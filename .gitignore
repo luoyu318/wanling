@@ -1,0 +1,47 @@
+# === 日志 ===
+*.log
+*.stackdump
+
+# === AI 辅助开发中间产物（不入库）===
+.superpowers/
+
+# === 历史设计文档（开发私有，不入开源仓库）===
+docs/superpowers/
+docs/plans/
+
+# === Python ===
+__pycache__/
+*.pyc
+
+# === Node ===
+node_modules/
+package-lock.json
+
+# === 文件上传存储目录（server 默认 STORAGE_PATH=./uploads，相对 cwd）===
+# 生产用绝对路径 /usr/local/wanling/uploads，本地跑会落到仓库根 uploads/
+uploads/
+
+# === Android ===
+# local.properties 含本机 SDK 路径（sdk.dir / flutter.sdk），必须过滤
+app/android/local.properties
+# .gradle 是 Gradle 构建缓存
+app/android/.gradle/
+
+# === iOS / macOS CocoaPods 依赖 ===
+app/ios/Pods/
+app/macos/Pods/
+
+# === Flutter 自动生成的原生插件注册（flutter pub get 会重建）===
+# 行业惯例过滤：生成文件不该进 git，clone 后跑 flutter pub get 自动生成
+app/macos/Flutter/GeneratedPluginRegistrant.swift
+app/ios/Runner/GeneratedPluginRegistrant.h
+app/ios/Runner/GeneratedPluginRegistrant.m
+app/linux/flutter/generated_plugin_registrant.cc
+app/linux/flutter/generated_plugin_registrant.h
+app/linux/flutter/generated_plugins.cmake
+app/windows/flutter/generated_plugin_registrant.cc
+app/windows/flutter/generated_plugin_registrant.h
+app/windows/flutter/generated_plugins.cmake
+
+# === Web（万灵不做 web 版，Flutter 默认生成产物）===
+app/web/

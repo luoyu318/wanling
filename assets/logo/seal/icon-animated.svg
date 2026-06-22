@@ -1,0 +1,57 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="万灵 · 万灵之印（动态）">
+  <title>万灵 Wanling — 万灵之印 · 动态</title>
+  <defs>
+    <linearGradient id="seal-bg-a" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#160726"/>
+      <stop offset="0.55" stop-color="#2a0f44"/>
+      <stop offset="1" stop-color="#1a0830"/>
+    </linearGradient>
+    <radialGradient id="seal-vg-a" cx="50%" cy="34%" r="78%">
+      <stop offset="62%" stop-color="rgba(0,0,0,0)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.36)"/>
+    </radialGradient>
+    <radialGradient id="seal-spark-a" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff4d6"/>
+      <stop offset="45%" stop-color="#f4d47c"/>
+      <stop offset="100%" stop-color="#f4d47c" stop-opacity="0"/>
+    </radialGradient>
+    <style>
+      @media (prefers-reduced-motion: reduce){
+        animate, animateTransform { display:none }
+      }
+    </style>
+  </defs>
+
+  <rect width="200" height="200" rx="45" fill="url(#seal-bg-a)"/>
+  <rect width="200" height="200" rx="45" fill="url(#seal-vg-a)"/>
+
+  <!-- 外法印圆环 -->
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#c9a3ff" stroke-width="0.9" opacity="0.5"/>
+
+  <!-- 星轮缓旋 -->
+  <g>
+    <polygon points="54,54 146,54 146,146 54,146" fill="none" stroke="#c9a3ff" stroke-width="1" opacity="0.45"/>
+    <polygon points="100,32 168,100 100,168 32,100" fill="none" stroke="#c9a3ff" stroke-width="1" opacity="0.45"/>
+    <animateTransform attributeName="transform" type="rotate"
+      from="0 100 100" to="360 100 100" dur="60s" repeatCount="indefinite"/>
+  </g>
+
+  <!-- 内环虚线反向缓旋 -->
+  <g>
+    <circle cx="100" cy="100" r="60" fill="none" stroke="#f4d47c" stroke-width="0.7" opacity="0.4" stroke-dasharray="3 6"/>
+    <animateTransform attributeName="transform" type="rotate"
+      from="360 100 100" to="0 100 100" dur="48s" repeatCount="indefinite"/>
+  </g>
+
+  <circle cx="100" cy="100" r="38" fill="none" stroke="#e6c98f" stroke-width="0.8" opacity="0.5"/>
+  <path d="M100,72 L109,91 L128,100 L109,109 L100,128 L91,109 L72,100 L91,91 Z" fill="#e6c98f" opacity="0.95"/>
+
+  <!-- 中央灵光呼吸（直接 animate r，以中心为原点，不偏移）-->
+  <circle cx="100" cy="100" r="11" fill="url(#seal-spark-a)">
+    <animate attributeName="r" values="10;13;10" keyTimes="0;0.5;1" dur="2.6s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.85;1;0.85" keyTimes="0;0.5;1" dur="2.6s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="100" cy="100" r="3.2" fill="#fff4d6">
+    <animate attributeName="r" values="3;3.8;3" keyTimes="0;0.5;1" dur="2.6s" repeatCount="indefinite"/>
+  </circle>
+</svg>

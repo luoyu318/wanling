@@ -1,0 +1,13 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="万灵 · 单色徽章">
+  <title>万灵 Wanling — 单色徽章</title>
+  <!-- 纯线条单色版：用 currentColor，可被任意 CSS color 着色。用于 favicon / 状态栏 / 单色场景 -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="100" cy="100" r="84" stroke-width="2.2" opacity="0.95"/>
+    <polygon points="54,54 146,54 146,146 54,146" stroke-width="2" opacity="0.8"/>
+    <polygon points="100,32 168,100 100,168 32,100" stroke-width="2" opacity="0.8"/>
+    <circle cx="100" cy="100" r="60" stroke-width="1.4" opacity="0.6" stroke-dasharray="4 7"/>
+    <circle cx="100" cy="100" r="38" stroke-width="1.6" opacity="0.75"/>
+    <path d="M100,72 L109,91 L128,100 L109,109 L100,128 L91,109 L72,100 L91,91 Z" stroke-width="1.8" fill="currentColor" fill-opacity="0.9"/>
+    <circle cx="100" cy="100" r="5" fill="currentColor" stroke="none"/>
+  </g>
+</svg>

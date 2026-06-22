@@ -1,0 +1,37 @@
+<svg viewBox="0 0 520 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="万灵 WANLING 唤灵即应">
+  <title>万灵 Wanling — Wordmark</title>
+  <defs>
+    <linearGradient id="wm-bg" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0" stop-color="#160726"/>
+      <stop offset="1" stop-color="#1a0830"/>
+    </linearGradient>
+    <radialGradient id="wm-spark" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff4d6"/>
+      <stop offset="45%" stop-color="#f4d47c"/>
+      <stop offset="100%" stop-color="#f4d47c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="520" height="200" rx="28" fill="url(#wm-bg)"/>
+
+  <!-- 左侧印章图标（缩小版⑥）-->
+  <g transform="translate(28,40) scale(0.6)">
+    <circle cx="100" cy="100" r="82" fill="none" stroke="#c9a3ff" stroke-width="1.2" opacity="0.5"/>
+    <polygon points="54,54 146,54 146,146 54,146" fill="none" stroke="#c9a3ff" stroke-width="1.2" opacity="0.45"/>
+    <polygon points="100,32 168,100 100,168 32,100" fill="none" stroke="#c9a3ff" stroke-width="1.2" opacity="0.45"/>
+    <circle cx="100" cy="100" r="60" fill="none" stroke="#f4d47c" stroke-width="0.9" opacity="0.4" stroke-dasharray="3 6"/>
+    <circle cx="100" cy="100" r="38" fill="none" stroke="#e6c98f" stroke-width="1" opacity="0.5"/>
+    <path d="M100,72 L109,91 L128,100 L109,109 L100,128 L91,109 L72,100 L91,91 Z" fill="#e6c98f"/>
+    <circle cx="100" cy="100" r="11" fill="url(#wm-spark)"/>
+    <circle cx="100" cy="100" r="3.2" fill="#fff4d6"/>
+  </g>
+
+  <!-- 右侧文字 -->
+  <text x="200" y="96" font-family="'Noto Serif SC','Source Han Serif SC',serif" font-weight="900"
+        font-size="58" fill="#e6c98f" letter-spacing="6">万灵</text>
+  <text x="202" y="128" font-family="'Cormorant Garamond',Georgia,serif" font-style="italic"
+        font-weight="300" font-size="22" fill="#c9a3ff" letter-spacing="11" opacity="0.85">WANLING</text>
+  <line x1="204" y1="144" x2="324" y2="144" stroke="#f4d47c" stroke-width="1" opacity="0.55"/>
+  <text x="204" y="164" font-family="'Noto Sans SC',sans-serif" font-weight="300"
+        font-size="13" fill="#c9a3ff" letter-spacing="6" opacity="0.6">唤灵 · 即应</text>
+</svg>
