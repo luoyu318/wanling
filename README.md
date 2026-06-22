@@ -72,6 +72,39 @@ AI 平台 (Hermes Agent, 跑实际 LLM 推理)
 - 🔐 **自托管**：服务端、数据库、文件、对话历史全部在自己机器，不经过第三方
 - 🌐 **跨端**：Linux desktop / Android / iOS，一份 Flutter 代码
 
+## 快速开始（Docker Compose）
+
+最快的方式跑起来整个后端栈（server + PostgreSQL + Redis）：
+
+```bash
+# 拷贝 compose 模板（用户改了不污染上游）
+cp docker-compose.example.yml docker-compose.yml
+cp docker-compose.prod.example.yml docker-compose.prod.yml
+# 开发模式改用：cp docker-compose.dev.example.yml docker-compose.dev.yml
+
+# 拷贝并填 .env（用 openssl rand -hex 32 生成 POSTGRES_PASSWORD / JWT_SECRET）
+cp .env.example.docker .env
+vim .env
+
+# 启动（.env 里 COMPOSE_FILE 已配好模式，直接 up）
+docker compose up -d
+```
+
+创建用户（万灵没有开放注册 API，用 admin-tool）：
+
+```bash
+# Linux / macOS / Windows PowerShell（直接跑）
+docker compose run --rm --entrypoint /app/wanling-admin server add-user --username=alice --password=secret123
+```
+
+```bash
+# Windows Git Bash（必须加 MSYS_NO_PATHCONV=1，否则路径会被破坏）
+MSYS_NO_PATHCONV=1 docker compose run --rm \
+    --entrypoint /app/wanling-admin server add-user --username=alice --password=secret123
+```
+
+详细见 [docs/deployment.md](docs/deployment.md) §1.5。
+
 ## 技术栈
 
 | 层 | 技术 |

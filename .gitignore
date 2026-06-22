@@ -45,3 +45,21 @@ app/windows/flutter/generated_plugins.cmake
 
 # === Web（万灵不做 web 版，Flutter 默认生成产物）===
 app/web/
+
+# === Docker Compose 运行产物 ===
+# 用户从 .example.yml 拷贝出来的实际文件（含可能的本地 secret 调整）
+.env
+data/
+docker-compose.yml
+docker-compose.prod.yml
+docker-compose.dev.yml
+docker-compose.override.yml
+
+# === Go 本地编译产物（go build ./cmd/... 时产生）===
+server/*.exe
+server/migrate
+server/wanling-server
+server/wanling-migrate
+server/wanling-admin
+# air 热重载构建产物（dev 模式 .air.toml 的 tmp_dir = "tmp"）
+server/tmp/

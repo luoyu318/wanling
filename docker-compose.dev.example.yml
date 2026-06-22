@@ -1,0 +1,48 @@
+# Wanling dev override 模板
+# 通过 .env 的 COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml 自动 merge
+# 切 dev/prod：改 .env 的 COMPOSE_FILE 那行注释切换
+#
+# 跟 prod 的差异：
+# - 用 bind mount（数据落到 ./data/，方便查看和清理）
+# - 暴露 PG 6333 和 Redis 6379 给 host 调试
+# - server 用 Dockerfile.dev（含 air）热重载
+# - migrate 继承 base 的 prod Dockerfile（one-shot，不需要 air）
+
+services:
+  postgres:
+    ports:
+      - "${DB_HOST_PORT:-6333}:5432"     # dev 暴露给 host 调试
+    volumes:
+      - ./data/pg:/var/lib/postgresql/data
+
+  redis:
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - ./data/redis:/data
+
+  # migrate 不 override，继承 base 的 prod Dockerfile
+  # 改 migrate 代码后手动跑：
+  #   docker compose run --rm migrate up
+  # （.env 的 COMPOSE_FILE 已指定 dev 模式，无需 -f）
+
+  server:
+    # 显式 image tag 避免跟 prod 模式 build 出的镜像互相覆盖（都是 wanling-server:latest 的坑）
+    image: wanling-server:dev
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    entrypoint: ["air"]
+    working_dir: /app
+    ports:
+      - "${SERVER_HOST_PORT:-18008}:18008"
+    volumes:
+      - ./server:/app                # 源码 bind mount
+      - ./data/uploads:/app/uploads  # 上传文件 bind mount
+      - air_cache:/root/.cache       # air / go build 缓存
+    environment:
+      # dev 宽松 CORS 方便本机调试
+      CORS_ALLOWED_ORIGINS: "*"
+
+volumes:
+  air_cache:

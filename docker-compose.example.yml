@@ -1,0 +1,87 @@
+# Wanling base compose 模板：4 个核心服务
+# 用法（详见 .env.example.docker 的 COMPOSE_FILE 配置）：
+#   1. cp docker-compose.example.yml docker-compose.yml
+#   2. cp docker-compose.prod.example.yml docker-compose.prod.yml（或 dev）
+#   3. cp .env.example.docker .env 并填值
+#   4. docker compose up -d   # .env 里 COMPOSE_FILE 自动 merge 这两个文件
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wanling}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required, see .env.example.docker}
+      POSTGRES_DB: ${POSTGRES_DB:-wanling}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wanling} -d ${POSTGRES_DB:-wanling}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [wanling-net]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [wanling-net]
+
+  migrate:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    entrypoint: ["/app/wanling-migrate"]
+    command: ["up"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-wanling}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-wanling}
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [wanling-net]
+    restart: "no"  # one-shot，跑完即退
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: "18008"
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-wanling}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-wanling}
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required, see .env.example.docker}
+      STORAGE_PATH: /app/uploads
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:18008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [wanling-net]
+
+networks:
+  wanling-net:
+    driver: bridge

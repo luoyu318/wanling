@@ -1,0 +1,33 @@
+# air 热重载配置
+# 文档：https://github.com/air-verse/air
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+# 编译入口
+cmd = "go build -o ./tmp/main.exe ./cmd/main.go"
+# 编译产物路径
+bin = "./tmp/main.exe"
+# 监听文件变化
+include_dir = ["cmd", "internal"]
+include_ext = ["go", "tpl", "tmpl", "html"]
+exclude_dir = ["tmp", "testdata", "vendor"]
+exclude_regex = ["_test.go"]
+# 延迟构建（防抖）
+delay = 500
+# 轮询模式（Windows + Docker Desktop bind mount 不转发 inotify，必须开 poll）
+poll = true
+
+[log]
+time = true
+
+[color]
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+clean_on_exit = true

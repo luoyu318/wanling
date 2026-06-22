@@ -27,6 +27,9 @@ func main() {
 			statusOnly = true
 		case "--mark-applied":
 			markApplied = true
+		case "up":
+			// 显式接受 up 子命令（默认行为：应用所有未应用迁移）
+			// 让 docker compose command: ["up"] 不被静默丢弃
 		}
 		if strings.HasPrefix(arg, "--env=") {
 			envFile = strings.TrimPrefix(arg, "--env=")
@@ -217,13 +220,42 @@ func showStatus(db *sql.DB) {
 }
 
 func loadDSN(envFile string) string {
-	f, err := os.Open(envFile)
-	if err != nil {
+	// 读 .env 文件（本地开发场景，文件可能不存在 — Docker 容器走环境变量）
+	env := loadEnvFile(envFile)
+
+	// os.Getenv 优先（Docker compose 注入的环境变量），.env 文件兜底
+	get := func(key string) string {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return env[key]
+	}
+
+	host := get("DB_HOST")
+	port := get("DB_PORT")
+	user := get("DB_USER")
+	pass := get("DB_PASSWORD")
+	name := get("DB_NAME")
+	sslmode := get("DB_SSLMODE")
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	if host == "" || user == "" || name == "" {
 		return ""
+	}
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, pass, name, sslmode)
+}
+
+// loadEnvFile 读 .env 文件为 map。文件不存在时返回空 map（不报错，Docker 场景下正常）。
+func loadEnvFile(path string) map[string]string {
+	env := make(map[string]string)
+	f, err := os.Open(path)
+	if err != nil {
+		return env
 	}
 	defer f.Close()
 
-	env := make(map[string]string)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -235,21 +267,7 @@ func loadDSN(envFile string) string {
 			env[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
-
-	host := env["DB_HOST"]
-	port := env["DB_PORT"]
-	user := env["DB_USER"]
-	pass := env["DB_PASSWORD"]
-	name := env["DB_NAME"]
-	sslmode := env["DB_SSLMODE"]
-	if sslmode == "" {
-		sslmode = "disable"
-	}
-	if host == "" || user == "" || name == "" {
-		return ""
-	}
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, pass, name, sslmode)
+	return env
 }
 
 func findProjectRoot() string {

@@ -1,0 +1,48 @@
+# Wanling prod override 模板
+# 通过 .env 的 COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml 自动 merge
+# 切 dev/prod：改 .env 的 COMPOSE_FILE 那行注释切换
+#
+# 跟 dev 的差异：
+# - 用 named volume（数据隔离，不污染仓库目录）
+# - server 暴露 0.0.0.0:18008（外网能否访问由 VPS 防火墙决定）
+# - server restart: always（崩溃自动重启）
+# - migrate / postgres / redis 保持 base 配置不变
+# - 所有服务启用日志轮转（防 json-file 无限增长爆磁盘）
+
+services:
+  postgres:
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    volumes:
+      - redisdata:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  server:
+    # 显式 image tag 避免跟 dev 模式 build 出的镜像互相覆盖（都是 wanling-server:latest 的坑）
+    image: wanling-server:prod
+    restart: always
+    ports:
+      - "0.0.0.0:${SERVER_HOST_PORT:-18008}:18008"
+    volumes:
+      - uploads:/app/uploads
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

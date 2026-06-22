@@ -1,0 +1,23 @@
+# Dev 镜像：含 Go 工具链 + air 热重载
+FROM golang:1.25-alpine
+
+# air 需要 git 拉取
+RUN apk add --no-cache git
+
+# 国内构建走 goproxy.cn，否则 go install 拉 proxy.golang.org 会失败
+ENV GOPROXY=https://goproxy.cn,direct
+
+# 装 air（Go 热重载工具）
+RUN go install github.com/air-verse/air@latest
+
+WORKDIR /app
+
+# 先拷依赖利用 layer 缓存
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 源码在运行时通过 bind mount 提供，不在这里 COPY
+# .air.toml 也通过 bind mount 提供
+
+# 默认 root（bind mount 写文件 owner=root，host 可 sudo 访问）
+CMD ["air"]

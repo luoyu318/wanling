@@ -31,6 +31,199 @@ AI 平台 (Hermes Agent)
 
 ---
 
+## 1.5 Docker Compose 一键部署（推荐）
+
+> **适用场景**：快速部署、不想手动配 systemd / nginx、单机部署。
+> **不适用**：需要 k8s 编排、多副本、跨机扩展。
+
+### 前置条件
+
+- Docker Engine >= 24
+- Docker Compose v2 >= 2.20
+- 服务器外网防火墙：默认开放 80/443（如要前置 nginx），按需开放 18008（如不走反代）
+
+### 一键启动（prod）
+
+仓库提供 3 个模板文件（入 git）：
+- `docker-compose.example.yml`（base 配置）
+- `docker-compose.prod.example.yml`（prod override）
+- `docker-compose.dev.example.yml`（dev override）
+
+用户拷贝成实际文件（gitignored），改了不会跟上游冲突：
+
+```bash
+git clone <repo> && cd wanling
+
+# 拷贝 compose 模板
+cp docker-compose.example.yml docker-compose.yml
+cp docker-compose.prod.example.yml docker-compose.prod.yml
+# （开发模式改用：cp docker-compose.dev.example.yml docker-compose.dev.yml）
+
+# 拷贝 .env 模板并填值
+cp .env.example.docker .env
+
+# 编辑 .env，填两个必填项（生成命令在文件注释里）：
+#   POSTGRES_PASSWORD=<openssl rand -hex 32>
+#   JWT_SECRET=<openssl rand -hex 32>
+vim .env
+
+# .env 里 COMPOSE_FILE 默认指向 prod，直接启动：
+docker compose up -d
+```
+
+首次启动会自动 build 镜像（耗时 3-5 分钟）。启动完成后：
+
+```bash
+docker compose ps                # 看 4 个服务都 healthy
+curl http://localhost:18008/health   # 验证 server
+```
+
+### 切换 dev / prod
+
+改 `.env` 里 `COMPOSE_FILE` 那一行（注释一行，取消注释另一行）：
+
+```ini
+# prod 模式（默认）
+COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+# COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+
+# dev 模式（注释上一行，取消注释这行）
+# COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+```
+
+切换后：
+```bash
+docker compose down             # 停当前模式
+docker compose up -d            # 起新模式
+```
+
+### 创建用户（重要）
+
+**Wanling 没有开放公开注册 API**，必须用 admin-tool 加用户：
+
+```bash
+# Linux / macOS / Windows PowerShell（都直接跑，PowerShell 不做路径转换）
+docker compose run --rm --entrypoint /app/wanling-admin server add-user --username=alice --password=secret123
+```
+
+```bash
+# Windows Git Bash 必须加 MSYS_NO_PATHCONV=1，否则 /app/wanling-admin 会被转换成 Windows 路径破坏执行
+MSYS_NO_PATHCONV=1 docker compose run --rm --entrypoint /app/wanling-admin server add-user --username=alice --password=secret123
+```
+
+**怎么判断你在用哪个 shell？**
+- 提示符 `$` 或 `%` → Linux/macOS/zsh/bash → 用上面那条
+- 提示符 `PS D:\>` → PowerShell → **用上面那条**（不需要 MSYS_NO_PATHCONV）
+- 提示符包含 `MINGW64` 或在 Git Bash 窗口 → Git Bash → 用下面那条
+
+admin-tool 子命令：
+- `add-user --username=<name> [--password=<pwd>]`：创建用户
+- `reset-password --username=<name>`：重置密码
+- `list-users`：列出所有用户
+
+### 本地自定义（不污染上游模板）
+
+如果你想加自己的服务 / 改日志驱动 / 改端口绑定，**直接编辑你拷贝出来的 `docker-compose.prod.yml` 或 `docker-compose.dev.yml`**。这些文件已被 gitignore，不会被 `git pull` 覆盖，也不会污染上游模板。
+
+如果上游模板更新了（比如 PG 升级到 17），你只需要：
+```bash
+# 看上游模板的改动
+git diff HEAD~1 -- docker-compose.prod.example.yml
+
+# 手动 merge 到你自己的 docker-compose.prod.yml（或者直接重新拷贝再应用你的改动）
+```
+
+### 端口自定义（host 暴露端口）
+
+host 上已有服务占用某个端口时（比如 18008 被其他服务占了），改 `.env` 的端口变量即可：
+
+```ini
+# .env
+SERVER_HOST_PORT=18009       # server 暴露到 host 的端口（默认 18008）
+DB_HOST_PORT=6334            # dev 模式 PG 暴露到 host 的端口（默认 6333）
+REDIS_HOST_PORT=6380         # dev 模式 Redis 暴露到 host 的端口（默认 6379）
+```
+
+改完跑：
+```bash
+docker compose down
+docker compose up -d
+```
+
+**只改 host 端口，容器内端口固定**（server 18008 / PG 5432 / Redis 6379），所以 server 连 PG/Redis 的内部配置不受影响。
+
+prod 模式不暴露 PG/Redis，只 `SERVER_HOST_PORT` 生效。
+
+### 可选：挂 nginx 反代 + TLS
+
+见 [`deploy/nginx/README.md`](../deploy/nginx/README.md)。compose 不内置反代，由用户决定是否使用、用什么。
+
+### 日常运维
+
+| 操作 | 命令 |
+|---|---|
+| 看服务状态 | `docker compose ps` |
+| 看实时日志 | `docker compose logs -f server` |
+| 重启 server | `docker compose restart server` |
+| 停服（保数据） | `docker compose down` |
+| 停服 + 删数据 | `docker compose down -v` |
+| 调用 admin-tool | 见上一节"创建用户" |
+| 升级 | `git pull && docker compose build && docker compose up -d` |
+
+### DB 密码修改陷阱
+
+postgres 官方镜像只在**首次初始化**时读 `POSTGRES_PASSWORD`。之后改 `.env` 不会同步到 PG。正确流程：
+
+```bash
+# 1. 先在 PG 改密码
+docker compose exec postgres \
+  psql -U wanling -d wanling -c "ALTER USER wanling PASSWORD 'new_password'"
+
+# 2. 改 .env 的 POSTGRES_PASSWORD 为新值
+
+# 3. 重建容器让 server / migrate 读到新密码
+docker compose up -d --force-recreate server migrate
+```
+
+### 备份 / 恢复
+
+```bash
+# PG 逻辑备份（建议每天 cron）
+docker compose exec postgres \
+  pg_dump -U wanling wanling | gzip > backups/wanling_$(date +%Y%m%d).sql.gz
+
+# uploads 物理备份
+docker run --rm -v $(pwd):/backup -v wanling_uploads:/data alpine \
+  tar czf /backup/uploads_$(date +%Y%m%d).tar.gz -C /data .
+
+# PG 恢复
+gunzip -c backups/wanling_20260622.sql.gz | \
+  docker compose exec -T postgres psql -U wanling -d wanling
+```
+
+### 开发模式（dev）
+
+dev 模式启用 air 热重载 + 暴露调试端口。
+
+跟 prod 的差异：
+
+| 维度 | prod | dev |
+|---|---|---|
+| server 镜像 | prod Dockerfile（multi-stage，小镜像） | dev Dockerfile（含 air，大镜像） |
+| 数据持久化 | named volume（隔离） | bind mount `./data/`（可查看） |
+| 端口暴露 | `0.0.0.0:18008` | 加 `0.0.0.0:6333`（PG）+ `0.0.0.0:6379`（Redis） |
+| 热重载 | 无 | 改 `.go` 文件 air 自动重建 |
+
+**Windows 用户注意**：dev 模式的 air 已配置 `poll = true`（轮询模式），因为 Docker Desktop on Windows 的 bind mount 不向容器内 inotify 转发文件事件，默认的 fsnotify 监听不触发。Linux / macOS 用户也兼容（poll 模式跨平台工作）。
+
+直连 PG：`psql -h localhost -p 6333 -U wanling -d wanling`（密码看 `.env`）。
+直连 Redis：`redis-cli -h localhost -p 6379`。
+
+**dev uploads 权限提示**：dev 容器以 root 跑，bind mount `./data/uploads` 里 host 上看文件 owner 是 `root:root`。host 普通用户读写需要 sudo（`sudo ls data/uploads`）。如希望 host 普通用户能直接读写，在 dev override 加 `user: "${UID}:${GID}"` 让容器 uid 匹配 host 用户（高级用法，不推荐）。
+
+---
+
 ## 2. 数据库初始化
 
 ### 2.1 创建 PostgreSQL 数据库
