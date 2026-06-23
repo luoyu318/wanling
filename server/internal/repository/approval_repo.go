@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -15,6 +16,18 @@ type ApprovalRepo struct {
 
 func NewApprovalRepo(db *sql.DB) *ApprovalRepo {
 	return &ApprovalRepo{db: db}
+}
+
+// DecisionContext service 决策所需的上下文（一次 JOIN 查询拿全）。
+type DecisionContext struct {
+	ApprovalID   string
+	MessageID    string
+	ConversationID string
+	AgentID      string
+	UserID       string
+	SessionKey   string
+	AllowPattern *string
+	CardContent  model.CardContent
 }
 
 const approvalSelectCols = `id, message_id, conversation_id, agent_id, user_id,
@@ -201,4 +214,51 @@ func (r *ApprovalRepo) MatchAllowPattern(convID, agentID, command string) (bool,
 		return false, err
 	}
 	return matched, nil
+}
+
+// GetForDecision 一次 JOIN messages 查询决策所需的所有字段。
+// 不存在返回 (nil, nil)，由调用方判断。
+func (r *ApprovalRepo) GetForDecision(id string) (*DecisionContext, error) {
+	row := r.db.QueryRow(
+		`SELECT a.id, a.message_id, a.conversation_id, a.agent_id, a.user_id,
+		        a.session_key, a.allow_pattern, a.actions, m.content
+		 FROM approvals a JOIN messages m ON m.id = a.message_id
+		 WHERE a.id = $1`,
+		id,
+	)
+	var (
+		ctx        DecisionContext
+		actionsRaw []byte
+		contentRaw []byte
+		allowPat   sql.NullString
+	)
+	err := row.Scan(
+		&ctx.ApprovalID, &ctx.MessageID, &ctx.ConversationID, &ctx.AgentID, &ctx.UserID,
+		&ctx.SessionKey, &allowPat, &actionsRaw, &contentRaw,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if allowPat.Valid {
+		ctx.AllowPattern = &allowPat.String
+	}
+	var wrapper struct {
+		Data model.CardContent `json:"data"`
+	}
+	if err := json.Unmarshal(contentRaw, &wrapper); err != nil {
+		return nil, err
+	}
+	ctx.CardContent = wrapper.Data
+	// actions 单独存表，覆盖 content 里可能不一致的副本（以表为准）
+	ctx.CardContent.Actions, _ = model.UnmarshalActions(actionsRaw)
+	return &ctx, nil
+}
+
+// UpdateMessageContent 更新 messages.content（service 双写 state 用）。
+func (r *ApprovalRepo) UpdateMessageContent(messageID string, content []byte) error {
+	_, err := r.db.Exec(`UPDATE messages SET content = $1 WHERE id = $2`, content, messageID)
+	return err
 }

@@ -207,3 +207,83 @@ func TestApprovalMarkExpired(t *testing.T) {
 		t.Fatalf("state wrong: %+v", got)
 	}
 }
+
+func TestApprovalGetForDecision(t *testing.T) {
+	repo, msgRepo, userID, agentID, convID, msgID := approvalTestFixture(t)
+	cardData := model.CardContent{
+		ApprovalID: "pending-id", CardType: model.CardTypeCommand, Title: "命令审批", Preview: "rm -rf x",
+		Actions: []model.ApprovalAction{{ID: "allow_once", Label: "允许"}, {ID: "deny", Label: "拒绝"}},
+		State:    model.ApprovalStatePending, ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+	}
+	contentMap := struct {
+		MsgType string            `json:"msg_type"`
+		Data    model.CardContent `json:"data"`
+	}{MsgType: "card", Data: cardData}
+	contentBytes, _ := json.Marshal(contentMap)
+	// MessageRepo 无 UpdateContent，直接 SQL UPDATE
+	if _, err := repo.db.Exec("UPDATE messages SET content = $1 WHERE id = $2", contentBytes, msgID); err != nil {
+		t.Fatalf("update msg content: %v", err)
+	}
+	_ = msgRepo // 避免未用警告
+
+	pattern := "rm -rf *"
+	a, err := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType:  model.CardTypeCommand, Actions: cardData.Actions,
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "exec:1", AllowPattern: &pattern,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ctx, err := repo.GetForDecision(a.ID)
+	if err != nil || ctx == nil {
+		t.Fatalf("GetForDecision: %v %v", ctx, err)
+	}
+	if ctx.CardContent.Title != "命令审批" || len(ctx.CardContent.Actions) != 2 {
+		t.Fatalf("CardContent wrong: %+v", ctx.CardContent)
+	}
+	if ctx.AllowPattern == nil || *ctx.AllowPattern != pattern {
+		t.Fatalf("AllowPattern wrong: %v", ctx.AllowPattern)
+	}
+}
+
+func TestApprovalUpdateMessageContent(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	_, err := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType:   model.CardTypeCommand,
+		Actions:    []model.ApprovalAction{{ID: "deny"}},
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "k",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	newContent := []byte(`{"msg_type":"card","data":{"state":"approved"}}`)
+	if err := repo.UpdateMessageContent(msgID, newContent); err != nil {
+		t.Fatalf("UpdateMessageContent: %v", err)
+	}
+	var raw []byte
+	err = repo.db.QueryRow(`SELECT content FROM messages WHERE id = $1`, msgID).Scan(&raw)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	// JSONB 读出来 key 顺序会变 + 加空格，比较解析后语义而非字节
+	var got, want struct {
+		MsgType string `json:"msg_type"`
+		Data    struct {
+			State string `json:"state"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal got: %v", err)
+	}
+	if err := json.Unmarshal(newContent, &want); err != nil {
+		t.Fatalf("unmarshal want: %v", err)
+	}
+	if got != want {
+		t.Fatalf("content mismatch: %+v vs %+v", got, want)
+	}
+}
