@@ -503,7 +503,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   subtitle,
                   style: TextStyle(
                     fontSize: 12,
-                    color: isTyping
+                    // 在线/打字中=绿,离线=灰。在线状态用颜色直观区分。
+                    color: (isTyping || agentStatus == AgentStatus.online)
                         ? const Color(0xFF07C160)
                         : const Color(0xFF999999),
                   ),

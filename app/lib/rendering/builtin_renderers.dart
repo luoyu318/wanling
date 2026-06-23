@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
 import '../models/msg_type.dart';
+import '../utils/emoji_span.dart';
 import '../widgets/full_screen_image_page.dart';
 import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
@@ -33,8 +34,10 @@ class TextContentRenderer implements MessageContentRenderer {
     // 纯文本（无 markdown 语法）走 Text：Text 有 intrinsic width，气泡能自适应内容宽度。
     // 含 markdown 语法的（# 标题、* 强调、``` 代码块、- 列表等）走 MarkdownView。
     if (!_hasMarkdownSyntax(text)) {
-      return Text(text,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w300));
+      // buildEmojiColoredText: 给 ♻️⚠️✂️ 等单色 emoji 字符单独设 Noto Color Emoji
+      // 字体(精确 span 分割),不影响普通文本度量(见 emoji_span.dart 根因说明)。
+      return buildEmojiColoredText(text,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300));
     }
     return MarkdownView(
       data: text,
@@ -86,6 +89,12 @@ class MarkdownContentRenderer implements MessageContentRenderer {
     final data = content['data'];
     final text = (data?['text'] as String?) ?? '';
     if (text.isEmpty) return const SizedBox.shrink();
+    // 无 markdown 语法的 markdown 消息降级为带 emoji span 分割的 Text:
+    // 保留 ♻️⚠️✂️ 彩色渲染,且避免 MarkdownView 对纯文本的额外开销。
+    if (!TextContentRenderer._hasMarkdownSyntax(text)) {
+      return buildEmojiColoredText(text,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300));
+    }
     return MarkdownView(
       data: text,
       config: markdownStyle(isDark: rc.isDark),

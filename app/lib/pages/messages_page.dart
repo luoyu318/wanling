@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../models/conversation.dart';
 import '../providers/conversation_provider.dart';
 import '../router_helpers.dart';
+import '../utils/emoji_span.dart';
 import '../utils/snackbar.dart';
 import '../widgets/avatar.dart';
 
@@ -413,7 +414,7 @@ class _ConvTileState extends State<_ConvTile> {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
+                          buildEmojiColoredText(
                             conv.lastMessagePreview,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,

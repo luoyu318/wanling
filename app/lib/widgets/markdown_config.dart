@@ -27,7 +27,7 @@ MarkdownConfig markdownStyle({required bool isDark}) {
   final preBase = isDark ? PreConfig.darkConfig : const PreConfig();
   final base = isDark ? MarkdownConfig.darkConfig : MarkdownConfig.defaultConfig;
   return base.copy(configs: [
-    PConfig(textStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.w300, height: 1.6, color: ink)),
+    PConfig(textStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.w300, height: 1.6, color: ink)),
     _NoDividerHeadingConfig(
       tag: MarkdownTag.h1,
       style: TextStyle(

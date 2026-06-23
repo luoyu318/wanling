@@ -95,6 +95,14 @@ flutter:
     - assets/images/
   #   - images/a_dot_ham.jpeg
 
+  fonts:
+    # Noto Color Emoji（CBDT/CBLC 位图格式）：修复 ♻️⚠️✂️ 等默认 text 形态 emoji
+    # 在 Android 被 Roboto 抢占成单色的问题。打包进 APK 后,设为 fontFamilyFallback,
+    # 让主字体找不到这些字符的彩色字形时回退到彩色 emoji 字体。
+    - family: Noto Color Emoji
+      fonts:
+        - asset: fonts/NotoColorEmoji.ttf
+
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
