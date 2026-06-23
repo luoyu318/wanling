@@ -134,3 +134,71 @@ func (r *ApprovalRepo) FindExpired(now time.Time) ([]*model.Approval, error) {
 	}
 	return out, rows.Err()
 }
+
+// ErrApprovalNotPending 试图对非 pending 状态推进。
+var ErrApprovalNotPending = errors.New("approval not pending")
+
+// MarkDecided 推进到 approved/denied 终态。actionID 必须是 actions 列表内的合法 id（由调用方校验）。
+// reason 仅 deny 时有意义。allowPattern 非 nil 时同时写入 allow_pattern（用于「始终」白名单）。
+// 已是终态时返回 ErrApprovalNotPending（用 WHERE state='pending' 做乐观锁）。
+func (r *ApprovalRepo) MarkDecided(id, actionID, userID, reason string, allowPattern *string) error {
+	state := model.ApprovalStateApproved
+	if actionID == "deny" {
+		state = model.ApprovalStateDenied
+	}
+	res, err := r.db.Exec(
+		`UPDATE approvals
+		 SET state = $1, decided_action = $2, decided_by = $3,
+		     decided_reason = NULLIF($4, ''), decided_at = now(),
+		     allow_pattern = COALESCE($5, allow_pattern)
+		 WHERE id = $6 AND state = 'pending'`,
+		state, actionID, userID, reason, nullableString(allowPattern), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrApprovalNotPending
+	}
+	return nil
+}
+
+// MarkExpired 推进到 expired 终态。
+func (r *ApprovalRepo) MarkExpired(id string) error {
+	res, err := r.db.Exec(
+		`UPDATE approvals SET state = 'expired'
+		 WHERE id = $1 AND state = 'pending'`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrApprovalNotPending
+	}
+	return nil
+}
+
+// MatchAllowPattern 查会话+agent 是否有已 approved 且 allow_pattern 匹配 command 的记录。
+// 匹配规则：allow_pattern 中 * → %, ? → _，大小写敏感（与 Linux shell 行为一致）。
+func (r *ApprovalRepo) MatchAllowPattern(convID, agentID, command string) (bool, error) {
+	var matched bool
+	err := r.db.QueryRow(
+		`SELECT EXISTS(
+		   SELECT 1 FROM approvals
+		   WHERE conversation_id = $1
+		     AND agent_id = $2
+		     AND state = 'approved'
+		     AND allow_pattern IS NOT NULL
+		     AND $3 LIKE replace(replace(allow_pattern, '*', '%'), '?', '_')
+		   LIMIT 1
+		)`,
+		convID, agentID, command,
+	).Scan(&matched)
+	if err != nil {
+		return false, err
+	}
+	return matched, nil
+}

@@ -96,3 +96,114 @@ func TestApprovalFindExpired(t *testing.T) {
 		t.Fatalf("expected 1 expired, got %d", len(pending))
 	}
 }
+
+func TestApprovalMarkDecidedAllowAlways(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	pattern := "rm -rf *"
+	created, err := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType: model.CardTypeCommand,
+		Actions: []model.ApprovalAction{
+			{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"},
+			{ID: "allow_always", Label: "始终", Icon: "shield", Style: "info"},
+			{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"},
+		},
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "exec:cmd:1",
+		AllowPattern: &pattern,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	actionID := "allow_always"
+	if err := repo.MarkDecided(created.ID, actionID, userID, "", &pattern); err != nil {
+		t.Fatalf("MarkDecided: %v", err)
+	}
+	got, _ := repo.GetByID(created.ID)
+	if got.State != model.ApprovalStateApproved || *got.DecidedAction != "allow_always" {
+		t.Fatalf("state/action wrong: %+v", got)
+	}
+	if got.AllowPattern == nil || *got.AllowPattern != pattern {
+		t.Fatalf("allow_pattern not saved: %v", got.AllowPattern)
+	}
+
+	// 后续同类命令应被 MatchAllowPattern 命中
+	matched, err := repo.MatchAllowPattern(convID, agentID, "rm -rf /tmp/cache")
+	if err != nil {
+		t.Fatalf("MatchAllowPattern: %v", err)
+	}
+	if !matched {
+		t.Fatal("expected pattern match")
+	}
+
+	// 不匹配的命令应返回 false
+	matched2, _ := repo.MatchAllowPattern(convID, agentID, "ls /")
+	if matched2 {
+		t.Fatal("unexpected pattern match for ls")
+	}
+}
+
+func TestApprovalMarkDecidedDenyWithReason(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	created, err := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType: model.CardTypeTool,
+		Actions:  []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "tool:1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	reason := "操作不可逆"
+	if err := repo.MarkDecided(created.ID, "deny", userID, reason, nil); err != nil {
+		t.Fatalf("MarkDecided: %v", err)
+	}
+	got, _ := repo.GetByID(created.ID)
+	if got.State != model.ApprovalStateDenied {
+		t.Fatalf("state wrong: %+v", got)
+	}
+	if got.DecidedReason == nil || *got.DecidedReason != reason {
+		t.Fatalf("reason not saved: %v", got.DecidedReason)
+	}
+}
+
+func TestApprovalMarkDecidedNotPendingFails(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	created, _ := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType:   model.CardTypeTool,
+		Actions:    []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "tool:1",
+	})
+	// 先 decide 一次
+	if err := repo.MarkDecided(created.ID, "deny", userID, "", nil); err != nil {
+		t.Fatalf("first MarkDecided: %v", err)
+	}
+	// 再次 decide 应失败（已是非 pending）
+	err := repo.MarkDecided(created.ID, "allow_once", userID, "", nil)
+	if err == nil {
+		t.Fatal("expected error on second MarkDecided")
+	}
+}
+
+func TestApprovalMarkExpired(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	created, _ := repo.Create(model.Approval{
+		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType:   model.CardTypeCommand,
+		Actions:    []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
+		ExpiresAt:  time.Now().Add(-time.Minute).UTC(),
+		SessionKey: "exec:1",
+	})
+	if err := repo.MarkExpired(created.ID); err != nil {
+		t.Fatalf("MarkExpired: %v", err)
+	}
+	got, _ := repo.GetByID(created.ID)
+	if got.State != model.ApprovalStateExpired {
+		t.Fatalf("state wrong: %+v", got)
+	}
+}
