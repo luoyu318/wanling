@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/approval"
 	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
@@ -143,5 +145,198 @@ func TestCreateApprovalRejectsWrongAgent(t *testing.T) {
 	hnd.CreateApproval(c)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for wrong agent, got %d", w.Code)
+	}
+}
+
+// TestDecideApprovalSuccess user 同意审批，state 推进到 approved。
+func TestDecideApprovalSuccess(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userID, agentID, convID := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	agentRepo := repository.NewAgentRepo(db)
+
+	// 建一条 pending approval（直接走 repo，绕过 CreateApproval handler）
+	cardData := model.CardContent{
+		CardType: model.CardTypeCommand, Title: "命令审批", Preview: "rm -rf x",
+		Actions: []model.ApprovalAction{
+			{ID: "allow_once"}, {ID: "deny"},
+		},
+		State:     model.ApprovalStatePending,
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+	}
+	contentMap := struct {
+		MsgType string          `json:"msg_type"`
+		Data    model.CardContent `json:"data"`
+	}{MsgType: "card", Data: cardData}
+	contentBytes, _ := json.Marshal(contentMap)
+	msg, _ := msgRepo.Create(convID, "agent", agentID, contentBytes)
+
+	a, _ := repo.Create(model.Approval{
+		MessageID: msg.ID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType: model.CardTypeCommand, Actions: cardData.Actions,
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "exec:1",
+	})
+
+	// service 用真 repo + 真 hub（但 hub 不开 Run，noop 广播）
+	h := hub.NewHub(nil, agentRepo)
+	svc := approval.NewService(repo, h, repo)
+	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo, h, svc)
+
+	body, _ := json.Marshal(map[string]string{"action_id": "allow_once"})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/approvals/"+a.ID+"/decide", bytes.NewReader(body))
+	c.Params = gin.Params{{Key: "id", Value: a.ID}}
+	c.Set("userID", userID)
+	c.Set("role", "user")
+
+	hnd.Decide(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	got, _ := repo.GetByID(a.ID)
+	if got.State != model.ApprovalStateApproved {
+		t.Fatalf("expected approved state, got %s", got.State)
+	}
+}
+
+// TestDecideApprovalRejectsAgent 非 user role 调用返回 403。
+func TestDecideApprovalRejectsAgent(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	_, agentID, _ := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	h := hub.NewHub(nil, repository.NewAgentRepo(db))
+	svc := approval.NewService(repo, h, repo)
+	hnd := NewApprovalHandler(repo, repository.NewMessageRepo(db),
+		repository.NewConversationRepo(db), repository.NewAgentRepo(db), h, svc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/", bytes.NewReader([]byte(`{"action_id":"deny"}`)))
+	c.Params = gin.Params{{Key: "id", Value: "x"}}
+	c.Set("userID", agentID)
+	c.Set("role", "agent") // 非 user
+
+	hnd.Decide(c)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+// TestDecideApprovalConflict approval 已 approved，再次 decide 返回 409。
+func TestDecideApprovalConflict(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userID, agentID, convID := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	agentRepo := repository.NewAgentRepo(db)
+
+	// 建一条已 approved 的审批
+	cardData := model.CardContent{
+		CardType: model.CardTypeCommand, Title: "t", Preview: "rm -rf x",
+		Actions:   []model.ApprovalAction{{ID: "allow_once"}, {ID: "deny"}},
+		State:     model.ApprovalStateApproved, // 已 approved
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+	}
+	contentMap := struct {
+		MsgType string          `json:"msg_type"`
+		Data    model.CardContent `json:"data"`
+	}{MsgType: "card", Data: cardData}
+	contentBytes, _ := json.Marshal(contentMap)
+	msg, _ := msgRepo.Create(convID, "agent", agentID, contentBytes)
+
+	a, _ := repo.Create(model.Approval{
+		MessageID: msg.ID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType: model.CardTypeCommand, Actions: cardData.Actions,
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "k",
+	})
+	// 推到 approved
+	repo.MarkDecided(a.ID, "allow_once", userID, "", nil)
+
+	h := hub.NewHub(nil, agentRepo)
+	svc := approval.NewService(repo, h, repo)
+	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo, h, svc)
+
+	body, _ := json.Marshal(map[string]string{"action_id": "deny"})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+	c.Params = gin.Params{{Key: "id", Value: a.ID}}
+	c.Set("userID", userID)
+	c.Set("role", "user")
+
+	hnd.Decide(c)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for already-decided, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestGetApprovalSuccess GET 返回审批详情。
+func TestGetApprovalSuccess(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userID, agentID, convID := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+
+	cardData := model.CardContent{
+		CardType: model.CardTypeCommand, Title: "t",
+		Actions:   []model.ApprovalAction{{ID: "allow_once"}},
+		State:     model.ApprovalStatePending, ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+	}
+	contentMap := struct {
+		MsgType string          `json:"msg_type"`
+		Data    model.CardContent `json:"data"`
+	}{MsgType: "card", Data: cardData}
+	contentBytes, _ := json.Marshal(contentMap)
+	msg, _ := msgRepo.Create(convID, "agent", agentID, contentBytes)
+	a, _ := repo.Create(model.Approval{
+		MessageID: msg.ID, ConversationID: convID, AgentID: agentID, UserID: userID,
+		CardType: model.CardTypeCommand, Actions: cardData.Actions,
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "k",
+	})
+
+	hnd := NewApprovalHandler(repo, msgRepo, repository.NewConversationRepo(db),
+		repository.NewAgentRepo(db), hub.NewHub(nil, repository.NewAgentRepo(db)), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/approvals/"+a.ID, nil)
+	c.Params = gin.Params{{Key: "id", Value: a.ID}}
+	c.Set("userID", userID)
+	c.Set("role", "user")
+
+	hnd.Get(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["id"] != a.ID {
+		t.Fatalf("id mismatch: %v", resp["id"])
+	}
+}
+
+// TestGetApprovalNotFound 不存在的 ID 返回 404。
+func TestGetApprovalNotFound(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	hnd := NewApprovalHandler(repository.NewApprovalRepo(db), repository.NewMessageRepo(db),
+		repository.NewConversationRepo(db), repository.NewAgentRepo(db),
+		hub.NewHub(nil, repository.NewAgentRepo(db)), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/approvals/nonexistent", nil)
+	c.Params = gin.Params{{Key: "id", Value: "nonexistent"}}
+
+	hnd.Get(c)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }

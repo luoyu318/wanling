@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -238,4 +239,67 @@ func getBool(m map[string]interface{}, k string) bool {
 		}
 	}
 	return false
+}
+
+// Decide POST /api/approvals/:id/decide
+// user 决策审批。action_id 必须在卡片 actions 列表内。
+func (h *ApprovalHandler) Decide(c *gin.Context) {
+	userID := c.GetString("userID")
+	if c.GetString("role") != "user" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅 user 可决策"})
+		return
+	}
+	approvalID := c.Param("id")
+
+	var req struct {
+		ActionID string `json:"action_id" binding:"required"`
+		Reason   string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体格式错误"})
+		return
+	}
+
+	// 查 approval，校验 user 是 owner
+	a, err := h.repo.GetByID(approvalID)
+	if err != nil || a == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "审批不存在"})
+		return
+	}
+	if a.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "不是该审批的 owner"})
+		return
+	}
+	if a.State != model.ApprovalStatePending {
+		c.JSON(http.StatusConflict, gin.H{"error": "审批已决策或已超时", "state": a.State})
+		return
+	}
+
+	// 调用 service 推进状态机 + 双写 content + 广播
+	_, err = h.service.Decide(approvalID, req.ActionID, userID, req.Reason)
+	if err != nil {
+		if errors.Is(err, approval.ErrInvalidAction) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 action_id"})
+			return
+		}
+		if errors.Is(err, repository.ErrApprovalNotPending) {
+			c.JSON(http.StatusConflict, gin.H{"error": "审批已被处理（并发）"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "决策失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"state": "ok"})
+}
+
+// Get GET /api/approvals/:id
+// 查审批详情（兜底，agent 重连错过 WS 推送时主动查）。user/agent 双角色可查。
+func (h *ApprovalHandler) Get(c *gin.Context) {
+	id := c.Param("id")
+	a, err := h.repo.GetByID(id)
+	if err != nil || a == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "审批不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, a)
 }
