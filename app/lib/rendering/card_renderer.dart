@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../models/approval.dart';
-import '../pages/deny_reason_dialog.dart';
 import '../widgets/card_button.dart';
 import '../widgets/card_state_badge.dart';
 import '../widgets/countdown_timer.dart';
@@ -254,28 +253,10 @@ class _CardViewState extends State<_CardView> {
           actionId == 'deny' ? ApprovalState.denied : ApprovalState.approved;
     });
 
-    String? reason;
-    if (actionId == 'deny') {
-      final result = await _showReasonDialog();
-      if (result == '__cancel__') {
-        // 用户取消，回退乐观更新
-        if (!mounted) return;
-        setState(() {
-          _optimisticState = null;
-          _optimisticAction = null;
-          _disabled = false;
-        });
-        return;
-      }
-      reason = result;
-    } else {
-      reason = null;
-    }
-
     final err = await CardContentRenderer.onDecide?.call(
       widget.card.approvalId,
       actionId,
-      reason,
+      null,
     );
     if (err != null) {
       if (mounted) {
@@ -288,10 +269,5 @@ class _CardViewState extends State<_CardView> {
       });
     }
     // 成功：等 MESSAGE_UPDATE 来同步（chatProvider 处理），无需本地额外操作
-  }
-
-  Future<String?> _showReasonDialog() async {
-    if (!mounted) return '__cancel__';
-    return showDenyReasonDialog(context);
   }
 }
