@@ -67,10 +67,11 @@ AI 平台 (Hermes Agent, 跑实际 LLM 推理)
 
 - 💬 **IM 风格对话**：未读红点、置顶、消息多选删除、撤回、长按菜单、Markdown / LaTeX / 代码块高亮 / 图片 / 文件渲染
 - 🤖 **多 Agent 管理**：一个用户管理多个 Agent，独立 secret_key，支持扫码授权覆盖
+- 🔐 **审批卡片**：Agent 执行敏感操作（危险命令 / 工具调用 / 文件操作 / 破坏性 slash 命令）前发卡片，user 按钮决策（允许/始终/拒绝），5 分钟超时，双端状态实时同步
 - 📲 **离线推送**：Android 前台服务保活 WS，APP 被杀也能收到通知（点击直达会话）
 - 🔌 **扫码配对**：hermes 终端 `--pair` → APP 扫码 → 选/建 Agent → 自动配凭据，5 分钟 TTL，领完即焚
-- 🔐 **自托管**：服务端、数据库、文件、对话历史全部在自己机器，不经过第三方
-- 🌐 **跨端**：Linux desktop / Android / iOS，一份 Flutter 代码
+- 🌐 **自托管**：服务端、数据库、文件、对话历史全部在自己机器，不经过第三方
+- 📱 **跨端**：Linux desktop / Android / iOS，一份 Flutter 代码
 
 ## 快速开始（Docker Compose）
 
@@ -124,7 +125,7 @@ MSYS_NO_PATHCONV=1 docker compose run --rm \
 ├── server/          # Go 服务端（Gin + PostgreSQL）
 │   ├── cmd/             # 入口（main / migrate / admin-tool）
 │   ├── internal/        # 业务代码（handler / hub / repository / ...）
-│   └── migrations/      # PostgreSQL migration（001~007）
+│   └── migrations/      # PostgreSQL migration（001~010）
 ├── plugin/          # Agent 平台接入插件（hermes-plugin）
 ├── scripts/         # 运维脚本（部署 / 建库 / 管理）
 ├── deploy/          # 部署配置模板（nginx 反代示例）
