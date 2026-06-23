@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/emoji_editing_controller.dart';
+
 /// IM 风聊天输入栏。
 ///
 /// 内聚状态:输入文本 / 焦点 / 面板显隐 / 加号↔发送切换。
@@ -24,7 +26,7 @@ class MessageInputBar extends StatefulWidget {
 }
 
 class _MessageInputBarState extends State<MessageInputBar> {
-  final TextEditingController _inputCtrl = TextEditingController();
+  final EmojiEditingController _inputCtrl = EmojiEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _showPanel = false;
   String _text = '';
@@ -160,7 +162,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
         maxLines: null,
         minLines: 1,
         // isDense: 去掉 Material 默认额外间距,让单行高度贴近文字+padding。
-        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w300, height: 1.0),
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300, height: 1.0),
         decoration: const InputDecoration(
           isDense: true,
           border: InputBorder.none,
