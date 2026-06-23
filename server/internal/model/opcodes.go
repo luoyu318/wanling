@@ -20,8 +20,11 @@ type WSMessage struct {
 }
 
 const (
-	EventMessageCreate = "MESSAGE_CREATE"
-	EventMessageDelete = "MESSAGE_DELETE"
-	EventAgentOnline   = "AGENT_ONLINE"
-	EventAgentOffline  = "AGENT_OFFLINE"
+	EventMessageCreate   = "MESSAGE_CREATE"
+	EventMessageDelete   = "MESSAGE_DELETE"
+	EventAgentOnline     = "AGENT_ONLINE"
+	EventAgentOffline    = "AGENT_OFFLINE"
+	EventMessageUpdate   = "MESSAGE_UPDATE"
+	EventApprovalDecided = "APPROVAL_DECIDED"
+	EventApprovalExpired = "APPROVAL_EXPIRED"
 )
