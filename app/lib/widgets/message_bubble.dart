@@ -97,7 +97,7 @@ class MessageBubble extends StatelessWidget {
     if (selectionMode) {
       // 多选模式:[固定 22px 勾选列] + [气泡列]。
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         child: Row(
           children: [
             GestureDetector(
@@ -124,7 +124,7 @@ class MessageBubble extends StatelessWidget {
     return _LongPressDetector(
       onLongPressStart: onLongPressStart,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         child: Row(
           mainAxisAlignment:
               isMe ? MainAxisAlignment.end : MainAxisAlignment.start,

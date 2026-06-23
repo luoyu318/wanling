@@ -9,7 +9,7 @@ import 'select_all_container.dart';
 /// 聊天气泡用的 markdown 渲染样式（极简墨白风格）。
 ///
 /// 特征:
-/// - 正文 15px、行高 1.6(受任务列表 checkbox WidgetSpan 约束下限,不能 < 1.6,
+/// - 正文 17px、行高 1.6(受任务列表 checkbox WidgetSpan 约束下限,不能 < 1.6,
 ///   否则触发 padding.isNonNegative 断言)
 /// - 标题墨黑/粗体,层级靠字号区分,**不带底部分割横线**
 /// - 代码块:浅灰底圆角 6 + flutter_highlight 高亮 + 右上角复制按钮(无语言标签)
@@ -27,7 +27,7 @@ MarkdownConfig markdownStyle({required bool isDark}) {
   final preBase = isDark ? PreConfig.darkConfig : const PreConfig();
   final base = isDark ? MarkdownConfig.darkConfig : MarkdownConfig.defaultConfig;
   return base.copy(configs: [
-    PConfig(textStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.w300, height: 1.6, color: ink)),
+    PConfig(textStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w300, height: 1.6, color: ink)),
     _NoDividerHeadingConfig(
       tag: MarkdownTag.h1,
       style: TextStyle(
