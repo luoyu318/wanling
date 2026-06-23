@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// 审批卡片类型
-enum CardType { command, tool, file, unknown }
+enum CardType { command, tool, file, slashConfirm, unknown }
 
 /// 审批状态
 enum ApprovalState { pending, approved, denied, expired, unknown }
@@ -97,12 +97,17 @@ class ApprovalCard {
   factory ApprovalCard.fromJson(Map<String, dynamic> j) {
     final rawType = j['card_type'] ?? '';
     final rawState = j['state'] ?? '';
+    // 后端用 snake_case（command/tool/file/slash_confirm），Dart enum name 是驼峰，
+    // 显式映射避免 firstWhere 失配落到 unknown。
+    final cardTypeMap = <String, CardType>{
+      'command': CardType.command,
+      'tool': CardType.tool,
+      'file': CardType.file,
+      'slash_confirm': CardType.slashConfirm,
+    };
     return ApprovalCard(
       approvalId: j['approval_id'] ?? '',
-      cardType: CardType.values.firstWhere(
-        (e) => e.name == rawType,
-        orElse: () => CardType.unknown,
-      ),
+      cardType: cardTypeMap[rawType] ?? CardType.unknown,
       title: j['title'] ?? '',
       preview: j['preview'] ?? '',
       previewLang: j['preview_language'] ?? '',

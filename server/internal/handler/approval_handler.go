@@ -78,6 +78,7 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		Meta         []map[string]interface{} `json:"meta"`
 		SessionKey   string                   `json:"session_key" binding:"required"`
 		AllowPattern *string                  `json:"allow_pattern"`
+		ConfirmID    *string                  `json:"confirm_id"` // slash_confirm 用
 		TimeoutSec   int                      `json:"timeout_sec"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -89,8 +90,15 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 	switch req.CardType {
 	case "command", "tool", "file":
 		cardType = model.CardType(req.CardType)
+	case "slash_confirm":
+		cardType = model.CardTypeSlashConfirm
+		// slash_confirm 必须带 confirm_id（hermes tools/slash_confirm.resolve 定位用）
+		if req.ConfirmID == nil || *req.ConfirmID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "slash_confirm 必须提供 confirm_id"})
+			return
+		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "card_type 必须是 command/tool/file"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "card_type 必须是 command/tool/file/slash_confirm"})
 		return
 	}
 
@@ -127,6 +135,7 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		Actions:     actions,
 		State:       model.ApprovalStatePending,
 		ExpiresAt:   expiresAt,
+		ConfirmID:   req.ConfirmID, // slash_confirm 才有值
 	}
 	for _, m := range req.Meta {
 		cardData.Meta = append(cardData.Meta, model.CardMeta{
@@ -177,6 +186,7 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		ExpiresAt:      expiresAt,
 		SessionKey:     req.SessionKey,
 		AllowPattern:   req.AllowPattern,
+		ConfirmID:      req.ConfirmID, // slash_confirm 才有值
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建审批失败"})
@@ -212,16 +222,29 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 }
 
 // buildActions 根据 card_type 构造按钮列表。
-// command 多一个「始终」白名单按钮；tool / file 只有允许 / 拒绝。
+//   - command：允许 / 始终 / 拒绝（action_id: allow_once/allow_always/deny）
+//   - tool/file：允许 / 拒绝（action_id: allow_once/deny）
+//   - slash_confirm：执行一次 / 不再询问 / 取消（action_id: once/always/cancel，对齐 hermes
+//     tools/slash_confirm.resolve 的 choice 枚举，adapter 直接透传无需映射）
 func buildActions(t model.CardType) []model.ApprovalAction {
-	allow := model.ApprovalAction{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"}
-	always := model.ApprovalAction{ID: "allow_always", Label: "始终", Icon: "shield", Style: "info"}
-	deny := model.ApprovalAction{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}
 	switch t {
 	case model.CardTypeCommand:
-		return []model.ApprovalAction{allow, always, deny}
-	default:
-		return []model.ApprovalAction{allow, deny}
+		return []model.ApprovalAction{
+			{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"},
+			{ID: "allow_always", Label: "始终", Icon: "shield", Style: "info"},
+			{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"},
+		}
+	case model.CardTypeSlashConfirm:
+		return []model.ApprovalAction{
+			{ID: "once", Label: "执行一次", Icon: "check", Style: "primary"},
+			{ID: "always", Label: "不再询问", Icon: "shield", Style: "info"},
+			{ID: "cancel", Label: "取消", Icon: "x", Style: "danger"},
+		}
+	default: // tool / file
+		return []model.ApprovalAction{
+			{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"},
+			{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"},
+		}
 	}
 }
 

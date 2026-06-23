@@ -85,7 +85,8 @@ func (s *Service) Decide(approvalID, actionID, userID, reason string) (json.RawM
 
 	now := time.Now().UTC()
 	state := model.ApprovalStateApproved
-	if actionID == "deny" {
+	// deny（exec_approval）和 cancel（slash_confirm）都是「未通过」，统一映射 denied。
+	if actionID == "deny" || actionID == "cancel" {
 		state = model.ApprovalStateDenied
 	}
 	ctx.CardContent.State = state
@@ -114,6 +115,7 @@ func (s *Service) Decide(approvalID, actionID, userID, reason string) (json.RawM
 		"message_id":      ctx.MessageID,
 		"conversation_id": ctx.ConversationID,
 		"session_key":     ctx.SessionKey,
+		"confirm_id":      ctx.ConfirmID, // slash_confirm 用；exec_approval 为空
 		"decision":        actionID,
 		"reason":          reason,
 		"decided_by":      userID,

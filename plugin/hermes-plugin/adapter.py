@@ -470,15 +470,17 @@ class WanlingAdapter(BasePlatformAdapter):
     # ── Approval (agent → user 卡片决策) ─────────────────────────────────
 
     async def _on_approval_decided(self, d: dict) -> None:
-        """APPROVAL_DECIDED 事件处理：唤醒 hermes gateway 的 approval 等待。
+        """APPROVAL_DECIDED 事件处理：按 card_type 分流唤醒 hermes 的等待。
 
-        decision（万灵 action_id）映射成 hermes gateway 的 choice：
-          allow_once   → once
-          allow_always → always
-          deny         → deny
+        两类审批走不同的 hermes 解析原语：
 
-        然后调 tools.approval.resolve_gateway_approval(session_key, choice)，
-        hermes gateway 主线程的 approval queue 会被唤醒，agent 命令继续执行 / 跳过。
+        1. exec_approval（card_type=command/tool/file，decision=allow_once/allow_always/deny）
+           → tools.approval.resolve_gateway_approval(session_key, choice)
+           choice 映射：allow_once→once, allow_always→always, deny→deny
+
+        2. slash_confirm（card_type=slash_confirm，decision=once/always/cancel）
+           → tools.slash_confirm.resolve(session_key, confirm_id, choice)
+           decision 直接是 hermes 的 choice 枚举，无需映射；但需要 confirm_id 定位。
         """
         session_key = d.get("session_key")
         if not session_key:
@@ -486,6 +488,14 @@ class WanlingAdapter(BasePlatformAdapter):
             return
 
         decision = d.get("decision", "")
+        confirm_id = d.get("confirm_id")
+
+        # 分流判断：slash_confirm 的 decision 是 once/always/cancel
+        if decision in ("once", "always", "cancel") and confirm_id:
+            await self._resolve_slash_confirm(session_key, confirm_id, decision, d)
+            return
+
+        # exec_approval 路径
         choice = {
             "allow_once": "once",
             "allow_always": "always",
@@ -508,6 +518,26 @@ class WanlingAdapter(BasePlatformAdapter):
             logger.error(
                 "Wanling: resolve_gateway_approval failed for session %s: %s",
                 session_key, e,
+            )
+
+    async def _resolve_slash_confirm(
+        self, session_key: str, confirm_id: str, choice: str, d: dict,
+    ) -> None:
+        """slash_confirm 决策：调 tools.slash_confirm.resolve 唤醒 hermes 的 slash 确认队列。
+
+        resolve 是 async（run handler 在事件循环上），需要 await。
+        """
+        try:
+            from tools.slash_confirm import resolve as slash_resolve
+            await slash_resolve(session_key, confirm_id, choice)
+            logger.info(
+                "Wanling: slash_confirm resolved session %s confirm %s (choice=%s, decided_by=%s)",
+                session_key, confirm_id, choice, d.get("decided_by"),
+            )
+        except Exception as e:
+            logger.error(
+                "Wanling: slash_confirm.resolve failed session %s confirm %s: %s",
+                session_key, confirm_id, e,
             )
 
     async def _on_approval_expired(self, d: dict) -> None:
@@ -646,6 +676,65 @@ class WanlingAdapter(BasePlatformAdapter):
             "Wanling: approval card sent for session %s (approval_id=%s) — "
             "awaiting user decision via APPROVAL_DECIDED event",
             session_key, approval_id,
+        )
+        return SendResult(success=True, message_id=approval_id)
+
+    async def send_slash_confirm(
+        self,
+        chat_id: str,
+        title: str,
+        message: str,
+        session_key: str,
+        confirm_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """发起 slash 命令确认卡片（hermes gateway 的跨平台契约）。
+
+        用于 /new /clear /reset /undo 等破坏性 slash 命令的三选一确认。
+        与 send_exec_approval 语义一致：只负责发卡片，立即返回，不等 user 决策。
+        user 决策由 APPROVAL_DECIDED 事件异步唤醒 hermes 的 slash_confirm 队列
+        （见 _on_approval_decided → _resolve_slash_confirm）。
+
+        title 形如 "/new"，message 是带 detail 的 markdown 提示文案。
+        confirm_id 由 hermes tools/slash_confirm.register 生成，决策时必须透传回去定位。
+        """
+        if self._ws is None:
+            return SendResult(success=False, error="Not connected")
+
+        conv_id = await self._resolve_conv_id(chat_id)
+        if not conv_id:
+            return SendResult(
+                success=False,
+                error=f"resolve conv_id failed for user {chat_id}",
+            )
+
+        body: Dict[str, Any] = {
+            "card_type": "slash_confirm",
+            "title": f"确认 {title}",
+            "preview": message,  # 详情文案走 preview 块展示
+            "session_key": session_key,
+            "confirm_id": confirm_id,
+            "timeout_sec": 300,
+        }
+
+        try:
+            create_resp = await asyncio.to_thread(
+                self._create_approval_sync, conv_id, body,
+            )
+        except Exception as e:
+            return SendResult(success=False, error=f"create slash_confirm failed: {e}")
+
+        if create_resp is None:
+            return SendResult(success=False, error="create slash_confirm HTTP failed")
+
+        approval_id = create_resp.get("approval_id")
+        if not approval_id:
+            return SendResult(success=False, error="missing approval_id in response")
+
+        logger.info(
+            "Wanling: slash_confirm card sent session %s confirm %s (approval_id=%s) — "
+            "awaiting user decision via APPROVAL_DECIDED event",
+            session_key, confirm_id, approval_id,
         )
         return SendResult(success=True, message_id=approval_id)
 

@@ -136,6 +136,8 @@ class _CardViewState extends State<_CardView> {
   List<Widget> _buildTypeSpecific() {
     switch (widget.card.cardType) {
       case CardType.command:
+      case CardType.slashConfirm:
+        // slash_confirm 复用 command 的代码块预览（preview 是提示文案）。
         return [
           Container(
             width: double.infinity,
@@ -236,10 +238,15 @@ class _CardViewState extends State<_CardView> {
   String _buttonLabel(ApprovalAction a, ApprovalState state) {
     final decided = widget.card.decidedAction ?? _optimisticAction;
     if (state == ApprovalState.approved && decided == a.id) {
+      // exec_approval: allow_once/allow_always → 已批准
       if (a.id == 'allow_once' || a.id == 'allow_always') return '已批准';
+      // slash_confirm: once/always → 已确认
+      if (a.id == 'once' || a.id == 'always') return '已确认';
     }
     if (state == ApprovalState.denied && decided == a.id) {
-      return '已拒绝';
+      // exec_approval: deny → 已拒绝；slash_confirm: cancel → 已取消
+      if (a.id == 'deny') return '已拒绝';
+      if (a.id == 'cancel') return '已取消';
     }
     return a.label;
   }
@@ -247,10 +254,11 @@ class _CardViewState extends State<_CardView> {
   Future<void> _onTap(String actionId) async {
     setState(() => _disabled = true);
 
+    // 终态映射：deny/cancel → denied；其余（allow_once/allow_always/once/always）→ approved
+    final isDeny = actionId == 'deny' || actionId == 'cancel';
     setState(() {
       _optimisticAction = actionId;
-      _optimisticState =
-          actionId == 'deny' ? ApprovalState.denied : ApprovalState.approved;
+      _optimisticState = isDeny ? ApprovalState.denied : ApprovalState.approved;
     });
 
     final err = await CardContentRenderer.onDecide?.call(

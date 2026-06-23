@@ -26,13 +26,14 @@ type DecisionContext struct {
 	AgentID      string
 	UserID       string
 	SessionKey   string
+	ConfirmID    string // slash_confirm 用（空表示 exec_approval）
 	AllowPattern *string
 	CardContent  model.CardContent
 }
 
 const approvalSelectCols = `id, message_id, conversation_id, agent_id, user_id,
 	card_type, state, actions, decided_action, decided_by, decided_reason, decided_at,
-	expires_at, session_key, allow_pattern, created_at`
+	expires_at, session_key, allow_pattern, confirm_id, created_at`
 
 func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	a := &model.Approval{}
@@ -43,11 +44,12 @@ func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 		decidedReason sql.NullString
 		decidedAt     sql.NullTime
 		allowPattern  sql.NullString
+		confirmID     sql.NullString
 	)
 	err := s.Scan(
 		&a.ID, &a.MessageID, &a.ConversationID, &a.AgentID, &a.UserID,
 		&a.CardType, &a.State, &actionsRaw, &decidedAction, &decidedBy, &decidedReason, &decidedAt,
-		&a.ExpiresAt, &a.SessionKey, &allowPattern, &a.CreatedAt,
+		&a.ExpiresAt, &a.SessionKey, &allowPattern, &confirmID, &a.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -71,6 +73,9 @@ func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	if allowPattern.Valid {
 		a.AllowPattern = &allowPattern.String
 	}
+	if confirmID.Valid {
+		a.ConfirmID = &confirmID.String
+	}
 	return a, nil
 }
 
@@ -93,11 +98,11 @@ func (r *ApprovalRepo) Create(a model.Approval) (*model.Approval, error) {
 	row := r.db.QueryRow(
 		`INSERT INTO approvals
 		 (id, message_id, conversation_id, agent_id, user_id, card_type, state, actions,
-		  expires_at, session_key, allow_pattern)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)
+		  expires_at, session_key, allow_pattern, confirm_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11)
 		 RETURNING `+approvalSelectCols,
 		a.ID, a.MessageID, a.ConversationID, a.AgentID, a.UserID, a.CardType, actionsRaw,
-		a.ExpiresAt, a.SessionKey, nullableString(a.AllowPattern),
+		a.ExpiresAt, a.SessionKey, nullableString(a.AllowPattern), nullableString(a.ConfirmID),
 	)
 	return scanApproval(row)
 }
@@ -223,7 +228,7 @@ func (r *ApprovalRepo) MatchAllowPattern(convID, agentID, command string) (bool,
 func (r *ApprovalRepo) GetForDecision(id string) (*DecisionContext, error) {
 	row := r.db.QueryRow(
 		`SELECT a.id, a.message_id, a.conversation_id, a.agent_id, a.user_id,
-		        a.session_key, a.allow_pattern, a.actions, m.content
+		        a.session_key, a.confirm_id, a.allow_pattern, a.actions, m.content
 		 FROM approvals a JOIN messages m ON m.id = a.message_id
 		 WHERE a.id = $1`,
 		id,
@@ -233,10 +238,11 @@ func (r *ApprovalRepo) GetForDecision(id string) (*DecisionContext, error) {
 		actionsRaw []byte
 		contentRaw []byte
 		allowPat   sql.NullString
+		confirmID  sql.NullString
 	)
 	err := row.Scan(
 		&ctx.ApprovalID, &ctx.MessageID, &ctx.ConversationID, &ctx.AgentID, &ctx.UserID,
-		&ctx.SessionKey, &allowPat, &actionsRaw, &contentRaw,
+		&ctx.SessionKey, &confirmID, &allowPat, &actionsRaw, &contentRaw,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -247,6 +253,7 @@ func (r *ApprovalRepo) GetForDecision(id string) (*DecisionContext, error) {
 	if allowPat.Valid {
 		ctx.AllowPattern = &allowPat.String
 	}
+	ctx.ConfirmID = confirmID.String
 	var wrapper struct {
 		Data model.CardContent `json:"data"`
 	}

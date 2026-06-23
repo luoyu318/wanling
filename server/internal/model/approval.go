@@ -9,9 +9,10 @@ import (
 type CardType string
 
 const (
-	CardTypeCommand CardType = "command"
-	CardTypeTool    CardType = "tool"
-	CardTypeFile    CardType = "file"
+	CardTypeCommand      CardType = "command"
+	CardTypeTool         CardType = "tool"
+	CardTypeFile         CardType = "file"
+	CardTypeSlashConfirm CardType = "slash_confirm"
 )
 
 // ApprovalState 审批状态机：pending → approved/denied/expired（终态不可逆）。
@@ -57,6 +58,11 @@ type Approval struct {
 	SessionKey     string           `json:"session_key" db:"session_key"`
 	AllowPattern   *string          `json:"allow_pattern,omitempty" db:"allow_pattern"`
 
+	// ConfirmID 仅 slash_confirm 类型用。hermes tools/slash_confirm.resolve
+	// 需要 (session_key, confirm_id, choice) 三元组定位 pending confirm。
+	// exec_approval（command/tool/file）不用此字段，保持 NULL。
+	ConfirmID      *string          `json:"confirm_id,omitempty" db:"confirm_id"`
+
 	CreatedAt      time.Time        `json:"created_at" db:"created_at"`
 }
 
@@ -78,6 +84,8 @@ type CardContent struct {
 	DecidedBy     *string          `json:"decided_by,omitempty"`
 	DecidedAt     *time.Time       `json:"decided_at,omitempty"`
 	ExpiresAt     time.Time        `json:"expires_at"`
+	// ConfirmID 仅 slash_confirm 类型用（双写到 content，APP 不直接消费）。
+	ConfirmID     *string          `json:"confirm_id,omitempty"`
 }
 
 // CardMeta 卡片元信息行（如 📁 工作目录 / ⚠ 风险提示）。

@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     agent_id        UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
-    card_type       TEXT NOT NULL CHECK (card_type IN ('command', 'tool', 'file')),
+    card_type       TEXT NOT NULL CHECK (card_type IN ('command', 'tool', 'file', 'slash_confirm')),
     state           TEXT NOT NULL DEFAULT 'pending'
                     CHECK (state IN ('pending', 'approved', 'denied', 'expired')),
     actions         JSONB NOT NULL,
