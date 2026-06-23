@@ -64,7 +64,7 @@ func main() {
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)
-	convHandler := handler.NewConversationHandler(convRepo, msgRepo, agentRepo)
+	convHandler := handler.NewConversationHandler(convRepo, msgRepo, agentRepo, userRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store)
 	userHandler := handler.NewUserHandler(userRepo)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, processor.HandleIncoming)
@@ -201,6 +201,9 @@ func main() {
 	agentAuth := r.Group("", handler.AuthMiddleware(cfg.JWT.Secret, "agent"))
 	{
 		agentAuth.POST("/api/conversations/:id/approvals", approvalCreateLimiter, approvalHandler.CreateApproval)
+		// agent 视角 findOrCreate：用于审批卡片等场景，agent 主动建立/获取会话
+		// （无 user 先发消息时也能拿到 conv_id）。跟 user 的 POST /api/conversations 对称。
+		agentAuth.POST("/api/agents/me/conversations", convHandler.FindOrCreateAsAgent)
 	}
 
 	// user 决策审批（同意/拒绝）

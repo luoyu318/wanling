@@ -158,9 +158,11 @@ class WanlingAdapter(BasePlatformAdapter):
         # Typing debounce: chat_id → last TYPING_START timestamp (epoch seconds)
         self._typing_sent_at: Dict[str, float] = {}
 
-        # user_id → conv_id 缓存。agent 没有 HTTP findOrCreate 权限（POST /api/conversations
-        # 走 userAuth 仅 user 可调），所以从入站 MESSAGE_CREATE 的 conversation_id 字段收集。
-        # send_exec_approval 命中缓存即可发审批卡片；miss 时返回失败让 agent 走文本兜底。
+        # user_id → conv_id 缓存。双向来源：
+        #   1. 入站 MESSAGE_CREATE 的 conversation_id 字段（高频路径，命中即可零开销）
+        #   2. POST /api/agents/me/conversations（agent 视角 findOrCreate）HTTP 兜底，
+        #      miss 时调一次后填缓存，下次命中。
+        # send_exec_approval 走 _resolve_conv_id：缓存优先，miss 时同步阻塞调 HTTP。
         self._conv_id_by_user: Dict[str, str] = {}
 
         # 待审批 Future 映射：session_key → Future。
@@ -370,7 +372,8 @@ class WanlingAdapter(BasePlatformAdapter):
         if not user_id:
             return
 
-        # 缓存 user_id → conv_id，供 send_exec_approval 用（agent 无 findOrCreate 权限）
+        # 缓存 user_id → conv_id，供 send_exec_approval 用（高频路径，命中即可零开销）；
+        # miss 时 send_exec_approval 会调 HTTP findOrCreate 兜底。
         conv_id = d.get("conversation_id")
         if conv_id and user_id:
             self._conv_id_by_user[user_id] = conv_id
@@ -497,14 +500,48 @@ class WanlingAdapter(BasePlatformAdapter):
             return
         fut.set_exception(TimeoutError(f"approval {session_key} expired"))
 
-    def _resolve_conv_id(self, user_id: str) -> Optional[str]:
-        """从本地缓存取 user_id 对应的 conv_id。
+    async def _resolve_conv_id(self, user_id: str) -> Optional[str]:
+        """从本地缓存或 HTTP 拿 user_id 对应 conv_id。
 
-        agent 没有 HTTP findOrCreate 权限（POST /api/conversations 走 userAuth 仅 user 可调），
-        所以依赖入站 MESSAGE_CREATE 收集的 conversation_id。缓存 miss 时返回 None，
-        调用方应走降级（文本回复提示 user 先发条消息建立会话）。
+        缓存优先（命中就不调 HTTP，零开销）；miss 时调
+        POST /api/agents/me/conversations findOrCreate，成功后填缓存下次命中。
         """
-        return self._conv_id_by_user.get(user_id)
+        cached = self._conv_id_by_user.get(user_id)
+        if cached:
+            return cached
+        # HTTP 兜底（同步阻塞调用，丢线程池里跑避免阻塞事件循环）
+        try:
+            conv_id = await asyncio.to_thread(self._find_conv_as_agent_sync, user_id)
+        except Exception as e:
+            logger.error("Wanling: find conv as agent failed — %s", e)
+            return None
+        if conv_id:
+            self._conv_id_by_user[user_id] = conv_id
+        return conv_id
+
+    def _find_conv_as_agent_sync(self, user_id: str) -> Optional[str]:
+        """POST /api/agents/me/conversations findOrCreate，返回 conv_id。
+
+        agent JWT 鉴权。失败时返回 None（调用方走文本兜底）。
+        """
+        if not self._token:
+            return None
+        req = urllib.request.Request(
+            f"{self.server_url.rstrip('/')}/api/agents/me/conversations",
+            data=json.dumps({"user_id": user_id}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read())
+            return payload.get("id")
+        except Exception as e:
+            logger.error("Wanling._find_conv_as_agent_sync: failed — %s", e)
+            return None
 
     async def send_exec_approval(
         self,
@@ -517,7 +554,7 @@ class WanlingAdapter(BasePlatformAdapter):
         """发起命令审批卡片，等待 user 决策。hermes gateway 的跨平台契约。
 
         流程：
-          1. 从本地缓存取 conv_id（agent 无 HTTP findOrCreate 权限，依赖入站消息收集）
+          1. 拿 conv_id（缓存优先，miss 时 POST /api/agents/me/conversations findOrCreate）
           2. POST /api/conversations/:id/approvals 创建审批
              - 命中 allow_pattern 白名单时服务端直接返 approved（auto_approved=true），
                本方法返回 success=True，不发卡片
@@ -531,12 +568,12 @@ class WanlingAdapter(BasePlatformAdapter):
         if self._ws is None:
             return SendResult(success=False, error="Not connected")
 
-        # 1. 拿 conv_id（本地缓存，agent 无 HTTP findOrCreate 权限）
-        conv_id = self._resolve_conv_id(chat_id)
+        # 1. 拿 conv_id（缓存优先，miss 时 HTTP findOrCreate 兜底）
+        conv_id = await self._resolve_conv_id(chat_id)
         if not conv_id:
             return SendResult(
                 success=False,
-                error=f"no conv_id cached for user {chat_id} (user must message first)",
+                error=f"resolve conv_id failed for user {chat_id}",
             )
 
         # 2. 构造审批请求体（命令审批独有 allow_pattern，由 metadata 传入）
