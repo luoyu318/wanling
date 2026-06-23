@@ -43,7 +43,7 @@ class _TypingBubbleState extends State<TypingBubble>
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         child: BubbleWithTail(
           isMe: false,
           child: AnimatedBuilder(
@@ -51,7 +51,7 @@ class _TypingBubbleState extends State<TypingBubble>
             builder: (_, __) => Text(
               '.' * _dots.value,
               style: const TextStyle(
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: FontWeight.bold,
               ),
             ),

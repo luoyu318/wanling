@@ -37,7 +37,7 @@ class TextContentRenderer implements MessageContentRenderer {
       // buildEmojiColoredText: 给 ♻️⚠️✂️ 等单色 emoji 字符单独设 Noto Color Emoji
       // 字体(精确 span 分割),不影响普通文本度量(见 emoji_span.dart 根因说明)。
       return buildEmojiColoredText(text,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300));
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w300));
     }
     return MarkdownView(
       data: text,
@@ -93,7 +93,7 @@ class MarkdownContentRenderer implements MessageContentRenderer {
     // 保留 ♻️⚠️✂️ 彩色渲染,且避免 MarkdownView 对纯文本的额外开销。
     if (!TextContentRenderer._hasMarkdownSyntax(text)) {
       return buildEmojiColoredText(text,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300));
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w300));
     }
     return MarkdownView(
       data: text,

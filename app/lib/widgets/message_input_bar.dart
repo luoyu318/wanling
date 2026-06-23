@@ -162,7 +162,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
         maxLines: null,
         minLines: 1,
         // isDense: 去掉 Material 默认额外间距,让单行高度贴近文字+padding。
-        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300, height: 1.0),
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w300, height: 1.0),
         decoration: const InputDecoration(
           isDense: true,
           border: InputBorder.none,
