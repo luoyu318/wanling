@@ -63,6 +63,8 @@ class Conversation {
         return '[图片]';
       case MsgType.file:
         return '[文件]';
+      case MsgType.card:
+        return '[审批]';
       default:
         return '';
     }
