@@ -162,12 +162,12 @@ class WanlingAdapter(BasePlatformAdapter):
         #   1. 入站 MESSAGE_CREATE 的 conversation_id 字段（高频路径，命中即可零开销）
         #   2. POST /api/agents/me/conversations（agent 视角 findOrCreate）HTTP 兜底，
         #      miss 时调一次后填缓存，下次命中。
-        # send_exec_approval 走 _resolve_conv_id：缓存优先，miss 时同步阻塞调 HTTP。
+        # 待审批状态：send_exec_approval 发卡片后立即返回（不等 user 决策），
+        # hermes gateway 通过 tools/approval.py 自己的 queue 等待 user 响应。
+        # user 决策由 APPROVAL_DECIDED 事件触发，调 resolve_gateway_approval 唤醒。
+        # （_pending_approvals 字段已删除：send_exec_approval 不再本地 await user 决策，
+        #  改为立即返回，由 hermes gateway 自己管 approval 等待）
         self._conv_id_by_user: Dict[str, str] = {}
-
-        # 待审批 Future 映射：session_key → Future。
-        # send_exec_approval 注册 Future 等待，APPROVAL_DECIDED/APPROVAL_EXPIRED 事件 resolve。
-        self._pending_approvals: Dict[str, asyncio.Future] = {}
 
     @property
     def name(self) -> str:
@@ -470,35 +470,58 @@ class WanlingAdapter(BasePlatformAdapter):
     # ── Approval (agent → user 卡片决策) ─────────────────────────────────
 
     async def _on_approval_decided(self, d: dict) -> None:
-        """APPROVAL_DECIDED 事件处理：根据 session_key resolve 对应 Future。
+        """APPROVAL_DECIDED 事件处理：唤醒 hermes gateway 的 approval 等待。
 
-        decision in (allow_once, allow_always) → resolve 正常；
-        decision == deny → resolve with decision=deny（调用方据此返回 success=False）。
+        decision（万灵 action_id）映射成 hermes gateway 的 choice：
+          allow_once   → once
+          allow_always → always
+          deny         → deny
+
+        然后调 tools.approval.resolve_gateway_approval(session_key, choice)，
+        hermes gateway 主线程的 approval queue 会被唤醒，agent 命令继续执行 / 跳过。
         """
         session_key = d.get("session_key")
         if not session_key:
             logger.warning("Wanling: APPROVAL_DECIDED missing session_key — %s", d)
             return
-        fut = self._pending_approvals.pop(session_key, None)
-        if fut is None or fut.done():
-            # 没人等（可能是 race：本地超时已触发），log 后忽略
-            logger.debug("Wanling: APPROVAL_DECIDED no pending Future for %s", session_key)
+
+        decision = d.get("decision", "")
+        choice = {
+            "allow_once": "once",
+            "allow_always": "always",
+            "deny": "deny",
+        }.get(decision)
+        if choice is None:
+            logger.warning("Wanling: APPROVAL_DECIDED unknown decision %r — %s", decision, d)
             return
-        fut.set_result({
-            "decision": d.get("decision"),
-            "reason": d.get("reason"),
-            "decided_by": d.get("decided_by"),
-        })
+
+        try:
+            # lazy import：避免插件加载时硬依赖 hermes 内部模块（测试隔离）
+            from tools.approval import resolve_gateway_approval
+            count = resolve_gateway_approval(session_key, choice)
+            logger.info(
+                "Wanling: APPROVAL_DECIDED resolved %d approval(s) for session %s "
+                "(choice=%s, decided_by=%s)",
+                count, session_key, choice, d.get("decided_by"),
+            )
+        except Exception as e:
+            logger.error(
+                "Wanling: resolve_gateway_approval failed for session %s: %s",
+                session_key, e,
+            )
 
     async def _on_approval_expired(self, d: dict) -> None:
-        """APPROVAL_EXPIRED 事件处理：reject 对应 Future with TimeoutError。"""
+        """APPROVAL_EXPIRED 事件处理：仅日志记录。
+
+        hermes gateway 通过 tools/approval.py 自己的 queue 管超时
+        （_gateway_queues 有独立的 timeout 机制），不依赖本事件驱动。
+        本事件主要用于本地状态可视化和调试。
+        """
         session_key = d.get("session_key")
-        if not session_key:
-            return
-        fut = self._pending_approvals.pop(session_key, None)
-        if fut is None or fut.done():
-            return
-        fut.set_exception(TimeoutError(f"approval {session_key} expired"))
+        logger.info(
+            "Wanling: APPROVAL_EXPIRED session %s (hermes gateway 自己管 timeout)",
+            session_key,
+        )
 
     async def _resolve_conv_id(self, user_id: str) -> Optional[str]:
         """从本地缓存或 HTTP 拿 user_id 对应 conv_id。
@@ -551,19 +574,23 @@ class WanlingAdapter(BasePlatformAdapter):
         description: str = "dangerous command",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        """发起命令审批卡片，等待 user 决策。hermes gateway 的跨平台契约。
+        """发起命令审批卡片（hermes gateway 的跨平台契约）。
+
+        重要语义：本方法只负责**发出审批卡片**，立即返回。不等 user 决策。
+        hermes gateway 通过 tools/approval.py 的 queue 自己管 approval 等待，
+        user 在万灵 APP 点按钮 → 服务端推 APPROVAL_DECIDED → adapter 的
+        _on_approval_decided 调 resolve_gateway_approval 唤醒等待。
 
         流程：
-          1. 拿 conv_id（缓存优先，miss 时 POST /api/agents/me/conversations findOrCreate）
-          2. POST /api/conversations/:id/approvals 创建审批
-             - 命中 allow_pattern 白名单时服务端直接返 approved（auto_approved=true），
-               本方法返回 success=True，不发卡片
-          3. 否则注册 Future，await APPROVAL_DECIDED（含本地 305s 兜底超时）
-          4. 收到事件后根据 decision 返回 SendResult
+          1. 拿 conv_id（缓存优先，miss 时 POST /api/agents/me/conversations）
+          2. POST /api/conversations/:id/approvals 创建审批卡片
+             - 命中 allow_pattern 白名单时服务端返 auto_approved=true，agent 立即继续
+             - 否则卡片落到 user 端，本方法返回 success=True（卡片已发出）
+          3. user 决策由 APPROVAL_DECIDED 事件异步触发 hermes 唤醒，不在本方法内等待
 
         返回：
-          success=True — user 批准（allow_once / allow_always）
-          success=False — user 拒绝 / 超时 / 网络失败（agent 应跳过命令）
+          success=True — 卡片已发出（或命中白名单直接通过）
+          success=False — 卡片发送失败（hermes gateway 会走文本兜底）
         """
         if self._ws is None:
             return SendResult(success=False, error="Not connected")
@@ -605,7 +632,7 @@ class WanlingAdapter(BasePlatformAdapter):
         if create_resp is None:
             return SendResult(success=False, error="create approval HTTP failed")
 
-        # 4. 命中白名单 → 直接通过（不发卡片，agent 立即继续）
+        # 4. 命中白名单 → agent 立即继续（不发卡片）
         if create_resp.get("auto_approved"):
             logger.info("Wanling: approval auto-approved by pattern — %s", command[:60])
             return SendResult(success=True, message_id=create_resp.get("approval_id", ""))
@@ -614,32 +641,13 @@ class WanlingAdapter(BasePlatformAdapter):
         if not approval_id:
             return SendResult(success=False, error="missing approval_id in response")
 
-        # 5. 注册 Future 等 APPROVAL_DECIDED
-        # 防御性：清掉同 key 旧 Future（不应发生，但避免泄漏）
-        old = self._pending_approvals.pop(session_key, None)
-        if old and not old.done():
-            old.cancel()
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_approvals[session_key] = fut
-
-        # 6. await（305s = 5min 服务端 TTL + 5s 网络余量）
-        try:
-            result = await asyncio.wait_for(fut, timeout=305.0)
-        except asyncio.TimeoutError:
-            self._pending_approvals.pop(session_key, None)
-            return SendResult(success=False, error="approval timed out (305s)")
-        except Exception as e:
-            self._pending_approvals.pop(session_key, None)
-            return SendResult(success=False, error=f"approval await failed: {e}")
-
-        # 7. 解析 decision（与 server approval_handler.buildActions 对齐：
-        #    command 卡片含 allow_once/allow_always/deny 三个 action_id）
-        decision = result.get("decision")
-        if decision in ("allow_once", "allow_always"):
-            return SendResult(success=True, message_id=approval_id)
-        # deny 或未知
-        reason = result.get("reason") or "user denied"
-        return SendResult(success=False, error=f"user denied: {reason}", message_id=approval_id)
+        # 5. 卡片已发出，立即返回。user 决策由 APPROVAL_DECIDED 事件异步唤醒 hermes。
+        logger.info(
+            "Wanling: approval card sent for session %s (approval_id=%s) — "
+            "awaiting user decision via APPROVAL_DECIDED event",
+            session_key, approval_id,
+        )
+        return SendResult(success=True, message_id=approval_id)
 
     def _create_approval_sync(self, conv_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """同步实现：POST /api/conversations/:id/approvals（走 agentAuth）。
