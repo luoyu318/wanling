@@ -72,6 +72,8 @@ OP_HELLO = 10
 OP_HEARTBEAT_ACK = 11
 
 EVENT_MESSAGE_CREATE = "MESSAGE_CREATE"
+EVENT_APPROVAL_DECIDED = "APPROVAL_DECIDED"
+EVENT_APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
 
 # 单文件上传大小上限（20MB），防止 agent 被诱导上传大文件 OOM。
 # IM 场景图片通常 <5MB，20MB 给截图/扫描件留余量。
@@ -155,6 +157,15 @@ class WanlingAdapter(BasePlatformAdapter):
         self._stopping = False
         # Typing debounce: chat_id → last TYPING_START timestamp (epoch seconds)
         self._typing_sent_at: Dict[str, float] = {}
+
+        # user_id → conv_id 缓存。agent 没有 HTTP findOrCreate 权限（POST /api/conversations
+        # 走 userAuth 仅 user 可调），所以从入站 MESSAGE_CREATE 的 conversation_id 字段收集。
+        # send_exec_approval 命中缓存即可发审批卡片；miss 时返回失败让 agent 走文本兜底。
+        self._conv_id_by_user: Dict[str, str] = {}
+
+        # 待审批 Future 映射：session_key → Future。
+        # send_exec_approval 注册 Future 等待，APPROVAL_DECIDED/APPROVAL_EXPIRED 事件 resolve。
+        self._pending_approvals: Dict[str, asyncio.Future] = {}
 
     @property
     def name(self) -> str:
@@ -338,8 +349,14 @@ class WanlingAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             return
-        if op == OP_DISPATCH and msg.get("t") == EVENT_MESSAGE_CREATE:
-            await self._on_message_create(msg["d"])
+        if op == OP_DISPATCH:
+            t = msg.get("t")
+            if t == EVENT_MESSAGE_CREATE:
+                await self._on_message_create(msg["d"])
+            elif t == EVENT_APPROVAL_DECIDED:
+                await self._on_approval_decided(msg["d"])
+            elif t == EVENT_APPROVAL_EXPIRED:
+                await self._on_approval_expired(msg["d"])
             return
         # Unhandled — log for debugging
         logger.debug("Wanling: unhandled msg op=%s t=%s", op, msg.get("t"))
@@ -352,6 +369,11 @@ class WanlingAdapter(BasePlatformAdapter):
         user_id = d.get("sender_id")
         if not user_id:
             return
+
+        # 缓存 user_id → conv_id，供 send_exec_approval 用（agent 无 findOrCreate 权限）
+        conv_id = d.get("conversation_id")
+        if conv_id and user_id:
+            self._conv_id_by_user[user_id] = conv_id
 
         # Authorization
         if not self.allow_all and self.allowed_users:
@@ -441,6 +463,170 @@ class WanlingAdapter(BasePlatformAdapter):
         )
 
         await self.handle_message(event)
+
+    # ── Approval (agent → user 卡片决策) ─────────────────────────────────
+
+    async def _on_approval_decided(self, d: dict) -> None:
+        """APPROVAL_DECIDED 事件处理：根据 session_key resolve 对应 Future。
+
+        decision in (allow_once, allow_always) → resolve 正常；
+        decision == deny → resolve with decision=deny（调用方据此返回 success=False）。
+        """
+        session_key = d.get("session_key")
+        if not session_key:
+            logger.warning("Wanling: APPROVAL_DECIDED missing session_key — %s", d)
+            return
+        fut = self._pending_approvals.pop(session_key, None)
+        if fut is None or fut.done():
+            # 没人等（可能是 race：本地超时已触发），log 后忽略
+            logger.debug("Wanling: APPROVAL_DECIDED no pending Future for %s", session_key)
+            return
+        fut.set_result({
+            "decision": d.get("decision"),
+            "reason": d.get("reason"),
+            "decided_by": d.get("decided_by"),
+        })
+
+    async def _on_approval_expired(self, d: dict) -> None:
+        """APPROVAL_EXPIRED 事件处理：reject 对应 Future with TimeoutError。"""
+        session_key = d.get("session_key")
+        if not session_key:
+            return
+        fut = self._pending_approvals.pop(session_key, None)
+        if fut is None or fut.done():
+            return
+        fut.set_exception(TimeoutError(f"approval {session_key} expired"))
+
+    def _resolve_conv_id(self, user_id: str) -> Optional[str]:
+        """从本地缓存取 user_id 对应的 conv_id。
+
+        agent 没有 HTTP findOrCreate 权限（POST /api/conversations 走 userAuth 仅 user 可调），
+        所以依赖入站 MESSAGE_CREATE 收集的 conversation_id。缓存 miss 时返回 None，
+        调用方应走降级（文本回复提示 user 先发条消息建立会话）。
+        """
+        return self._conv_id_by_user.get(user_id)
+
+    async def send_exec_approval(
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str = "dangerous command",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """发起命令审批卡片，等待 user 决策。hermes gateway 的跨平台契约。
+
+        流程：
+          1. 从本地缓存取 conv_id（agent 无 HTTP findOrCreate 权限，依赖入站消息收集）
+          2. POST /api/conversations/:id/approvals 创建审批
+             - 命中 allow_pattern 白名单时服务端直接返 approved（auto_approved=true），
+               本方法返回 success=True，不发卡片
+          3. 否则注册 Future，await APPROVAL_DECIDED（含本地 305s 兜底超时）
+          4. 收到事件后根据 decision 返回 SendResult
+
+        返回：
+          success=True — user 批准（allow_once / allow_always）
+          success=False — user 拒绝 / 超时 / 网络失败（agent 应跳过命令）
+        """
+        if self._ws is None:
+            return SendResult(success=False, error="Not connected")
+
+        # 1. 拿 conv_id（本地缓存，agent 无 HTTP findOrCreate 权限）
+        conv_id = self._resolve_conv_id(chat_id)
+        if not conv_id:
+            return SendResult(
+                success=False,
+                error=f"no conv_id cached for user {chat_id} (user must message first)",
+            )
+
+        # 2. 构造审批请求体（命令审批独有 allow_pattern，由 metadata 传入）
+        allow_pattern = None
+        if metadata and isinstance(metadata, dict):
+            allow_pattern = metadata.get("allow_pattern")
+
+        body: Dict[str, Any] = {
+            "card_type": "command",
+            "title": "命令执行审批",
+            "preview": command,
+            "session_key": session_key,
+            "timeout_sec": 300,
+            "meta": [
+                {"icon": "📝", "text": description or "dangerous command"},
+            ],
+        }
+        if allow_pattern:
+            body["allow_pattern"] = allow_pattern
+
+        # 3. POST 创建审批
+        try:
+            create_resp = await asyncio.to_thread(
+                self._create_approval_sync, conv_id, body,
+            )
+        except Exception as e:
+            return SendResult(success=False, error=f"create approval failed: {e}")
+
+        if create_resp is None:
+            return SendResult(success=False, error="create approval HTTP failed")
+
+        # 4. 命中白名单 → 直接通过（不发卡片，agent 立即继续）
+        if create_resp.get("auto_approved"):
+            logger.info("Wanling: approval auto-approved by pattern — %s", command[:60])
+            return SendResult(success=True, message_id=create_resp.get("approval_id", ""))
+
+        approval_id = create_resp.get("approval_id")
+        if not approval_id:
+            return SendResult(success=False, error="missing approval_id in response")
+
+        # 5. 注册 Future 等 APPROVAL_DECIDED
+        # 防御性：清掉同 key 旧 Future（不应发生，但避免泄漏）
+        old = self._pending_approvals.pop(session_key, None)
+        if old and not old.done():
+            old.cancel()
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_approvals[session_key] = fut
+
+        # 6. await（305s = 5min 服务端 TTL + 5s 网络余量）
+        try:
+            result = await asyncio.wait_for(fut, timeout=305.0)
+        except asyncio.TimeoutError:
+            self._pending_approvals.pop(session_key, None)
+            return SendResult(success=False, error="approval timed out (305s)")
+        except Exception as e:
+            self._pending_approvals.pop(session_key, None)
+            return SendResult(success=False, error=f"approval await failed: {e}")
+
+        # 7. 解析 decision（与 server approval_handler.buildActions 对齐：
+        #    command 卡片含 allow_once/allow_always/deny 三个 action_id）
+        decision = result.get("decision")
+        if decision in ("allow_once", "allow_always"):
+            return SendResult(success=True, message_id=approval_id)
+        # deny 或未知
+        reason = result.get("reason") or "user denied"
+        return SendResult(success=False, error=f"user denied: {reason}", message_id=approval_id)
+
+    def _create_approval_sync(self, conv_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """同步实现：POST /api/conversations/:id/approvals（走 agentAuth）。
+
+        返回响应 dict（含 approval_id/message_id/state/expires_at 或 auto_approved=true）；
+        失败返回 None。
+        """
+        if not self._token:
+            return None
+        req = urllib.request.Request(
+            f"{self.server_url.rstrip('/')}/api/conversations/{conv_id}/approvals",
+            data=json.dumps(body).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            logger.error("Wanling._create_approval_sync: failed — %s", e)
+            return None
 
     # ── Outbound (agent → user) ──────────────────────────────────────────
 
