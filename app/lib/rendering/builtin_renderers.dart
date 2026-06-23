@@ -8,6 +8,7 @@ import '../widgets/full_screen_image_page.dart';
 import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_view.dart';
+import 'card_renderer.dart';
 import 'message_content_renderer.dart';
 
 /// 纯文本渲染器。
@@ -204,4 +205,5 @@ void registerBuiltinRenderers() {
       MsgType.markdown, const MarkdownContentRenderer());
   ContentRendererRegistry.register(MsgType.image, const ImageContentRenderer());
   ContentRendererRegistry.register(MsgType.file, const FileContentRenderer());
+  ContentRendererRegistry.register(MsgType.card, const CardContentRenderer());
 }
