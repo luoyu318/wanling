@@ -1,7 +1,7 @@
 name: wanling-platform
 label: Wanling
 kind: platform
-version: 0.1.0
+version: 0.2.0
 description: >
   Wanling platform adapter for Hermes Agent.
   Connects to a Wanling server (Go/Gin IM server with standard IM Bot-style

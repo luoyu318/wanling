@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/approval"
 	"github.com/wanling/server/internal/config"
 	"github.com/wanling/server/internal/handler"
 	"github.com/wanling/server/internal/hub"
@@ -63,7 +64,7 @@ func main() {
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)
-	convHandler := handler.NewConversationHandler(convRepo, msgRepo, agentRepo)
+	convHandler := handler.NewConversationHandler(convRepo, msgRepo, agentRepo, userRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store)
 	userHandler := handler.NewUserHandler(userRepo)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, processor.HandleIncoming)
@@ -71,6 +72,12 @@ func main() {
 	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, h)
 
 	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo)
+
+	approvalRepo := repository.NewApprovalRepo(db)
+	approvalSvc := approval.NewService(approvalRepo, h, approvalRepo)
+	approvalHandler := handler.NewApprovalHandler(
+		approvalRepo, msgRepo, convRepo, agentRepo, h, approvalSvc,
+	)
 
 	// 扫码配对限流：
 	// - GET /tickets/:id 按 IP 60/min（hermes 端 2s 一次轮询 ×30 并发足够）
@@ -90,11 +97,26 @@ func main() {
 		Prefix:  "rl:pair_complete:",
 	})
 
+	// 审批发起限流：20/min/会话（key=agent_id:conv_id），防 agent 异常刷屏。
+	approvalCreateLimiter := ratelimit.New(ratelimit.Options{
+		Window: time.Minute,
+		Max:    20,
+		KeyFunc: func(c *gin.Context) string {
+			// agentAuth 中间件写入 userID 字段实际是 agent_id（JWT sub）
+			return c.GetString("userID") + ":" + c.Param("id")
+		},
+		Redis:  rdb,
+		Prefix: "rl:approval_create:",
+	})
+
 	// 后台清理过期票据：每 10 分钟扫一次，删 1 小时前的记录。
 	// 随 server 生命周期结束（main 退出时 ctx 取消）。
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	go pair.RunCleanup(cleanupCtx, pairRepo, 10*time.Minute, time.Hour)
+
+	// 后台清理过期审批：每分钟扫一次（间隔短，因为审批 1 分钟超时），dispatch APPROVAL_EXPIRED。
+	go approval.RunCleanup(cleanupCtx, approvalSvc, approvalSvc, h, time.Minute)
 
 	// 不用 gin.Default()：它自带的 Logger 会把 NoRoute 的 404（公网扫描器探测
 	// /mcp /actuator/health /HNAP1 等）也打到 access log，污染 journalctl。
@@ -173,6 +195,22 @@ func main() {
 		msgAuth.DELETE("/api/messages/:id", msgHandler.Delete)
 		msgAuth.POST("/api/messages/batch-delete", msgHandler.BatchDelete)
 	}
+
+	// === 审批消息路由 ===
+	// agent 在会话中发起审批卡片：限流 20/min/会话
+	agentAuth := r.Group("", handler.AuthMiddleware(cfg.JWT.Secret, "agent"))
+	{
+		agentAuth.POST("/api/conversations/:id/approvals", approvalCreateLimiter, approvalHandler.CreateApproval)
+		// agent 视角 findOrCreate：用于审批卡片等场景，agent 主动建立/获取会话
+		// （无 user 先发消息时也能拿到 conv_id）。跟 user 的 POST /api/conversations 对称。
+		agentAuth.POST("/api/agents/me/conversations", convHandler.FindOrCreateAsAgent)
+	}
+
+	// user 决策审批（同意/拒绝）
+	userAuth.POST("/api/approvals/:id/decide", approvalHandler.Decide)
+
+	// 双角色查审批详情（user + agent 都可，用于兜底/刷新）
+	fileAuth.GET("/api/approvals/:id", approvalHandler.Get)
 
 	r.GET("/ws", gin.WrapH(wsHandler))
 

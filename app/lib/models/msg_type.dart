@@ -6,6 +6,7 @@ enum MsgType {
   image,
   file,
   mixed,
+  card,
   unknown;
 }
 
@@ -16,6 +17,7 @@ extension MsgTypeX on MsgType {
         MsgType.image => 'image',
         MsgType.file => 'file',
         MsgType.mixed => 'mixed',
+        MsgType.card => 'card',
         MsgType.unknown => 'unknown',
       };
 
@@ -31,6 +33,8 @@ extension MsgTypeX on MsgType {
         return MsgType.file;
       case 'mixed':
         return MsgType.mixed;
+      case 'card':
+        return MsgType.card;
       default:
         return MsgType.unknown;
     }

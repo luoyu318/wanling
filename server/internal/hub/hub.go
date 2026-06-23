@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wanling/server/internal/model"
@@ -59,6 +60,14 @@ type Hub struct {
 	agentRepo     *repository.AgentRepo
 	agentOwnerMap sync.Map
 	buffers       sync.Map
+	seq           int64 // Hub 直发 dispatch 的序号分配器
+}
+
+// NextSeq 暴露内部 seq 自增，供 dispatch.go 的新事件用。
+// 注意：MessageProcessor 另持有独立的 seq，两套计数器写入同一 client 时
+// 各自单调即可（dispatch buffer 按 per-client seq 比对）。
+func (h *Hub) NextSeq() int64 {
+	return atomic.AddInt64(&h.seq, 1)
 }
 
 func NewHub(p *presence.Presence, agentRepo *repository.AgentRepo) *Hub {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,7 +46,7 @@ func TestConversationHandler_List_ReturnsAgentAndLastMessage(t *testing.T) {
 		t.Fatalf("UpdateLastMessage 失败: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo)
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
 	r := gin.New()
 	r.GET("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -90,7 +91,7 @@ func TestConversationHandler_List_ExcludesNoMessageConversations(t *testing.T) {
 		t.Fatalf("FindOrCreate 失败: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo)
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
 	r := gin.New()
 	r.GET("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -126,7 +127,7 @@ func TestConversationHandler_FindOrCreate_ReturnsAgentField(t *testing.T) {
 		t.Fatalf("Create agent 失败: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo)
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -166,7 +167,7 @@ func TestConversationHandler_FindOrCreate_Returns404WhenAgentMissing(t *testing.
 		t.Fatalf("Create user 失败: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo)
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -217,7 +218,7 @@ func TestConversationHandler_MarkRead_ClearsUnreadCount(t *testing.T) {
 		_ = tx.Commit()
 	}
 
-	h := NewConversationHandler(crepo, mrepo, arepo)
+	h := NewConversationHandler(crepo, mrepo, arepo, urepo)
 	r := gin.New()
 	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -252,7 +253,7 @@ func TestConversationHandler_MarkRead_Returns404OnForeignConv(t *testing.T) {
 	agent, _ := arepo.Create(owner.ID, "Agent", "secret-key-placeholder")
 	conv, _ := crepo.FindOrCreate(owner.ID, agent.ID)
 
-	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo)
+	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
 	r := gin.New()
 	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
 		c.Set("userID", intruder.ID) // 入侵者
@@ -265,5 +266,123 @@ func TestConversationHandler_MarkRead_Returns404OnForeignConv(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("期望 404，实际: %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestFindOrCreateAsAgentSuccess 验证 agent 视角的 findOrCreate：能正确按 (agent_id, user_id)
+// 拿到会话，响应里含 conv id 和 user 详情（不含 password_hash）。
+func TestFindOrCreateAsAgentSuccess(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+
+	// agent 的 owner
+	owner, err := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	agent, err := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	// 聊天对端 user
+	target, err := urepo.Create(shortName(t, "target"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("create target user: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+
+	body, _ := json.Marshal(map[string]string{"user_id": target.ID})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/agents/me/conversations", bytes.NewReader(body))
+	c.Set("userID", agent.ID) // agent JWT 解析后写入的实际是 agent_id
+	c.Set("role", "agent")
+
+	h.FindOrCreateAsAgent(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := w.Body.String()
+	if !strings.Contains(resp, `"id":`) {
+		t.Errorf("missing conv id: %s", resp)
+	}
+	// 响应里应有 user 详情（username），不应有 password_hash（model.User json:"-" tag）
+	if !strings.Contains(resp, `"username":"`) {
+		t.Errorf("missing user.username in response: %s", resp)
+	}
+	if strings.Contains(resp, "password_hash") {
+		t.Errorf("password_hash leaked: %s", resp)
+	}
+}
+
+// TestFindOrCreateAsAgentRejectsNonexistentUser 验证：对端 user 不存在时返回 404（而非 500）。
+// 顺序很关键：必须先 GetByID 校验 user 存在，再 FindOrCreate，否则 FK 约束触发 500。
+func TestFindOrCreateAsAgentRejectsNonexistentUser(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	owner, _ := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
+	agent, _ := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
+
+	h := NewConversationHandler(
+		repository.NewConversationRepo(db), repository.NewMessageRepo(db),
+		arepo, urepo,
+	)
+
+	body, _ := json.Marshal(map[string]string{"user_id": "00000000-0000-0000-0000-000000000000"})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/agents/me/conversations", bytes.NewReader(body))
+	c.Set("userID", agent.ID)
+	c.Set("role", "agent")
+
+	h.FindOrCreateAsAgent(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent user, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestFindOrCreateAsAgentIdempotent 验证：同一 (agent, user) 二次调用不新建会话，返回同一 conv_id。
+// 这是 FindOrCreate 语义的核心，agent 端的缓存兜底依赖此幂等性。
+func TestFindOrCreateAsAgentIdempotent(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+
+	owner, _ := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
+	agent, _ := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
+	target, _ := urepo.Create(shortName(t, "target"), "$2a$10$hash")
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+
+	call := func() string {
+		body, _ := json.Marshal(map[string]string{"user_id": target.ID})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Set("userID", agent.ID)
+		h.FindOrCreateAsAgent(c)
+		var resp map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		id, _ := resp["id"].(string)
+		return id
+	}
+
+	id1 := call()
+	id2 := call()
+	if id1 == "" || id2 == "" {
+		t.Fatalf("expected non-empty ids, got %q and %q", id1, id2)
+	}
+	if id1 != id2 {
+		t.Errorf("expected idempotent conv_id, got %s then %s", id1, id2)
 	}
 }

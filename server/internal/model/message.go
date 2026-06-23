@@ -15,6 +15,7 @@ const (
 	MsgTypeImage    MsgType = "image"
 	MsgTypeFile     MsgType = "file"
 	MsgTypeMixed    MsgType = "mixed"
+	MsgTypeCard     MsgType = "card"
 )
 
 type Message struct {

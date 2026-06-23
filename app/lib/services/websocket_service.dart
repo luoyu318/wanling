@@ -34,6 +34,12 @@ class WebSocketService {
       StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get typingStream => _typingController.stream;
 
+  /// MESSAGE_UPDATE 事件流（审批状态变更推送等）。
+  /// 单列流，避免 chatProvider 把 UPDATE 当 CREATE 重复插入消息列表。
+  /// chatProvider 监听本流后按 d.id 定位已有消息做局部更新（如 approval 状态切换）。
+  final _messageUpdateController = StreamController<WSMessage>.broadcast();
+  Stream<WSMessage> get messageUpdates => _messageUpdateController.stream;
+
   // 连接状态：private setter，对外只读 currentValue + 流。
   final _connStateController = StreamController<ConnState>.broadcast();
   Stream<ConnState> get connectionStateStream => _connStateController.stream;
@@ -131,6 +137,13 @@ class WebSocketService {
           }
           return;
         }
+        // MESSAGE_UPDATE 分流：审批状态变更等走单独流，避免被 chatProvider
+        // 当 MESSAGE_CREATE 重复插入。seq 同步逻辑共用。
+        if (msg.t == 'MESSAGE_UPDATE') {
+          if (msg.s != null) _lastSeq = msg.s;
+          _messageUpdateController.add(msg);
+          return;
+        }
         if (msg.s != null) _lastSeq = msg.s;
         _messageController.add(msg);
         break;
@@ -178,5 +191,6 @@ class WebSocketService {
     _connecting = false;
     _setConnState(ConnState.disconnected);
     _typingController.close();
+    _messageUpdateController.close();
   }
 }

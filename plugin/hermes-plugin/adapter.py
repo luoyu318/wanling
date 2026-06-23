@@ -72,6 +72,8 @@ OP_HELLO = 10
 OP_HEARTBEAT_ACK = 11
 
 EVENT_MESSAGE_CREATE = "MESSAGE_CREATE"
+EVENT_APPROVAL_DECIDED = "APPROVAL_DECIDED"
+EVENT_APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
 
 # 单文件上传大小上限（20MB），防止 agent 被诱导上传大文件 OOM。
 # IM 场景图片通常 <5MB，20MB 给截图/扫描件留余量。
@@ -155,6 +157,17 @@ class WanlingAdapter(BasePlatformAdapter):
         self._stopping = False
         # Typing debounce: chat_id → last TYPING_START timestamp (epoch seconds)
         self._typing_sent_at: Dict[str, float] = {}
+
+        # user_id → conv_id 缓存。双向来源：
+        #   1. 入站 MESSAGE_CREATE 的 conversation_id 字段（高频路径，命中即可零开销）
+        #   2. POST /api/agents/me/conversations（agent 视角 findOrCreate）HTTP 兜底，
+        #      miss 时调一次后填缓存，下次命中。
+        # 待审批状态：send_exec_approval 发卡片后立即返回（不等 user 决策），
+        # hermes gateway 通过 tools/approval.py 自己的 queue 等待 user 响应。
+        # user 决策由 APPROVAL_DECIDED 事件触发，调 resolve_gateway_approval 唤醒。
+        # （_pending_approvals 字段已删除：send_exec_approval 不再本地 await user 决策，
+        #  改为立即返回，由 hermes gateway 自己管 approval 等待）
+        self._conv_id_by_user: Dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -338,8 +351,14 @@ class WanlingAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             return
-        if op == OP_DISPATCH and msg.get("t") == EVENT_MESSAGE_CREATE:
-            await self._on_message_create(msg["d"])
+        if op == OP_DISPATCH:
+            t = msg.get("t")
+            if t == EVENT_MESSAGE_CREATE:
+                await self._on_message_create(msg["d"])
+            elif t == EVENT_APPROVAL_DECIDED:
+                await self._on_approval_decided(msg["d"])
+            elif t == EVENT_APPROVAL_EXPIRED:
+                await self._on_approval_expired(msg["d"])
             return
         # Unhandled — log for debugging
         logger.debug("Wanling: unhandled msg op=%s t=%s", op, msg.get("t"))
@@ -352,6 +371,12 @@ class WanlingAdapter(BasePlatformAdapter):
         user_id = d.get("sender_id")
         if not user_id:
             return
+
+        # 缓存 user_id → conv_id，供 send_exec_approval 用（高频路径，命中即可零开销）；
+        # miss 时 send_exec_approval 会调 HTTP findOrCreate 兜底。
+        conv_id = d.get("conversation_id")
+        if conv_id and user_id:
+            self._conv_id_by_user[user_id] = conv_id
 
         # Authorization
         if not self.allow_all and self.allowed_users:
@@ -441,6 +466,301 @@ class WanlingAdapter(BasePlatformAdapter):
         )
 
         await self.handle_message(event)
+
+    # ── Approval (agent → user 卡片决策) ─────────────────────────────────
+
+    async def _on_approval_decided(self, d: dict) -> None:
+        """APPROVAL_DECIDED 事件处理：按 card_type 分流唤醒 hermes 的等待。
+
+        两类审批走不同的 hermes 解析原语：
+
+        1. exec_approval（card_type=command/tool/file，decision=allow_once/allow_always/deny）
+           → tools.approval.resolve_gateway_approval(session_key, choice)
+           choice 映射：allow_once→once, allow_always→always, deny→deny
+
+        2. slash_confirm（card_type=slash_confirm，decision=once/always/cancel）
+           → tools.slash_confirm.resolve(session_key, confirm_id, choice)
+           decision 直接是 hermes 的 choice 枚举，无需映射；但需要 confirm_id 定位。
+        """
+        session_key = d.get("session_key")
+        if not session_key:
+            logger.warning("Wanling: APPROVAL_DECIDED missing session_key — %s", d)
+            return
+
+        decision = d.get("decision", "")
+        confirm_id = d.get("confirm_id")
+
+        # 分流判断：slash_confirm 的 decision 是 once/always/cancel
+        if decision in ("once", "always", "cancel") and confirm_id:
+            await self._resolve_slash_confirm(session_key, confirm_id, decision, d)
+            return
+
+        # exec_approval 路径
+        choice = {
+            "allow_once": "once",
+            "allow_always": "always",
+            "deny": "deny",
+        }.get(decision)
+        if choice is None:
+            logger.warning("Wanling: APPROVAL_DECIDED unknown decision %r — %s", decision, d)
+            return
+
+        try:
+            # lazy import：避免插件加载时硬依赖 hermes 内部模块（测试隔离）
+            from tools.approval import resolve_gateway_approval
+            count = resolve_gateway_approval(session_key, choice)
+            logger.info(
+                "Wanling: APPROVAL_DECIDED resolved %d approval(s) for session %s "
+                "(choice=%s, decided_by=%s)",
+                count, session_key, choice, d.get("decided_by"),
+            )
+        except Exception as e:
+            logger.error(
+                "Wanling: resolve_gateway_approval failed for session %s: %s",
+                session_key, e,
+            )
+
+    async def _resolve_slash_confirm(
+        self, session_key: str, confirm_id: str, choice: str, d: dict,
+    ) -> None:
+        """slash_confirm 决策：调 tools.slash_confirm.resolve 唤醒 hermes 的 slash 确认队列。
+
+        resolve 是 async（run handler 在事件循环上），需要 await。
+        """
+        try:
+            from tools.slash_confirm import resolve as slash_resolve
+            await slash_resolve(session_key, confirm_id, choice)
+            logger.info(
+                "Wanling: slash_confirm resolved session %s confirm %s (choice=%s, decided_by=%s)",
+                session_key, confirm_id, choice, d.get("decided_by"),
+            )
+        except Exception as e:
+            logger.error(
+                "Wanling: slash_confirm.resolve failed session %s confirm %s: %s",
+                session_key, confirm_id, e,
+            )
+
+    async def _on_approval_expired(self, d: dict) -> None:
+        """APPROVAL_EXPIRED 事件处理：仅日志记录。
+
+        hermes gateway 通过 tools/approval.py 自己的 queue 管超时
+        （_gateway_queues 有独立的 timeout 机制），不依赖本事件驱动。
+        本事件主要用于本地状态可视化和调试。
+        """
+        session_key = d.get("session_key")
+        logger.info(
+            "Wanling: APPROVAL_EXPIRED session %s (hermes gateway 自己管 timeout)",
+            session_key,
+        )
+
+    async def _resolve_conv_id(self, user_id: str) -> Optional[str]:
+        """从本地缓存或 HTTP 拿 user_id 对应 conv_id。
+
+        缓存优先（命中就不调 HTTP，零开销）；miss 时调
+        POST /api/agents/me/conversations findOrCreate，成功后填缓存下次命中。
+        """
+        cached = self._conv_id_by_user.get(user_id)
+        if cached:
+            return cached
+        # HTTP 兜底（同步阻塞调用，丢线程池里跑避免阻塞事件循环）
+        try:
+            conv_id = await asyncio.to_thread(self._find_conv_as_agent_sync, user_id)
+        except Exception as e:
+            logger.error("Wanling: find conv as agent failed — %s", e)
+            return None
+        if conv_id:
+            self._conv_id_by_user[user_id] = conv_id
+        return conv_id
+
+    def _find_conv_as_agent_sync(self, user_id: str) -> Optional[str]:
+        """POST /api/agents/me/conversations findOrCreate，返回 conv_id。
+
+        agent JWT 鉴权。失败时返回 None（调用方走文本兜底）。
+        """
+        if not self._token:
+            return None
+        req = urllib.request.Request(
+            f"{self.server_url.rstrip('/')}/api/agents/me/conversations",
+            data=json.dumps({"user_id": user_id}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read())
+            return payload.get("id")
+        except Exception as e:
+            logger.error("Wanling._find_conv_as_agent_sync: failed — %s", e)
+            return None
+
+    async def send_exec_approval(
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str = "dangerous command",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """发起命令审批卡片（hermes gateway 的跨平台契约）。
+
+        重要语义：本方法只负责**发出审批卡片**，立即返回。不等 user 决策。
+        hermes gateway 通过 tools/approval.py 的 queue 自己管 approval 等待，
+        user 在万灵 APP 点按钮 → 服务端推 APPROVAL_DECIDED → adapter 的
+        _on_approval_decided 调 resolve_gateway_approval 唤醒等待。
+
+        流程：
+          1. 拿 conv_id（缓存优先，miss 时 POST /api/agents/me/conversations）
+          2. POST /api/conversations/:id/approvals 创建审批卡片
+             - 命中 allow_pattern 白名单时服务端返 auto_approved=true，agent 立即继续
+             - 否则卡片落到 user 端，本方法返回 success=True（卡片已发出）
+          3. user 决策由 APPROVAL_DECIDED 事件异步触发 hermes 唤醒，不在本方法内等待
+
+        返回：
+          success=True — 卡片已发出（或命中白名单直接通过）
+          success=False — 卡片发送失败（hermes gateway 会走文本兜底）
+        """
+        if self._ws is None:
+            return SendResult(success=False, error="Not connected")
+
+        # 1. 拿 conv_id（缓存优先，miss 时 HTTP findOrCreate 兜底）
+        conv_id = await self._resolve_conv_id(chat_id)
+        if not conv_id:
+            return SendResult(
+                success=False,
+                error=f"resolve conv_id failed for user {chat_id}",
+            )
+
+        # 2. 构造审批请求体（命令审批独有 allow_pattern，由 metadata 传入）
+        allow_pattern = None
+        if metadata and isinstance(metadata, dict):
+            allow_pattern = metadata.get("allow_pattern")
+
+        body: Dict[str, Any] = {
+            "card_type": "command",
+            "title": "命令执行审批",
+            "preview": command,
+            "session_key": session_key,
+            "timeout_sec": 300,
+            "meta": [
+                {"icon": "📝", "text": description or "dangerous command"},
+            ],
+        }
+        if allow_pattern:
+            body["allow_pattern"] = allow_pattern
+
+        # 3. POST 创建审批
+        try:
+            create_resp = await asyncio.to_thread(
+                self._create_approval_sync, conv_id, body,
+            )
+        except Exception as e:
+            return SendResult(success=False, error=f"create approval failed: {e}")
+
+        if create_resp is None:
+            return SendResult(success=False, error="create approval HTTP failed")
+
+        # 4. 命中白名单 → agent 立即继续（不发卡片）
+        if create_resp.get("auto_approved"):
+            logger.info("Wanling: approval auto-approved by pattern — %s", command[:60])
+            return SendResult(success=True, message_id=create_resp.get("approval_id", ""))
+
+        approval_id = create_resp.get("approval_id")
+        if not approval_id:
+            return SendResult(success=False, error="missing approval_id in response")
+
+        # 5. 卡片已发出，立即返回。user 决策由 APPROVAL_DECIDED 事件异步唤醒 hermes。
+        logger.info(
+            "Wanling: approval card sent for session %s (approval_id=%s) — "
+            "awaiting user decision via APPROVAL_DECIDED event",
+            session_key, approval_id,
+        )
+        return SendResult(success=True, message_id=approval_id)
+
+    async def send_slash_confirm(
+        self,
+        chat_id: str,
+        title: str,
+        message: str,
+        session_key: str,
+        confirm_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """发起 slash 命令确认卡片（hermes gateway 的跨平台契约）。
+
+        用于 /new /clear /reset /undo 等破坏性 slash 命令的三选一确认。
+        与 send_exec_approval 语义一致：只负责发卡片，立即返回，不等 user 决策。
+        user 决策由 APPROVAL_DECIDED 事件异步唤醒 hermes 的 slash_confirm 队列
+        （见 _on_approval_decided → _resolve_slash_confirm）。
+
+        title 形如 "/new"，message 是带 detail 的 markdown 提示文案。
+        confirm_id 由 hermes tools/slash_confirm.register 生成，决策时必须透传回去定位。
+        """
+        if self._ws is None:
+            return SendResult(success=False, error="Not connected")
+
+        conv_id = await self._resolve_conv_id(chat_id)
+        if not conv_id:
+            return SendResult(
+                success=False,
+                error=f"resolve conv_id failed for user {chat_id}",
+            )
+
+        body: Dict[str, Any] = {
+            "card_type": "slash_confirm",
+            "title": f"确认 {title}",
+            "preview": message,  # 详情文案走 preview 块展示
+            "session_key": session_key,
+            "confirm_id": confirm_id,
+            "timeout_sec": 300,
+        }
+
+        try:
+            create_resp = await asyncio.to_thread(
+                self._create_approval_sync, conv_id, body,
+            )
+        except Exception as e:
+            return SendResult(success=False, error=f"create slash_confirm failed: {e}")
+
+        if create_resp is None:
+            return SendResult(success=False, error="create slash_confirm HTTP failed")
+
+        approval_id = create_resp.get("approval_id")
+        if not approval_id:
+            return SendResult(success=False, error="missing approval_id in response")
+
+        logger.info(
+            "Wanling: slash_confirm card sent session %s confirm %s (approval_id=%s) — "
+            "awaiting user decision via APPROVAL_DECIDED event",
+            session_key, confirm_id, approval_id,
+        )
+        return SendResult(success=True, message_id=approval_id)
+
+    def _create_approval_sync(self, conv_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """同步实现：POST /api/conversations/:id/approvals（走 agentAuth）。
+
+        返回响应 dict（含 approval_id/message_id/state/expires_at 或 auto_approved=true）；
+        失败返回 None。
+        """
+        if not self._token:
+            return None
+        req = urllib.request.Request(
+            f"{self.server_url.rstrip('/')}/api/conversations/{conv_id}/approvals",
+            data=json.dumps(body).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            logger.error("Wanling._create_approval_sync: failed — %s", e)
+            return None
 
     # ── Outbound (agent → user) ──────────────────────────────────────────
 
