@@ -213,4 +213,34 @@ class ApiService {
     final res = await _dio.put('/api/users/me', data: data);
     return res.data;
   }
+
+  /// 决策审批。actionId 必须是卡片 actions 列表内的合法 id。
+  /// 返回 null 表示成功（HTTP 200），非 null 为错误文案。
+  Future<String?> decideApproval(String approvalId, String actionId,
+      {String? reason}) async {
+    try {
+      await _dio.post('/api/approvals/$approvalId/decide', data: {
+        'action_id': actionId,
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      });
+      return null;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 409) return '审批已被处理';
+      if (code == 403) return '无权决策此审批';
+      if (code == 404) return '审批不存在';
+      return '决策失败：${e.message ?? '网络错误'}';
+    }
+  }
+
+  /// 查审批详情（兜底，WS 推送丢失时主动查）
+  Future<Map<String, dynamic>?> getApproval(String approvalId) async {
+    try {
+      final res = await _dio.get('/api/approvals/$approvalId');
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
 }
