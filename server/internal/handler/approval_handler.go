@@ -184,12 +184,16 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 	}
 
 	// 广播 MESSAGE_CREATE 给会话双端（user + agent）
-	// payload 与现有 message processor 保持一致：双端共用，含 agent_id / user_id / content
+	// payload 字段必须与 internal/message/processor.go 的 dispatch 一致：
+	// APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填
+	// conversation_id/sender_type/sender_id/created_at，缺一就会被丢弃或解析崩溃。
 	msgPayload, _ := json.Marshal(map[string]any{
-		"id":       msg.ID,
-		"agent_id": agentID,
-		"user_id":  conv.UserID,
-		"content":  contentMap,
+		"id":              msg.ID,
+		"conversation_id": convID,
+		"sender_type":     "agent",
+		"sender_id":       agentID,
+		"content":         contentMap,
+		"created_at":      msg.CreatedAt,
 	})
 	wsMsg := &model.WSMessage{
 		Op: model.OpDispatch,

@@ -82,7 +82,9 @@ func nullableString(p *string) any {
 	return *p
 }
 
-// Create 插入一条 pending 审批。返回完整记录（含生成的 id 和默认 state）。
+// Create 插入一条 pending 审批。id 由调用方预生成（必须与 message content 里
+// 的 CardContent.ApprovalID 一致，否则 APP 点按钮时按 content 的 id 来决策会
+// 找不到记录）。返回完整记录。
 func (r *ApprovalRepo) Create(a model.Approval) (*model.Approval, error) {
 	actionsRaw, err := model.MarshalActions(a.Actions)
 	if err != nil {
@@ -90,11 +92,11 @@ func (r *ApprovalRepo) Create(a model.Approval) (*model.Approval, error) {
 	}
 	row := r.db.QueryRow(
 		`INSERT INTO approvals
-		 (message_id, conversation_id, agent_id, user_id, card_type, state, actions,
+		 (id, message_id, conversation_id, agent_id, user_id, card_type, state, actions,
 		  expires_at, session_key, allow_pattern)
-		 VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)
 		 RETURNING `+approvalSelectCols,
-		a.MessageID, a.ConversationID, a.AgentID, a.UserID, a.CardType, actionsRaw,
+		a.ID, a.MessageID, a.ConversationID, a.AgentID, a.UserID, a.CardType, actionsRaw,
 		a.ExpiresAt, a.SessionKey, nullableString(a.AllowPattern),
 	)
 	return scanApproval(row)

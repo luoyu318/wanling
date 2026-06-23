@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wanling/server/internal/model"
 )
 
@@ -49,6 +50,7 @@ func TestApprovalCreateAndGets(t *testing.T) {
 	expires := time.Now().Add(5 * time.Minute).UTC()
 
 	created, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType: model.CardTypeTool, Actions: actions,
 		ExpiresAt: expires, SessionKey: "exec:test:1",
@@ -78,6 +80,7 @@ func TestApprovalFindExpired(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	// 创建一条已过期的 pending
 	_, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType:   model.CardTypeCommand,
 		Actions:    []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
@@ -101,6 +104,7 @@ func TestApprovalMarkDecidedAllowAlways(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	pattern := "rm -rf *"
 	created, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType: model.CardTypeCommand,
 		Actions: []model.ApprovalAction{
@@ -147,6 +151,7 @@ func TestApprovalMarkDecidedAllowAlways(t *testing.T) {
 func TestApprovalMarkDecidedDenyWithReason(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	created, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType: model.CardTypeTool,
 		Actions:  []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
@@ -173,6 +178,7 @@ func TestApprovalMarkDecidedDenyWithReason(t *testing.T) {
 func TestApprovalMarkDecidedNotPendingFails(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	created, _ := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType:   model.CardTypeTool,
 		Actions:    []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
@@ -193,6 +199,7 @@ func TestApprovalMarkDecidedNotPendingFails(t *testing.T) {
 func TestApprovalMarkExpired(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	created, _ := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType:   model.CardTypeCommand,
 		Actions:    []model.ApprovalAction{{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"}},
@@ -228,6 +235,7 @@ func TestApprovalGetForDecision(t *testing.T) {
 
 	pattern := "rm -rf *"
 	a, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType:  model.CardTypeCommand, Actions: cardData.Actions,
 		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
@@ -252,6 +260,7 @@ func TestApprovalGetForDecision(t *testing.T) {
 func TestApprovalUpdateMessageContent(t *testing.T) {
 	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
 	_, err := repo.Create(model.Approval{
+		ID: uuid.New().String(),
 		MessageID: msgID, ConversationID: convID, AgentID: agentID, UserID: userID,
 		CardType:   model.CardTypeCommand,
 		Actions:    []model.ApprovalAction{{ID: "deny"}},
