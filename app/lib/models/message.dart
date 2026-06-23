@@ -23,4 +23,22 @@ class ChatMessage {
     content: json['content'] as Map<String, dynamic>,
     createdAt: DateTime.parse(json['created_at']),
   );
+
+  ChatMessage copyWith({
+    String? id,
+    String? conversationId,
+    String? senderType,
+    String? senderId,
+    Map<String, dynamic>? content,
+    DateTime? createdAt,
+  }) {
+    return ChatMessage(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      senderType: senderType ?? this.senderType,
+      senderId: senderId ?? this.senderId,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 }

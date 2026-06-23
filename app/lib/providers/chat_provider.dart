@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
 import '../models/msg_type.dart';
 import '../models/ws_message.dart';
+import '../rendering/card_renderer.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
 import 'auth_provider.dart';
@@ -15,6 +16,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final String conversationId;
   final String agentId;
   StreamSubscription<WSMessage>? _subscription;
+  StreamSubscription<WSMessage>? _updateSubscription;
 
   int _page = 0;
   final int _pageSize = 20;
@@ -25,13 +27,20 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   bool get loadingMore => _loadingMore;
 
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId) : super([]) {
+    // 注入全局卡片决策回调。多个 ChatNotifier 实例会覆盖 onDecide，
+    // 但每个会话共用同一 api 实例（token 相同），无副作用。
+    CardContentRenderer.onDecide = (approvalId, actionId, reason) {
+      return api.decideApproval(approvalId, actionId, reason: reason);
+    };
     _loadHistory();
     _listenWS();
+    _listenUpdates();
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
+    _updateSubscription?.cancel();
     super.dispose();
   }
 
@@ -91,6 +100,30 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
           state = [msg, ...state];
         }
       });
+  }
+
+  /// 订阅 MESSAGE_UPDATE 事件，本地更新对应消息的 content。
+  /// 用于审批卡片状态变化（pending → approved/denied/expired）的双端同步。
+  void _listenUpdates() {
+    _updateSubscription = ws.messageUpdates.listen((msg) {
+      final payload = msg.d as Map<String, dynamic>?;
+      if (payload == null) return;
+      final msgId = payload['message_id'] as String?;
+      if (msgId == null) return;
+      final convId = payload['conversation_id'] as String?;
+      if (convId != conversationId) return; // 仅处理本会话
+
+      final idx = state.indexWhere((m) => m.id == msgId);
+      if (idx < 0) return;
+
+      final newContent = payload['content'] as Map<String, dynamic>?;
+      if (newContent == null) return;
+
+      final updated = state[idx].copyWith(content: newContent);
+      final newList = List.of(state);
+      newList[idx] = updated;
+      state = newList;
+    });
   }
 
   void sendText(String text) {
