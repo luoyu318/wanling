@@ -106,9 +106,10 @@ class BackgroundChatService {
         if (agentId != null) {
           final oldUrl = _avatarUrls[agentId];
           _avatarUrls[agentId] = avatarUrl ?? '';
-          // URL 变了 → 清旧 bitmap 缓存,下次通知重新下载
+          // URL 变了 → 清内存 + 文件缓存(防旧头像永久驻留),下次通知重新下载
           if (oldUrl != (avatarUrl ?? '')) {
             _avatarBitmapCache.remove(agentId);
+            clearAvatarFileCache(agentId);
           }
         }
       });
@@ -259,12 +260,13 @@ class BackgroundChatService {
     // 其他情况（前台但不在该会话 / 在别的页面 / APP 在后台）都弹通知。
     final isViewing = _appInForeground && convId == _activeConvId;
     if (isViewing) return;
-    // 计数(在通知前累加,N 反映含本条)
-    _unread.increment(convId!);
 
     final agentId = data['sender_id'] as String?;
     final content = data['content'] as Map<String, dynamic>?;
-    if (agentId == null || content == null) return;
+    if (convId == null || agentId == null || content == null) return;
+
+    // 计数(在通知前累加,N 反映含本条)
+    _unread.increment(convId);
 
     final msgType = content['msg_type'] as String? ?? 'text';
     final msgData = content['data'] as Map<String, dynamic>?;

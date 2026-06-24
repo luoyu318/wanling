@@ -162,7 +162,26 @@ Future<File> _cachePath(String agentId) async {
   if (!await cacheDir.exists()) {
     await cacheDir.create(recursive: true);
   }
-  return File('${cacheDir.path}/$agentId.png');
+  return File('${cacheDir.path}/${_sanitizeAgentId(agentId)}.png');
+}
+
+/// 清除指定 agent 的文件缓存(agent 换头像后调,防旧头像永久驻留)。
+/// 失败静默(文件不存在/IO 错误都不影响通知流程)。
+Future<void> clearAvatarFileCache(String agentId) async {
+  try {
+    final f = await _cachePath(agentId);
+    if (await f.exists()) {
+      await f.delete();
+    }
+  } catch (_) {
+    // 清缓存失败不影响通知(下次 loadAvatarBitmap 仍会重新下载)
+  }
+}
+
+/// sanitize agentId(防路径穿越:agentId 来自 WS sender_id,正常是 UUID,
+/// 但拼文件名前做防御,去掉路径分隔符和 .. )。
+String _sanitizeAgentId(String agentId) {
+  return agentId.replaceAll(RegExp(r'[/\\]|\.\.'), '');
 }
 
 Future<void> _writeCache(String agentId, Uint8List bytes) async {
