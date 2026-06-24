@@ -14,7 +14,6 @@ import 'services/background_chat_service.dart';
 import 'services/notification_service.dart';
 import 'utils/app_lifecycle_observer.dart';
 import 'utils/permission_helper.dart';
-import 'utils/secure_storage.dart';
 
 /// 全局 lifecycle observer（main 中创建一次）。
 late final AppLifecycleObserver _lifecycleObserver;
@@ -33,9 +32,25 @@ Future<void> main() async {
   NotificationService.instance.onTap = (payload) {
     final ctx = navigatorKey.currentContext;
     if (ctx == null) return;
-    GoRouter.of(ctx).push(
-      '/chat/${payload.convId}?agentId=${payload.agentId}',
-    );
+    // 智能单例：栈顶已是 ChatPage 则 replace（避免 ChatPage 叠加，也避免
+    // setActiveConv 竞态——旧 ChatPage dispose + 新 ChatPage initState 顺序错乱）；
+    // 否则正常 push（保留当前页面层级，如从设置页点通知返回仍回设置页）。
+    final router = GoRouter.of(ctx);
+    // 用 routerDelegate.currentConfiguration 拿真实栈状态，
+    // routeInformationProvider 在通知唤起的过渡态可能未同步。
+    // 栈顶 route 的 path（如 /chat/xxx 或 / 或 /settings）。
+    final stack = router.routerDelegate.currentConfiguration;
+    final topPath = stack.isNotEmpty ? stack.last.matchedLocation : '';
+    final isViewingChat = topPath.startsWith('/chat/');
+    final target = '/chat/${payload.convId}?agentId=${payload.agentId}';
+    if (isViewingChat) {
+      // ChatPage 是 push 出来的栈帧（基础 location 仍是 /），不能用 replace
+      // （replace 会替换整个路由目标 URI，不替换 push 栈帧，导致栈仍叠加）。
+      // pushReplacement 专门替换栈顶 push 帧：[列表,黑羽] → [列表,白羽]。
+      router.pushReplacement(target);
+    } else {
+      router.push(target);
+    }
   };
 
   // 2. 配置 + 启动 background service（前台服务）
