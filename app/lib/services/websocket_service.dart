@@ -154,7 +154,10 @@ class WebSocketService {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
       Duration(milliseconds: intervalMs),
-      (_) => send(WSMessage(op: OpCodes.heartbeat, d: _lastSeq)),
+      // 纯心跳：只表达「我还活着」。seq 同步与断线补发由 Resume 通道
+      // （116-118 行）负责，server 心跳分支不读 d，带上只会误导维护者。
+      // 对齐 background_chat_service 的干净写法。
+      (_) => send(WSMessage(op: OpCodes.heartbeat)),
     );
   }
 
