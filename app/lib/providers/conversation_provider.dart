@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 
 import '../models/conversation.dart';
 import '../models/ws_message.dart';
@@ -41,8 +42,19 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   }
 
   /// ChatPage 进入/离开时切换激活会话。激活期间 incoming 消息不计未读。
+  /// 同时同步给后台 service isolate，用于本地通知过滤：
+  /// 前台且正在看该会话时不弹通知（用户已直接看到）。
   void setActiveConv(String? convId) {
     _activeConvId = convId;
+    // 同步给 bg-service。原生平台未注册时 invoke 可能抛异常（测试环境），
+    // 不应影响主流程，吞掉即可。
+    try {
+      FlutterBackgroundService().invoke('setActiveConv', {
+        'conv_id': convId ?? '',
+      });
+    } catch (_) {
+      // 测试环境无原生平台注册，忽略
+    }
   }
 
   /// 拉取会话列表并替换当前 state。
