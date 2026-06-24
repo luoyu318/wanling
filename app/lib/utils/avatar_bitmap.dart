@@ -70,11 +70,13 @@ Future<Uint8List> loadAvatarBitmap({
 }
 
 /// 裁剪为方形 + 圆角,返回 PNG bytes。
+///
+/// 解码失败抛 [FormatException],让外层 catch 走兜底色块(避免把 HTML/JSON
+/// 错误页当 PNG 写入缓存导致永久污染)。
 Uint8List _cropRounded(Uint8List srcBytes) {
   final src = img.decodeImage(srcBytes);
   if (src == null) {
-    // 解码失败,返回原图(让系统自己处理)
-    return srcBytes;
+    throw FormatException('头像解码失败(响应可能不是图片)');
   }
   // 先裁正方形(居中)
   final side = src.width < src.height ? src.width : src.height;
@@ -103,24 +105,34 @@ img.Image _applyRoundedCorners(img.Image square, int radius) {
   return out;
 }
 
-/// 判断点是否在圆角矩形内。
+/// 判断点 (x,y) 是否在圆角矩形内。
+///
+/// 按点所在象限只比对那一个角的圆心:
+/// - 四个角的圆心分别在 (r,r) / (w-r-1,r) / (r,h-r-1) / (w-r-1,h-r-1)
+/// - 点落在某角的 r×r 外切方框内时,距该角圆心 > r 才判透明(在圆弧外)
+/// - 点不在任何角方框内(中心十字区)则恒不透明
 bool _isInsideRoundedRect(int x, int y, int w, int h, int r) {
-  // 四个角的圆心
-  final corners = [
-    [r, r],
-    [w - r - 1, r],
-    [r, h - r - 1],
-    [w - r - 1, h - r - 1],
-  ];
-  for (final c in corners) {
-    final dx = (x - c[0]).abs();
-    final dy = (y - c[1]).abs();
-    // 在角的外切正方形区域且距圆心 > r → 在圆角外
-    final inCornerBox = (x < r || x >= w - r) && (y < r || y >= h - r);
-    if (inCornerBox && (dx * dx + dy * dy) > r * r) {
-      return false;
-    }
+  // 左上角
+  if (x < r && y < r) {
+    final dx = r - x, dy = r - y;
+    return dx * dx + dy * dy <= r * r;
   }
+  // 右上角(圆心在 w-r-1, r)
+  if (x >= w - r && y < r) {
+    final dx = x - (w - r - 1), dy = r - y;
+    return dx * dx + dy * dy <= r * r;
+  }
+  // 左下角(圆心在 r, h-r-1)
+  if (x < r && y >= h - r) {
+    final dx = r - x, dy = y - (h - r - 1);
+    return dx * dx + dy * dy <= r * r;
+  }
+  // 右下角(圆心在 w-r-1, h-r-1)
+  if (x >= w - r && y >= h - r) {
+    final dx = x - (w - r - 1), dy = y - (h - r - 1);
+    return dx * dx + dy * dy <= r * r;
+  }
+  // 中心十字区(不在任何角方框内)恒不透明
   return true;
 }
 
@@ -165,3 +177,8 @@ Future<void> _writeCache(String agentId, Uint8List bytes) async {
 // 测试可见的兜底色块生成(便于单测验证颜色一致性)
 @visibleForTesting
 Uint8List initialColorBlockForTest(String name) => _initialColorBlock(name);
+
+// 测试可见的圆角判定(锁死形状正确性,防 C1 回归)
+@visibleForTesting
+bool isInsideRoundedRectForTest(int x, int y, int w, int h, int r) =>
+    _isInsideRoundedRect(x, y, w, h, r);
