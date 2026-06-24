@@ -39,6 +39,7 @@ import random
 import re
 import time
 import urllib.request
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -152,6 +153,10 @@ class WanlingAdapter(BasePlatformAdapter):
         self._token: Optional[str] = None
         self._recv_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        # Resume：本连接最后收到的 dispatch seq（来自服务端 WSMessage.s）。
+        # 重连时若 >0 发 OpResume 让服务端补发断线期间的消息，避免丢消息。
+        # 注意：seq 是 per-client 的，必须记录本 adapter 实例自己收到的最后值。
+        self._last_seq: int = 0
         # _stopping 跟 _running 区别：_running 是父类管理的，需要 _mark_connected 后才 True，
         # 但我们要在 connect 后立刻启动 _receive_loop（_running 还是 False），所以用单独标志。
         self._stopping = False
@@ -261,7 +266,17 @@ class WanlingAdapter(BasePlatformAdapter):
         if hello.get("op") != OP_HELLO:
             raise RuntimeError(f"expected Hello (op=10), got {hello}")
 
+        # 握手必须先 Identify：server ws_handler 要求首条消息必须是 Identify，
+        # 否则直接关闭连接（不支持握手阶段直接发 Resume）。
+        # 故总是先 Identify 让 server 注册 client，再补 Resume 拉取断线期间
+        # 错过的 dispatch（对齐 app/lib/services/websocket_service.dart 的做法）。
+        # server 重启后 dispatch buffer 为空，Resume 不会补到任何消息，无害。
         await self._ws.send(json.dumps({"op": OP_IDENTIFY, "d": {"token": self._token}}))
+        if self._last_seq > 0:
+            await self._ws.send(json.dumps(
+                {"op": OP_RESUME, "d": {"last_seq": self._last_seq}}
+            ))
+            logger.info("Wanling: resume requested (last_seq=%d)", self._last_seq)
 
         return hello.get("d", {}).get("heartbeat_interval", 30000)
 
@@ -352,6 +367,11 @@ class WanlingAdapter(BasePlatformAdapter):
                 pass
             return
         if op == OP_DISPATCH:
+            # 记录 seq 用于断线重连 Resume。服务端 WSMessage.s 是 per-client 单调递增，
+            # 重连带上 last_seq 可让服务端 getAfter 补发断线期间错过的 dispatch。
+            s = msg.get("s")
+            if isinstance(s, int) and s > self._last_seq:
+                self._last_seq = s
             t = msg.get("t")
             if t == EVENT_MESSAGE_CREATE:
                 await self._on_message_create(msg["d"])
@@ -461,7 +481,7 @@ class WanlingAdapter(BasePlatformAdapter):
             source=source,
             media_urls=media_urls,
             media_types=media_types,
-            message_id=d.get("id") or str(int(time.time() * 1000)),
+            message_id=d.get("id") or uuid.uuid4().hex[:12],
             timestamp=datetime.now(),
         )
 
@@ -783,7 +803,7 @@ class WanlingAdapter(BasePlatformAdapter):
 
         # 上传 + 发送图片后可能只剩空白（LLM 整段都在描述图片），跳过 markdown 发送
         if not content.strip():
-            return SendResult(success=True, message_id=str(int(time.time() * 1000)))
+            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
 
         # chat_id is user_id (one-on-one IM)
         try:
@@ -798,7 +818,7 @@ class WanlingAdapter(BasePlatformAdapter):
         except Exception as e:
             return SendResult(success=False, error=str(e))
 
-        return SendResult(success=True, message_id=str(int(time.time() * 1000)))
+        return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
 
     # 匹配本地图片绝对路径（/...jpg|png|gif|webp|bmp）。不匹配 http(s):// URL（hermes
     # 上游 extract_images 已处理）。否定后顾排除 : 防 https:// 被误匹配（: 后第一个 /）。
@@ -1121,7 +1141,7 @@ class WanlingAdapter(BasePlatformAdapter):
 
         if caption:
             await self.send(chat_id, caption)
-        return SendResult(success=True, message_id=str(int(time.time() * 1000)))
+        return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Send typing indicator to user.
