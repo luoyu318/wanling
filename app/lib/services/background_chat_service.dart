@@ -13,6 +13,7 @@ import '../utils/notification_payload.dart';
 /// IPC handler 名称（UI ↔ Service 通信）。
 class _Ipc {
   static const setLifecycle = 'setAppLifecycle';
+  static const setActiveConv = 'setActiveConv';
   static const start = 'start';
   static const stop = 'stop';
 }
@@ -47,6 +48,9 @@ class BackgroundChatService {
   bool _appInForeground = false;
   bool _connecting = false;
   int? _lastSeq;
+  /// 当前正在看的会话（由 UI 经 IPC setActiveConv 同步）。空 = 没在任何会话页。
+  /// 用于决定本地通知要不要弹：前台且正在看该会话时不弹（用户已直接看到）。
+  String? _activeConvId;
 
   BackgroundChatService(this.service);
 
@@ -55,6 +59,13 @@ class BackgroundChatService {
       service.on(_Ipc.setLifecycle).listen((event) {
         final state = (event as Map?)?['state'] as String?;
         _appInForeground = state == 'foreground';
+      });
+
+      // UI 上报当前活跃会话：ChatPage 进入时 setActiveConv(convId)，离开时 setActiveConv(null)。
+      // 用于本地通知过滤——前台且正在看该会话时不弹通知（用户已直接看到）。
+      service.on(_Ipc.setActiveConv).listen((event) {
+        final convId = (event as Map?)?['conv_id'] as String?;
+        _activeConvId = (convId == null || convId.isEmpty) ? null : convId;
       });
 
       service.on(_Ipc.start).listen((event) async {
@@ -195,9 +206,15 @@ class BackgroundChatService {
 
     if (data['sender_type'] != 'agent') return;
 
-    if (_appInForeground) return;
-
+    // convId 先取出来，下面的「正在看该会话」判断要用。
     final convId = data['conversation_id'] as String?;
+
+    // 通知过滤：只在「用户没直接看到这条消息」时弹通知。
+    // 用户直接看到 = APP 在前台 且 正在该会话页（_activeConvId == convId）。
+    // 其他情况（前台但不在该会话 / 在别的页面 / APP 在后台）都弹通知。
+    // 修复前只看 _appInForeground，导致「前台但不在该会话」也漏弹，
+    // 且「后台 + 当前会话」反而误弹。
+    if (_appInForeground && convId == _activeConvId) return;
     final agentId = data['sender_id'] as String?;
     final content = data['content'] as Map<String, dynamic>?;
     if (convId == null || agentId == null || content == null) return;

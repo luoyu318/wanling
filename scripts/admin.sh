@@ -58,6 +58,97 @@ pause() {
     read -r -p "按回车返回菜单..." _
 }
 
+# pgrep_any <pattern1> [pattern2 ...]
+# 任一 pattern 用 pgrep -f 命中即返回 0。
+# 注意：pgrep 默认基本正则，'\|'（或）在不同实现行为不一致，实测本环境匹配不到，
+# 故避免用 'a\|b'，改为多个 pattern 分别 pgrep 再「或」起来，兼容性最好。
+pgrep_any() {
+    local p
+    for p in "$@"; do
+        if pgrep -f "$p" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# pkill_any <signal> <pattern1> [pattern2 ...]
+# 对每个 pattern 发信号，任一命中即可。配合 pgrep_any 使用。
+pkill_any() {
+    local sig="$1"; shift
+    local p
+    for p in "$@"; do
+        pkill -"$sig" -f "$p" 2>/dev/null || true
+    done
+}
+
+# stop_and_wait <label> <pattern1> [pattern2 ...]
+# 先发 SIGTERM 让进程走优雅关闭，轮询等它退出；超时再 SIGKILL 强杀。
+# 配合 server 的优雅关闭（最长 30s），这里轮询上限 35s 给足余量。
+# label 在前、pattern 在后，pattern 可多个（兼容多种进程名形态）。
+stop_and_wait() {
+    local label="$1"; shift
+    local patterns=("$@")
+
+    if ! pgrep_any "${patterns[@]}"; then
+        return 0
+    fi
+
+    info "停止 $label (SIGTERM)..."
+    pkill_any TERM "${patterns[@]}"
+
+    local waited=0
+    local timeout=35
+    while pgrep_any "${patterns[@]}"; do
+        if (( waited >= timeout )); then
+            warn "$label ${timeout}s 未退出，SIGKILL 强杀"
+            pkill_any KILL "${patterns[@]}"
+            sleep 1
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if pgrep_any "${patterns[@]}"; then
+        die "$label 停止失败，请手动处理"
+    fi
+    ok "$label 已停止"
+}
+
+# wait_port_free <port> [timeout_sec]
+# 轮询等待端口释放，防止上一进程还在 TIME_WAIT / 未完全关闭就 bind 冲突。
+wait_port_free() {
+    local port="$1"
+    local timeout="${2:-10}"
+    local waited=0
+    while ss -tlnH 2>/dev/null | grep -q ":$port "; do
+        if (( waited >= timeout )); then
+            warn "端口 $port 仍被占用 (等了 ${timeout}s)"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
+# wait_health <url> [timeout_sec]
+# 轮询 health 端点判断服务真正可用，比「端口在」更可靠（能抓到启动后立即崩溃）。
+wait_health() {
+    local url="$1"
+    local timeout="${2:-15}"
+    local waited=0
+    while ! curl -sf "$url" >/dev/null 2>&1; do
+        if (( waited >= timeout )); then
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
 # ─── 菜单项 ───────────────────────────────────────────────────────────────
 
 menu_add_user() {
@@ -126,37 +217,47 @@ menu_build_apk() {
 
 menu_restart_local_server() {
     info "重启本地服务..."
-    pkill -f "wanling-server\|server/cmd/main" 2>/dev/null || true
-    sleep 1
+
+    # 1. 优雅停旧进程：SIGTERM 轮询等退出（配合 server 优雅关闭最长 30s），
+    #    超时 SIGKILL。再等端口释放，避免 bind 冲突。
+    stop_and_wait "server" "wanling-server" "server/cmd/main"
+    local port
+    port=$(grep -E '^SERVER_PORT=' "$SERVER_DIR/.env" 2>/dev/null | cut -d= -f2)
+    port="${port:-18008}"
+    wait_port_free "$port" || die "端口 $port 无法释放"
 
     info "编译 server..."
     (cd "$SERVER_DIR" && go build -o /tmp/wanling-server ./cmd/main.go) || die "编译失败"
 
+    # 2. 日志改追加（>>），避免重启冲掉上次的报错线索。
     cd "$ROOT"
     nohup bash -c 'set -a && . ./server/.env && set +a && /tmp/wanling-server' \
-        > /tmp/wanling-server.log 2>&1 &
+        >> /tmp/wanling-server.log 2>&1 &
     disown 2>/dev/null || true
-    sleep 2
-    if ss -tlnp 2>/dev/null | grep -q ":18008"; then
+
+    # 3. 用 health 端点轮询判定「真正可用」，而非仅看端口在。
+    #    端口在但进程秒崩（如 DB 连不上）也能被抓到。
+    if wait_health "http://localhost:$port/health" 15; then
         ok "服务已启动 (PID $(pgrep -f wanling-server | head -1))"
     else
-        warn "服务可能未起来，看 /tmp/wanling-server.log"
+        warn "服务未在 15s 内就绪，看 /tmp/wanling-server.log"
+        tail -15 /tmp/wanling-server.log 2>/dev/null
     fi
     pause
 }
 
 menu_restart_app() {
     info "重启桌面 APP..."
-    # flutter_tools.snapshot 是父进程；bundle/app 是它衍生出的真正 APP，kill 父不会自动收子
-    pkill -f "flutter_tools.snapshot run" 2>/dev/null || true
-    pkill -f "$APP_DIR/build/linux/.*/bundle/app" 2>/dev/null || true
-    sleep 2
+    # flutter_tools.snapshot 是父进程；bundle/app 是它衍生出的真正 APP，kill 父不会自动收子。
+    # 用 stop_and_wait 优雅等待退出，避免旧 APP 还在就起新的导致重复窗口。
+    stop_and_wait "Flutter runner" "flutter_tools.snapshot run"
+    stop_and_wait "桌面 APP" "$APP_DIR/build/linux/.*/bundle/app"
     (
         cd "$APP_DIR"
         nohup bash -c 'PUB_HOSTED_URL=https://pub.flutter-io.cn \
                         FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn \
                         flutter run -d linux --release' \
-            > /tmp/chat-app.log 2>&1 &
+            >> /tmp/chat-app.log 2>&1 &
         disown
     )
     ok "APP 启动中（30s 后可用）"

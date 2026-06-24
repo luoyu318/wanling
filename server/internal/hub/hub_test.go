@@ -252,3 +252,47 @@ func TestSendToUserMissingKeyReturnsNil(t *testing.T) {
 		t.Fatalf("SendToUser should return nil for missing key, got %v", err)
 	}
 }
+
+// TestIsUserViewingConv 验证「用户是否正在看某会话」的判断逻辑，
+// 该判断决定 agent 发消息时要不要计未读（修复「看了却显示未读」）。
+// 覆盖：单端在看、多端任一看、没连接、看的是别的会话。
+func TestIsUserViewingConv(t *testing.T) {
+	h := NewHub(nil, nil)
+	go h.Run()
+
+	// user-1 两个连接（多端登录），分别在 convA 和 convB
+	c1 := newTestClient("user-1", "user")
+	c1.SetActiveConv("convA")
+	c2 := newTestClient("user-1", "user")
+	c2.SetActiveConv("convB")
+	h.Register <- c1
+	h.Register <- c2
+	time.Sleep(10 * time.Millisecond)
+
+	// 1. 任一连接在看 convA → true（c1 在看）
+	if !h.IsUserViewingConv("user-1", "convA") {
+		t.Error("user-1 should be viewing convA (via c1)")
+	}
+	// 2. 任一连接在看 convB → true（c2 在看）
+	if !h.IsUserViewingConv("user-1", "convB") {
+		t.Error("user-1 should be viewing convB (via c2)")
+	}
+	// 3. 没有任何连接在看 convC → false
+	if h.IsUserViewingConv("user-1", "convC") {
+		t.Error("user-1 should NOT be viewing convC")
+	}
+	// 4. 不存在的 user → false
+	if h.IsUserViewingConv("user-2", "convA") {
+		t.Error("nonexistent user-2 should not be viewing anything")
+	}
+	// 5. 清除 c1 的 activeConv 后，convA 不再有人看 → false
+	c1.SetActiveConv("")
+	time.Sleep(5 * time.Millisecond)
+	if h.IsUserViewingConv("user-1", "convA") {
+		t.Error("convA should not be viewed after c1 cleared")
+	}
+	// 6. convB 仍被 c2 看 → true
+	if !h.IsUserViewingConv("user-1", "convB") {
+		t.Error("convB should still be viewed by c2")
+	}
+}

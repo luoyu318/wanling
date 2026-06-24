@@ -115,6 +115,18 @@ func (h *WSHandler) readPump(client *hub.Client) {
 				client.Send <- m
 			}
 
+		case model.OpSetActiveConv:
+			// 前端上报「我正在看 conv X」/「我退出会话了」。
+			// 服务端据此决定 agent 发消息时要不要给该会话计未读。
+			// conv_id 为空 = 退出会话。仅 user 角色有意义（agent 不计未读）。
+			var active struct {
+				ConvID string `json:"conv_id"`
+			}
+			if len(msg.D) > 0 {
+				_ = json.Unmarshal(msg.D, &active)
+			}
+			client.SetActiveConv(active.ConvID)
+
 		default:
 			if msg.Op == model.OpDispatch || msg.T != "" {
 				if h.onMessage != nil {

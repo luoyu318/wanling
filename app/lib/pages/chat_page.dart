@@ -14,6 +14,7 @@ import '../providers/chat_provider.dart' show ChatNotifier, chatProvider, wsProv
 import '../providers/conversation_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/typing_provider.dart';
+import '../services/websocket_service.dart';
 import '../widgets/message_bubble.dart' show MessageBubble, formatTimestamp;
 import '../widgets/message_context_menu.dart';
 import '../widgets/message_input_bar.dart';
@@ -79,9 +80,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   /// 订阅 MESSAGE_CREATE：agent 回复到达时清掉 typing。
   StreamSubscription<WSMessage>? _msgSub;
-  /// 缓存 dispose 阶段需要的 notifier 引用。
+  /// 缓存 dispose 阶段需要的 notifier / ws 引用。
   late final ConversationListNotifier _convNotifier;
   late final TypingNotifier _typingNotifier;
+  late final WebSocketService _ws;
 
   @override
   void initState() {
@@ -91,8 +93,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _typingNotifier = ref.read(typingProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
     _convNotifier.setActiveConv(widget.convId);
-    final ws = ref.read(wsProvider);
-    _msgSub = ws.messages
+    _ws = ref.read(wsProvider);
+    // 上报当前会话给服务端（op=3）：agent 发消息时该会话不计未读。
+    // 与本地 _convNotifier.setActiveConv 互补：本地管 WS 收消息时的乐观计数，
+    // 服务端管 unread_count 持久值（列表刷新/多端一致依赖它）。
+    _ws.setActiveConv(widget.convId);
+    _msgSub = _ws.messages
         .where((m) => m.t == 'MESSAGE_CREATE')
         .listen((m) {
       final d = m.d as Map<String, dynamic>?;
@@ -109,6 +115,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _hideMessageMenu(); // 防止页面退出时 Overlay 残留
     _msgSub?.cancel();
     _convNotifier.setActiveConv(null);
+    // 通知服务端：用户已离开该会话，后续 agent 消息恢复计未读。
+    _ws.setActiveConv(null);
     _scrollCtrl.dispose();
     _selectionFocusNode.dispose();
     super.dispose();

@@ -13,12 +13,14 @@ import (
 	"github.com/wanling/server/internal/storage"
 )
 
-// TestFileHandler_Download_AllowsAnyAuthenticatedUser 验证去 owner 校验后：
-//   - user A 上传的文件，user B 也能下载（200，非 403）
+// TestFileHandler_Download_Ownership 验证文件下载的归属校验（防 IDOR）：
+//   - owner 自己能下载（200）
+//   - 其他 user 被拒（403）
+//   - agent 用 ownerID 能下载它服务的 user 的文件（200）
 //
-// 这是 markdown-image-platformhint spec Task 1 的核心验证点：依赖 UUID 不可枚举
-// + JWT 强制登录来保证安全，而不是 owner_id 比对。
-func TestFileHandler_Download_AllowsAnyAuthenticatedUser(t *testing.T) {
+// UUID 不可枚举只是抬高攻击成本，不能替代归属校验——任意登录用户
+// 拿到 file UUID（如分享、日志泄露）即可下载他人文件，故必须比对 owner_id。
+func TestFileHandler_Download_Ownership(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	frepo := repository.NewFileRepo(db)
 	store, err := storage.NewLocalStorage(t.TempDir())
@@ -71,20 +73,45 @@ func TestFileHandler_Download_AllowsAnyAuthenticatedUser(t *testing.T) {
 	}
 	fileID = resp.ID
 
-	// 用 downloader 身份下载 — 应该 200（去 owner 校验后）
+	// 通用下载：路由只注册一次，身份通过闭包变量注入。
+	// 反复 r.GET 会触发 gin 路由重复注册 panic，故用闭包传递身份。
+	var curRole, curUser, curOwner string
 	r.GET("/api/files/:id", func(c *gin.Context) {
-		c.Set("userID", downloader.ID)
-		c.Set("role", "user")
+		c.Set("userID", curUser)
+		c.Set("role", curRole)
+		if curOwner != "" {
+			c.Set("ownerID", curOwner)
+		}
 		h.Download(c)
 	})
-	req2 := httptest.NewRequest("GET", "/api/files/"+fileID, nil)
-	w2 := httptest.NewRecorder()
-	r.ServeHTTP(w2, req2)
-
-	if w2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", w2.Code, w2.Body.String())
+	downloadAs := func(role, userID, ownerID string) *httptest.ResponseRecorder {
+		curRole, curUser, curOwner = role, userID, ownerID
+		greq := httptest.NewRequest("GET", "/api/files/"+fileID, nil)
+		gw := httptest.NewRecorder()
+		r.ServeHTTP(gw, greq)
+		return gw
 	}
-	if !bytes.Equal(w2.Body.Bytes(), []byte("hello world")) {
-		t.Errorf("content mismatch: got %q", w2.Body.String())
+
+	// 1. owner 自己下载 → 200
+	if w2 := downloadAs("user", uploader.ID, ""); w2.Code != http.StatusOK {
+		t.Errorf("owner download: expected 200, got %d body=%s", w2.Code, w2.Body.String())
+	} else if !bytes.Equal(w2.Body.Bytes(), []byte("hello world")) {
+		t.Errorf("owner download content mismatch: got %q", w2.Body.String())
+	}
+
+	// 2. 其他 user 下载 → 403（IDOR 已修复）
+	if w3 := downloadAs("user", downloader.ID, ""); w3.Code != http.StatusForbidden {
+		t.Errorf("non-owner user download: expected 403, got %d body=%s", w3.Code, w3.Body.String())
+	}
+
+	// 3. agent 用 ownerID 下载它服务的 user 的文件 → 200
+	//    agent 自己没有文件（agent_id 不在 users 表），ownerID 是它服务的 user。
+	if w4 := downloadAs("agent", "some-agent-id", uploader.ID); w4.Code != http.StatusOK {
+		t.Errorf("agent download owner file: expected 200, got %d body=%s", w4.Code, w4.Body.String())
+	}
+
+	// 4. agent 用错误的 ownerID → 403
+	if w5 := downloadAs("agent", "some-agent-id", downloader.ID); w5.Code != http.StatusForbidden {
+		t.Errorf("agent download non-owner file: expected 403, got %d body=%s", w5.Code, w5.Body.String())
 	}
 }

@@ -3,13 +3,14 @@ package model
 import "encoding/json"
 
 const (
-	OpDispatch     = 0
-	OpHeartbeat    = 1
-	OpIdentify     = 2
-	OpResume       = 6
-	OpReconnect    = 7
-	OpHello        = 10
-	OpHeartbeatACK = 11
+	OpDispatch      = 0
+	OpHeartbeat     = 1
+	OpIdentify      = 2
+	OpSetActiveConv = 3 // client 上报当前正在看的会话，供服务端判断要不要计未读
+	OpResume        = 6
+	OpReconnect     = 7
+	OpHello         = 10
+	OpHeartbeatACK  = 11
 )
 
 type WSMessage struct {

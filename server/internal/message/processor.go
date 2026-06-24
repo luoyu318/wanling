@@ -99,8 +99,10 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		log.Println("更新会话缓存失败:", err)
 		return
 	}
-	// agent → user 方向累加未读（user 给 agent 的消息不算 user 自己的未读）
-	if senderType == "agent" {
+	// agent → user 方向累加未读（user 给 agent 的消息不算 user 自己的未读）。
+	// 但若用户正在看该会话（前端 op=3 上报了 activeConv），不计未读——
+	// 否则会出现「用户明明看过了，刷新列表却显示未读」的矛盾。
+	if senderType == "agent" && !p.hub.IsUserViewingConv(userID, convID) {
 		if err := p.convRepo.IncrUnreadTx(tx, convID); err != nil {
 			log.Println("未读计数失败:", err)
 			return

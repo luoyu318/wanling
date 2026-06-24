@@ -97,12 +97,20 @@ EOF
 ok "远程二进制已更新"
 
 # ─── 步骤 2.5：远程数据库迁移 ────────────────────────────────────────────────
+# 迁移失败默认 fail-fast：schema 不匹配会导致重启后的 server 查表 500，比现在停下更糟。
+# 已是最新（无待应用）时 migrate 退出码为 0，不会误伤。需强制跳过用 SKIP_MIGRATE_FAIL=1。
 info "[2.5/4] 编译迁移工具并推送到远程..."
 LOCAL_MIGRATE="/tmp/wanling-migrate-linux"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$LOCAL_MIGRATE" ./cmd/migrate
 rsync -az "$LOCAL_MIGRATE" "${REMOTE_HOST}:/tmp/wanling-migrate"
 rsync -az --delete "$ROOT/server/migrations/" "${REMOTE_HOST}:${REMOTE_PATH}/migrations/"
-ssh "$REMOTE_HOST" "cd ${REMOTE_PATH} && /tmp/wanling-migrate --env=${REMOTE_PATH}/etc/.env" || warn "迁移未全部完成(非 fatal)"
+if ! ssh "$REMOTE_HOST" "cd ${REMOTE_PATH} && /tmp/wanling-migrate --env=${REMOTE_PATH}/etc/.env"; then
+    if [[ "${SKIP_MIGRATE_FAIL:-}" == "1" ]]; then
+        warn "迁移失败，但 SKIP_MIGRATE_FAIL=1，继续发布（风险自负：server 可能起不来）"
+    else
+        die "数据库迁移失败（schema 不匹配会让重启后的 server 查表 500）。排查：ssh $REMOTE_HOST 'cd ${REMOTE_PATH} && /tmp/wanling-migrate --env=${REMOTE_PATH}/etc/.env --status'。强制继续：SKIP_MIGRATE_FAIL=1 ./scripts/deploy.sh"
+    fi
+fi
 ok "数据库迁移完成"
 
 # ─── 步骤 3：systemctl restart ────────────────────────────────────────────
@@ -115,17 +123,36 @@ fi
 
 # ─── 步骤 4：健康检查 ────────────────────────────────────────────────────
 info "[4/4] 健康检查..."
-sleep 2
-if ! ssh "$REMOTE_HOST" "systemctl is-active --quiet $SERVICE_NAME"; then
-    die "服务未起来。检查：ssh $REMOTE_HOST 'sudo journalctl -u $SERVICE_NAME -n 50'"
+# 轮询 is-active（最多 15s），取代固定 sleep 2。systemctl restart 是异步的，
+# 新进程可能还在初始化（连 DB、注册路由），2s 不够也不准。
+active_ok="false"
+i=0
+for i in $(seq 1 15); do
+    if ssh "$REMOTE_HOST" "systemctl is-active --quiet $SERVICE_NAME"; then
+        active_ok="true"
+        break
+    fi
+    sleep 1
+done
+if [[ "$active_ok" != "true" ]]; then
+    die "服务 15s 内未就绪。检查：ssh $REMOTE_HOST 'sudo journalctl -u $SERVICE_NAME -n 50'"
 fi
-ok "服务运行中"
+ok "服务运行中（就绪于 ${i}s）"
 
 if [[ -n "$HEALTH_URL" ]]; then
-    if curl -sf -o /dev/null --max-time 5 "$HEALTH_URL"; then
+    # HTTP 健康同样轮询，避免「服务在但路由还没起来」的窗口期误判
+    http_ok="false"
+    for j in $(seq 1 10); do
+        if curl -sf -o /dev/null --max-time 5 "$HEALTH_URL"; then
+            http_ok="true"
+            break
+        fi
+        sleep 1
+    done
+    if [[ "$http_ok" == "true" ]]; then
         ok "HTTP 健康: $HEALTH_URL"
     else
-        warn "HTTP 健康检查失败: $HEALTH_URL（可能服务还在初始化，10s 后再试）"
+        warn "HTTP 健康检查失败: $HEALTH_URL（is-active 已通过，可能反代/防火墙问题）"
     fi
 fi
 

@@ -56,8 +56,17 @@ Widget _slideTransition(
 }
 
 /// 构建统一的页面转场 Page。
-CustomTransitionPage<void> _cupertinoPage(Widget child) {
+///
+/// 必须传入 key（GoRouterState.pageKey）：pushReplacement 时，新旧 page 的 key
+/// 不同，Flutter 才会销毁旧 page 的 State 并重建新 page（触发 initState）。
+/// 缺 key 时 Flutter 会复用旧 State，导致 initState 不重跑——表现为 ChatPage
+/// 切换会话时 markRead / setActiveConv 等初始化逻辑失效（未读不清等 bug）。
+CustomTransitionPage<void> _cupertinoPage({
+  required Widget child,
+  required ValueKey<String> key,
+}) {
   return CustomTransitionPage<void>(
+    key: key,
     child: child,
     transitionDuration: const Duration(milliseconds: 200),
     reverseTransitionDuration: const Duration(milliseconds: 200),
@@ -96,59 +105,90 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(
         path: '/splash',
-        pageBuilder: (_, _) => _cupertinoPage(const SplashPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const SplashPage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/login',
-        pageBuilder: (_, _) => _cupertinoPage(const LoginPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const LoginPage(),
+          key: state.pageKey,
+        ),
       ),
       // 底部导航容器：HomePage 内部用 PageView 实现 tab 切换（支持左右跟手滑动）
       GoRoute(
         path: '/',
-        pageBuilder: (_, _) => _cupertinoPage(const HomePage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const HomePage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/agent/:id',
-        pageBuilder: (_, s) => _cupertinoPage(AgentDetailPage(
-          agentId: s.pathParameters['id']!,
-        )),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: AgentDetailPage(agentId: state.pathParameters['id']!),
+          key: state.pageKey,
+        ),
       ),
       // Chat 路由：convId 走 path 参数，agentId 走 query。
       // 调用方在 push 前必须已 findOrCreateConversation 拿到 convId。
       GoRoute(
         path: '/chat/:convId',
-        pageBuilder: (_, state) {
+        pageBuilder: (context, state) {
           final convId = state.pathParameters['convId']!;
           final agentId = state.uri.queryParameters['agentId']!;
-          return _cupertinoPage(ChatPage(convId: convId, agentId: agentId));
+          return _cupertinoPage(
+            child: ChatPage(convId: convId, agentId: agentId),
+            key: state.pageKey,
+          );
         },
       ),
       GoRoute(
         path: '/settings',
-        pageBuilder: (_, _) => _cupertinoPage(const SettingsPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const SettingsPage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/change-password',
-        pageBuilder: (_, _) => _cupertinoPage(const ChangePasswordPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const ChangePasswordPage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/profile/edit',
-        pageBuilder: (_, _) => _cupertinoPage(const EditProfilePage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const EditProfilePage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/about',
-        pageBuilder: (_, _) => _cupertinoPage(const AboutPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const AboutPage(),
+          key: state.pageKey,
+        ),
       ),
       // 扫码配对：hermes 终端扫码授权连接 Agent。
       GoRoute(
         path: '/pair/scan',
-        pageBuilder: (_, _) => _cupertinoPage(const ScanPairPage()),
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const ScanPairPage(),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/pair/select-agent',
-        pageBuilder: (_, state) {
+        pageBuilder: (context, state) {
           final ticket = state.uri.queryParameters['ticket'] ?? '';
-          return _cupertinoPage(PairSelectAgentPage(ticketId: ticket));
+          return _cupertinoPage(
+            child: PairSelectAgentPage(ticketId: ticket),
+            key: state.pageKey,
+          );
         },
       ),
     ],

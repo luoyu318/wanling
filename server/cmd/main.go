@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,9 +56,14 @@ func main() {
 		DB:       cfg.Redis.DB,
 	})
 
+	// Redis 是可选增强：连不上不致命，降级到单机模式。
+	// - presence：方法对 nil rdb 短路返回（在线状态恒为离线，IM 体验略降）。
+	// - ratelimit：传 nil 走内存限流（仅单实例有效），不阻塞业务。
+	// 多实例部署仍需 Redis 保证一致限流 / 在线状态，此时 Ping 失败应查部署。
 	p := presence.New(rdb)
 	if err := p.Ping(); err != nil {
-		log.Fatal("Redis 连接失败:", err)
+		log.Printf("[WARN] Redis 连接失败（降级为单机模式，限流/在线状态仅本实例有效）: %v", err)
+		rdb = nil
 	}
 
 	h := hub.NewHub(p, agentRepo)
@@ -218,8 +227,32 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	log.Printf("服务启动在端口 %s", cfg.Server.Port)
-	if err := r.Run(":" + cfg.Server.Port); err != nil {
-		log.Fatal("服务启动失败:", err)
+	// 优雅关闭：SIGTERM/SIGINT 时先停止 accept 新连接，
+	// 等活跃请求（含 WS）写完再关 DB pool，避免 kill 丢消息。
+	// 用 http.Server 替代 r.Run()，拿到 Shutdown 的控制权。
+	srv := &http.Server{
+		Addr:    ":" + cfg.Server.Port,
+		Handler: r,
 	}
+
+	go func() {
+		log.Printf("服务启动在端口 %s", cfg.Server.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("服务启动失败:", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("收到退出信号，开始优雅关闭（最长等待 30s）...")
+
+	// hub 停止后台广播，cleanup goroutine 通过 cleanupCancel 退出。
+	cleanupCancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("[WARN] 优雅关闭超时或出错: %v", err)
+	}
+	log.Println("服务已退出")
 }
