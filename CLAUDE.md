@@ -115,12 +115,12 @@ Agent 平台插件 (plugin/hermes-plugin)
 - **lib/router_helpers.dart** — `chatRoute(convId, agentId)` 拼路径 + `startChatAndPush(context, ref, agent)` 统一 findOrCreate + 跳转。
 - **lib/services/api_service.dart** — Dio HTTP 封装。含 `@visibleForTesting withDio` 构造和 dio getter；Dio Interceptor 在 401 时触发全局登出回调（由 authProvider 反向注入，避免 Riverpod 循环依赖）。
 - **lib/services/websocket_service.dart** — WebSocket 客户端，实现完整 Opcode 协议 + 自动重连 + OpResume 补发。
-- **lib/services/background_chat_service.dart** — `flutter_background_service` Android 前台服务，APP 后台/被杀时仍能接收消息推送（保活 WS 连接，3s 重连兜底）。跑在**独立 isolate**，看不到 UI 状态，故通过 IPC（`service.on('setActiveConv')`）接收 UI 同步的「当前正在看的会话」(`_activeConvId`)。收消息时判断「要不要弹通知」：`_appInForeground && convId == _activeConvId` 才跳过（前台但不在该会话仍要弹），避免用户正在看的会话误弹系统通知。
-- **lib/services/notification_service.dart** — `flutter_local_notifications` 封装，后台收到消息时弹通知，点击跳转对应会话。**点击跳转用智能单例**（`main.dart` 注入 onTap）：用 `routerDelegate.currentConfiguration` 读真实栈顶 location，若已在某个 `/chat/X`（栈顶是 ChatPage）则 `router.pushReplacement('/chat/Y')` 替换栈顶（避免无限叠加），否则 `router.push('/chat/Y')`。**注意**：ChatPage 是 push 出来的栈帧（基础 location 仍是 `/`），不能用 `router.replace`（replace 替换路由目标 URI 不替换 push 栈帧，栈仍叠加）。
+- **lib/services/background_chat_service.dart** — `flutter_background_service` Android 前台服务，APP 后台/被杀时仍能接收消息推送（保活 WS 连接，3s 重连兜底）。跑在**独立 isolate**，看不到 UI 状态，故通过 IPC（`service.on('setActiveConv')`）接收 UI 同步的「当前正在看的会话」(`_activeConvId`)。收消息时判断「要不要弹通知」：`_appInForeground && convId == _activeConvId` 才跳过（前台但不在该会话仍要弹），避免用户正在看的会话误弹系统通知。**未读计数**：`UnreadCounter`（isolate 本地 Map，进入会话清零，复用 setActiveConv IPC）。**头像同步**：`syncAgentAvatar` IPC 接收 UI 同步的 agent avatar_url，URL 变化时清内存+文件缓存（`clearAvatarFileCache`）。收 agent 消息时按 `_unread.get(convId)` 拼 `[N条]` 前缀，并加载头像（内存→文件缓存→下载→首字母色块兜底）。进入会话时 `cancel(convId.hashCode)` 清通知横幅（不点通知直接进 APP 读消息横幅也消失）。
+- **lib/services/notification_service.dart** — `flutter_local_notifications` 封装，后台收到消息时弹通知，点击跳转对应会话。**通知样式**：普通文本样式 + `largeIcon`（192x192 方形圆角头像 bitmap，折叠态右侧大头像位），body 用 `[N条]agent名: 消息` 格式（N>1 时）。**点击跳转用智能单例**（`main.dart` 注入 onTap）：用 `routerDelegate.currentConfiguration` 读真实栈顶 location，若已在某个 `/chat/X`（栈顶是 ChatPage）则 `router.pushReplacement('/chat/Y')` 替换栈顶（避免无限叠加），否则 `router.push('/chat/Y')`。**注意**：ChatPage 是 push 出来的栈帧（基础 location 仍是 `/`），不能用 `router.replace`（replace 替换路由目标 URI 不替换 push 栈帧，栈仍叠加）。
 - **lib/providers/** — Riverpod 状态管理：
   - `authProvider` — 认证（含 user 信息，restoreSession 调 /me）
   - `agentListProvider` — Agent CRUD
-  - `conversationProvider` — IM 列表（订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态）。`setActiveConv(convId)` 方法：发 WS op=3 上报正在看的会话，同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate（让后台通知逻辑也感知，避免正在看的会话误弹通知）。
+  - `conversationProvider` — IM 列表（订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态）。`setActiveConv(convId)` 方法：发 WS op=3 上报正在看的会话，同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate（让后台通知逻辑也感知，避免正在看的会话误弹通知）。`load()` 拉列表成功后调 `syncAgentAvatarsToBgService`，把每个 agent 的 avatar_url 经 IPC 同步到 isolate（供通知下载头像）。
   - `chatProvider` — family，key 是 record `({convId, agentId})`
   - `settingsProvider` — 服务器地址（默认 `http://localhost:18008`）
   - `savedLoginsProvider` — 多账号管理（`secure_storage` 加密存储历史登录，支持切换）
@@ -158,8 +158,9 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `ConnectionBanner` — WS 断线时顶部条幅提示
   - `FullScreenImagePage` — `photo_view` 全屏查看 + 双指缩放
   - `CardButton` / `CardStateBadge` / `CountdownTimer` — **审批卡片组件三件套**。`CardButton` 三色实心按钮（primary 绿/info 蓝/danger 红）+ Material Icons（check/shield/close）+ 三态（active/selected/disabled）；`CardStateBadge` 右上角终态徽章（✓已批准/✗已拒绝/⏰已超时）；`CountdownTimer` 倒计时（按 expires_at 自算，每秒刷新）
-- **lib/utils/** — 6 个工具：
+- **lib/utils/** — 7 个工具：
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
+  - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用
   - `dio_error.dart` — 统一 Dio 异常 → 用户可读文案
   - `notification_payload.dart` — 通知点击 payload 解析（路由到对应会话）
   - `permission_helper.dart` — `permission_handler` 封装，运行时权限申请（图片/通知）

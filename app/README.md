@@ -48,8 +48,8 @@ lib/
 ├── services/
 │   ├── api_service.dart     # Dio HTTP 封装（401 触发全局登出）
 │   ├── websocket_service.dart  # WS 客户端 + Opcode 协议 + 自动重连 + OpResume 补发
-│   ├── background_chat_service.dart  # Android 前台服务，被杀后仍收消息
-│   └── notification_service.dart     # flutter_local_notifications 封装
+│   ├── background_chat_service.dart  # Android 前台服务，被杀后仍收消息；未读计数 + 头像 IPC 同步
+│   └── notification_service.dart     # flutter_local_notifications 封装；文本样式+largeIcon 头像 + [N条] 计数
 ├── providers/               # Riverpod 状态管理
 │   ├── auth_provider.dart
 │   ├── agent_provider.dart
@@ -65,6 +65,7 @@ lib/
 ├── widgets/                 # 14 个组件（见下方"组件清单"）
 └── utils/
     ├── app_lifecycle_observer.dart   # 前后台切换 → 启停后台服务
+    ├── avatar_bitmap.dart            # 通知头像加载(下载裁圆角+色块兜底,isolate 可用)
     ├── dio_error.dart                # Dio 异常 → 用户可读文案
     ├── notification_payload.dart     # 通知点击路由解析
     ├── permission_helper.dart        # 运行时权限申请
