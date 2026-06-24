@@ -7,11 +7,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../widgets/avatar.dart';
 
-/// 通知头像尺寸(方形)。与系统 MessagingStyle 头像显示尺寸匹配。
-const _kAvatarSize = 48;
+/// 通知头像尺寸(方形)。Android largeIcon 建议大尺寸(系统自动缩放),
+/// 微信用 173x173,我们用 192(xxxhdpi 级)保证各 DPI 清晰。
+const _kAvatarSize = 192;
 
-/// 方形圆角半径(与 Avatar 组件的 ClipRRect 视觉一致)。
-const _kCornerRadius = 9;
+/// 方形圆角半径(与 _kAvatarSize 成比例 ≈19%,与 APP Avatar 的 9px@48 视觉一致)。
+const _kCornerRadius = 36;
 
 /// 加载通知用头像 bitmap。
 ///

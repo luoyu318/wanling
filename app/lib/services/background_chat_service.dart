@@ -90,12 +90,15 @@ class BackgroundChatService {
 
       // UI 上报当前活跃会话：ChatPage 进入时 setActiveConv(convId)，离开时 setActiveConv(null)。
       // 用于本地通知过滤——前台且正在看该会话时不弹通知（用户已直接看到）。
-      // 进入会话时顺手清零该会话的通知未读计数（复用现有通道,不新增 IPC）。
+      // 进入会话时:清零未读计数 + 取消该会话的通知横幅(用户已读到,横幅该消失)。
+      // 通知 id 与 notification_service 一致 = convId.hashCode。
       service.on(_Ipc.setActiveConv).listen((event) {
         final convId = (event as Map?)?['conv_id'] as String?;
         _activeConvId = (convId == null || convId.isEmpty) ? null : convId;
         if (_activeConvId != null) {
           _unread.clear(_activeConvId!);
+          // 取消该会话的通知横幅(不点通知、直接进 APP 读消息时横幅也消失)
+          NotificationService.instance.cancel(_activeConvId!.hashCode);
         }
       });
 

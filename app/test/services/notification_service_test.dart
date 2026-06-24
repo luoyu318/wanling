@@ -16,42 +16,16 @@ void main() {
       expect(payload.agentName, '白羽');
     });
 
-    test('ByteArrayAndroidIcon 接受 Uint8List bitmap', () {
+    test('ByteArrayAndroidBitmap 接受 Uint8List bitmap', () {
       final avatarBytes = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
-      final icon = ByteArrayAndroidIcon(avatarBytes);
-      expect(icon, isNotNull);
+      final bitmap = ByteArrayAndroidBitmap(avatarBytes);
+      expect(bitmap, isNotNull);
     });
 
-    test('Person.icon 接受 ByteArrayAndroidIcon', () {
-      final avatarBytes = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
-      final person = Person(
-        name: '白羽',
-        icon: ByteArrayAndroidIcon(avatarBytes),
-      );
-      expect(person.name, '白羽');
-      expect(person.icon, isNotNull);
-    });
-
-    test('Message 构造(text + timestamp + person)', () {
-      final person = Person(name: '白羽');
-      final msg = Message('你好', DateTime(2026, 6, 24), person);
-      expect(msg.text, '你好');
-    });
-
-    test('MessagingStyleInformation 构造(person + messages)', () {
-      final person = Person(name: '白羽');
-      final style = MessagingStyleInformation(
-        person,
-        messages: [Message('你好', DateTime.now(), person)],
-      );
-      expect(style, isNotNull);
-    });
-
-    test('body 计数前缀 — unreadCount>1 时加 [N条]', () {
-      // 复用 notification_service 的静态方法验证计数前缀逻辑
-      expect(NotificationService.prefixCount(1, '你好'), '你好');
-      expect(NotificationService.prefixCount(2, '你好'), '[2条] 你好');
-      expect(NotificationService.prefixCount(5, '在吗'), '[5条] 在吗');
+    test('body 微信格式 — N>1 时 [N条]agent名: 消息', () {
+      expect(NotificationService.prefixBody(1, '白羽', '你好'), '你好');
+      expect(NotificationService.prefixBody(2, '白羽', '你好'), '[2条]白羽: 你好');
+      expect(NotificationService.prefixBody(5, '黑羽', '在吗'), '[5条]黑羽: 在吗');
     });
   });
 }

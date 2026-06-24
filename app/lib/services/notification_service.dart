@@ -115,7 +115,10 @@ class NotificationService {
     Uint8List? avatarBytes,
     required String agentName,
   }) async {
-    final displayBody = prefixCount(unreadCount, body);
+    // body 用微信格式:[N条]agent名: 消息(N>1 时)。普通文本样式 + largeIcon
+    // (经 dump 验证:微信/QQ 都用普通文本样式+largeIcon,折叠态右侧显示大头像;
+    //  MessagingStyle 是对话样式,折叠态强制小头像,故弃用)。
+    final displayBody = prefixBody(unreadCount, agentName, body);
 
     final androidDetails = AndroidNotificationDetails(
       _Channels.messages,
@@ -124,7 +127,8 @@ class NotificationService {
       importance: Importance.high,
       priority: Priority.high,
       category: AndroidNotificationCategory.message,
-      styleInformation: _buildMessagingStyle(agentName, displayBody, avatarBytes),
+      // largeIcon 渲染在通知右侧大头像位(192x192 bitmap,系统自动缩放)。
+      largeIcon: avatarBytes != null ? ByteArrayAndroidBitmap(avatarBytes) : null,
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -146,28 +150,17 @@ class NotificationService {
     );
   }
 
-  /// body 前缀未读计数(N>1 时加「[N条]」前缀)。纯函数便于单测。
-  @visibleForTesting
-  static String prefixCount(int count, String body) =>
-      count > 1 ? '[$count条] $body' : body;
-
-  /// 构造 MessagingStyle(仅 Android;iOS 走 title/body 默认样式)。
-  ///
-  /// [avatarBytes] 塞进 Person.icon(系统原样显示,故预处理成方形+圆角)。
-  MessagingStyleInformation _buildMessagingStyle(
-    String agentName,
-    String body,
-    Uint8List? avatarBytes,
-  ) {
-    final person = Person(
-      name: agentName,
-      icon: avatarBytes != null ? ByteArrayAndroidIcon(avatarBytes) : null,
-    );
-    return MessagingStyleInformation(
-      person,
-      messages: [Message(body, DateTime.now(), person)],
-    );
+  /// 取消指定通知(进入会话读了消息后,清掉该会话的横幅)。
+  /// id 与 show 时一致 = convId.hashCode。
+  void cancel(int id) {
+    _plugin.cancel(id);
   }
+
+  /// 构造通知 body(微信格式):N>1 时 `[N条]agent名: 消息`,否则 `消息`。
+  /// 纯函数便于单测。
+  @visibleForTesting
+  static String prefixBody(int count, String agentName, String body) =>
+      count > 1 ? '[$count条]$agentName: $body' : body;
 
   /// 取冷启动 payload（用户从通知拉起 APP 时携带的会话信息）。
   /// 取一次后清空，避免重复跳转。
