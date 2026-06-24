@@ -42,7 +42,7 @@ flutter build apk --release       # 输出 build/app/outputs/flutter-apk/app-rel
 ```
 lib/
 ├── main.dart                # async main + restoreSession + MaterialApp.router（固定 zh locale）
-├── router.dart              # GoRouter + StatefulShellRoute.indexedStack（3 tab 保活）+ _cupertinoPage 横向平移转场(200ms)
+├── router.dart              # GoRouter + StatefulShellRoute.indexedStack（3 tab 保活）+ _cupertinoPage 横向平移转场(200ms)。pageBuilder 必传 `key: state.pageKey`（否则 pushReplacement 复用旧 State，initState 不触发）
 ├── router_helpers.dart      # chatRoute() + startChatAndPush() 统一跳转
 ├── models/                  # User / Agent / Conversation / Message / WSMessage
 ├── services/

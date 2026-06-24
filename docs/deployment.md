@@ -256,6 +256,8 @@ systemctl enable --now redis
 ```
 
 > 💡 不装 Redis 也能跑：限流降级为单进程内存计数，在线状态恒返回离线。
+>
+> **连不上也降级**：即使配置了 Redis 但 Ping 失败（网络抖动 / Redis 宕机），server 不再 `log.Fatal`，而是打 `[WARN]` 并以 `rdb=nil` 降级启动（限流/在线状态退化为单机内存）。多实例部署时这会导致限流/在线状态不一致，单实例无影响。日志里看到 `[WARN] Redis 连接失败（降级为单机模式...）` 即为此情况。
 
 ### 3.4 配置环境变量
 
@@ -355,6 +357,10 @@ curl http://localhost:18008/health    # 应返回 {"status":"ok"}
 ```bash
 ./scripts/deploy.sh
 ```
+
+**关键行为**（v1.0.6+）：
+- **migration 快速失败**：迁移失败默认 `die` 中止发布（schema 不匹配会让重启后的 server 查表 500，比停下更糟）。已是最新（无待应用 migration）时退出码 0 不误伤。需强制跳过：`SKIP_MIGRATE_FAIL=1 ./scripts/deploy.sh`（风险自负）
+- **健康检查轮询**：`systemctl restart` 后轮询 `is-active`（最多 15s）+ HTTP `/health`（最多 10s），取代固定 `sleep 2`。避免「服务在但路由还没起来」或「restart 还没完成」的窗口期误判
 
 或手动：
 
