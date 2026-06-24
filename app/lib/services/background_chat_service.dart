@@ -234,6 +234,8 @@ class BackgroundChatService {
           agentName: agentName,
         ),
         body: body,
+        unreadCount: 1, // Task 3 接入真实计数
+        agentName: agentName,
       );
     } catch (e) {
       debugPrint('[bg-service] 通知发送失败: $e');
