@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/ws_message.dart';
+import '../utils/avatar_bitmap.dart';
 import 'notification_service.dart';
 import '../utils/notification_payload.dart';
 
@@ -14,8 +16,27 @@ import '../utils/notification_payload.dart';
 class _Ipc {
   static const setLifecycle = 'setAppLifecycle';
   static const setActiveConv = 'setActiveConv';
+  static const syncAgentAvatar = 'syncAgentAvatar'; // UI 同步 agent avatar_url(供通知下载头像)
   static const start = 'start';
   static const stop = 'stop';
+}
+
+/// 未读计数器(bg-service isolate 本地维护)。
+///
+/// 进入会话(setActiveConv)清零,收 agent 消息累加。
+/// 用于通知 body 的 `[N条]` 前缀。纯类便于单测。
+class UnreadCounter {
+  final Map<String, int> _counts = {};
+
+  int get(String convId) => _counts[convId] ?? 0;
+
+  void increment(String convId) {
+    _counts[convId] = (_counts[convId] ?? 0) + 1;
+  }
+
+  void clear(String convId) {
+    _counts[convId] = 0;
+  }
 }
 
 /// service isolate 入口。必须 top-level 函数 + @pragma 注解。
@@ -51,6 +72,12 @@ class BackgroundChatService {
   /// 当前正在看的会话（由 UI 经 IPC setActiveConv 同步）。空 = 没在任何会话页。
   /// 用于决定本地通知要不要弹：前台且正在看该会话时不弹（用户已直接看到）。
   String? _activeConvId;
+  /// 各会话未读计数(用于通知 [N条] 前缀)。进入会话清零,收 agent 消息累加。
+  final UnreadCounter _unread = UnreadCounter();
+  /// UI 同步过来的 agent avatar_url(agentId → url)。供通知下载头像用。
+  final Map<String, String> _avatarUrls = {};
+  /// 下载后的头像 bitmap 内存缓存(agentId → PNG bytes)。避免每条消息都查文件缓存。
+  final Map<String, Uint8List> _avatarBitmapCache = {};
 
   BackgroundChatService(this.service);
 
@@ -63,9 +90,31 @@ class BackgroundChatService {
 
       // UI 上报当前活跃会话：ChatPage 进入时 setActiveConv(convId)，离开时 setActiveConv(null)。
       // 用于本地通知过滤——前台且正在看该会话时不弹通知（用户已直接看到）。
+      // 进入会话时:清零未读计数 + 取消该会话的通知横幅(用户已读到,横幅该消失)。
+      // 通知 id 与 notification_service 一致 = convId.hashCode。
       service.on(_Ipc.setActiveConv).listen((event) {
         final convId = (event as Map?)?['conv_id'] as String?;
         _activeConvId = (convId == null || convId.isEmpty) ? null : convId;
+        if (_activeConvId != null) {
+          _unread.clear(_activeConvId!);
+          // 取消该会话的通知横幅(不点通知、直接进 APP 读消息时横幅也消失)
+          NotificationService.instance.cancel(_activeConvId!.hashCode);
+        }
+      });
+
+      // UI 同步 agent 头像 URL（拉列表后调,供通知下载头像）。
+      service.on(_Ipc.syncAgentAvatar).listen((event) {
+        final agentId = (event as Map?)?['agentId'] as String?;
+        final avatarUrl = (event as Map?)?['avatarUrl'] as String?;
+        if (agentId != null) {
+          final oldUrl = _avatarUrls[agentId];
+          _avatarUrls[agentId] = avatarUrl ?? '';
+          // URL 变了 → 清内存 + 文件缓存(防旧头像永久驻留),下次通知重新下载
+          if (oldUrl != (avatarUrl ?? '')) {
+            _avatarBitmapCache.remove(agentId);
+            clearAvatarFileCache(agentId);
+          }
+        }
       });
 
       service.on(_Ipc.start).listen((event) async {
@@ -209,15 +258,18 @@ class BackgroundChatService {
     // convId 先取出来，下面的「正在看该会话」判断要用。
     final convId = data['conversation_id'] as String?;
 
-    // 通知过滤：只在「用户没直接看到这条消息」时弹通知。
+    // 通知过滤：用户正在看该会话则不弹也不计数（语义正确:看了不算未读）。
     // 用户直接看到 = APP 在前台 且 正在该会话页（_activeConvId == convId）。
     // 其他情况（前台但不在该会话 / 在别的页面 / APP 在后台）都弹通知。
-    // 修复前只看 _appInForeground，导致「前台但不在该会话」也漏弹，
-    // 且「后台 + 当前会话」反而误弹。
-    if (_appInForeground && convId == _activeConvId) return;
+    final isViewing = _appInForeground && convId == _activeConvId;
+    if (isViewing) return;
+
     final agentId = data['sender_id'] as String?;
     final content = data['content'] as Map<String, dynamic>?;
     if (convId == null || agentId == null || content == null) return;
+
+    // 计数(在通知前累加,N 反映含本条)
+    _unread.increment(convId);
 
     final msgType = content['msg_type'] as String? ?? 'text';
     final msgData = content['data'] as Map<String, dynamic>?;
@@ -227,6 +279,22 @@ class BackgroundChatService {
       final prefs = await SharedPreferences.getInstance();
       final agentName = prefs.getString('agent_name_$agentId') ?? 'Agent';
 
+      // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载 → 兜底色块)
+      Uint8List? avatarBytes;
+      final avatarUrl = _avatarUrls[agentId];
+      if (_baseUrl != null && _token != null) {
+        // loadAvatarBitmap 必返回非空(下载失败兜底色块),故用空合并直接赋值
+        avatarBytes = _avatarBitmapCache[agentId] ??
+            await loadAvatarBitmap(
+              agentId: agentId,
+              name: agentName,
+              avatarUrl: avatarUrl,
+              baseUrl: _baseUrl!,
+              httpHeaders: {'Authorization': 'Bearer $_token'},
+            );
+        _avatarBitmapCache[agentId] = avatarBytes;
+      }
+
       await NotificationService.instance.showMessageNotification(
         payload: NotificationPayload(
           convId: convId,
@@ -234,6 +302,9 @@ class BackgroundChatService {
           agentName: agentName,
         ),
         body: body,
+        unreadCount: _unread.get(convId),
+        avatarBytes: avatarBytes,
+        agentName: agentName,
       );
     } catch (e) {
       debugPrint('[bg-service] 通知发送失败: $e');

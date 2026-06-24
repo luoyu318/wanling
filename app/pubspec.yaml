@@ -62,6 +62,10 @@ dependencies:
   nested_scroll_views: ^0.0.12
   wechat_camera_picker: ^4.5.0
   mobile_scanner: ^7.2.0
+  # 通知头像裁方形圆角 + 首字母色块生成(isolate 内无 Flutter widget,需纯 Dart bitmap 操作)
+  image: ^4.5.3
+  # 通知头像文件缓存目录(getApplicationDocumentsDirectory),avatar_bitmap 工具用
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
