@@ -40,7 +40,7 @@
 | Agent 接入 | **标准 WebSocket 协议** | hermes 已实现参考插件 |
 | 鉴权 | **统一 JWT，role 区分** | user 和 agent 共用一套 JWT，role 字段区分身份，简单可扩展 |
 | 消息可靠性 | **WS + OpResume 补发** | 断线后客户端携带最后 seq，服务端补发缺失 Dispatch，消息不丢 |
-| Redis | **可选增强** | 在线状态 / 多实例限流用 Redis，单机部署可不装，自动降级 |
+| Redis | **推荐必装** | 在线状态 / 多实例限流走 Redis。不装可启动但降级为单机模式（在线状态恒离线、限流仅本实例有效），多实例部署强烈建议安装 |
 | APP 端 | **Flutter 单代码库** | 一份代码出 Linux desktop / Android / iOS，避免多端分裂 |
 | 配对方式 | **扫码授权优先** | hermes 终端 `--pair` 生成二维码，APP 扫码选 Agent 自动下发凭据，替代手粘 user token |
 

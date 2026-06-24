@@ -74,6 +74,21 @@ func (h *FileHandler) Download(c *gin.Context) {
 		return
 	}
 
+	// 归属校验（防 IDOR）：只允许文件 owner 下载。
+	// - user 角色：owner 就是自己，校验 f.OwnerID == userID
+	// - agent 角色：agent 没有自己的文件（owner 落的是它服务的 user），校验 f.OwnerID == ownerID
+	// 不校验则任何登录用户可遍历 UUID 下载他人文件。
+	claimer := c.GetString("userID")
+	if c.GetString("role") == "agent" {
+		claimer = c.GetString("ownerID")
+	}
+	if claimer != f.OwnerID {
+		log.Printf("[download] 归属校验失败 | file_id=%s owner=%s claimer=%s role=%s remote=%s",
+			id, f.OwnerID, claimer, c.GetString("role"), c.ClientIP())
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问"})
+		return
+	}
+
 	reader, err := h.storage.Read(f.StoragePath)
 	if err != nil {
 		log.Printf("[download] 读取失败: %v | file_id=%s storage_path=%s remote=%s",
