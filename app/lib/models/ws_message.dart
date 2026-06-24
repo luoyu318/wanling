@@ -25,6 +25,7 @@ class OpCodes {
   static const dispatch = 0;
   static const heartbeat = 1;
   static const identify = 2;
+  static const setActiveConv = 3; // 上报当前正在看的会话（空=退出）
   static const resume = 6;
   static const reconnect = 7;
   static const hello = 10;

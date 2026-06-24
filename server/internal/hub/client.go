@@ -15,6 +15,7 @@ type Client struct {
 	Send          chan []byte
 	mu            sync.Mutex
 	seq           int64
+	activeConvID  string    // 该连接当前正在看的会话（前端 setActiveConv 上报），空=没在看任何会话
 	LastHeartbeat time.Time // 最近一次心跳时间，GC 用
 	closeOnce     sync.Once // 保证 Send/Conn 只关一次
 }
@@ -54,4 +55,19 @@ func (c *Client) GetSeq() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.seq
+}
+
+// SetActiveConv 设置该连接当前正在看的会话 ID（前端 op=3 上报）。
+// 空字符串表示退出会话（没在看任何会话）。并发安全：readPump 与 processor 可能同时访问。
+func (c *Client) SetActiveConv(convID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activeConvID = convID
+}
+
+// GetActiveConv 获取该连接当前正在看的会话 ID。
+func (c *Client) GetActiveConv() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.activeConvID
 }

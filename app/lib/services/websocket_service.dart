@@ -173,6 +173,13 @@ class WebSocketService {
     ));
   }
 
+  /// 上报当前正在看的会话（op=3）。服务端据此决定 agent 发消息时是否计未读。
+  /// convId 传 null 或空 = 退出会话（没在看任何会话）。
+  /// ChatPage initState 调 setActiveConv(convId)，dispose 调 setActiveConv(null)。
+  void setActiveConv(String? convId) {
+    send(WSMessage(op: OpCodes.setActiveConv, d: {'conv_id': convId ?? ''}));
+  }
+
   void _reconnect() {
     if (_stopped) return; // disconnect 后不再重连
     _heartbeatTimer?.cancel();
