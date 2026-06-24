@@ -63,6 +63,8 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
     state = raw
         .map((e) => Conversation.fromJson(e as Map<String, dynamic>))
         .toList();
+    // 同步 agent avatar_url 到 bg-service isolate(供通知下载头像)
+    syncAgentAvatarsToBgService(state);
   }
 
   void _onMessageCreate(WSMessage m) {
@@ -192,3 +194,24 @@ final totalUnreadProvider = Provider<int>((ref) {
   final list = ref.watch(conversationProvider);
   return list.fold(0, (sum, c) => sum + c.unreadCount);
 });
+
+/// 同步所有 agent 的 avatar_url 到 bg-service isolate(供通知下载头像)。
+///
+/// 在拉会话列表成功后调。原生平台未注册时 invoke 抛异常(测试环境),
+/// 用 try-catch 兜底不阻塞 UI。
+@visibleForTesting
+void syncAgentAvatarsToBgService(List<Conversation> conversations) {
+  try {
+    final service = FlutterBackgroundService();
+    for (final c in conversations) {
+      final agentId = c.agent.id;
+      if (agentId.isEmpty) continue;
+      service.invoke('syncAgentAvatar', {
+        'agentId': agentId,
+        'avatarUrl': c.agent.avatarUrl,
+      });
+    }
+  } catch (_) {
+    // 原生平台未注册(测试环境)静默,不阻塞 UI
+  }
+}
