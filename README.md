@@ -167,4 +167,4 @@ cd app && flutter test
 
 ## License
 
-本项目暂未指定开源协议，代码公开供学习和自托管使用。如需商用或对协议有疑问，欢迎 issue 联系。
+[MIT](./LICENSE) © 2026 洛羽
