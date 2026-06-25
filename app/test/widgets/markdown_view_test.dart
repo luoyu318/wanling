@@ -1,6 +1,7 @@
 import 'package:app/widgets/markdown_config.dart';
 import 'package:app/widgets/markdown_latex.dart';
 import 'package:app/widgets/markdown_view.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -103,6 +104,68 @@ void main() {
       )));
       // Column 而非 ListView
       expect(find.byType(Column), findsOneWidget);
+    });
+  });
+
+  // 安全回归:markdown 内容来自 agent(LLM),不受信任。策略是只放行内部
+  // server 图片(/api/files/xxx,adapter 已把可下载的远程图替换为此内部链接),
+  // 其余 http(s) URL(追踪图/SSRF/LLM 幻觉)一律文字占位,不发起网络请求。
+  // 这组测试守住「内部 URL 渲染 + 外部 URL 占位」的安全行为不被回退。
+  group('MarkdownView 图片渲染安全', () {
+    testWidgets('内部 /api/files/ 图片渲染为 CachedNetworkImage', (tester) async {
+      await tester.pumpWidget(wrap(MarkdownView(
+        data: '![示意图](/api/files/abc123)',
+        config: markdownStyle(isDark: false, baseUrl: 'http://test', token: 'tk'),
+      )));
+      await tester.pump();
+
+      // 内部链接 → 渲染成图片(带 JWT header 拉取)
+      expect(find.byType(CachedNetworkImage), findsOneWidget);
+      // 不显示文字占位
+      expect(find.byIcon(Icons.image_outlined), findsNothing);
+    });
+
+    testWidgets('外链图片不渲染为图,改显示占位 + alt 文本(防追踪/SSRF)', (tester) async {
+      await tester.pumpWidget(wrap(MarkdownView(
+        data: '![这是说明](https://attacker.example/track.png?u=victim)',
+        config: markdownStyle(isDark: false),
+      )));
+      await tester.pump();
+
+      // 核心:外部 URL 不渲染成会发网络请求的图片 widget
+      expect(find.byType(CachedNetworkImage), findsNothing);
+      expect(find.byType(Image), findsNothing);
+      // 占位显示 alt 文本(RichText),保证无图也能看懂上下文
+      expect(find.byWidgetPredicate((w) =>
+          w is RichText && w.text.toPlainText().contains('这是说明')),
+          findsOneWidget);
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+    });
+
+    testWidgets('无 alt 的外链图片显示通用占位,不渲染图', (tester) async {
+      await tester.pumpWidget(wrap(MarkdownView(
+        data: '![](https://attacker.example/x.png)',
+        config: markdownStyle(isDark: false),
+      )));
+      await tester.pump();
+
+      expect(find.byType(CachedNetworkImage), findsNothing);
+      expect(find.byType(Image), findsNothing);
+      expect(
+          find.byWidgetPredicate(
+              (w) => w is RichText && w.text.toPlainText().contains('图片')),
+          findsOneWidget);
+    });
+
+    testWidgets('内网 IP 图片被禁用(防 SSRF),仅内部 /api/files/ 放行', (tester) async {
+      await tester.pumpWidget(wrap(MarkdownView(
+        data: '![](http://192.168.1.1/admin.png)',
+        config: markdownStyle(isDark: false),
+      )));
+      await tester.pump();
+
+      expect(find.byType(CachedNetworkImage), findsNothing);
+      expect(find.byType(Image), findsNothing);
     });
   });
 }
