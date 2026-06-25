@@ -5,6 +5,7 @@ import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
+import 'full_screen_image_page.dart';
 import 'markdown_code_wrapper.dart';
 import 'select_all_container.dart';
 
@@ -43,8 +44,10 @@ bool _isInternalFileUrl(String url, String baseUrl) {
 /// [isDark] 控制明暗主题切换(代码块高亮主题 + 文字颜色)。
 /// [baseUrl] / [token] 用于渲染 markdown 内嵌的内部图片(/api/files/xxx):
 /// adapter 已把 agent 回复里的远程图替换为内部链接,APP 需带 JWT 从 server 拉取。
+/// [context] 用于图片点击进全屏查看页(Navigator.push)。
 MarkdownConfig markdownStyle({
   required bool isDark,
+  required BuildContext context,
   String baseUrl = '',
   String token = '',
 }) {
@@ -112,7 +115,7 @@ MarkdownConfig markdownStyle({
     // adapter 已把 agent 回复里的远程图下载上传替换为 /api/files/{id}(见 adapter),
     // 这里放行内部链接带 JWT 拉取;其余 URL 是 LLM 幻觉/追踪图,不渲染成图。
     // 见 [_markdownImageBuilder] / [_markdownImagePlaceholder]。
-    ImgConfig(builder: (url, attrs) => _markdownImageBuilder(url, attrs, baseUrl, token)),
+    ImgConfig(builder: (url, attrs) => _markdownImageBuilder(url, attrs, baseUrl, token, context)),
     // 安全:链接点击收敛到 http/https 白名单,拦截 javascript:/file: 等危险 scheme。
     // 放行的链接仍走 markdown_widget 默认的 launchUrl 外部打开。
     LinkConfig(onTap: _safeLaunchUrl),
@@ -161,6 +164,7 @@ Widget _markdownImageBuilder(
   Map<String, String> attributes,
   String baseUrl,
   String token,
+  BuildContext context,
 ) {
   if (!_isInternalFileUrl(url, baseUrl)) {
     return _markdownImagePlaceholder(attributes);
@@ -169,20 +173,28 @@ Widget _markdownImageBuilder(
   final imageUrl =
       url.startsWith('http') ? url : '$baseUrl${url.startsWith('/') ? '' : '/'}$url';
   final headers = token.isEmpty ? <String, String>{} : {'Authorization': 'Bearer $token'};
-  return ClipRRect(
-    borderRadius: BorderRadius.circular(6),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 200),
-      child: CachedNetworkImage(
-        imageUrl: imageUrl,
-        httpHeaders: headers,
-        fit: BoxFit.contain,
-        placeholder: (_, __) => const SizedBox(
-          width: 200,
-          height: 150,
-          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+  // 点击进全屏查看页(与独立 image 消息 ImageContentRenderer 行为一致)
+  return GestureDetector(
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FullScreenImagePage(url: imageUrl, headers: headers),
+      ),
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 200),
+        child: CachedNetworkImage(
+          imageUrl: imageUrl,
+          httpHeaders: headers,
+          fit: BoxFit.contain,
+          placeholder: (_, __) => const SizedBox(
+            width: 200,
+            height: 150,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          ),
+          errorWidget: (_, __, ___) => _markdownImagePlaceholder(attributes),
         ),
-        errorWidget: (_, __, ___) => _markdownImagePlaceholder(attributes),
       ),
     ),
   );

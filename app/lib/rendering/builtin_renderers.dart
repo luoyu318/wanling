@@ -42,7 +42,7 @@ class TextContentRenderer implements MessageContentRenderer {
     }
     return MarkdownView(
       data: text,
-      config: markdownStyle(isDark: rc.isDark, baseUrl: rc.baseUrl, token: rc.token),
+      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token),
       inlineSyntaxes: [LatexSyntax()],
       generators: [latexGenerator],
     );
@@ -98,7 +98,7 @@ class MarkdownContentRenderer implements MessageContentRenderer {
     }
     return MarkdownView(
       data: text,
-      config: markdownStyle(isDark: rc.isDark, baseUrl: rc.baseUrl, token: rc.token),
+      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token),
       inlineSyntaxes: [LatexSyntax()],
       generators: [latexGenerator],
     );
