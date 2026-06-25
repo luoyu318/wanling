@@ -794,12 +794,13 @@ class WanlingAdapter(BasePlatformAdapter):
         if self._ws is None:
             return SendResult(success=False, error="Not connected")
 
-        # hermes 的 extract_images 只识别 markdown ![](https://...) 格式的 URL，
-        # 不识别本地路径。LLM 输出本地图片路径（如 /home/k/.hermes/cache/xxx.jpg
-        # 或 🖼️ Image: <path>）会被当 markdown 文本发出，APP 看到的是路径字符串。
-        # 这里在 send 入口扫描本地图片路径，发现就上传 server 发 msg_type=image，
-        # 并从 content 删除该路径。
+        # 两类媒体在 markdown 文本里需在发送前处理：
+        # 1. 本地图片路径（裸 /xxx.jpg）→ 上传 + 发独立 image 消息 + 从 content 删除
+        #    （_strip_and_send_local_images，处理 hermes 不识别本地路径的盲区）
+        # 2. 远程图片 URL（![alt](https://...)）→ 下载上传 + 替换为内部 /api/files/
+        #    URL（_rewrite_remote_images，处理 hermes extract_images 漏掉无扩展名 URL 的逃逸）
         content = await self._strip_and_send_local_images(chat_id, content)
+        content = await self._rewrite_remote_images(content)
 
         # 上传 + 发送图片后可能只剩空白（LLM 整段都在描述图片），跳过 markdown 发送
         if not content.strip():
@@ -820,11 +821,22 @@ class WanlingAdapter(BasePlatformAdapter):
 
         return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
 
-    # 匹配本地图片绝对路径（/...jpg|png|gif|webp|bmp）。不匹配 http(s):// URL（hermes
-    # 上游 extract_images 已处理）。否定后顾排除 : 防 https:// 被误匹配（: 后第一个 /）。
+    # 匹配本地图片绝对路径（/...jpg|png|gif|webp|bmp）。不匹配 http(s):// URL
+    # （远程图片由下方 _REMOTE_IMAGE_RE + _rewrite_remote_images 处理）。
+    # 否定后顾排除 : 防 https:// 被误匹配（: 后第一个 /）。
     _LOCAL_IMAGE_RE = re.compile(
         r"(?<![\w/:])(?P<path>/[\w./\-]+\.(?:jpg|jpeg|png|gif|webp|bmp))",
         re.IGNORECASE,
+    )
+
+    # 匹配 markdown 远程图片 ![alt](http(s)://...)。
+    # 与 hermes 上游 extract_images 刻意不同：上游只提取带图片扩展名的 URL
+    # （.png/.jpg/...），picsum.photos/300/200 这类无扩展名 URL 会漏网逃逸到
+    # markdown 文本，APP 渲染端砍了网络图（SSRF 防护），用户只看到文字占位。
+    # 这里不限扩展名，兜住所有 http(s) 图片 URL。只匹配 ![]() 图片语法，
+    # 不碰裸 URL，避免误转正文里的网页/文档链接。
+    _REMOTE_IMAGE_RE = re.compile(
+        r"!\[(?P<alt>[^\]]*)\]\((?P<url>https?://[^\s\)]+)\)"
     )
 
     async def _strip_and_send_local_images(self, chat_id: str, content: str) -> str:
@@ -869,6 +881,50 @@ class WanlingAdapter(BasePlatformAdapter):
             content = content.replace(path, "")
         # 清理多余空白：连续 3+ 换行压成 2 个，首尾空白去掉
         content = re.sub(r"\n{3,}", "\n\n", content).strip()
+        return content
+
+    async def _rewrite_remote_images(self, content: str) -> str:
+        """把 markdown 里的远程图片 URL 下载上传，替换为内部 /api/files/ 链接。
+
+        背景：hermes 上游 extract_images 只提取带图片扩展名的 URL，picsum.photos
+        这类无扩展名 URL 会逃逸到 markdown 文本。APP 渲染端砍了网络图（SSRF
+        防护），只渲染 /api/files/ 前缀的内部 URL。这里兜底下载上传，让用户
+        在 APP 看到真实图（图文同气泡）。
+
+        策略（串行）：
+          - 下载 cache_image_from_url（自带 SSRF 防护）→ _upload_file 拿 file_id
+          - 成功：把 ![alt](外部URL) 替换为 ![alt](/api/files/{file_id})
+          - 失败：原 URL 原样保留（APP 端文字占位兜底，不静默吞）
+        """
+        if not content:
+            return content
+
+        matches = list(self._REMOTE_IMAGE_RE.finditer(content))
+        if not matches:
+            return content
+
+        for m in matches:
+            url = m.group("url")
+            alt = m.group("alt")
+            # 下载远程图到本地缓存（is_safe_url + 重定向守卫，自带 SSRF 防护）。
+            # cache_image_from_url 是 async 函数，直接 await，不要用 asyncio.to_thread
+            # （to_thread 传 async 函数只返回未 await 的协程对象，下载不会真正发生）。
+            try:
+                local_path = await cache_image_from_url(url)
+            except Exception as e:
+                logger.warning("Wanling.send: download remote image failed, keep URL — %s (%s)", url, e)
+                continue
+            # 上传 server 拿内部 file_id
+            file_id = await self._upload_file(local_path)
+            if not file_id:
+                logger.warning("Wanling.send: upload remote image failed, keep URL — %s", url)
+                continue
+            # 替换为内部 URL，APP 渲染端只放行 /api/files/ 前缀
+            content = content.replace(
+                m.group(0),
+                f"![{alt}](/api/files/{file_id})",
+            )
+
         return content
 
     @staticmethod
@@ -1068,13 +1124,14 @@ class WanlingAdapter(BasePlatformAdapter):
 
         降级：路径解析失败或上传失败时走 send() 发文本，保证对话不中断。
         """
-        # 1. 解析路径：本地文件优先，http(s) 走 hermes 缓存工具下载
+        # 1. 解析路径：本地文件优先，http(s) 走 hermes 缓存工具下载。
+        # cache_image_from_url 是 async 函数，直接 await（to_thread 传 async 函数无效）。
         local_path: Optional[str] = None
         try:
             if os.path.isfile(image_url):
                 local_path = image_url
             elif image_url.startswith(("http://", "https://")):
-                local_path = await asyncio.to_thread(cache_image_from_url, image_url)
+                local_path = await cache_image_from_url(image_url)
         except Exception as e:
             logger.warning("Wanling.send_image: resolve %s failed — %s", image_url, e)
 
@@ -1223,8 +1280,22 @@ def _env_enablement() -> Optional[dict]:
     return {"extra": extra, "home_channel": home_channel}
 
 
-async def _standalone_send(pconfig, chat_id: str, message: str) -> dict:
-    """Out-of-process send for cron delivery: spin up a minimal WS client."""
+async def _standalone_send(
+    pconfig,
+    chat_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+    media_files: Optional[list] = None,
+    force_document: bool = False,
+    **_extra,
+) -> dict:
+    """Out-of-process send for cron delivery: spin up a minimal WS client.
+
+    形参对齐 hermes 上游 send_message_tool 的调用约定（关键字传参）：
+    thread_id / media_files / force_document。本平台是一对一 IM（user_id 即
+    会话），且 standalone 是轻量 WS 直发 markdown，不处理线程分流与媒体附件，
+    这三者接下后忽略。`**_extra` 兜底上游未来新增参数，避免再次签名不匹配崩。
+    """
     try:
         extra = getattr(pconfig, "extra", {}) or {}
         server_url = extra.get("server_url", "http://localhost:18008")
@@ -1255,11 +1326,11 @@ async def _standalone_send(pconfig, chat_id: str, message: str) -> dict:
                         "content": {"msg_type": "markdown", "data": {"text": message}},
                     },
                 }))
-                return {"ok": True}
+                return {"success": True}
             finally:
                 task.cancel()
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"error": str(e)}
 
 
 def register(ctx):
@@ -1291,3 +1362,126 @@ def register(ctx):
             "当视觉内容有助于表达时（图解、截图、生成的图）可以使用。"
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# 自检脚本：python plugin/hermes-plugin/adapter.py
+#
+# 验证 _rewrite_remote_images 的核心行为，不依赖真实 server/网络：
+# - monkeypatch cache_image_from_url（adapter 通过 import 持有该引用）/ _upload_file
+# - 构造 WanlingAdapter 实例但不连接（_ws=None，_rewrite_remote_images 不碰 WS）
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import asyncio as _asyncio
+    import sys as _sys
+    from contextlib import contextmanager
+
+    failures: List[str] = []
+
+    def _check(cond: bool, msg: str) -> None:
+        print(f"  [{'PASS' if cond else 'FAIL'}] {msg}")
+        if not cond:
+            failures.append(msg)
+
+    def _asyncify(sync_fn):
+        """把同步函数包成 async coroutine，匹配真实的 async 函数签名。"""
+        async def _wrapper(*args, **kwargs):
+            return sync_fn(*args, **kwargs)
+        return _wrapper
+
+    # adapter 顶部 `from gateway.platforms.base import cache_image_from_url` 把函数
+    # 绑定到了本模块全局命名空间，_rewrite_remote_images 用的就是这个模块级引用。
+    # 所以 patch 必须打在本模块（__main__）上，patch hermes 那边不生效。
+    _self_module = _sys.modules[__name__]
+
+    @contextmanager
+    def _patch_download(sync_fake):
+        """临时把本模块的 cache_image_from_url 换成假下载（包 async），退出还原。"""
+        _orig = _self_module.cache_image_from_url
+        _self_module.cache_image_from_url = _asyncify(sync_fake)
+        try:
+            yield
+        finally:
+            _self_module.cache_image_from_url = _orig
+
+    def _make_adapter(sync_upload) -> "WanlingAdapter":
+        """构造不连 server 的 adapter，注入（包了 async 的）假上传函数。"""
+        adapter = WanlingAdapter.__new__(WanlingAdapter)
+        adapter._ws = None
+        adapter._upload_file = _asyncify(sync_upload)  # type: ignore[method-assign]
+        return adapter
+
+    async def _run_tests():
+        print("== _rewrite_remote_images 自检 ==")
+
+        # 用例 1：无扩展名远程图（picsum）成功 → 替换为内部 URL
+        with _patch_download(lambda url: "/tmp/c.jpg"):
+            out = await _make_adapter(lambda p: "fid1")._rewrite_remote_images(
+                "示例图：\n![](https://picsum.photos/300/200)"
+            )
+        _check(
+            "/api/files/fid1" in out and "picsum.photos" not in out,
+            "picsum 无扩展名 URL 成功下载上传 → 替换为 /api/files/ 内部 URL",
+        )
+
+        # 用例 2：下载失败 → 原 URL 保留（不静默吞）
+        def _boom(_u):
+            raise RuntimeError("mock download failure")
+        with _patch_download(_boom):
+            out = await _make_adapter(lambda p: "fid")._rewrite_remote_images(
+                "![](https://attacker.example/track.png)"
+            )
+        _check(
+            "https://attacker.example/track.png" in out and "/api/files/" not in out,
+            "下载失败 → 原 URL 保留",
+        )
+
+        # 用例 3：上传失败 → 原 URL 保留
+        with _patch_download(lambda url: "/tmp/c.jpg"):
+            out = await _make_adapter(lambda p: None)._rewrite_remote_images(
+                "![](https://example.com/a.jpg)"
+            )
+        _check(
+            "https://example.com/a.jpg" in out and "/api/files/" not in out,
+            "上传失败 → 原 URL 保留",
+        )
+
+        # 用例 4：裸 URL 不被误转（只匹配 ![]() 图片语法）
+        with _patch_download(lambda url: "/tmp/c.jpg"):
+            out = await _make_adapter(lambda p: "fid")._rewrite_remote_images(
+                "参考文档 https://example.com/doc 和 https://picsum.photos/300/200"
+            )
+        _check(
+            "https://example.com/doc" in out and "https://picsum.photos/300/200" in out,
+            "裸 URL（非 ![]() 语法）不被误转",
+        )
+
+        # 用例 5：alt 文本在替换后保留
+        with _patch_download(lambda url: "/tmp/c.jpg"):
+            out = await _make_adapter(lambda p: "abc123")._rewrite_remote_images(
+                "![示意图](https://x.com/y.png)"
+            )
+        _check("[示意图]" in out, "alt 文本在替换后保留")
+
+        # 用例 6：多张图串行处理各自替换
+        seq = iter(["id_a", "id_b"])
+        with _patch_download(lambda url: f"/tmp/{abs(hash(url))}.jpg"):
+            out = await _make_adapter(lambda p: next(seq))._rewrite_remote_images(
+                "![](https://a.com/1.png) ![](https://b.com/2.jpg)"
+            )
+        _check(
+            "/api/files/id_a" in out and "/api/files/id_b" in out,
+            "多张图串行处理各自替换",
+        )
+
+    async def _main():
+        await _run_tests()
+        print()
+        if failures:
+            print(f"== 自检失败：{len(failures)} 项 ==")
+            for f in failures:
+                print(f"  - {f}")
+            raise SystemExit(1)
+        print("== 自检全部通过 ==")
+
+    _asyncio.run(_main())
