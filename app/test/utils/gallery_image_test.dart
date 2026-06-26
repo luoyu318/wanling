@@ -1,6 +1,43 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/utils/gallery_image.dart';
 import 'package:app/models/message.dart';
+import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+/// 假的 PathProvider，把临时目录指向测试 temp 目录。
+class _FakePathProvider extends PathProviderPlatform {
+  _FakePathProvider(this.tempDir);
+  final Directory tempDir;
+
+  @override
+  Future<String?> getTemporaryPath() async => tempDir.path;
+}
+
+/// 假 HttpClientAdapter：固定返回给定状态码和字节。
+class _FakeAdapter implements HttpClientAdapter {
+  _FakeAdapter({required this.statusCode, required this.body});
+  final int statusCode;
+  final List<int> body;
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final stream = Stream<Uint8List>.fromIterable([Uint8List.fromList(body)]);
+    return ResponseBody(stream, statusCode, headers: {
+      Headers.contentTypeHeader: ['application/octet-stream'],
+    });
+  }
+}
 
 void main() {
   group('extractInternalImageIds', () {
@@ -55,6 +92,86 @@ void main() {
     test('空消息列表返回空', () {
       expect(
           collectConversationImages([], 'https://h', 'tok'), <GalleryImage>[]);
+    });
+  });
+
+  group('saveToGallery', () {
+    late Directory tempDir;
+    // gal 插件的 method channel（gal 2.3.2 用 'gal'）
+    const galChannel = MethodChannel('gal');
+
+    setUp(() async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      tempDir = await Directory.systemTemp.createTemp('gal_save_test');
+      PathProviderPlatform.instance = _FakePathProvider(tempDir);
+    });
+
+    tearDown(() async {
+      // 清理 gal channel mock
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(galChannel, null);
+      if (tempDir.existsSync()) await tempDir.delete(recursive: true);
+    });
+
+    test('鉴权下载成功 + gal 写入成功 → SaveResult.success + 临时文件已删',
+        () async {
+      // mock Gal.putImage 返回成功（null 即成功）
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(galChannel, (call) async => null);
+
+      final dio = Dio();
+      dio.httpClientAdapter = _FakeAdapter(
+        statusCode: 200,
+        body: [0x89, 0x50, 0x4E, 0x47], // 假 PNG 字节
+      );
+
+      final image = GalleryImage(
+        url: 'https://example.com/api/files/abc',
+        fileId: 'abc',
+        headers: const {'Authorization': 'Bearer test-token'},
+      );
+
+      final result = await saveToGallery(image, dio: dio);
+      expect(result, SaveResult.success);
+      // 临时文件已删
+      expect(File('${tempDir.path}/abc.jpg').existsSync(), isFalse);
+    });
+
+    test('dio 下载失败（404）→ SaveResult.failed', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _FakeAdapter(statusCode: 404, body: []);
+
+      final image = GalleryImage(
+        url: 'https://example.com/api/files/abc',
+        fileId: 'abc',
+        headers: const {},
+      );
+
+      final result = await saveToGallery(image, dio: dio);
+      expect(result, SaveResult.failed);
+    });
+
+    test('gal 写入抛异常 → SaveResult.failed（不抛到调用方）', () async {
+      // mock Gal.putImage 抛 PlatformException
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(galChannel, (call) async {
+        throw PlatformException(code: 'ACCESS_DENIED', message: '写入失败');
+      });
+
+      final dio = Dio();
+      dio.httpClientAdapter = _FakeAdapter(
+        statusCode: 200,
+        body: [0x89, 0x50, 0x4E, 0x47],
+      );
+
+      final image = GalleryImage(
+        url: 'https://example.com/api/files/abc',
+        fileId: 'abc',
+        headers: const {},
+      );
+
+      final result = await saveToGallery(image, dio: dio);
+      expect(result, SaveResult.failed);
     });
   });
 }

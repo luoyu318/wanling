@@ -1,3 +1,9 @@
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:gal/gal.dart';
+import 'package:path_provider/path_provider.dart';
+
 import '../models/message.dart';
 import '../models/msg_type.dart';
 
@@ -98,4 +104,47 @@ List<GalleryImage> collectConversationImages(
   }
   // 反转：messages 是 newest first，反转后 index 0 = 最旧，符合左滑下一张习惯。
   return result.reversed.toList();
+}
+
+/// 保存结果，供 UI 层决定 SnackBar 文案。
+enum SaveResult { success, failed }
+
+/// 将画廊图片保存到系统相册。
+///
+/// 内部图片需 JWT 鉴权（[GalleryImage.headers] 已含 Authorization），gal 自带
+/// 下载不带 header，故先用 dio 下载到临时文件，再交给 gal 写入相册。任一步
+/// 失败即返回 [SaveResult.failed]（fail fast，不吞异常但转为业务结果）。
+///
+/// [dio] 可选注入，便于单测 mock；默认新建独立 Dio 实例（不走 ApiService
+/// 拦截器，因 headers 已自带鉴权，无需 401 登出等副作用）。
+Future<SaveResult> saveToGallery(GalleryImage image, {Dio? dio}) async {
+  final client = dio ?? Dio();
+  try {
+    // 1. 鉴权下载图片字节（headers 已含 Authorization）。
+    final resp = await client.get<List<int>>(
+      image.url,
+      options: Options(
+        headers: image.headers,
+        responseType: ResponseType.bytes,
+      ),
+    );
+    final bytes = resp.data ?? const <int>[];
+
+    // 2. 写临时文件（fileId 命名，重复保存覆盖无妨，gal 写相册会去重）。
+    final dir = await getTemporaryDirectory();
+    final tempFile = File('${dir.path}/${image.fileId}.jpg');
+    await tempFile.writeAsBytes(bytes);
+
+    // 3. gal 写入相册（gal 写入免权限，Android 13+ MediaStore 写入无需申请）。
+    await Gal.putImage(tempFile.path);
+
+    // 4. 成功后删临时文件（gal 已拷贝到相册，临时文件无需保留）。
+    if (tempFile.existsSync()) {
+      await tempFile.delete();
+    }
+    return SaveResult.success;
+  } catch (_) {
+    // 下载失败 / 文件写入失败 / GalException 统一转 failed。
+    return SaveResult.failed;
+  }
 }
