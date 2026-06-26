@@ -180,7 +180,7 @@ class WanlingAdapter(BasePlatformAdapter):
 
     # ── Connection lifecycle ──────────────────────────────────────────────
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not self.agent_id or not self.secret_key:
             logger.error("Wanling: agent_id and secret_key must be configured")
             self._set_fatal_error(
