@@ -4,7 +4,6 @@ import 'package:markdown_widget/markdown_widget.dart';
 
 import '../models/msg_type.dart';
 import '../utils/emoji_span.dart';
-import '../widgets/full_screen_image_page.dart';
 import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_view.dart';
@@ -42,7 +41,7 @@ class TextContentRenderer implements MessageContentRenderer {
     }
     return MarkdownView(
       data: text,
-      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token),
+      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token, openGallery: rc.openGallery),
       inlineSyntaxes: [LatexSyntax()],
       generators: [latexGenerator],
     );
@@ -98,16 +97,18 @@ class MarkdownContentRenderer implements MessageContentRenderer {
     }
     return MarkdownView(
       data: text,
-      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token),
+      config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token, openGallery: rc.openGallery),
       inlineSyntaxes: [LatexSyntax()],
       generators: [latexGenerator],
     );
   }
 }
 
-/// 图片渲染器：6px 圆角无三角，点击全屏。
+/// 图片渲染器：6px 圆角无三角，点击进会话级画廊（Hero 共享元素过渡）。
 ///
 /// 不参与选择（图片不可选），不包气泡三角（自带圆角样式）。
+/// 缩略图包 Hero(tag='gallery_$fileId')，与画廊初始页的 PhotoView 配对，
+/// 完成从点击位置缩放放大的过渡动画。
 class ImageContentRenderer implements MessageContentRenderer {
   const ImageContentRenderer();
 
@@ -130,29 +131,30 @@ class ImageContentRenderer implements MessageContentRenderer {
     final url = '${rc.baseUrl}/api/files/$fileId';
     final headers = {'Authorization': 'Bearer ${rc.token}'};
 
-    return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => FullScreenImagePage(url: url, headers: headers),
-        ),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: CachedNetworkImage(
-          imageUrl: url,
-          httpHeaders: headers,
-          cacheKey: 'file_$fileId',
-          width: 200,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => const SizedBox(
+    return Hero(
+      tag: 'gallery_$fileId',
+      child: GestureDetector(
+        // 点击收集会话图片并打开画廊（由 ChatPage 注入 rc.openGallery）。
+        // openGallery 为 null（如测试）时降级为无操作，避免崩溃。
+        onTap: () => rc.openGallery?.call(fileId),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: CachedNetworkImage(
+            imageUrl: url,
+            httpHeaders: headers,
+            cacheKey: 'file_$fileId',
             width: 200,
-            height: 150,
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-          ),
-          errorWidget: (_, __, ___) => const SizedBox(
-            width: 200,
-            height: 150,
-            child: Center(child: Icon(Icons.broken_image, size: 60)),
+            fit: BoxFit.cover,
+            placeholder: (_, __) => const SizedBox(
+              width: 200,
+              height: 150,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+            errorWidget: (_, __, ___) => const SizedBox(
+              width: 200,
+              height: 150,
+              child: Center(child: Icon(Icons.broken_image, size: 60)),
+            ),
           ),
         ),
       ),

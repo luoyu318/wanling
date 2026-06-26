@@ -1,4 +1,3 @@
-import 'package:app/widgets/full_screen_image_page.dart';
 import 'package:app/widgets/markdown_config.dart';
 import 'package:app/widgets/markdown_latex.dart';
 import 'package:app/widgets/markdown_view.dart';
@@ -21,6 +20,7 @@ void main() {
     bool isDark = false,
     String baseUrl = '',
     String token = '',
+    void Function(String fileId)? openGallery,
   }) =>
       Builder(
         builder: (context) => MarkdownView(
@@ -30,6 +30,7 @@ void main() {
             context: context,
             baseUrl: baseUrl,
             token: token,
+            openGallery: openGallery,
           ),
         ),
       );
@@ -126,23 +127,22 @@ void main() {
       expect(find.byIcon(Icons.image_outlined), findsNothing);
     });
 
-    testWidgets('内部图片点击进全屏查看页', (tester) async {
+    testWidgets('内部图片点击触发 openGallery', (tester) async {
+      String? tappedFileId;
       await tester.pumpWidget(wrap(wrapMarkdown(
         data: '![示意图](/api/files/abc123)',
         baseUrl: 'http://test',
         token: 'tk',
+        openGallery: (fileId) => tappedFileId = fileId,
       )));
       await tester.pump();
-
-      // 初始无全屏页
-      expect(find.byType(FullScreenImagePage), findsNothing);
-      // 点击图片(CachedNetworkImage 在测试环境会持续 loading 动画,
-      // 用 pump 推进几帧而非 pumpAndSettle,后者会因 loading 永不静止超时)
+      // 点击图片（CachedNetworkImage 在测试环境持续 loading，
+      // 用 pump 推进几帧而非 pumpAndSettle，后者会因 loading 永不静止超时）
       await tester.tap(find.byType(CachedNetworkImage));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      // 进入全屏查看页(GestureDetector → Navigator.push)
-      expect(find.byType(FullScreenImagePage), findsOneWidget);
+      // 点击触发 openGallery，传入 fileId（用于画廊定位初始索引）
+      expect(tappedFileId, 'abc123');
     });
 
     testWidgets('外链图片不渲染为图,改显示占位 + alt 文本(防追踪/SSRF)', (tester) async {
