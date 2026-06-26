@@ -165,7 +165,7 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
   - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用
   - `dio_error.dart` — 统一 Dio 异常 → 用户可读文案
-  - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载到临时文件 → `gal.putImage` 写相册，返回 `SaveResult` 枚举，gal 写入免权限）
+  - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载字节，3 秒超时 → `Gal.putImageBytes` 写相册，gal 按 magic bytes 自动推断格式免临时文件，返回 `SaveResult` 枚举，gal 写入免权限）
   - `notification_payload.dart` — 通知点击 payload 解析（路由到对应会话）
   - `permission_helper.dart` — `permission_handler` 封装，运行时权限申请（图片/通知）
   - `secure_storage.dart` — `flutter_secure_storage` 封装，加密存储 token / 多账号

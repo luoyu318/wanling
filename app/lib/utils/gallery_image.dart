@@ -1,8 +1,7 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:gal/gal.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../models/message.dart';
 import '../models/msg_type.dart';
@@ -112,39 +111,38 @@ enum SaveResult { success, failed }
 /// 将画廊图片保存到系统相册。
 ///
 /// 内部图片需 JWT 鉴权（[GalleryImage.headers] 已含 Authorization），gal 自带
-/// 下载不带 header，故先用 dio 下载到临时文件，再交给 gal 写入相册。任一步
-/// 失败即返回 [SaveResult.failed]（fail fast，不吞异常但转为业务结果）。
+/// 下载不带 header，故先用 dio 下载字节，再用 [Gal.putImageBytes] 写入相册
+/// （gal 按 magic bytes 自动推断真实格式，无需假设扩展名）。任一步失败即返回
+/// [SaveResult.failed]（fail fast，不吞异常但转为业务结果）。
 ///
 /// [dio] 可选注入，便于单测 mock；默认新建独立 Dio 实例（不走 ApiService
-/// 拦截器，因 headers 已自带鉴权，无需 401 登出等副作用）。
+/// 拦截器，因 headers 已自带鉴权，无需 401 登出等副作用），设 3 秒超时
+/// 防止慢网络下 UI 无反馈（对齐 avatar_bitmap 的超时设置）。
 Future<SaveResult> saveToGallery(GalleryImage image, {Dio? dio}) async {
-  final client = dio ?? Dio();
+  final client = dio ??
+      Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 3),
+        receiveTimeout: const Duration(seconds: 3),
+      ));
   try {
     // 1. 鉴权下载图片字节（headers 已含 Authorization）。
-    final resp = await client.get<List<int>>(
+    final resp = await client.get<Uint8List>(
       image.url,
       options: Options(
         headers: image.headers,
         responseType: ResponseType.bytes,
       ),
     );
-    final bytes = resp.data ?? const <int>[];
+    final bytes = resp.data;
+    if (bytes == null || bytes.isEmpty) return SaveResult.failed;
 
-    // 2. 写临时文件（fileId 命名，重复保存覆盖无妨，gal 写相册会去重）。
-    final dir = await getTemporaryDirectory();
-    final tempFile = File('${dir.path}/${image.fileId}.jpg');
-    await tempFile.writeAsBytes(bytes);
-
-    // 3. gal 写入相册（gal 写入免权限，Android 13+ MediaStore 写入无需申请）。
-    await Gal.putImage(tempFile.path);
-
-    // 4. 成功后删临时文件（gal 已拷贝到相册，临时文件无需保留）。
-    if (tempFile.existsSync()) {
-      await tempFile.delete();
-    }
+    // 2. gal 写入相册（putImageBytes 按 magic bytes 自动推断格式，免临时文件）。
+    //    gal 写入免权限（Android 11+ MediaStore 写入无需申请；Android 6-10 gal
+    //    内部会按需申请 WRITE_EXTERNAL_STORAGE，拒绝则抛 GalException 走 failed）。
+    await Gal.putImageBytes(bytes, name: image.fileId);
     return SaveResult.success;
   } catch (_) {
-    // 下载失败 / 文件写入失败 / GalException 统一转 failed。
+    // 下载超时/失败 / GalException 统一转 failed。
     return SaveResult.failed;
   }
 }

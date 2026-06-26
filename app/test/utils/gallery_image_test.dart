@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,16 +5,6 @@ import 'package:app/utils/gallery_image.dart';
 import 'package:app/models/message.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-
-/// 假的 PathProvider，把临时目录指向测试 temp 目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.tempDir);
-  final Directory tempDir;
-
-  @override
-  Future<String?> getTemporaryPath() async => tempDir.path;
-}
 
 /// 假 HttpClientAdapter：固定返回给定状态码和字节。
 class _FakeAdapter implements HttpClientAdapter {
@@ -96,28 +85,32 @@ void main() {
   });
 
   group('saveToGallery', () {
-    late Directory tempDir;
     // gal 插件的 method channel（gal 2.3.2 用 'gal'）
     const galChannel = MethodChannel('gal');
 
-    setUp(() async {
+    setUp(() {
       TestWidgetsFlutterBinding.ensureInitialized();
-      tempDir = await Directory.systemTemp.createTemp('gal_save_test');
-      PathProviderPlatform.instance = _FakePathProvider(tempDir);
     });
 
-    tearDown(() async {
+    tearDown(() {
       // 清理 gal channel mock
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(galChannel, null);
-      if (tempDir.existsSync()) await tempDir.delete(recursive: true);
     });
 
-    test('鉴权下载成功 + gal 写入成功 → SaveResult.success + 临时文件已删',
-        () async {
-      // mock Gal.putImage 返回成功（null 即成功）
+    test('鉴权下载成功 + gal putImageBytes 成功 → SaveResult.success', () async {
+      // mock gal channel：requestAccess 返回 true，putImageBytes 返回成功
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(galChannel, (call) async => null);
+          .setMockMethodCallHandler(galChannel, (call) async {
+        switch (call.method) {
+          case 'requestAccess':
+            return true;
+          case 'putImageBytes':
+            return null;
+          default:
+            return null;
+        }
+      });
 
       final dio = Dio();
       dio.httpClientAdapter = _FakeAdapter(
@@ -133,11 +126,10 @@ void main() {
 
       final result = await saveToGallery(image, dio: dio);
       expect(result, SaveResult.success);
-      // 临时文件已删
-      expect(File('${tempDir.path}/abc.jpg').existsSync(), isFalse);
     });
 
-    test('dio 下载失败（404）→ SaveResult.failed', () async {
+    test('dio 下载失败（404，在 gal 调用前）→ SaveResult.failed', () async {
+      // 下载在 gal 之前失败，无需 gal mock
       final dio = Dio();
       dio.httpClientAdapter = _FakeAdapter(statusCode: 404, body: []);
 
@@ -152,7 +144,7 @@ void main() {
     });
 
     test('gal 写入抛异常 → SaveResult.failed（不抛到调用方）', () async {
-      // mock Gal.putImage 抛 PlatformException
+      // mock gal channel 抛 PlatformException（模拟 Android 6-9 权限被拒等）
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(galChannel, (call) async {
         throw PlatformException(code: 'ACCESS_DENIED', message: '写入失败');

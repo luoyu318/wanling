@@ -127,9 +127,8 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
-    // 非多选模式:用 Listener(pointer 层)捕获长按,回调弹菜单。
+    // 非多选模式:用 LongPressDetector(pointer 层 Listener)捕获长按,回调弹菜单。
     // Listener 不进 gesture arena,与 SelectableRegion 内部长按选词并存。
-    // _LongPressDetector 自己计时:down 记位置,up/cancel 清,超时触发回调。
     return LongPressDetector(
       onLongPressStart: onLongPressStart,
       child: Padding(
@@ -166,9 +165,6 @@ class MessageBubble extends StatelessWidget {
     );
   }
 }
-
-/// 用 [Listener]（pointer 层）实现的轻量长按检测器（已提取为公共组件
-/// [LongPressDetector]，见 long_press_detector.dart）。
 
 /// 带三角的气泡容器。文本 / Markdown / 文件 消息共用。
 /// 三角 top 固定 11px（= 单行文字中心），不随气泡高度变化。
