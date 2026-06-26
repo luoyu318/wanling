@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../utils/gallery_image.dart';
+import '../long_press_detector.dart';
+import '../panel_item.dart';
 import 'photo_view/photo_view.dart';
 import 'photo_view/photo_view_gallery.dart';
 import 'photo_view/src/controller/photo_view_controller.dart';
@@ -139,50 +141,103 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
   @visibleForTesting
   void goToPage(int index) => _pageController.jumpToPage(index);
 
+  /// 长按图片：弹出底部菜单（复用 PanelItem 样式，与加号面板视觉统一）。
+  ///
+  /// BottomSheet 顶部圆角 12、背景 #F7F7F7。点「保存图片」先 pop sheet 再异步
+  /// 保存（标准 IM 交互，不让 sheet 卡住等异步下载）。
+  void _showSaveSheet(LongPressStartDetails _) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      backgroundColor: const Color(0xFFF7F7F7),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 18, 8, 24),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              PanelItem(
+                icon: Icons.download_for_offline_outlined,
+                label: '保存图片',
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _doSave();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 保存当前页图片到相册，SnackBar 反馈结果。
+  ///
+  /// 取当前 _currentIndex 对应图（长按必发生在当前显示页，二者等价）。
+  Future<void> _doSave() async {
+    final image = widget.images[_currentIndex];
+    final result = await saveToGallery(image);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result == SaveResult.success
+            ? '已保存到相册'
+            : '保存失败，请稍后重试'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: PhotoViewGallery.builder(
-        pageController: _pageController,
-        itemCount: widget.images.length,
-        scrollPhysics: _physics,
-        onPageChanged: (index) {
-          final oldIndex = _currentIndex;
-          setState(() {
-            _currentIndex = index;
-            // 切页后按新页的 scaleState 更新 _zoomed
-            _updateZoomed(_scaleStateControllers[index].scaleState);
-          });
-          if (oldIndex != index) {
-            // 快速连续翻页时，上一个待重置页此时必然已完全滑出，先重置它。
-            final previousPending = _resetPendingIndex;
-            if (previousPending != null && previousPending != index) {
-              _controllers[previousPending].reset();
-              _scaleStateControllers[previousPending].reset();
+      // 外包 LongPressDetector（pointer 层，不进 arena），长按图片弹保存菜单。
+      // 缩放/拖动移动超阈值自动取消长按，与 PhotoView 的手势隔离不冲突。
+      body: LongPressDetector(
+        onLongPressStart: _showSaveSheet,
+        child: PhotoViewGallery.builder(
+          pageController: _pageController,
+          itemCount: widget.images.length,
+          scrollPhysics: _physics,
+          onPageChanged: (index) {
+            final oldIndex = _currentIndex;
+            setState(() {
+              _currentIndex = index;
+              // 切页后按新页的 scaleState 更新 _zoomed
+              _updateZoomed(_scaleStateControllers[index].scaleState);
+            });
+            if (oldIndex != index) {
+              // 快速连续翻页时，上一个待重置页此时必然已完全滑出，先重置它。
+              final previousPending = _resetPendingIndex;
+              if (previousPending != null && previousPending != index) {
+                _controllers[previousPending].reset();
+                _scaleStateControllers[previousPending].reset();
+              }
+              // 标记本次离开页待重置，等它完全滑出屏幕（_onPageScroll 判定）再执行，
+              // 避免半屏可见时缩回原大小的突兀感。
+              _resetPendingIndex = oldIndex;
             }
-            // 标记本次离开页待重置，等它完全滑出屏幕（_onPageScroll 判定）再执行，
-            // 避免半屏可见时缩回原大小的突兀感。
-            _resetPendingIndex = oldIndex;
-          }
-        },
-        builder: (_, i) {
-          final img = widget.images[i];
-          return PhotoViewGalleryPageOptions(
-            imageProvider:
-                CachedNetworkImageProvider(img.url, headers: img.headers),
-            controller: _controllers[i],
-            minScale: PhotoViewComputedScale.contained,
-            maxScale: PhotoViewComputedScale.covered * 4,
-            // 仅初始页注册 Hero：关闭时反向飞行只匹配当前显示页。
-            heroAttributes: i == widget.initialIndex
-                ? PhotoViewHeroAttributes(tag: img.heroTag)
-                : null,
-            onTapUp: (_, __, ___) => close(),
-            scaleStateController: _scaleStateControllers[i],
-          );
-        },
-        backgroundDecoration: const BoxDecoration(color: Colors.black),
+          },
+          builder: (_, i) {
+            final img = widget.images[i];
+            return PhotoViewGalleryPageOptions(
+              imageProvider:
+                  CachedNetworkImageProvider(img.url, headers: img.headers),
+              controller: _controllers[i],
+              minScale: PhotoViewComputedScale.contained,
+              maxScale: PhotoViewComputedScale.covered * 4,
+              // 仅初始页注册 Hero：关闭时反向飞行只匹配当前显示页。
+              heroAttributes: i == widget.initialIndex
+                  ? PhotoViewHeroAttributes(tag: img.heroTag)
+                  : null,
+              onTapUp: (_, __, ___) => close(),
+              scaleStateController: _scaleStateControllers[i],
+            );
+          },
+          backgroundDecoration: const BoxDecoration(color: Colors.black),
+        ),
       ),
     );
   }
