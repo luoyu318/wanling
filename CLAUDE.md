@@ -156,14 +156,16 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `TypingBubble` — 对方"正在输入"动画气泡
   - `UnreadBadge` — 未读数红点
   - `ConnectionBanner` — WS 断线时顶部条幅提示
-  - `gallery/zoomable_gallery` — 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡）。点击聊天图片（image 类型 / markdown 内嵌图）打开全屏画廊，可左右滑动切换会话内所有图片。`_openGallery`（ChatPage）收集会话图片去重反转成正序 + 定位初始页。放大态下图片平移到边缘后跟随手指翻页（photo_view 原版 shouldMove 协调：到边让 PageView drag 赢得手势）；翻页时离开页完全滑出屏幕外（监听 `_pageController` 连续 page 值，`|page-oldIndex|>=1.0`）才重置 position/scaleState，避免半屏可见时缩回原大小的突兀感。单击/下拉关闭
+  - `gallery/zoomable_gallery` — 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡）。点击聊天图片（image 类型 / markdown 内嵌图）打开全屏画廊，可左右滑动切换会话内所有图片。`_openGallery`（ChatPage）收集会话图片去重反转成正序 + 定位初始页。放大态下图片平移到边缘后跟随手指翻页（photo_view 原版 shouldMove 协调：到边让 PageView drag 赢得手势）；翻页时离开页完全滑出屏幕外（监听 `_pageController` 连续 page 值，`|page-oldIndex|>=1.0`）才重置 position/scaleState，避免半屏可见时缩回原大小的突兀感。单击/下拉关闭。**长按弹 BottomSheet**（外包 `LongPressDetector`，pointer 层不与缩放冲突）→ 复用 `PanelItem` 菜单项样式（顶部圆角 12）→ 点保存调 `saveToGallery`（鉴权下载 + gal 写相册）+ SnackBar 反馈
   - `gallery/photo_view/` — **内化的 photo_view 0.15.0 源码**（脱离 pub 依赖作内部组件，package 自引用改为 `package:app/widgets/gallery/photo_view/`）。提供缩放/平移/fling 惯性。关键改动点：`photo_view_core.dart` 的 fling 用 `velocity/drag`（drag=0.018）替代原版写死 100px；`clampPosition` 拆严格版与 overscroll 版；`photo_view_gesture_detector.dart` 移除 DoubleTapGestureRecognizer 的 pointer 层方案（已废弃，现恢复竞技场仲裁）；`_blindScaleListener` 不钳制 position（避免双指缩放频闪）。photo_view 源码既有大量 info/warning 是内化时自带的，非本次引入
   - `CardButton` / `CardStateBadge` / `CountdownTimer` — **审批卡片组件三件套**。`CardButton` 三色实心按钮（primary 绿/info 蓝/danger 红）+ Material Icons（check/shield/close）+ 三态（active/selected/disabled）；`CardStateBadge` 右上角终态徽章（✓已批准/✗已拒绝/⏰已超时）；`CountdownTimer` 倒计时（按 expires_at 自算，每秒刷新）
+  - `long_press_detector` — **长按检测器（pointer 层）**。用 `Listener`（不进 gesture arena）实现，500ms 不动触发 `onLongPressStart`，移动超 18px 阈值取消。不与内部手势识别器（SelectableRegion 长按选词 / PhotoViewGallery 缩放）抢手势。message_bubble 长按弹菜单 + gallery 长按保存共用（从 message_bubble 提取）
+  - `panel_item` — **加号面板/画廊菜单共用菜单项**。52×52 白底圆角 12 容器 + 30px 黑色 outlined 图标 + 11px #6B7280 灰字（图标上文字下）。MessageInputBar 加号面板（拍照/相册/文件）+ gallery 长按保存菜单共用（从 message_input_bar 提取）
 - **lib/utils/** — 7 个工具：
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
   - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用
   - `dio_error.dart` — 统一 Dio 异常 → 用户可读文案
-  - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）
+  - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载到临时文件 → `gal.putImage` 写相册，返回 `SaveResult` 枚举，gal 写入免权限）
   - `notification_payload.dart` — 通知点击 payload 解析（路由到对应会话）
   - `permission_helper.dart` — `permission_handler` 封装，运行时权限申请（图片/通知）
   - `secure_storage.dart` — `flutter_secure_storage` 封装，加密存储 token / 多账号

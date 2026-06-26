@@ -119,8 +119,10 @@ test/
 | `TypingBubble` | "对方正在输入" 动画气泡 |
 | `UnreadBadge` | 未读数红点 |
 | `ConnectionBanner` | WS 断线时顶部条幅 |
-| `gallery/zoomable_gallery` | 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡 + 放大态跟随翻页） |
+| `gallery/zoomable_gallery` | 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡 + 放大态跟随翻页 + 长按保存到相册） |
 | `gallery/photo_view/` | 内化的 photo_view 源码（脱离 pub 依赖，提供缩放/平移/fling 惯性） |
+| `long_press_detector` | 长按检测器（pointer 层 Listener，不进 arena，message_bubble/gallery 共用） |
+| `panel_item` | 加号面板/画廊菜单共用菜单项（52×52 白底圆角12 + outlined 图标 + 灰字） |
 
 ### 渲染器体系（lib/rendering/）
 
