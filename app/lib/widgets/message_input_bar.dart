@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../utils/emoji_editing_controller.dart';
+import 'panel_item.dart';
 
 /// IM 风聊天输入栏。
 ///
@@ -258,50 +259,16 @@ class _PlusPanel extends StatelessWidget {
         crossAxisSpacing: 12,
         childAspectRatio: 0.8,
         children: [
-          _PanelItem(
+          PanelItem(
               icon: Icons.camera_alt_outlined,
               label: '拍照',
               onTap: onTakePhoto),
-          _PanelItem(
+          PanelItem(
               icon: Icons.photo_outlined, label: '相册', onTap: onPickAlbum),
-          _PanelItem(
+          PanelItem(
               icon: Icons.insert_drive_file_outlined,
               label: '文件',
               onTap: onPickFile),
-        ],
-      ),
-    );
-  }
-}
-
-class _PanelItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _PanelItem(
-      {required this.icon, required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-            ),
-            child: Icon(icon, size: 30, color: Colors.black),
-          ),
-          const SizedBox(height: 6),
-          Text(label,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
         ],
       ),
     );
