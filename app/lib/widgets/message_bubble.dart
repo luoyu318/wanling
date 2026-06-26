@@ -1,10 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../models/message.dart';
 import '../models/msg_type.dart';
 import '../rendering/message_content_renderer.dart';
+import 'long_press_detector.dart';
 
 export 'markdown_config.dart' show markdownStyle;
 
@@ -131,7 +130,7 @@ class MessageBubble extends StatelessWidget {
     // 非多选模式:用 Listener(pointer 层)捕获长按,回调弹菜单。
     // Listener 不进 gesture arena,与 SelectableRegion 内部长按选词并存。
     // _LongPressDetector 自己计时:down 记位置,up/cancel 清,超时触发回调。
-    return _LongPressDetector(
+    return LongPressDetector(
       onLongPressStart: onLongPressStart,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -168,73 +167,8 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
-/// 用 [Listener]（pointer 层）实现的轻量长按检测器。
-///
-/// 不进 gesture arena → 不会与 [SelectableRegion] 内部的长按选词识别器抢手势。
-/// 自己用 Timer 计时:down 启动,移动超阈值或 up/cancel 取消,到点(onLongPress
-/// 默认 500ms)触发回调。
-class _LongPressDetector extends StatefulWidget {
-  final Widget child;
-  final void Function(LongPressStartDetails)? onLongPressStart;
-
-  const _LongPressDetector({
-    required this.child,
-    this.onLongPressStart,
-  });
-
-  @override
-  State<_LongPressDetector> createState() => _LongPressDetectorState();
-}
-
-class _LongPressDetectorState extends State<_LongPressDetector> {
-  Offset? _downPos;
-  Timer? _timer;
-  static const Duration _longPressDelay = Duration(milliseconds: 500);
-  static const double _moveSlop = 18;
-
-  void _startTimer(Offset pos) {
-    _downPos = pos;
-    _timer?.cancel();
-    _timer = Timer(_longPressDelay, () {
-      if (_downPos != null && mounted) {
-        widget.onLongPressStart?.call(
-          LongPressStartDetails(
-            globalPosition: _downPos!,
-            localPosition: _downPos!,
-          ),
-        );
-      }
-    });
-  }
-
-  void _cancelTimer() {
-    _timer?.cancel();
-    _timer = null;
-    _downPos = null;
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (e) => _startTimer(e.position),
-      onPointerMove: (e) {
-        if (_downPos != null && (e.position - _downPos!).distance > _moveSlop) {
-          _cancelTimer();
-        }
-      },
-      onPointerUp: (_) => _cancelTimer(),
-      onPointerCancel: (_) => _cancelTimer(),
-      child: widget.child,
-    );
-  }
-}
+/// 用 [Listener]（pointer 层）实现的轻量长按检测器（已提取为公共组件
+/// [LongPressDetector]，见 long_press_detector.dart）。
 
 /// 带三角的气泡容器。文本 / Markdown / 文件 消息共用。
 /// 三角 top 固定 11px（= 单行文字中心），不随气泡高度变化。
