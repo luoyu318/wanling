@@ -56,6 +56,12 @@ class MessageBubble extends StatelessWidget {
   final bool selectionMode; // 是否多选模式
   final bool selected;      // 当前消息是否被勾选
 
+  /// 当前会话的全部消息。透传给 renderer 用于画廊收集会话级图片。
+  final List<ChatMessage> conversationMessages;
+
+  /// 点击图片时打开画廊的回调（参数 = 被点击图 fileId）。透传给 renderer。
+  final void Function(String fileId)? openGallery;
+
   /// 非多选模式下，长按触发（带触发位置，供 ChatPage 定位菜单）。
   final void Function(LongPressStartDetails details)? onLongPressStart;
 
@@ -68,6 +74,8 @@ class MessageBubble extends StatelessWidget {
     required this.isMe,
     required this.baseUrl,
     required this.token,
+    this.conversationMessages = const [],
+    this.openGallery,
     this.selectionMode = false,
     this.selected = false,
     this.onLongPressStart,
@@ -84,6 +92,8 @@ class MessageBubble extends StatelessWidget {
       baseUrl: baseUrl,
       token: token,
       isDark: isDark,
+      conversationMessages: conversationMessages,
+      openGallery: openGallery,
     );
 
     // 由 renderer 渲染纯内容

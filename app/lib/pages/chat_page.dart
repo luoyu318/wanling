@@ -15,8 +15,11 @@ import '../providers/conversation_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/typing_provider.dart';
 import '../services/websocket_service.dart';
+import '../utils/gallery_image.dart'
+    show collectConversationImages;
 import '../widgets/message_bubble.dart' show MessageBubble, formatTimestamp;
 import '../widgets/message_context_menu.dart';
+import '../widgets/gallery/zoomable_gallery.dart' show ZoomableGallery;
 import '../widgets/message_input_bar.dart';
 import '../widgets/avatar_picker.dart' show defaultAssetPickerConfig;
 import '../widgets/typing_bubble.dart';
@@ -301,6 +304,32 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return ref.read(chatProvider(chatKey));
   }
 
+  /// 打开会话级图片画廊：收集会话所有图，定位被点击图索引，Hero 过渡进画廊。
+  ///
+  /// 由 MessageBubble → ImageContentRenderer 的点击回调注入（rc.openGallery）。
+  /// 收集结果为空（无任何图片，理论不应发生）则直接返回，不打开空画廊。
+  void _openGallery(String fileId, List<ChatMessage> messages) {
+    final baseUrl = ref.read(settingsProvider);
+    final token = ref.read(authProvider).token ?? '';
+    final images = collectConversationImages(messages, baseUrl, token);
+    if (images.isEmpty) return;
+    final index = images.indexWhere((g) => g.fileId == fileId);
+    // 用全透明路由：页面本身无入场/退场动画（避免黑色背景横划覆盖 Hero），
+    // 只有 Hero 共享元素的飞行过渡可见，背景随 Hero 自然淡入/淡出。
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, __, ___) => ZoomableGallery(
+          images: images,
+          initialIndex: index < 0 ? 0 : index,
+        ),
+      ),
+    );
+  }
+
   /// 滚动时动态调整菜单:消息出屏则关闭,定位变化则重建 OverlayEntry。
   void _updateMenuOnScroll() {
     final msgId = _activeSelectMsgId;
@@ -582,6 +611,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           isMe: msg.senderType == 'user',
                           baseUrl: ref.read(settingsProvider),
                           token: ref.read(authProvider).token ?? '',
+                          conversationMessages: chatState,
+                          openGallery: (fileId) =>
+                              _openGallery(fileId, chatState),
                           selectionMode: _selectionMode,
                           selected: _selectedIds.contains(msg.id),
                           onLongPressStart: _selectionMode

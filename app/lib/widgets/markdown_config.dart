@@ -5,7 +5,6 @@ import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
-import 'full_screen_image_page.dart';
 import 'markdown_code_wrapper.dart';
 import 'select_all_container.dart';
 
@@ -50,6 +49,7 @@ MarkdownConfig markdownStyle({
   required BuildContext context,
   String baseUrl = '',
   String token = '',
+  void Function(String fileId)? openGallery,
 }) {
   final ink = isDark ? const Color(0xFFE8E8E8) : const Color(0xFF222222);
   final sub = isDark ? const Color(0xFF999999) : const Color(0xFF666666);
@@ -115,7 +115,7 @@ MarkdownConfig markdownStyle({
     // adapter 已把 agent 回复里的远程图下载上传替换为 /api/files/{id}(见 adapter),
     // 这里放行内部链接带 JWT 拉取;其余 URL 是 LLM 幻觉/追踪图,不渲染成图。
     // 见 [_markdownImageBuilder] / [_markdownImagePlaceholder]。
-    ImgConfig(builder: (url, attrs) => _markdownImageBuilder(url, attrs, baseUrl, token, context)),
+    ImgConfig(builder: (url, attrs) => _markdownImageBuilder(url, attrs, baseUrl, token, context, openGallery)),
     // 安全:链接点击收敛到 http/https 白名单,拦截 javascript:/file: 等危险 scheme。
     // 放行的链接仍走 markdown_widget 默认的 launchUrl 外部打开。
     LinkConfig(onTap: _safeLaunchUrl),
@@ -165,6 +165,7 @@ Widget _markdownImageBuilder(
   String baseUrl,
   String token,
   BuildContext context,
+  void Function(String fileId)? openGallery,
 ) {
   if (!_isInternalFileUrl(url, baseUrl)) {
     return _markdownImagePlaceholder(attributes);
@@ -173,31 +174,46 @@ Widget _markdownImageBuilder(
   final imageUrl =
       url.startsWith('http') ? url : '$baseUrl${url.startsWith('/') ? '' : '/'}$url';
   final headers = token.isEmpty ? <String, String>{} : {'Authorization': 'Bearer $token'};
-  // 点击进全屏查看页(与独立 image 消息 ImageContentRenderer 行为一致)
-  return GestureDetector(
-    onTap: () => Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => FullScreenImagePage(url: imageUrl, headers: headers),
-      ),
-    ),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 200),
-        child: CachedNetworkImage(
-          imageUrl: imageUrl,
-          httpHeaders: headers,
-          fit: BoxFit.contain,
-          placeholder: (_, __) => const SizedBox(
-            width: 200,
-            height: 150,
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+  // fileId 作 Hero tag，与 image 类型 'gallery_$fileId' 同口径；点击进会话级
+  // 画廊（openGallery），与 image 类型完全对称。openGallery 为 null（测试）
+  // 时降级为单图全屏，避免崩溃。
+  final fileId = _extractFileIdFromUrl(url);
+  return Hero(
+    tag: 'gallery_$fileId',
+    child: GestureDetector(
+      onTap: () => openGallery?.call(fileId),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 200),
+          child: CachedNetworkImage(
+            imageUrl: imageUrl,
+            httpHeaders: headers,
+            fit: BoxFit.contain,
+            placeholder: (_, __) => const SizedBox(
+              width: 200,
+              height: 150,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+            errorWidget: (_, __, ___) => _markdownImagePlaceholder(attributes),
           ),
-          errorWidget: (_, __, ___) => _markdownImagePlaceholder(attributes),
         ),
       ),
     ),
   );
+}
+
+/// 从 markdown 图片 URL 提取 fileId（/api/files/{id}）。
+///
+/// 与 gallery_image.dart 的 _extractFileId 同口径，确保 Hero tag 一致。
+/// 无法识别时回退到原 url（保证 tag 唯一不冲突）。
+String _extractFileIdFromUrl(String url) {
+  const prefix = '/api/files/';
+  final idx = url.indexOf(prefix);
+  if (idx < 0) return url;
+  final tail = url.substring(idx + prefix.length);
+  final qIdx = tail.indexOf('?');
+  return qIdx >= 0 ? tail.substring(0, qIdx) : tail;
 }
 
 /// 外部/不可信图片的文字占位:不发起网络请求。

@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../models/message.dart';
 import '../models/msg_type.dart';
 
 /// 消息内容渲染器接口。
@@ -49,11 +50,21 @@ class MessageRenderContext {
   final String token;
   final bool isDark;
 
+  /// 当前会话的全部消息（用于画廊收集会话级图片）。仅点击图片时使用。
+  /// 默认空列表，保证 renderer 在测试/无画廊场景下也能正常构造。
+  final List<ChatMessage> conversationMessages;
+
+  /// 点击图片时打开画廊的回调。参数是被点击图的 fileId（用于定位初始索引）。
+  /// null 表示当前不支持画廊（如测试场景），点击降级为无操作。
+  final void Function(String fileId)? openGallery;
+
   const MessageRenderContext({
     required this.isMe,
     required this.baseUrl,
     required this.token,
     required this.isDark,
+    this.conversationMessages = const [],
+    this.openGallery,
   });
 }
 

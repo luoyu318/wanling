@@ -62,11 +62,15 @@ lib/
 ├── rendering/              # 消息内容渲染器（注册表模式：MsgType → Renderer）
 │   ├── message_content_renderer.dart  # Renderer 接口 + 注册表 + MessageRenderContext
 │   └── builtin_renderers.dart         # text/markdown/image/file renderer + registerBuiltinRenderers()
-├── widgets/                 # 14 个组件（见下方"组件清单"）
+├── widgets/                 # 组件，含 gallery/ 画廊子目录（见下方"组件清单"）
+│   └── gallery/
+│       ├── zoomable_gallery.dart     # 会话级图片画廊（Hero + 翻页 + 放大态跟随翻页）
+│       └── photo_view/               # 内化的 photo_view 源码（缩放/平移/fling）
 └── utils/
     ├── app_lifecycle_observer.dart   # 前后台切换 → 启停后台服务
     ├── avatar_bitmap.dart            # 通知头像加载(下载裁圆角+色块兜底,isolate 可用)
     ├── dio_error.dart                # Dio 异常 → 用户可读文案
+    ├── gallery_image.dart            # 画廊数据层（GalleryImage 模型 + 会话图片收集 + markdown 提取）
     ├── notification_payload.dart     # 通知点击路由解析
     ├── permission_helper.dart        # 运行时权限申请
     ├── secure_storage.dart           # flutter_secure_storage 封装
@@ -97,14 +101,14 @@ test/
 | `SettingsPage` | 服务器地址配置 |
 | `AboutPage` | 版本号（`package_info_plus`） |
 
-### 组件清单（14 个）
+### 组件清单
 
 | 组件 | 说明 |
 |------|------|
 | `Avatar` | 首字母 + hash 色板（avatar_url 为空时降级）；有 url 时拼 baseUrl + Authorization 头；`memCacheWidth` 限解码尺寸防返回闪烁 |
 | `AvatarPicker` | 选图 + 裁剪（绕开 Android ActivityResult 崩溃）；导出 `defaultAssetPickerConfig` 共享配置（简中 + 相册名汉化），头像/聊天发图两处复用 |
 | `CopyableField` | 复制 + 眼睛切换（用于密钥展示） |
-| `MessageBubble` | **StatefulWidget**，负责外壳（气泡/选择态/勾选/长按），内容委托 `ContentRendererRegistry`。长按：震动 + 进选择态（SelectableRegion+全选拉杆）+ 弹菜单。多选模式渲染左侧 22px 圆形勾选框 |
+| `MessageBubble` | **StatefulWidget**，负责外壳（气泡/选择态/勾选/长按），内容委托 `ContentRendererRegistry`，透传 `conversationMessages` + `openGallery` 给 renderer。长按：震动 + 进选择态（SelectableRegion+全选拉杆）+ 弹菜单。多选模式渲染左侧 22px 圆形勾选框 |
 | `BubbleWithTail` | 带三角的气泡容器（text/markdown/file 共用） |
 | `MessageContextMenu` | 长按消息浮动菜单（OverlayEntry + LayerLink 紧贴气泡）：半透明深色 + 三项横向（复制/删除/多选，icon 上文字下） |
 | `MarkdownView` | **自控 markdown 渲染**（不用 MarkdownWidget，绕开其 SelectionArea 吞手势）。用 markdown_widget 底层 API：parseLines→WidgetVisitor.visit→SpanNode.build→Column[Text.rich] |
@@ -115,7 +119,8 @@ test/
 | `TypingBubble` | "对方正在输入" 动画气泡 |
 | `UnreadBadge` | 未读数红点 |
 | `ConnectionBanner` | WS 断线时顶部条幅 |
-| `FullScreenImagePage` | `photo_view` 全屏图查看 + 双指缩放 |
+| `gallery/zoomable_gallery` | 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡 + 放大态跟随翻页） |
+| `gallery/photo_view/` | 内化的 photo_view 源码（脱离 pub 依赖，提供缩放/平移/fling 惯性） |
 
 ### 渲染器体系（lib/rendering/）
 

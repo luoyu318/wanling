@@ -138,30 +138,32 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `SettingsPage` / `AboutPage` — 设置（服务器地址）+ 关于（用 `package_info_plus` 取版本号）
 - **lib/rendering/** — 消息内容渲染器体系（注册表模式，为后续 HTML/卡片扩展预留）：
   - `message_content_renderer` — `MessageContentRenderer` 接口（`selectable`/`wrapInBubble`/`build`）+ `ContentRendererRegistry` 注册表（`MsgType → Renderer`）+ `MessageRenderContext`。MessageBubble 只管外壳，内容渲染委托给注册表查到的 renderer。扩展新类型只需写一个 renderer 并 `register`
-  - `builtin_renderers` — 内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡）、`FileContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调
+  - `builtin_renderers` — 内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`）、`FileContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调
   - `card_renderer` — **审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行。按钮终态映射：deny/cancel→denied，allow_once/allow_always/once/always→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，ChatNotifier 构造时注入（避免 Riverpod 循环依赖）
-- **lib/widgets/** — 14 个组件：
+- **lib/widgets/** — 组件（含 `gallery/` 画廊子目录）：
   - `Avatar` — 首字母 + hash 色板（avatar_url 为空时降级）；有 url 时拼 baseUrl + 注入 Authorization 头（用 `cached_network_image`）。`memCacheWidth` 限显示尺寸 ×3 解码（避免大图占满 ImageCache 被淘汰，二级页返回时头像稳定命中内存不闪）。`fadeInDuration`/`fadeOutDuration` 设 zero（关闭加载淡入，对齐主流 IM 直接显示）
   - `AvatarPicker` — `wechat_assets_picker` + `crop_your_image` 选图裁剪（绕开 Android ActivityResult 崩溃）。导出 `defaultAssetPickerConfig` 共享配置（简中 textDelegate + pathNameBuilder 把 Android 系统相册名 Recent 转成「最近项目」+ 品牌绿），`pickImageBytes`（头像，返回字节）和 `ChatPage._pickAlbum`（聊天发图，返回 AssetEntity）两处复用，避免配置漂移
   - `CopyableField` — 复制 + 眼睛切换
-  - `MessageBubble` — **StatefulWidget**，负责外壳（气泡三角/选择态/勾选框/长按），内容渲染委托给 `ContentRendererRegistry`。长按：`onLongPressStart` → 震动（`HapticFeedback.selectionClick`）+ 进选择态（包 `SelectableRegion` 持 key + postFrame `selectAll` 显示拉杆）+ 回调弹菜单。**SelectableRegion 仅长按后挂上**（避免常态吞长按手势，绕开 markdown_widget 内置 SelectionArea 的 Bug）。菜单"复制"读当前选区（`onSelectionChanged` 缓存）降级全文。多选模式渲染左侧 22px 圆形勾选框
+  - `MessageBubble` — **StatefulWidget**，负责外壳（气泡三角/选择态/勾选框/长按），内容渲染委托给 `ContentRendererRegistry`。透传 `conversationMessages`（会话全部消息，供画廊收集）+ `openGallery`（点击图片回调）给 renderer。长按：`onLongPressStart` → 震动（`HapticFeedback.selectionClick`）+ 进选择态（包 `SelectableRegion` 持 key + postFrame `selectAll` 显示拉杆）+ 回调弹菜单。**SelectableRegion 仅长按后挂上**（避免常态吞长按手势，绕开 markdown_widget 内置 SelectionArea 的 Bug）。菜单"复制"读当前选区（`onSelectionChanged` 缓存）降级全文。多选模式渲染左侧 22px 圆形勾选框
   - `MessageInputBar` — IM 风聊天输入栏（StatefulWidget）。内聚输入文本/焦点/面板显隐/加号↔发送切换状态，对外 5 个回调（`onSend`/`onPickFile`/`onTakePhoto`/`onPickAlbum`，不依赖 Provider）。结构：填充式胶囊输入框（白底圆角 6、isDense 锁 40px、`maxLines:null` 1~5 行）+ `AnimatedSwitcher`（150ms 加号 ⊕ ↔ 绿色发送）+ `AnimatedSize`（250ms 上滑）的 `PlusPanel`（九宫格：拍照/相册/文件，去图片）。键盘↔面板互斥（FocusNode listener：输入框获焦收面板；点加号 unfocus 展面板）。`ColoredBox` 在 `SafeArea` 外层填满底部安全区。统一字号 16/w300（与气泡一致）
   - `MessageContextMenu` — 长按消息浮动菜单（`OverlayEntry` + `LayerLink`/`CompositedTransformFollower` 紧贴气泡上方 8px）。半透明深色（`#262626` 0.91）+ 圆角 12 + 阴影，三项横向（复制/删除/多选，icon 上文字下，删除红色）。全屏透明遮罩捕获外部点击 → onDismiss。由 ChatPage 的 OverlayEntry 驱动
   - `BubbleWithTail` — 带三角的气泡容器（text/markdown/file 共用），maxWidth=屏宽×0.9（留余量防 markdown 内容 sub-pixel 溢出）
   - `MarkdownView` — **自控 markdown 渲染**，不用 `MarkdownWidget`（它内部固定包 `SelectionArea`+`ListView`+`VisibilityDetector`，吞长按手势且不必要）。用 markdown_widget 底层 API：`m.Document.parseLines` → `WidgetVisitor.visit`（AST→SpanNode，config/generator 钩子照常生效）→ `SpanNode.build()`（→InlineSpan）→ `Column[Text.rich]`。**不包 SelectionArea**（选择由 MessageBubble 外层统一管）。样式/LaTeX/代码高亮 100% 保留
-  - `markdown_config` — `markdownStyle({isDark, baseUrl, token})` 极简墨白样式预设。**图片渲染安全策略**：只放行内部 server 图片（`/api/files/xxx`，adapter `_rewrite_remote_images` 已把 agent 回复里可下载的远程图下载上传替换为此内部链接），带 JWT 渲染成 `CachedNetworkImage`；其余 http(s) URL（追踪图/SSRF/LLM 幻觉）一律文字占位，不发网络请求。**注意 markdown_widget 2.3.2+8 bug**：表内容 `TBodyNode` 实际读 `headerStyle` 而非 `bodyStyle`，故表头表内容共用 `headerStyle`；且 `PConfig.textStyle.height` 必须 ≥ 1.6（否则任务列表 checkbox WidgetSpan 算出负 padding，debug 模式崩溃）
+  - `markdown_config` — `markdownStyle({isDark, baseUrl, token})` 极简墨白样式预设。**图片渲染安全策略**：只放行内部 server 图片（`/api/files/xxx`，adapter `_rewrite_remote_images` 已把 agent 回复里可下载的远程图下载上传替换为此内部链接），带 JWT 渲染成 `CachedNetworkImage`；其余 http(s) URL（追踪图/SSRF/LLM 幻觉）一律文字占位，不发网络请求。内部图片包 Hero（tag='gallery_$fileId'，与 image 类型同口径）+ 点击进会话级画廊（`openGallery`，与 image 类型完全对称）。**注意 markdown_widget 2.3.2+8 bug**：表内容 `TBodyNode` 实际读 `headerStyle` 而非 `bodyStyle`，故表头表内容共用 `headerStyle`；且 `PConfig.textStyle.height` 必须 ≥ 1.6（否则任务列表 checkbox WidgetSpan 算出负 padding，debug 模式崩溃）
   - `markdown_latex` — `LatexSyntax`（`$...$`/`$$...$$` 匹配）+ `latexGenerator`（`SpanNodeGeneratorWithTag`，走 `flutter_math_fork` 的 `Math.tex`），通过 `MarkdownGenerator.inlineSyntaxList`/`generators` 注入。块级 `$$...$$` 的 WidgetSpan child 包 `SelectAllOrNoneContainer`（fallbackText=latex 源码），行内 `$...$` 不包
   - `markdown_code_wrapper` — 代码块复制按钮（右上角，✓ 回弹 2 秒，无语言标签），签名对齐 `markdown_widget` 的 `CodeWrapper` typedef，注入 `PreConfig.wrapper`。**外层包 `SelectAllOrNoneContainer`（fallbackText=代码源码）实现整块选中**
   - `SelectAllOrNoneContainer` — 块级整体选中（主流 IM 式）。`SelectionContainer` + `SelectAllOrNoneContainerDelegate`（照搬 Flutter 官方示例，落块即全选）。`fallbackText` 兜底非文本块（如 LaTeX 图形）的复制。注入到代码块 wrapper / 块级 LaTeX / 表格 wrapper
   - `TypingBubble` — 对方"正在输入"动画气泡
   - `UnreadBadge` — 未读数红点
   - `ConnectionBanner` — WS 断线时顶部条幅提示
-  - `FullScreenImagePage` — `photo_view` 全屏查看 + 双指缩放
+  - `gallery/zoomable_gallery` — 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡）。点击聊天图片（image 类型 / markdown 内嵌图）打开全屏画廊，可左右滑动切换会话内所有图片。`_openGallery`（ChatPage）收集会话图片去重反转成正序 + 定位初始页。放大态下图片平移到边缘后跟随手指翻页（photo_view 原版 shouldMove 协调：到边让 PageView drag 赢得手势）；翻页时离开页完全滑出屏幕外（监听 `_pageController` 连续 page 值，`|page-oldIndex|>=1.0`）才重置 position/scaleState，避免半屏可见时缩回原大小的突兀感。单击/下拉关闭
+  - `gallery/photo_view/` — **内化的 photo_view 0.15.0 源码**（脱离 pub 依赖作内部组件，package 自引用改为 `package:app/widgets/gallery/photo_view/`）。提供缩放/平移/fling 惯性。关键改动点：`photo_view_core.dart` 的 fling 用 `velocity/drag`（drag=0.018）替代原版写死 100px；`clampPosition` 拆严格版与 overscroll 版；`photo_view_gesture_detector.dart` 移除 DoubleTapGestureRecognizer 的 pointer 层方案（已废弃，现恢复竞技场仲裁）；`_blindScaleListener` 不钳制 position（避免双指缩放频闪）。photo_view 源码既有大量 info/warning 是内化时自带的，非本次引入
   - `CardButton` / `CardStateBadge` / `CountdownTimer` — **审批卡片组件三件套**。`CardButton` 三色实心按钮（primary 绿/info 蓝/danger 红）+ Material Icons（check/shield/close）+ 三态（active/selected/disabled）；`CardStateBadge` 右上角终态徽章（✓已批准/✗已拒绝/⏰已超时）；`CountdownTimer` 倒计时（按 expires_at 自算，每秒刷新）
 - **lib/utils/** — 7 个工具：
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
   - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用
   - `dio_error.dart` — 统一 Dio 异常 → 用户可读文案
+  - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）
   - `notification_payload.dart` — 通知点击 payload 解析（路由到对应会话）
   - `permission_helper.dart` — `permission_handler` 封装，运行时权限申请（图片/通知）
   - `secure_storage.dart` — `flutter_secure_storage` 封装，加密存储 token / 多账号
