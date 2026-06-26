@@ -44,5 +44,7 @@
 	<string>用于拍照发送</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于从相册选择图片发送</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于将图片保存到相册</string>
 </dict>
 </plist>
