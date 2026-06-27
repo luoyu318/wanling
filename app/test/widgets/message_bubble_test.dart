@@ -306,5 +306,73 @@ void main() {
       await tester.longPress(find.text('hi'));
       expect(longPressed, isTrue);
     });
+
+    testWidgets('多选模式：点气泡本体切换选中', (tester) async {
+      var selected = false;
+      final message = ChatMessage(
+        id: '1',
+        conversationId: 'c1',
+        senderType: 'agent',
+        senderId: 'a1',
+        content: {'msg_type': 'text', 'data': {'text': 'hello'}},
+        createdAt: DateTime.now(),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: message,
+            isMe: false,
+            baseUrl: '',
+            token: '',
+            selectionMode: true,
+            selected: false,
+            onTapSelect: () => selected = !selected,
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('hello'), warnIfMissed: false);
+      await tester.pump();
+      expect(selected, isTrue);
+
+      await tester.tap(find.text('hello'), warnIfMissed: false);
+      await tester.pump();
+      expect(selected, isFalse);
+    });
+
+    testWidgets('多选模式：点勾选框也切换选中', (tester) async {
+      var selected = false;
+      final message = ChatMessage(
+        id: '1',
+        conversationId: 'c1',
+        senderType: 'agent',
+        senderId: 'a1',
+        content: {'msg_type': 'text', 'data': {'text': 'hi'}},
+        createdAt: DateTime.now(),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: message,
+            isMe: false,
+            baseUrl: '',
+            token: '',
+            selectionMode: true,
+            selected: false,
+            onTapSelect: () => selected = !selected,
+          ),
+        ),
+      ));
+
+      // 勾选框是最左侧的 22px 圆形容器
+      final check = find.byWidgetPredicate(
+        (w) => w is Container && w.decoration is BoxDecoration,
+      ).first;
+      await tester.tap(check);
+      await tester.pump();
+      expect(selected, isTrue);
+    });
   });
 }

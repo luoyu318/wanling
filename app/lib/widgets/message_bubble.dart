@@ -104,25 +104,36 @@ class MessageBubble extends StatelessWidget {
         : content;
 
     if (selectionMode) {
-      // 多选模式:[固定 22px 勾选列] + [气泡列]。
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        child: Row(
-          children: [
-            GestureDetector(
-              onTap: onTapSelect,
-              behavior: HitTestBehavior.opaque,
-              child: _buildCheck(),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Row(
-                mainAxisAlignment:
-                    isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                children: [Flexible(child: bubble)],
+      // 多选模式：整个 Row 包 GestureDetector，点 Row 任意位置都切换选中。
+      // 移除勾选框独立 GestureDetector（避免双层冲突）。
+      // 多选模式下不挂 LongPressDetector（长按菜单仅非多选模式触发，
+      // 由 chat_page.dart 控制），新增 onTap 无手势冲突。
+      //
+      // bubble 外包 AbsorbPointer 吸收内容子树 pointer：图片消息内部的
+      // GestureDetector（点击进画廊）会截获外层点击导致点图片气泡无法切换
+      // 选中。AbsorbPointer 让 hitTest 终止在外层 GestureDetector。
+      // 勾选框不包（保留可点）。
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTapSelect,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          child: Row(
+            children: [
+              _buildCheck(),
+              const SizedBox(width: 8),
+              Expanded(
+                child: AbsorbPointer(
+                  child: Row(
+                    mainAxisAlignment: isMe
+                        ? MainAxisAlignment.end
+                        : MainAxisAlignment.start,
+                    children: [Flexible(child: bubble)],
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }

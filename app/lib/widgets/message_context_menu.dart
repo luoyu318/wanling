@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_menu_style.dart';
 
 /// 菜单固定宽度（用于定位计算）。
 /// 三项（复制/删除/多选）每项约 40px + 容器 padding 8*2 ≈ 136，取 150 留余量。
@@ -13,9 +14,10 @@ const double kMenuTailHalfWidth = 5;
 /// 长按消息弹出的浮动菜单（**绝对定位**，锚钉效果）。
 ///
 /// 设计:
-/// - 半透明深色背景(Color(0xE8262626)) + 圆角 4 + 阴影 + 指向消息的小三角
+/// - 半透明深色背景(AppMenuStyle.darkBg) + 圆角(AppMenuStyle.radiusAnchor)
+///   + 阴影(AppMenuStyle.shadow) + 指向消息的小三角
 /// - 三项横向排列:复制 / 删除 / 多选,每项 icon 在上、文字在下(垂直 Column)
-/// - "删除"用红色(#FF5B5B),其余白色
+/// - "删除"用 AppMenuStyle.darkDanger,其余 AppMenuStyle.darkFg
 /// - **绝对定位**（Positioned left/top）而非 CompositedTransformFollower：
 ///   follower 钉在消息上，消息溢出可见区时菜单跟着溢出。绝对定位让菜单
 ///   "跟随消息但钉在可见区边缘"——消息在中央时贴消息上方/下方，消息接近
@@ -114,7 +116,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
   }
 }
 
-/// 菜单容器本体(深色背景 + 圆角 4 + 阴影 + 指向消息的三角)。
+/// 菜单容器本体(深色背景 + 圆角 + 阴影 + 指向消息的三角)。
 class _MenuBody extends StatelessWidget {
   /// 三角朝向：true=朝下（菜单在消息上方），false=朝上。
   final bool pointDown;
@@ -132,8 +134,6 @@ class _MenuBody extends StatelessWidget {
     required this.onSelect,
   });
 
-  static const Color _bg = Color(0xE8262626);
-
   @override
   Widget build(BuildContext context) {
     // 三角画在"靠消息那一侧"的边、水平位置=tailOffsetX(指向消息中心)。
@@ -144,7 +144,8 @@ class _MenuBody extends StatelessWidget {
       bottom: pointDown ? -6 : null,
       child: CustomPaint(
         size: const Size(10, 6),
-        painter: _MenuTailPainter(color: _bg, pointDown: pointDown),
+        painter:
+            _MenuTailPainter(color: AppMenuStyle.darkBg, pointDown: pointDown),
       ),
     );
 
@@ -157,15 +158,10 @@ class _MenuBody extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             decoration: BoxDecoration(
-              color: _bg,
-              borderRadius: BorderRadius.circular(4),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 20,
-                  offset: Offset(0, 6),
-                ),
-              ],
+              color: AppMenuStyle.darkBg,
+              borderRadius:
+                  BorderRadius.circular(AppMenuStyle.radiusAnchor),
+              boxShadow: const [AppMenuStyle.shadow],
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -173,17 +169,17 @@ class _MenuBody extends StatelessWidget {
                 _MenuItem(
                     icon: Icons.content_copy,
                     label: '复制',
-                    color: Colors.white,
+                    color: AppMenuStyle.darkFg,
                     onTap: onCopy),
                 _MenuItem(
                     icon: Icons.delete_outline,
                     label: '删除',
-                    color: const Color(0xFFFF5B5B),
+                    color: AppMenuStyle.darkDanger,
                     onTap: onDelete),
                 _MenuItem(
                     icon: Icons.check_circle_outline,
                     label: '多选',
-                    color: Colors.white,
+                    color: AppMenuStyle.darkFg,
                     onTap: onSelect),
               ],
             ),

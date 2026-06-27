@@ -17,11 +17,13 @@ import '../providers/typing_provider.dart';
 import '../services/websocket_service.dart';
 import '../utils/gallery_image.dart'
     show collectConversationImages;
+import '../utils/snackbar.dart';
 import '../widgets/message_bubble.dart' show MessageBubble, formatTimestamp;
 import '../widgets/message_context_menu.dart';
 import '../widgets/gallery/zoomable_gallery.dart' show ZoomableGallery;
 import '../widgets/message_input_bar.dart';
 import '../widgets/avatar_picker.dart' show defaultAssetPickerConfig;
+import '../widgets/feedback/app_dialog.dart';
 import '../widgets/typing_bubble.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 import 'package:wechat_camera_picker/wechat_camera_picker.dart';
@@ -367,19 +369,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final text = (sel != null && sel.isNotEmpty) ? sel : _extractText(msg);
     if (text.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('该消息无可复制文本'),
-              duration: Duration(seconds: 1)),
-        );
+        showAppSnackBar(context, '该消息无可复制文本');
       }
       return;
     }
     await Clipboard.setData(ClipboardData(text: text));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
-      );
+      showAppSnackBar(context, '已复制', type: SnackBarType.success);
     }
   }
 
@@ -415,69 +411,48 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         .join('\n');
     if (texts.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('选中的消息无可复制文本'),
-              duration: Duration(seconds: 1)),
-        );
+        showAppSnackBar(context, '选中的消息无可复制文本');
       }
       return;
     }
     await Clipboard.setData(ClipboardData(text: texts));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
-      );
+      showAppSnackBar(context, '已复制', type: SnackBarType.success);
     }
   }
 
-  /// 删除确认(单条/批量共用)。弹 AlertDialog 二次确认 → 调 provider 乐观删除。
+  /// 删除确认(单条/批量共用)。弹 showAppDialog 二次确认 → 调 provider 乐观删除。
   Future<void> _confirmDelete(List<String> ids) async {
     if (ids.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除消息'),
-        content: Text(ids.length == 1
-            ? '确定删除这条消息吗?'
-            : '确定删除 ${ids.length} 条消息吗?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFFA5151)),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+      title: '删除消息',
+      content: Text(ids.length == 1
+          ? '确定删除这条消息吗?'
+          : '确定删除 ${ids.length} 条消息吗?'),
+      confirmText: '删除',
+      onConfirm: () async {
+        final wasSelectionMode = _selectionMode;
+        try {
+          await _notifier.deleteMessages(ids);
+          // 清理已删消息的 GlobalKey(防长期会话 Map 无限增长)
+          _bubbleKeys.removeWhere((k, _) => ids.contains(k));
+          if (!mounted) return;
+          // 删除成功后若是多选模式,清空选中并退出
+          if (wasSelectionMode) {
+            setState(() {
+              _selectedIds.clear();
+              _selectionMode = false;
+            });
+          }
+        } catch (_) {
+          // provider 失败已回滚,UI 层提示。多选模式不退出(让用户重试)。
+          if (mounted) {
+            showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
+          }
+        }
+      },
     );
-    if (confirmed != true) return;
-
-    final wasSelectionMode = _selectionMode;
-    try {
-      await _notifier.deleteMessages(ids);
-      // 清理已删消息的 GlobalKey(防长期会话 Map 无限增长)
-      _bubbleKeys.removeWhere((k, _) => ids.contains(k));
-      if (!mounted) return;
-      // 删除成功后若是多选模式,清空选中并退出
-      if (wasSelectionMode) {
-        setState(() {
-          _selectedIds.clear();
-          _selectionMode = false;
-        });
-      }
-    } catch (_) {
-      // provider 失败已回滚,UI 层提示。多选模式不退出(让用户重试)。
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败,请重试')),
-        );
-      }
-    }
   }
 
   // ============ build ============
@@ -572,11 +547,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       key: _selectionKey,
                       focusNode: _selectionFocusNode,
                       // materialTextSelectionHandleControls：它是 TextSelectionHandleControls，
-                      // buildHandle 复用父类水滴拉杆（保留），buildToolbar 返回空。
-                      // 配合 contextMenuBuilder 返回空 → 彻底禁掉系统工具栏(cut/copy/paste/selectAll)，
-                      // 拉杆/选中高亮不受影响（由 buildHandle 渲染）。
+                      // buildHandle 复用父类水滴拉杆（保留），buildToolbar 不再用（被 contextMenuBuilder 覆盖）。
+                      // contextMenuBuilder 返回 SizedBox.shrink()：禁用 SelectableRegion 自带
+                      // 的文字菜单（与 MessageContextMenu 重复），保留拉杆/选中高亮（由
+                      // buildHandle 渲染）。复制功能由 MessageContextMenu「复制」读取
+                      // onSelectionChanged 缓存的 _selectedText 提供。
                       selectionControls: materialTextSelectionHandleControls,
-                      contextMenuBuilder: (context, state) =>
+                      contextMenuBuilder: (context, selectableRegionState) =>
                           const SizedBox.shrink(),
                       onSelectionChanged: (c) =>
                           _selectedText = c?.plainText,
@@ -711,9 +688,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _notifier.sendFile(fileId, msgType);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('上传失败: $e')),
-        );
+        showAppSnackBar(context, '上传失败: $e', type: SnackBarType.error);
       }
     }
   }
@@ -746,9 +721,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final file = await asset.file;
     if (file == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法读取文件')),
-        );
+        showAppSnackBar(context, '无法读取文件', type: SnackBarType.error);
       }
       return;
     }
@@ -758,9 +731,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _notifier.sendFile(fileId, msgType);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('上传失败: $e')),
-        );
+        showAppSnackBar(context, '上传失败: $e', type: SnackBarType.error);
       }
     }
   }
