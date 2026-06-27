@@ -19,8 +19,25 @@ import 'utils/permission_helper.dart';
 /// 全局 lifecycle observer（main 中创建一次）。
 late final AppLifecycleObserver _lifecycleObserver;
 
+/// 配置全局 ImageCache 容量上限。
+///
+/// Flutter 默认 1000 张 / 100MB。聊天场景头像 + 消息图片密集，且各加载点已用
+/// memCacheWidth 把单张缩略图压到几十 KB，但仍可能在大段历史消息里超过默认
+/// 上限触发 LRU 淘汰，导致返回页面 / 滚动时「闪占位符再出图」。
+///
+/// 调到 500 张 / 200MB：配合 memCacheWidth（缩略图每张数十 KB，画廊原图按需），
+/// 200MB 可容纳数百张缩略图稳定驻留内存，长会话滚动 / 二级页返回均同步命中。
+/// 必须在 runApp 前设置（runApp 后首帧才初始化 imageCache 为时已晚）。
+void _configureImageCache() {
+  PaintingBinding.instance.imageCache.maximumSize = 500;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 调优全局图片内存缓存上限（runApp 前设置才生效）。
+  _configureImageCache();
 
   // 注册内置消息内容渲染器（text/markdown/image/file）。
   // 新增 HTML/卡片时在 registerBuiltinRenderers 内追加。

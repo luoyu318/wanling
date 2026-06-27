@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../utils/gallery_image.dart';
+import '../../utils/image_cache_key.dart';
 import '../../utils/snackbar.dart';
 import '../long_press_detector.dart';
 import '../panel_item.dart';
@@ -224,8 +225,18 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
           builder: (_, i) {
             final img = widget.images[i];
             return PhotoViewGalleryPageOptions(
-              imageProvider:
-                  CachedNetworkImageProvider(img.url, headers: img.headers),
+              imageProvider: CachedNetworkImageProvider(
+                img.url,
+                headers: img.headers,
+                // 画廊用原图（高清），与缩略图场景的 cacheKey 隔离（origin_ 前缀），
+                // 避免缩略图小 bitmap 把原图大 bitmap 从内存 LRU 顶掉。
+                // cacheKey 对齐后，同一张原图在同一会话内重复打开画廊会命中内存，
+                // 无需重新解码——这正是根治「每次打开画廊重新加载」的关键。
+                cacheKey: originCacheKey(img.fileId),
+                // 注意：不加 cacheWidth。画廊支持 4× 手势缩放，需原图全分辨率
+                // 保证放大后清晰。原图体积较大，靠 origin_ key 与缩略图隔离 +
+                // 全局 ImageCache 上限控制总占用。
+              ),
               controller: _controllers[i],
               minScale: PhotoViewComputedScale.contained,
               maxScale: PhotoViewComputedScale.covered * 4,

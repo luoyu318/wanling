@@ -13,6 +13,7 @@ require (
 	github.com/redis/go-redis/v9 v9.20.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	golang.org/x/crypto v0.53.0
+	golang.org/x/image v0.43.0
 	golang.org/x/term v0.44.0
 )
 

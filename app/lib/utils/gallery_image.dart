@@ -27,6 +27,9 @@ class GalleryImage {
   ///
   /// baseUrl 末尾的 `/` 会被裁掉，保证拼出的 URL 形态恒为
   /// `{baseUrl}/api/files/{fileId}`。
+  ///
+  /// 注：这里拼的是**原图** URL（画廊全屏看大图用高清）。消息列表 / 气泡 /
+  /// markdown 内嵌图等缩略图场景请用 [thumbUrl]，加载服务端 ?thumb=1 小图。
   factory GalleryImage.fromInternal(
       String fileId, String baseUrl, String token) {
     final b = baseUrl.endsWith('/')
@@ -38,6 +41,24 @@ class GalleryImage {
       headers: token.isEmpty ? const {} : {'Authorization': 'Bearer $token'},
     );
   }
+}
+
+/// 拼缩略图 URL：`{baseUrl}/api/files/{fileId}?thumb=1`。
+///
+/// 服务端对 ?thumb=1 的处理：有缩略图则返回 600px 长边小图（体积远小于原图，
+/// 解码快、内存占用低）；无缩略图（非图片 / 存量数据 / 生成失败）则**自动
+/// 降级返回原图**。前端无需感知降级，统一请求 ?thumb=1 即可。
+///
+/// 用于消息列表 / 气泡 / markdown 内嵌图（显示宽 200，600px 缩略图已覆盖 3×DPR）。
+/// 全屏画廊请直接用原图（[GalleryImage.fromInternal]），保证高清。
+///
+/// baseUrl 末尾的 `/` 会被裁掉，保证 URL 形态恒为
+/// `{baseUrl}/api/files/{fileId}?thumb=1`。
+String thumbUrl(String baseUrl, String fileId) {
+  final b = baseUrl.endsWith('/')
+      ? baseUrl.substring(0, baseUrl.length - 1)
+      : baseUrl;
+  return '$b/api/files/$fileId?thumb=1';
 }
 
 /// markdown 图片语法 `![alt](url)` 的正则。非贪婪匹配括号内 url。

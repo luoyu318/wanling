@@ -72,6 +72,10 @@ class Avatar extends ConsumerWidget {
             ? CachedNetworkImage(
                 imageUrl: effectiveUrl,
                 httpHeaders: headers,
+                // cacheKey 命名空间隔离：avatar_ 前缀避免与消息图片 key 冲突。
+                // url 含 baseUrl/host，切服务器/账号时磁盘缓存按 url 粒度失效
+                // （属合理低频行为）；同一进程内 baseUrl 不变则内存缓存稳定命中。
+                cacheKey: 'avatar_$effectiveUrl',
                 fit: BoxFit.cover,
                 // 限制解码进内存缓存的尺寸上限，按显示尺寸的 3 倍（覆盖高 DPR 屏幕）。
                 // 不限制的话图片按原图解码，大图 bitmap 占内存高，几十张就逼近
