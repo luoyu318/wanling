@@ -42,7 +42,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   /// 点击头像：相册选图 → 裁剪页 → 上传 → 刷新预览。
   /// 三步式流程，每步失败/取消都静默返回，仅上传成功后提示。
   Future<void> _changeAvatar() async {
-    // 1. 相册选图
+    // 1. 相册选图（返回原始字节，HEIC 转码由裁剪页内承担，避免回上一页等转码）
     final rawBytes = await pickImageBytes(context);
     if (rawBytes == null || !mounted) return; // 用户取消
 

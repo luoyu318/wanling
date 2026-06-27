@@ -229,7 +229,7 @@ class AgentDetailPage extends ConsumerWidget {
   /// AgentDetailPage 是 ConsumerWidget（无 StatefulState），用 context.mounted。
   Future<void> _changeAvatar(
       BuildContext context, WidgetRef ref, Agent agent) async {
-    // 1. 相册选图
+    // 1. 相册选图（返回原始字节，HEIC 转码由裁剪页内承担，避免回上一页等转码）
     final rawBytes = await pickImageBytes(context);
     if (rawBytes == null || !context.mounted) return; // 用户取消
 

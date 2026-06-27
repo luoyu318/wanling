@@ -34,7 +34,11 @@ AssetPickerConfig get defaultAssetPickerConfig => AssetPickerConfig(
 /// 不走 Android ActivityResult，避开 image_picker 在 Android 14+ 上的
 /// "Reply already submitted" 崩溃。
 ///
-/// 返回 null 表示用户取消。拿到字节后由调用方跳转裁剪页（crop_your_image）。
+/// 返回原始字节（originBytes，保留原图格式，可能是 HEIC）。
+/// HEIC → 标准 JPEG 的转码不在这里做，由调用方 push 裁剪页后，
+/// 由裁剪页在加载态内完成（避免选图后卡在上一页等转码的真空期）。
+///
+/// 返回 null 表示用户取消。
 Future<Uint8List?> pickImageBytes(BuildContext context) async {
   final List<AssetEntity>? result = await AssetPicker.pickAssets(
     context,
@@ -43,6 +47,5 @@ Future<Uint8List?> pickImageBytes(BuildContext context) async {
   if (result == null || result.isEmpty) return null;
 
   // originBytes 返回图片原始字节（photo_manager 内部处理权限请求）
-  final asset = result.first;
-  return asset.originBytes;
+  return result.first.originBytes;
 }
