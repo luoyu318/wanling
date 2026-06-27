@@ -12,7 +12,6 @@ import 'pages/login_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
 import 'pages/select_account_page.dart';
-import 'pages/settings_page.dart';
 import 'pages/splash_page.dart';
 import 'providers/auth_provider.dart';
 import 'services/notification_service.dart';
@@ -88,7 +87,8 @@ final routerProvider = Provider<GoRouter>((ref) {
     navigatorKey: navigatorKey,
     initialLocation: '/',
     redirect: (ctx, state) {
-      final loggedIn = auth.isAuthenticated;
+      // 切换账号(isSwitching)期间视同已登录:logout→login 中间态不让 router 误跳 /login。
+      final loggedIn = auth.isAuthenticated || auth.isSwitching;
       // 未登录白名单：登录页 + 账号选择页（后者从登录页 push 进入，必须放行，
       // 否则会被踢回 /login 导致 SelectAccountPage 进不去）。
       final authFlowPaths = const {'/login', '/select-account'};
@@ -158,13 +158,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             key: state.pageKey,
           );
         },
-      ),
-      GoRoute(
-        path: '/settings',
-        pageBuilder: (context, state) => _cupertinoPage(
-          child: const SettingsPage(),
-          key: state.pageKey,
-        ),
       ),
       GoRoute(
         path: '/change-password',

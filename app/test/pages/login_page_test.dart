@@ -23,6 +23,9 @@ void main() {
       prefs: prefs,
       storage: storage,
       onBaseUrlChange: (url) => settingsNotifier.setBaseUrl(url),
+      onLogout: ({bool silent = false}) async {},
+      onLogin: (u, p) async {},
+      onSwitchingChange: (_) {},
     );
     container = ProviderContainer(
       overrides: [

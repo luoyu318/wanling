@@ -38,12 +38,17 @@ class AuthState {
   /// 避免 restoreSession 完成前的瞬间因 isAuthenticated=false 误跳 /login。
   /// restoreSession 完成后永远保持 false。
   final bool isRestoring;
+  /// 账号切换进行中。切换 = logout→login 两步,中间会短暂处于未登录态,
+  /// 若不标记会让 router 误跳 /login 造成"我的→登录页闪现→消息页"两次跳转。
+  /// true 时 router 视同已登录,不触发 redirect,切换全程页面稳定。
+  final bool isSwitching;
 
   AuthState({
     this.user,
     this.token,
     this.isLoading = false,
     this.isRestoring = false,
+    this.isSwitching = false,
   });
 
   AuthState copyWith({
@@ -51,12 +56,14 @@ class AuthState {
     String? token,
     bool? isLoading,
     bool? isRestoring,
+    bool? isSwitching,
   }) =>
       AuthState(
         user: user ?? this.user,
         token: token ?? this.token,
         isLoading: isLoading ?? this.isLoading,
         isRestoring: isRestoring ?? this.isRestoring,
+        isSwitching: isSwitching ?? this.isSwitching,
       );
 
   bool get isAuthenticated => token != null;
@@ -76,6 +83,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final token = state.token;
     if (token != null) newApi.setToken(token);
     api = newApi;
+  }
+
+  /// 标记切换账号进行中。SavedLoginsNotifier.switchTo 调用,
+  /// 让 router 在 logout→login 中间态视同已登录(见 router redirect)。
+  void setSwitching(bool switching) {
+    if (state.isSwitching == switching) return;
+    state = state.copyWith(isSwitching: switching);
   }
 
   Future<void> login(String username, String password) async {
@@ -185,7 +199,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> logout() async {
+  /// 登出。
+  ///
+  /// [silent]：切换账号场景用 true。普通登出会广播 AuthState()（未登录），
+  /// 触发 router 跳 /login。但切换 = logout→login 两步，中间若广播未登录态
+  /// 会让 router 误跳 /login 再被拉回，造成页面闪烁两次。
+  /// silent=true 时保留 isSwitching 标志，router 视同已登录不跳转，
+  /// 切换全程页面稳定。
+  Future<void> logout({bool silent = false}) async {
     // 幂等短路：并发 401 风暴时（多个 in-flight 请求同时收到 401），
     // 第一个调用进入后会立即把 state 置空，后续调用看到未认证直接返回，
     // 避免重复广播 AuthState 变化触发 router/wsProvider 等订阅方多次响应。
@@ -195,9 +216,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _notifyService('stop');
     // 立即标记为已登出，让后续并发调用短路返回；
     // prefs 中的 token 异步清理，但内存 state 已变，业务侧已感知登出。
-    // logout 不重置 isRestoring：此时已脱离启动期，isRestoring 必然为 false，
-    // 默认构造就是 false。
-    state = AuthState();
+    // silent=true 保留 isSwitching,避免切换中 router 误跳 /login。
+    state = AuthState(isSwitching: silent);
     _lastKnownToken = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
