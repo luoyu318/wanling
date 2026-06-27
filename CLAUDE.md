@@ -105,7 +105,7 @@ Agent 平台插件 (plugin/hermes-plugin)
 - **internal/model/null_json.go** — `NullJSON` 类型（实现 Scanner/Valuer/Marshaler/Unmarshaler），处理可空 JSONB 字段。**不要加 `omitempty` tag**（实现了 MarshalJSON 后 omitempty 是死代码）。
 - **internal/storage/** — 文件存储抽象，当前为本地存储，接口预留 MinIO 扩展。
 - **internal/config/config.go** — 从环境变量加载配置，必填项（JWT_SECRET、DB_PASSWORD）缺失直接报错退出。
-- **internal/presence/** — 基于 Redis 的在线状态服务。
+- **internal/presence/** — 基于 Redis 的在线状态服务。`Online`/`RefreshTTL` 都用 **幂等 `SET`**（带 ttl）而非 `EXPIRE`：`EXPIRE` 对已失效的 key 返回 0 且不重建，会导致 Redis 清空或 server 重启后（既有 WS 连接不会断开）存活连接的 presence key 永久丢失，agent 表现为「离线但能正常收发消息」；`SET` 幂等且能重建 key，**下一次心跳即自愈**（commit 766f192 修复）。无 Redis 时降级为内存 map（多实例部署不生效）。
 - **internal/approval/** — 审批状态机编排层。`service.go` 的 `Decide` 是核心：JOIN 查审批+消息 → 校验 action_id 合法 → `MarkDecided`（allow_always 才写 allow_pattern；deny/cancel 映射 denied，其余 approved）→ 双写 messages.content（state + decided_*）→ 广播 MESSAGE_UPDATE（双端）+ APPROVAL_DECIDED（仅 agent，带 session_key + confirm_id）。`cleanup.go` 的 `RunCleanup` 后台 goroutine 每 1 分钟扫超时审批（pending + expires_at < now）→ MarkExpired + 广播 APPROVAL_EXPIRED。`*Service` 同时满足 `ExpiredFinder`/`Marker` 接口供 cleanup 调用。
 
 ### APP 端核心结构
@@ -121,26 +121,31 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `authProvider` — 认证（含 user 信息，restoreSession 调 /me）
   - `agentListProvider` — Agent CRUD
   - `conversationProvider` — IM 列表（订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态）。`setActiveConv(convId)` 方法：发 WS op=3 上报正在看的会话，同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate（让后台通知逻辑也感知，避免正在看的会话误弹通知）。`load()` 拉列表成功后调 `syncAgentAvatarsToBgService`，把每个 agent 的 avatar_url 经 IPC 同步到 isolate（供通知下载头像）。
-  - `chatProvider` — family，key 是 record `({convId, agentId})`
-  - `settingsProvider` — 服务器地址（默认 `http://localhost:18008`）
-  - `savedLoginsProvider` — 多账号管理（`secure_storage` 加密存储历史登录，支持切换）
+  - `chatProvider` — family，key 是 record `({convId, agentId})`。同文件还有 `wsProvider`（仅 watch `authProvider.token`，token 变化才重建 WS，避免 updateProfile 刷新 user 触发误断连）和 `connStateProvider`（StreamProvider 桥接 `wsProvider.connectionStateStream`，订阅期先同步推一次 currentConnState 防 banner 误判）。banner 必须订阅 connStateProvider 而非直接 read wsProvider——切换账号时 wsProvider 重建，直接订阅会监听到已 dispose 的旧实例。
+  - `settingsProvider` — 服务器地址（baseUrl，默认 `http://localhost:18008`）。被 main/auth/chat/avatar 多处引用。**设置 UI 入口已隐藏**，baseUrl 现由切换账号流程按账号保存值同步覆盖。
+  - `savedLoginsProvider` — 多账号管理（`secure_storage` 加密存储历史登录）。`switchTo(index)` 是核心编排：`setSwitching(true)` → `logout(silent:true)`（保留 isSwitching）→ `select(index)` → `onLogin` 注入（invalidate apiProvider + `settingsProvider.setBaseUrl` + login）→ finally `setSwitching(false)`。AuthState 的 `isSwitching` 标志让路由守卫和 banner 在过渡期不误判（见 router.dart 和 ConnectionBanner）。
   - `typingProvider` — 输入指示器（"对方正在输入..."）。**双重订阅**：`ws.typingStream`（TYPING_START）→ startTyping 标记；`ws.messages`（agent 的 MESSAGE_CREATE）→ clearTyping 清掉。clearTyping 放全局 provider 而非 ChatPage 内订阅，是为了「用户已离开 ChatPage / 切到别的会话」时 typing 也能被清掉（否则「正在输入」会卡住不消失）。
-- **lib/pages/** — 14 个页面：
+- **lib/pages/** — 15 个页面：
   - `SplashPage` — 启动闪屏，决定走登录还是主页
-  - `LoginPage` / `SelectAccountPage` — 登录/注册 + 已保存账号选择（多账号）
+  - `LoginPage` / `SelectAccountPage` — 登录/注册 + 已保存账号选择（多账号）。`SelectAccountPage` 选中账号后触发与切换面板相同的登录注入流程
   - `HomePage` — Scaffold + BottomNavigationBar（3 tab 容器）
   - `MessagesPage` — 消息 tab，IM 风格列表（未读小红点 + 置顶分组）
   - `AgentListPage` — Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
   - `AgentDetailPage` — 详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA
   - `ChatPage` — 聊天，入参 `(convId, agentId)` record。长按消息弹浮动菜单（复制/删除/多选），多选模式：顶部深色 AppBar（左取消/居中"已选择 N 条"）+ 左侧统一勾选框 + 底部固定操作栏（复制/删除纯 icon，N=0 置灰）。删除走 `ChatNotifier.deleteMessages`（乐观更新+WS MESSAGE_DELETE 同步）。`PopScope` 多选模式拦截返回键。**IM 风输入栏**：AppBar 居中标题（昵称 + 在线/正在输入副标题，正在输入绿色）+ `MessageInputBar`（加号↔发送动态切换 + 加号九宫格面板）。上传通道：文件（file_picker）/相册（wechat_assets_picker）/拍照（wechat_camera_picker），统一走 `_uploadAndSendAsset`
-  - `ProfilePage` — 我的 tab 入口，展示用户信息 + 头像
+  - `ProfilePage` — 我的 tab 入口，展示用户信息 + 头像。设置项分组：切换账号（≥2 账号才显示，拉起 `SwitchAccountSheet`）/ 通知权限跳转 / 修改密码 / 关于 / 退出登录。**原设置内页入口已隐藏**
+  - `ScanPairPage` / `PairSelectAgentPage` — 扫码配对两件套（见「扫码配对」节），AgentListPage 右上角 `+` 拉起
   - `EditProfilePage` / `CropAvatarPage` / `ChangePasswordPage` — 个人资料编辑三件套
-  - `SettingsPage` / `AboutPage` — 设置（服务器地址）+ 关于（用 `package_info_plus` 取版本号）
+  - `AboutPage` — 关于（用 `package_info_plus` 取版本号）。**`SettingsPage` 已移除**（服务器地址配置内页废弃），设置入口在 ProfilePage 暂时隐藏；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
 - **lib/rendering/** — 消息内容渲染器体系（注册表模式，为后续 HTML/卡片扩展预留）：
   - `message_content_renderer` — `MessageContentRenderer` 接口（`selectable`/`wrapInBubble`/`build`）+ `ContentRendererRegistry` 注册表（`MsgType → Renderer`）+ `MessageRenderContext`。MessageBubble 只管外壳，内容渲染委托给注册表查到的 renderer。扩展新类型只需写一个 renderer 并 `register`
   - `builtin_renderers` — 内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`）、`FileContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调
   - `card_renderer` — **审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行。按钮终态映射：deny/cancel→denied，allow_once/allow_always/once/always→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，ChatNotifier 构造时注入（避免 Riverpod 循环依赖）
-- **lib/widgets/** — 组件（含 `gallery/` 画廊子目录）：
+- **lib/theme/** — 设计 token 集合（为将来主题切换/ThemeExtension 铺路，常量改 getter 即可接入）：
+  - `app_colors` — 应用色板集中地。把散落各页面的色值（背景 `#EDEDED`/次要文字 `#999999`/品牌绿 `#07C160` 等）收拢到一处，避免硬编码漂移
+  - `app_menu_style` — 深色菜单统一色板 token（`#262626` 0.91 背景 + 圆角 12）。`MessageContextMenu`（消息级浮动菜单）和 `AppTextSelectionToolbar`（文字级系统选区菜单）共用，保证两套深色菜单视觉一致
+  - `account_palette` — 账号标记固定调色板（8 色）。`AccountMark.colorIndex` 索引此数组，存索引而非 Color 值（序列化稳定 + 便于换肤）
+- **lib/widgets/** — 组件（含 `gallery/` 画廊子目录、`feedback/` 反馈子目录）：
   - `Avatar` — 首字母 + hash 色板（avatar_url 为空时降级）；有 url 时拼 baseUrl + 注入 Authorization 头（用 `cached_network_image`）。`memCacheWidth` 限显示尺寸 ×3 解码（避免大图占满 ImageCache 被淘汰，二级页返回时头像稳定命中内存不闪）。`fadeInDuration`/`fadeOutDuration` 设 zero（关闭加载淡入，对齐主流 IM 直接显示）
   - `AvatarPicker` — `wechat_assets_picker` + `crop_your_image` 选图裁剪（绕开 Android ActivityResult 崩溃）。导出 `defaultAssetPickerConfig` 共享配置（简中 textDelegate + pathNameBuilder 把 Android 系统相册名 Recent 转成「最近项目」+ 品牌绿），`pickImageBytes`（头像，返回字节）和 `ChatPage._pickAlbum`（聊天发图，返回 AssetEntity）两处复用，避免配置漂移
   - `CopyableField` — 复制 + 眼睛切换
@@ -152,15 +157,25 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `markdown_config` — `markdownStyle({isDark, baseUrl, token})` 极简墨白样式预设。**图片渲染安全策略**：只放行内部 server 图片（`/api/files/xxx`，adapter `_rewrite_remote_images` 已把 agent 回复里可下载的远程图下载上传替换为此内部链接），带 JWT 渲染成 `CachedNetworkImage`；其余 http(s) URL（追踪图/SSRF/LLM 幻觉）一律文字占位，不发网络请求。内部图片包 Hero（tag='gallery_$fileId'，与 image 类型同口径）+ 点击进会话级画廊（`openGallery`，与 image 类型完全对称）。**注意 markdown_widget 2.3.2+8 bug**：表内容 `TBodyNode` 实际读 `headerStyle` 而非 `bodyStyle`，故表头表内容共用 `headerStyle`；且 `PConfig.textStyle.height` 必须 ≥ 1.6（否则任务列表 checkbox WidgetSpan 算出负 padding，debug 模式崩溃）
   - `markdown_latex` — `LatexSyntax`（`$...$`/`$$...$$` 匹配）+ `latexGenerator`（`SpanNodeGeneratorWithTag`，走 `flutter_math_fork` 的 `Math.tex`），通过 `MarkdownGenerator.inlineSyntaxList`/`generators` 注入。块级 `$$...$$` 的 WidgetSpan child 包 `SelectAllOrNoneContainer`（fallbackText=latex 源码），行内 `$...$` 不包
   - `markdown_code_wrapper` — 代码块复制按钮（右上角，✓ 回弹 2 秒，无语言标签），签名对齐 `markdown_widget` 的 `CodeWrapper` typedef，注入 `PreConfig.wrapper`。**外层包 `SelectAllOrNoneContainer`（fallbackText=代码源码）实现整块选中**
+  - `markdown_strong` — 自定义 Bold 节点，覆盖 markdown_widget 默认的 `FontWeight.bold`（w700）改用 w500（medium），对齐 IM 简洁风格、与 H1 标题字重一致。通过 `MarkdownGenerator.generators` 注入
+  - `markdown_block_spacing` — 自定义块级元素（标题/分割线）的上下间距。markdown_widget 2.3.2+8 默认无法直接配置这两类元素 margin，用 `SpanNodeGeneratorWithTag` 注入自定义节点重写 padding
   - `SelectAllOrNoneContainer` — 块级整体选中（主流 IM 式）。`SelectionContainer` + `SelectAllOrNoneContainerDelegate`（照搬 Flutter 官方示例，落块即全选）。`fallbackText` 兜底非文本块（如 LaTeX 图形）的复制。注入到代码块 wrapper / 块级 LaTeX / 表格 wrapper
   - `TypingBubble` — 对方"正在输入"动画气泡
   - `UnreadBadge` — 未读数红点
-  - `ConnectionBanner` — WS 断线时顶部条幅提示
+  - `ConnectionBanner` — WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvider` + `authProvider`（用 `ref.listenManual` + `fireImmediately`）。**3 秒防抖**：disconnected 不立即显示，先启 Timer，期间恢复（connected/connecting）则 cancel；超时才显示。认证过渡期（isSwitching/isRestoring/isLoading）和 connecting/loading 态都静默，消除切换/登录时的闪烁。
   - `gallery/zoomable_gallery` — 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡）。点击聊天图片（image 类型 / markdown 内嵌图）打开全屏画廊，可左右滑动切换会话内所有图片。`_openGallery`（ChatPage）收集会话图片去重反转成正序 + 定位初始页。放大态下图片平移到边缘后跟随手指翻页（photo_view 原版 shouldMove 协调：到边让 PageView drag 赢得手势）；翻页时离开页完全滑出屏幕外（监听 `_pageController` 连续 page 值，`|page-oldIndex|>=1.0`）才重置 position/scaleState，避免半屏可见时缩回原大小的突兀感。单击/下拉关闭。**长按弹 BottomSheet**（外包 `LongPressDetector`，pointer 层不与缩放冲突）→ 复用 `PanelItem` 菜单项样式（顶部圆角 12）→ 点保存调 `saveToGallery`（鉴权下载 + gal 写相册）+ SnackBar 反馈
   - `gallery/photo_view/` — **内化的 photo_view 0.15.0 源码**（脱离 pub 依赖作内部组件，package 自引用改为 `package:app/widgets/gallery/photo_view/`）。提供缩放/平移/fling 惯性。关键改动点：`photo_view_core.dart` 的 fling 用 `velocity/drag`（drag=0.018）替代原版写死 100px；`clampPosition` 拆严格版与 overscroll 版；`photo_view_gesture_detector.dart` 移除 DoubleTapGestureRecognizer 的 pointer 层方案（已废弃，现恢复竞技场仲裁）；`_blindScaleListener` 不钳制 position（避免双指缩放频闪）。photo_view 源码既有大量 info/warning 是内化时自带的，非本次引入
   - `CardButton` / `CardStateBadge` / `CountdownTimer` — **审批卡片组件三件套**。`CardButton` 三色实心按钮（primary 绿/info 蓝/danger 红）+ Material Icons（check/shield/close）+ 三态（active/selected/disabled）；`CardStateBadge` 右上角终态徽章（✓已批准/✗已拒绝/⏰已超时）；`CountdownTimer` 倒计时（按 expires_at 自算，每秒刷新）
   - `long_press_detector` — **长按检测器（pointer 层）**。用 `Listener`（不进 gesture arena）实现，500ms 不动触发 `onLongPressStart`，移动超 18px 阈值取消。不与内部手势识别器（SelectableRegion 长按选词 / PhotoViewGallery 缩放）抢手势。message_bubble 长按弹菜单 + gallery 长按保存共用（从 message_bubble 提取）
   - `panel_item` — **加号面板/画廊菜单共用菜单项**。52×52 白底圆角 12 容器 + 30px 黑色 outlined 图标 + 11px #6B7280 灰字（图标上文字下）。MessageInputBar 加号面板（拍照/相册/文件）+ gallery 长按保存菜单共用（从 message_input_bar 提取）
+  - `PasswordTextField` — 密码输入框组件（StatefulWidget），内置 obscure 显隐状态 + 右侧 `IconButton`（visibility / visibility_off）。替代 login_page / select_account_page / switch_account_sheet / change_password_page 四处原本各写一份的密码框，统一显隐交互
+  - `SwitchAccountSheet` — 切换账号底部弹层（从 ProfilePage「切换账号」入口拉起）。列出 `savedLoginsProvider` 已保存账号（含账号标记 + 服务器名），点击触发 `switchTo(index)`。仅在 ≥2 个账号时显示入口
+  - `AccountMarkEditor` — 账号标记编辑对话框，给已保存登录起别名（如「工作号」「测试号」），存回 savedLogins，让切换面板和登录选择页更易辨认
+  - `settings_group` / `settings_tile` — **通用列表项组件**。`SettingsGroup` 白底卡片容器（顶部默认 8px margin，与 ProfilePage/AgentDetailPage 卡片间距一致）包裹一组 `SettingsTile`；`SettingsTile` 通用行（左 icon + label + 右 trailing 默认 chevron，带按下反馈），从 ProfilePage 的 `_ProfileTile` 升格为公共组件，ProfilePage/AgentDetailPage 复用，避免两处列表样式漂移
+  - `feedback/` — **统一反馈组件子目录**（commit 939a804 引入，收拢此前散落各处的弹窗/提示实现）：
+    - `app_dialog` — 统一风格全局 Dialog helper（圆角 12 / 标题 17·w500 / 内容 14·w300 / 品牌绿确认按钮）。替代各页 showDialog + AlertDialog 拼装
+    - `app_snackbar` — 统一位置轻量提示条。位置策略用 SafeArea bottom 80px（不再依赖 inputBarKey），覆盖输入栏但不遮挡。替代 utils/snackbar.dart 的旧实现
+    - `app_text_selection_toolbar` — 文字级系统选区菜单（commit e51366b）。覆写 Flutter 系统 `TextSelectionToolbar`，深色配色对齐 `app_menu_style`，让长按文字选词后的系统菜单与消息级浮动菜单视觉统一。估算菜单宽度（4 中文按钮 + 分隔线）对齐 anchor
 - **lib/utils/** — 7 个工具：
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
   - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用

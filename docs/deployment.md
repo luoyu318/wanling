@@ -258,6 +258,8 @@ systemctl enable --now redis
 > 💡 不装 Redis 也能跑：限流降级为单进程内存计数，在线状态恒返回离线。
 >
 > **连不上也降级**：即使配置了 Redis 但 Ping 失败（网络抖动 / Redis 宕机），server 不再 `log.Fatal`，而是打 `[WARN]` 并以 `rdb=nil` 降级启动（限流/在线状态退化为单机内存）。多实例部署时这会导致限流/在线状态不一致，单实例无影响。日志里看到 `[WARN] Redis 连接失败（降级为单机模式...）` 即为此情况。
+>
+> **在线状态自愈**：presence 心跳续期用幂等 `SET`（带 ttl）而非 `EXPIRE`。若 Redis 被 `FLUSHALL` 清空、或 server 重启（既有 WS 连接不断开），presence key 会丢失，但**下一次心跳（秒级）即自动重建**，agent 在线状态自愈，无需重连 WS。表现为「重启 server 后 agent 短暂显示离线，几秒后恢复在线」属正常现象。
 
 ### 3.4 配置环境变量
 
