@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app/widgets/avatar.dart';
 
 void main() {
@@ -23,29 +24,37 @@ void main() {
 
   group('Avatar widget', () {
     testWidgets('渲染首字母（取名字第一个字符）', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: 'Bob', size: 40)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: 'Bob', size: 40)),
+        ),
       ));
       expect(find.text('B'), findsOneWidget);
     });
 
     testWidgets('英文名首字母大写', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: 'alice', size: 40)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: 'alice', size: 40)),
+        ),
       ));
       expect(find.text('A'), findsOneWidget);
     });
 
     testWidgets('中文名取首字符', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: '小爱', size: 40)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: '小爱', size: 40)),
+        ),
       ));
       expect(find.text('小'), findsOneWidget);
     });
 
     testWidgets('空名 fallback 显示 ?', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: '', size: 40)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: '', size: 40)),
+        ),
       ));
       expect(find.text('?'), findsOneWidget);
     });
@@ -53,15 +62,19 @@ void main() {
 
   group('Avatar badge', () {
     testWidgets('unreadCount > 0 显示数字', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 3)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 3)),
+        ),
       ));
       expect(find.text('3'), findsOneWidget);
     });
 
     testWidgets('unreadCount = 0 不显示 badge 文本', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 0)),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 0)),
+        ),
       ));
       // 只有首字母 A，没有数字 badge
       expect(find.text('A'), findsOneWidget);
@@ -69,8 +82,10 @@ void main() {
     });
 
     testWidgets('不传 unreadCount 不显示 badge', (tester) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: Avatar(name: 'Alice')),
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: Avatar(name: 'Alice')),
+        ),
       ));
       expect(find.text('A'), findsOneWidget);
       // 无任何数字文本
