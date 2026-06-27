@@ -32,7 +32,7 @@ class AgentListNotifier extends StateNotifier<List<Agent>> {
   AgentListNotifier(this.api, this.ws) : super([]) {
     load();
     // 订阅 AGENT_ONLINE/AGENT_OFFLINE 实时更新 status。
-    // 否则列表上的在线小圆点只是首次拉取时的快照，agent 上下线后不会变。
+    // 否则列表上的在线小圆点只是首次拉取时的快照,agent 上下线后不会变。
     _subscription = ws.messages
         .where((m) => m.t == 'AGENT_ONLINE' || m.t == 'AGENT_OFFLINE')
         .listen(_onAgentStatusChange);
@@ -68,6 +68,10 @@ class AgentListNotifier extends StateNotifier<List<Agent>> {
 
   Future<void> load() async {
     final list = await api.getAgents();
+    // 切换账号时 apiProvider/wsProvider 重建会 dispose 本 notifier，
+    // 但构造函数里 fire-and-forget 的 load() 可能仍在 await 中。
+    // dispose 后再赋值 state 会抛 Bad state；在第一个 await 后守卫。
+    if (!mounted) return;
     state = list.map((e) => Agent.fromJson(e)).toList();
     // 缓存 agent name 到 SharedPreferences，供 service isolate 通知标题用
     for (final a in state) {

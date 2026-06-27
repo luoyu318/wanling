@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/ws_message.dart';
 
@@ -77,11 +78,13 @@ class WebSocketService {
         _handleMessage(msg);
       },
       onError: (error) {
+        debugPrint('[ws] onError: $error');
         _setConnState(ConnState.disconnected);
         _connecting = false;
         _reconnect();
       },
       onDone: () {
+        debugPrint('[ws] onDone(连接关闭) closeCode=${_channel?.closeCode}');
         _setConnState(ConnState.disconnected);
         _connecting = false;
         _reconnect();

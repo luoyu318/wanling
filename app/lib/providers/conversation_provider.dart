@@ -21,7 +21,15 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   // 当前打开的 ChatPage convId。该会话收到的 agent 消息不计未读（用户正在看）。
   String? _activeConvId;
 
-  ConversationListNotifier(this.api, this.ws) : super([]) {
+  ConversationListNotifier(this.api, this.ws, {bool autoload = true})
+      : super([]) {
+    // 构造即拉取:切换账号时 apiProvider/wsProvider 重建会连带重建本 notifier,
+    // 新 server 的历史会话需要重新拉。messages_page 用 AutomaticKeepAlive 保活,
+    // 切换时不会重建触发 initState 的 load,故此处主动 load 兜底。
+    // 与 agentListProvider 构造即 load 的模式对齐。
+    // autoload=false 仅供单元测试:直接构造 Notifier 测 pin/resort 等纯逻辑时,
+    // 跳过 load 避免触发未 stub 的 getConversations。
+    if (autoload) load();
     _subscription = ws.messages
         .where((m) => m.t == 'MESSAGE_CREATE' || m.t == 'MESSAGE_DELETE')
         .listen((m) {
@@ -60,6 +68,10 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   /// 拉取会话列表并替换当前 state。
   Future<void> load() async {
     final raw = await api.getConversations();
+    // 切换账号时 apiProvider/wsProvider 重建会 dispose 本 notifier,
+    // 但构造函数里 fire-and-forget 的 load() 可能仍在 await 中。
+    // dispose 后再赋值 state 会抛 Bad state;在第一个 await 后守卫。
+    if (!mounted) return;
     state = raw
         .map((e) => Conversation.fromJson(e as Map<String, dynamic>))
         .toList();

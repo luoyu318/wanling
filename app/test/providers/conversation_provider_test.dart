@@ -202,7 +202,9 @@ void main() {
     setUp(() {
       api2 = MockApi();
       ws2 = FakeWS();
-      notifier2 = ConversationListNotifier(api2, ws2);
+      // autoload=false:本组测 pin/unpin/hide/resort 纯逻辑,构造时不触发 load,
+      // 避免对未 stub 的 getConversations 抛 MissingStubError。
+      notifier2 = ConversationListNotifier(api2, ws2, autoload: false);
     });
 
     test('_resort: 置顶组在前 + 组内按时间倒序', () {
@@ -280,7 +282,8 @@ void main() {
 
     setUp(() {
       ws3 = FakeWS();
-      notifier3 = ConversationListNotifier(MockApi(), ws3);
+      // autoload=false:本组测 isPinned 保留逻辑,构造时不触发 load。
+      notifier3 = ConversationListNotifier(MockApi(), ws3, autoload: false);
     });
 
     test('_onMessageCreate 不能丢 isPinned（regression）', () async {
@@ -383,10 +386,11 @@ void main() {
 
   test('onMessageDelete 触发 load 刷新列表', () async {
     final container = makeContainer();
+    // read 触发构造,autoload 会调一次 getConversations(fire-and-forget)。
     final notifier = container.read(conversationProvider.notifier);
     await notifier.load();
-    // load 被调用 1 次(setUp 的 when)
-    verify(() => api.getConversations()).called(1);
+    // 构造 autoload load + 显式 load = 2 次
+    verify(() => api.getConversations()).called(2);
 
     // 模拟 MESSAGE_DELETE(删除事件可能改变 last_message_content)
     ws.emit(WSMessage(
