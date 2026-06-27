@@ -175,6 +175,23 @@ final wsProvider = Provider<WebSocketService>((ref) {
   return ws;
 });
 
+/// WS 连接状态流 provider。banner 通过它订阅连接状态。
+///
+/// 依赖 wsProvider：切换账号时 token 变化触发 wsProvider 重建，本 provider 一并
+/// 重建并订阅新实例的状态流。若 banner 直接 ref.read(wsProvider) 只订阅一次，
+/// 切换后会监听已被 dispose 的旧实例，旧 stream 不再发 connected 事件，
+/// banner 会永远卡在「已断开」。用 StreamProvider 桥接让订阅跟随实例切换。
+final connStateProvider = StreamProvider<ConnState>((ref) {
+  final ws = ref.watch(wsProvider);
+  // 先同步推一次当前状态，避免订阅期间（connected 的实例没新事件时）banner
+  // 误判为断开。StreamController 广播流不支持 sync 投递，用一个合并流。
+  return Stream.multi((controller) {
+    controller.add(ws.currentConnState);
+    final sub = ws.connectionStateStream.listen(controller.add);
+    sub.onDone(controller.close);
+  });
+});
+
 /// family key 用 record：convId 决定历史拉取与 WS 过滤，
 /// agentId 决定发送目标。两者共同唯一确定一个聊天上下文。
 final chatProvider = StateNotifierProvider.family<ChatNotifier, List<ChatMessage>, ({String convId, String agentId})>((ref, key) {

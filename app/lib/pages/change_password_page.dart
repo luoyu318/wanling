@@ -4,6 +4,7 @@ import '../providers/auth_provider.dart';
 import '../theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import '../utils/snackbar.dart';
+import '../widgets/password_text_field.dart';
 
 /// 修改密码页：新密码 + 确认密码 + 提交。
 ///
@@ -19,8 +20,6 @@ class ChangePasswordPage extends ConsumerStatefulWidget {
 class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
   final _newPwdCtrl = TextEditingController();
   final _confirmPwdCtrl = TextEditingController();
-  bool _obscureNew = true;
-  bool _obscureConfirm = true;
   bool _submitting = false;
 
   @override
@@ -40,35 +39,14 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
+            PasswordTextField(
               controller: _newPwdCtrl,
-              obscureText: _obscureNew,
-              decoration: InputDecoration(
-                labelText: '新密码',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscureNew
-                      ? Icons.visibility_off
-                      : Icons.visibility),
-                  onPressed: () => setState(() => _obscureNew = !_obscureNew),
-                ),
-              ),
+              labelText: '新密码',
             ),
             const SizedBox(height: 16),
-            TextField(
+            PasswordTextField(
               controller: _confirmPwdCtrl,
-              obscureText: _obscureConfirm,
-              decoration: InputDecoration(
-                labelText: '确认密码',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscureConfirm
-                      ? Icons.visibility_off
-                      : Icons.visibility),
-                  onPressed: () =>
-                      setState(() => _obscureConfirm = !_obscureConfirm),
-                ),
-              ),
+              labelText: '确认密码',
             ),
             const SizedBox(height: 24),
             FilledButton(

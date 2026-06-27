@@ -8,6 +8,7 @@ import '../providers/settings_provider.dart';
 import '../theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import '../utils/snackbar.dart';
+import '../widgets/password_text_field.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -80,11 +81,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     labelText: '用户名', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 12),
-              TextField(
+              PasswordTextField(
                 controller: _passwordCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(
-                    labelText: '密码', border: OutlineInputBorder()),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => auth.isLoading ? null : _submit(),
               ),
               const SizedBox(height: 24),
               // 登录按钮(选中态高亮)
