@@ -3,7 +3,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
+import '../utils/gallery_image.dart' show thumbUrl;
 import 'unread_badge.dart';
+
+/// 内部图片相对路径前缀（/api/files/），用于识别可走缩略图的头像。
+const _internalFilePrefix = '/api/files/';
+
+/// 拼接头像 URL。
+///
+/// 内部图（/api/files/{id}）走 [thumbUrl] 加 ?thumb=1：头像显示 40px，
+/// 服务端 600px 缩略图（几十 KB）远小于原图（用户可能上传 2.5MB 大照片），
+/// 加载+解码快，消除闪烁。无缩略图的存量图自动降级原图（见 server Download）。
+/// 完整 URL（http 外部图）/ 非标准相对路径保持原拼接逻辑。
+String? _resolveAvatarUrl(String baseUrl, String? url) {
+  if (url == null || url.isEmpty) return url;
+  if (url.startsWith('http')) return url; // 完整 URL 直接用
+  if (url.startsWith(_internalFilePrefix)) {
+    // 提取 fileId（兼容带 query 的情况）：/api/files/{id} → {id}
+    final tail = url.substring(_internalFilePrefix.length);
+    final qIdx = tail.indexOf('?');
+    final fileId = qIdx >= 0 ? tail.substring(0, qIdx) : tail;
+    return thumbUrl(baseUrl, fileId);
+  }
+  return '$baseUrl$url'; // 非标准相对路径兜底拼 baseUrl
+}
 
 /// 头像 widget：首字母 + hash 色板。
 /// 若 url 非空优先加载图片，失败 fallback 到字母。
@@ -52,11 +75,16 @@ class Avatar extends ConsumerWidget {
     final letter = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final bg = colorFor(name);
 
-    // 相对路径拼 baseUrl；完整 URL（含 host）直接用
+    // 头像 URL 拼接策略：
+    //   - 内部图（/api/files/xxx 相对路径）→ 走 thumbUrl（?thumb=1 缩略图）。
+    //     头像显示才 40px，却曾加载 2.5MB 原图（用户上传的大照片），解码慢导致
+    //     闪烁。改用服务端 600px 缩略图（几十 KB），加载快、解码快。
+    //     无缩略图的存量图 ?thumb=1 自动降级原图，且响应带 immutable 缓存头，
+    //     二次加载命中本地缓存不闪。
+    //   - 完整 URL（http 开头，外部图）→ 原样用
+    //   - 非标准相对路径 → 拼 baseUrl（兼容）
     final baseUrl = ref.watch(settingsProvider);
-    final effectiveUrl = (url != null && url!.isNotEmpty && !url!.startsWith('http'))
-        ? '$baseUrl$url'
-        : url;
+    final effectiveUrl = _resolveAvatarUrl(baseUrl, url);
 
     // /api/files/:id 走 fileAuth 中间件需要 JWT，
     // CachedNetworkImage 不走 dio，需要手动注入 Authorization header
@@ -87,8 +115,11 @@ class Avatar extends ConsumerWidget {
                 // 关闭加载完成后的淡入动画（默认 fadeIn 500ms / fadeOut 1000ms）。
                 fadeInDuration: Duration.zero,
                 fadeOutDuration: Duration.zero,
-                // 加载中 / 加载失败都回退字母色块，避免闪空白
-                placeholder: (_, _) => _letterTile(letter, bg),
+                // 加载中用中性灰色块（非彩色字母）：彩色字母与真实照片色差大，
+                // 硬切时大脑感知到「闪」。中性灰和任何照片色差都小，加载完
+                // 直接盖上去无感（对齐主流 IM 和消息图片的 ImageThumb 占位策略）。
+                placeholder: (_, _) => _neutralPlaceholder(context),
+                // 加载失败回退彩色字母色块（图确实拉不到，保留辨识度）。
                 errorWidget: (_, _, _) => _letterTile(letter, bg),
               )
             : _letterTile(letter, bg),
@@ -109,6 +140,19 @@ class Avatar extends ConsumerWidget {
           child: UnreadBadge(count: unreadCount),
         ),
       ],
+    );
+  }
+
+  /// 加载中占位：中性灰色块（亮 #E8E8E8 / 暗 #2A2A2A）。
+  ///
+  /// 不用彩色字母：彩色与真实照片色差大，硬切时闪。中性灰和任何照片色差都小，
+  /// 加载完直接盖上去大脑无感。与消息图片 ImageThumb 的占位色块口径一致。
+  /// 父级 SizedBox 已限定尺寸，这里 const SizedBox.expand() 撑满。
+  Widget _neutralPlaceholder(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ColoredBox(
+      color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE8E8E8),
+      child: const SizedBox.expand(),
     );
   }
 
