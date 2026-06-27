@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/snackbar.dart';
+
 /// 一行展示 label + value，trailing 是复制 icon（secret 时再加眼睛 icon）。
 /// IM 风：label 灰色小字 + value 黑色 + 复制按钮。
 class CopyableField extends StatefulWidget {
@@ -31,9 +33,7 @@ class _CopyableFieldState extends State<CopyableField> {
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: widget.value));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
-      );
+      showAppSnackBar(context, '已复制', type: SnackBarType.success);
     }
   }
 

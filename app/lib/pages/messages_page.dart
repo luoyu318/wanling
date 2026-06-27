@@ -9,6 +9,7 @@ import '../router_helpers.dart';
 import '../utils/emoji_span.dart';
 import '../utils/snackbar.dart';
 import '../widgets/avatar.dart';
+import '../widgets/feedback/app_dialog.dart';
 
 /// 消息列表页（IM 风格）。
 ///
@@ -172,53 +173,28 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
         }
       }
     } else if (selected == 'hide') {
-      final confirmed = await _confirmHide(context);
-      if (confirmed != true) return;
-      if (!mounted) return;
-      try {
-        await ref.read(conversationProvider.notifier).hide(conv.id);
-      } catch (_) {
-        if (mounted) {
-          showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
-        }
-      }
+      _confirmHide(context, conv.id);
     }
   }
 
-  /// 删除确认 dialog。
-  Future<bool?> _confirmHide(BuildContext context) {
-    return showDialog<bool>(
+  /// 删除确认 dialog。确认后调用 provider.hide。
+  void _confirmHide(BuildContext context, String convId) {
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除该会话?',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-        content: const Text(
-          '聊天记录将保留,有新消息时会话自动恢复。',
-          style: TextStyle(fontSize: 12, color: Color(0xFF999999)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: const Color(0xFFF0F0F0),
-              child: const Text('取消',
-                  style: TextStyle(color: Color(0xFF666666))),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: const Color(0xFFFA5151),
-              child:
-                  const Text('删除', style: TextStyle(color: Colors.white)),
-            ),
-          ),
-        ],
+      title: '确认删除该会话?',
+      content: const Text(
+        '聊天记录将保留,有新消息时会话自动恢复。',
       ),
+      confirmText: '删除',
+      onConfirm: () async {
+        try {
+          await ref.read(conversationProvider.notifier).hide(convId);
+        } catch (_) {
+          if (mounted) {
+            showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
+          }
+        }
+      },
     );
   }
 }

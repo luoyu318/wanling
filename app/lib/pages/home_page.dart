@@ -9,6 +9,7 @@ import '../pages/profile_page.dart';
 import '../providers/agent_provider.dart';
 import '../providers/conversation_provider.dart' show totalUnreadProvider;
 import '../widgets/connection_banner.dart';
+import '../widgets/feedback/app_dialog.dart';
 import '../widgets/unread_badge.dart';
 
 /// 主容器：承载底部导航 + PageView 的 2 个 page。
@@ -190,31 +191,20 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
   /// 万灵 tab 的「新建 Agent」弹窗。
   void _showCreateAgentDialog() {
     final ctrl = TextEditingController();
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('创建 Agent'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Agent 名称'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = ctrl.text.trim();
-              if (name.isEmpty) return;
-              ref.read(agentListProvider.notifier).create(name);
-              Navigator.pop(ctx);
-            },
-            child: const Text('创建'),
-          ),
-        ],
+      title: '创建 Agent',
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Agent 名称'),
       ),
+      confirmText: '创建',
+      onConfirm: () {
+        final name = ctrl.text.trim();
+        if (name.isEmpty) return;
+        ref.read(agentListProvider.notifier).create(name);
+      },
     );
   }
 

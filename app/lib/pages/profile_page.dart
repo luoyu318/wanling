@@ -5,9 +5,12 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/auth_provider.dart';
 import '../utils/permission_helper.dart';
 import '../widgets/avatar.dart';
+import '../widgets/feedback/app_dialog.dart';
+import '../widgets/settings_group.dart';
+import '../widgets/settings_tile.dart';
 
 /// 个人中心页：「我的」Tab。
-/// 顶部用户区域背景与消息页 AppBar 一致（#F7F7F7），列表用自定义 _ProfileTile。
+/// 顶部用户区域背景与消息页 AppBar 一致（白底），列表用公共 SettingsTile。
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
 
@@ -119,55 +122,50 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
           ),
           // 设置项分组
           SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Column(
-                children: [
-                  _ProfileTile(
-                    icon: Icons.settings_outlined,
-                    label: '设置',
-                    trailing: _chevron,
-                    onTap: () => context.push('/settings'),
+            child: SettingsGroup(
+              children: [
+                SettingsTile(
+                  icon: Icons.settings_outlined,
+                  label: '设置',
+                  onTap: () => context.push('/settings'),
+                ),
+                SettingsTile(
+                  icon: Icons.notifications_outlined,
+                  label: '通知与后台',
+                  onTap: () =>
+                      PermissionHelper.openAppNotificationSettings(),
+                ),
+                SettingsTile(
+                  icon: Icons.lock_outline,
+                  label: '修改密码',
+                  onTap: () => context.push('/change-password'),
+                ),
+                SettingsTile(
+                  icon: Icons.info_outline,
+                  label: '关于',
+                  trailing: Text(
+                    _version,
+                    style: const TextStyle(
+                        color: Color(0xFF999999), fontSize: 12),
                   ),
-                  _ProfileTile(
-                    icon: Icons.notifications_outlined,
-                    label: '通知与后台',
-                    trailing: _chevron,
-                    onTap: () =>
-                        PermissionHelper.openAppNotificationSettings(),
-                  ),
-                  _ProfileTile(
-                    icon: Icons.lock_outline,
-                    label: '修改密码',
-                    trailing: _chevron,
-                    onTap: () => context.push('/change-password'),
-                  ),
-                  _ProfileTile(
-                    icon: Icons.info_outline,
-                    label: '关于',
-                    trailing: Text(
-                      _version,
-                      style: const TextStyle(
-                          color: Color(0xFF999999), fontSize: 12),
-                    ),
-                    onTap: () => context.push('/about'),
-                  ),
-                ],
-              ),
+                  onTap: () => context.push('/about'),
+                ),
+              ],
             ),
           ),
           // 退出登录（单独一组）
           SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _ProfileTile(
-                icon: Icons.logout,
-                label: '退出登录',
-                labelColor: const Color(0xFFFA5151),
-                iconColor: const Color(0xFFFA5151),
-                showDivider: false,
-                onTap: () => _confirmLogout(context, ref),
-              ),
+            child: SettingsGroup(
+              children: [
+                SettingsTile(
+                  icon: Icons.logout,
+                  label: '退出登录',
+                  labelColor: const Color(0xFFFA5151),
+                  iconColor: const Color(0xFFFA5151),
+                  showDivider: false,
+                  onTap: () => _confirmLogout(context, ref),
+                ),
+              ],
             ),
           ),
         ],
@@ -177,143 +175,16 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
 
   /// 退出登录二次确认。点击「退出」会清 token 并回到登录页。
   void _confirmLogout(BuildContext context, WidgetRef ref) {
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出登录'),
-        content: const Text('确定要退出吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              ref.read(authProvider.notifier).logout();
-              Navigator.pop(ctx); // 关 dialog
-              if (context.mounted) context.go('/login');
-            },
-            child: const Text('退出'),
-          ),
-        ],
-      ),
+      title: '退出登录',
+      content: const Text('确定要退出吗？'),
+      confirmText: '退出',
+      onConfirm: () {
+        ref.read(authProvider.notifier).logout();
+        if (context.mounted) context.go('/login');
+      },
     );
   }
 }
 
-/// 「我的」页列表项。按下背景反馈 #EDEDED，底部画分割线 #E4E4E4（左对齐 icon 右侧）。
-/// 与 _ConvTile / _AgentTile 同款按下反馈模式：Listener 立即变色 + InkWell 透明 splash。
-
-// chevron：size 20（比默认 24 细，不加重视觉）。
-// 距离屏幕右边缘 = Container padding right = 10（由 _ProfileTile 控制）。
-const _chevron = Icon(Icons.chevron_right, size: 20, color: Color(0xFFC0C0C0));
-class _ProfileTile extends StatefulWidget {
-  final IconData icon;
-  final String label;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-  final Color? labelColor;
-  final Color? iconColor;
-  final bool showDivider;
-
-  const _ProfileTile({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.trailing,
-    this.labelColor,
-    this.iconColor,
-    this.showDivider = true,
-  });
-
-  @override
-  State<_ProfileTile> createState() => _ProfileTileState();
-}
-
-class _ProfileTileState extends State<_ProfileTile> {
-  bool _isPressed = false;
-  Offset? _downPos; // 记录按下位置，用于检测滑动距离
-
-  void _setPressed(bool v) {
-    if (_isPressed == v) return;
-    setState(() => _isPressed = v);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tileBg =
-        _isPressed ? const Color(0xFFEDEDED) : Colors.white;
-
-    return Listener(
-      onPointerDown: (e) {
-        _downPos = e.position;
-        _setPressed(true);
-      },
-      // 滑动超过 8px 视为滚动而非点击，立即归位避免背景色卡住
-      onPointerMove: (e) {
-        if (_downPos != null &&
-            (e.position - _downPos!).distance > 8) {
-          _setPressed(false);
-        }
-      },
-      onPointerUp: (_) {
-        _downPos = null;
-        _setPressed(false);
-      },
-      onPointerCancel: (_) {
-        _downPos = null;
-        _setPressed(false);
-      },
-      child: InkWell(
-        onTap: widget.onTap,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        child: Column(
-          children: [
-            Container(
-              color: tileBg,
-              // right 10 让 chevron 距离屏幕右边缘 10（chevron 无内 padding）
-              padding: const EdgeInsets.only(
-                  left: 16, right: 10, top: 14, bottom: 14),
-              child: Row(
-                children: [
-                  Icon(
-                    widget.icon,
-                    size: 22,
-                    color: widget.iconColor ?? const Color(0xFF333333),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      widget.label,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w300, // w300 细体
-                        color: widget.labelColor ?? const Color(0xFF333333),
-                      ),
-                    ),
-                  ),
-                  if (widget.trailing != null) ...[
-                    const SizedBox(width: 8),
-                    widget.trailing!,
-                  ],
-                ],
-              ),
-            ),
-            if (widget.showDivider)
-              // 分割线区域：白色与 tile 同色无缝；线段从 left=56 开始
-              // 56 = 16 padding + 22 icon + 18 spacing 修正 ≈ 与文字对齐
-              Container(
-                height: 0.5,
-                color: Colors.white,
-                child: Container(
-                  margin: const EdgeInsets.only(left: 54),
-                  color: const Color(0xFFE4E4E4),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}

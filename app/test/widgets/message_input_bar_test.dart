@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/widgets/message_input_bar.dart';
+import 'package:app/widgets/feedback/app_text_selection_toolbar.dart';
 
 void main() {
   // 构造一个最小可用的 MessageInputBar,所有回调空实现。
@@ -71,5 +72,31 @@ void main() {
     await tester.tap(find.byType(TextField));
     await tester.pumpAndSettle();
     expect(find.text('拍照'), findsNothing);
+  });
+
+  testWidgets('长按 TextField 弹 AppTextSelectionToolbar', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: MessageInputBar(
+          onSend: (_) {},
+          onPickFile: () {},
+          onTakePhoto: () {},
+          onPickAlbum: () {},
+        ),
+      ),
+    ));
+
+    // 输入文字然后长按选区
+    await tester.enterText(find.byType(TextField), 'hello world');
+    await tester.pump();
+
+    // 长按触发 contextMenuBuilder
+    await tester.longPress(find.byType(TextField));
+    await tester.pumpAndSettle(const Duration(milliseconds: 500));
+
+    // 验证是我们的 AppTextSelectionToolbar 而非 Flutter 默认菜单
+    // （Flutter 默认 AdaptiveTextSelectionToolbar 也会有「复制」「粘贴」文字,
+    //   故用 byType 精确断言我们的组件类型）
+    expect(find.byType(AppTextSelectionToolbar), findsOneWidget);
   });
 }

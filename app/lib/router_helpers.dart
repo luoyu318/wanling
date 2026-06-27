@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'models/agent.dart';
 import 'providers/auth_provider.dart' show apiProvider;
+import 'utils/snackbar.dart';
 
 /// 拼接 chat 路由路径：convId 走 path 参数，agentId 走 query。
 String chatRoute(String convId, String agentId) =>
@@ -24,8 +25,6 @@ Future<void> startChatAndPush(
     context.push(chatRoute(convId, agent.id));
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('创建会话失败: $e')),
-    );
+    showAppSnackBar(context, '创建会话失败: $e', type: SnackBarType.error);
   }
 }

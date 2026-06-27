@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../models/pairing.dart';
 import '../providers/auth_provider.dart' show apiProvider;
+import '../utils/snackbar.dart';
 import '../widgets/avatar.dart';
+import '../widgets/feedback/app_dialog.dart';
 
 /// 扫码后选择/新建 Agent 页。
 /// 顶部 AppBar ← 返回；列表显示当前 user 名下 agent（scan 接口返回）；
@@ -33,52 +35,34 @@ class _PairSelectAgentPageState extends ConsumerState<PairSelectAgentPage> {
   }
 
   void _onSelectExisting(PairAgentSummary agent) {
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重置密钥'),
-        content: Text(
-          '该 Agent「${agent.name}」可能正在被其他 hermes 使用。\n'
-          '继续将重置其密钥使旧连接失效，确定吗？',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _doComplete(agentId: agent.id);
-            },
-            child: const Text('确定重置'),
-          ),
-        ],
+      title: '重置密钥',
+      content: Text(
+        '该 Agent「${agent.name}」可能正在被其他 hermes 使用。\n'
+        '继续将重置其密钥使旧连接失效，确定吗？',
       ),
+      confirmText: '确定重置',
+      onConfirm: () => _doComplete(agentId: agent.id),
     );
   }
 
   void _onCreateNew() {
     final ctrl = TextEditingController();
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建 Agent'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Agent 名称'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              final name = ctrl.text.trim();
-              if (name.isEmpty) return;
-              Navigator.pop(ctx);
-              _doComplete(newAgentName: name);
-            },
-            child: const Text('创建'),
-          ),
-        ],
+      title: '新建 Agent',
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Agent 名称'),
       ),
+      confirmText: '创建',
+      onConfirm: () {
+        final name = ctrl.text.trim();
+        if (name.isEmpty) return;
+        _doComplete(newAgentName: name);
+      },
     );
   }
 
@@ -91,16 +75,16 @@ class _PairSelectAgentPageState extends ConsumerState<PairSelectAgentPage> {
         newAgentName: newAgentName,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('配对完成，hermes 终端将自动完成配置')),
+      showAppSnackBar(
+        context,
+        '配对完成，hermes 终端将自动完成配置',
+        type: SnackBarType.success,
       );
       // 配对成功后回首页（Agent 列表会在进入时刷新）
       context.go('/');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('配对失败：$e')),
-      );
+      showAppSnackBar(context, '配对失败：$e', type: SnackBarType.error);
     }
   }
 

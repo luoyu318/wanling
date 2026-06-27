@@ -4,11 +4,23 @@ import 'package:markdown_widget/markdown_widget.dart';
 
 import '../models/msg_type.dart';
 import '../utils/emoji_span.dart';
+import '../widgets/markdown_block_spacing.dart';
 import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
+import '../widgets/markdown_strong.dart';
 import '../widgets/markdown_view.dart';
 import 'card_renderer.dart';
 import 'message_content_renderer.dart';
+
+/// MarkdownView 共用的 generators 列表：
+/// - latex/strong：自定义节点（数学公式、w500 粗体）
+/// - hr/heading：自定义节点（提供上下间距，markdown_widget 默认无 margin 字段）
+final List<SpanNodeGeneratorWithTag> _markdownGenerators = [
+  latexGenerator,
+  strongGenerator,
+  hrSpacingGenerator,
+  ...headingSpacingGenerators(),
+];
 
 /// 纯文本渲染器。
 ///
@@ -43,7 +55,7 @@ class TextContentRenderer implements MessageContentRenderer {
       data: text,
       config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token, openGallery: rc.openGallery),
       inlineSyntaxes: [LatexSyntax()],
-      generators: [latexGenerator],
+      generators: _markdownGenerators,
     );
   }
 
@@ -99,7 +111,7 @@ class MarkdownContentRenderer implements MessageContentRenderer {
       data: text,
       config: markdownStyle(isDark: rc.isDark, context: context, baseUrl: rc.baseUrl, token: rc.token, openGallery: rc.openGallery),
       inlineSyntaxes: [LatexSyntax()],
-      generators: [latexGenerator],
+      generators: _markdownGenerators,
     );
   }
 }

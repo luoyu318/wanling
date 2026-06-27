@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/notification_service.dart';
+import '../widgets/feedback/app_dialog.dart';
 
 /// 权限相关 helper：通知权限申请、电池优化白名单、应用详情跳转。
 ///
@@ -22,25 +23,13 @@ class PermissionHelper {
     await prefs.setBool(_prefsKeyNotifAsked, true);
 
     if (!granted && !alreadyAsked && context.mounted) {
-      await showDialog(
+      await showAppDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('通知权限未开启'),
-          content: const Text('不开启通知权限将无法在后台收到 agent 消息。是否现在去设置？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('稍后'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                openAppNotificationSettings();
-              },
-              child: const Text('去设置'),
-            ),
-          ],
-        ),
+        title: '通知权限未开启',
+        content: const Text('不开启通知权限将无法在后台收到 agent 消息。是否现在去设置？'),
+        cancelText: '稍后',
+        confirmText: '去设置',
+        onConfirm: () => openAppNotificationSettings(),
       );
     }
     return granted;
@@ -55,28 +44,16 @@ class PermissionHelper {
     await prefs.setBool(_prefsKeyBatteryAsked, true);
 
     if (!context.mounted) return;
-    await showDialog(
+    await showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('后台接收设置'),
-        content: const Text(
-          '为了在 APP 后台或锁屏时仍能收到 agent 消息，'
-          '请开启「自启动」并将电池策略设为「无限制」。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('稍后'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              openBatteryOptimizationSettings();
-            },
-            child: const Text('去设置'),
-          ),
-        ],
+      title: '后台接收设置',
+      content: const Text(
+        '为了在 APP 后台或锁屏时仍能收到 agent 消息，'
+        '请开启「自启动」并将电池策略设为「无限制」。',
       ),
+      cancelText: '稍后',
+      confirmText: '去设置',
+      onConfirm: () => openBatteryOptimizationSettings(),
     );
   }
 

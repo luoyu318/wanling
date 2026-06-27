@@ -5,6 +5,7 @@ import '../models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../widgets/avatar.dart';
+import '../widgets/feedback/app_dialog.dart';
 
 class AgentListPage extends ConsumerStatefulWidget {
   const AgentListPage({super.key});
@@ -58,31 +59,20 @@ class _AgentListPageState extends ConsumerState<AgentListPage>
 
   void _showCreateDialog(BuildContext context, WidgetRef ref) {
     final ctrl = TextEditingController();
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('创建 Agent'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Agent 名称'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = ctrl.text.trim();
-              if (name.isEmpty) return;
-              ref.read(agentListProvider.notifier).create(name);
-              Navigator.pop(ctx);
-            },
-            child: const Text('创建'),
-          ),
-        ],
+      title: '创建 Agent',
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Agent 名称'),
       ),
+      confirmText: '创建',
+      onConfirm: () {
+        final name = ctrl.text.trim();
+        if (name.isEmpty) return;
+        ref.read(agentListProvider.notifier).create(name);
+      },
     );
   }
 }

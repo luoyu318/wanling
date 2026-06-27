@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../utils/emoji_editing_controller.dart';
+import 'feedback/app_text_selection_toolbar.dart';
 import 'panel_item.dart';
+
+/// 全局 key：让 AppSnackBar 定位到当前页面的 MessageInputBar，
+/// 提示条贴输入栏上方显示。MessageInputBar 不存在的页面（如设置页）
+/// currentContext 为 null，AppSnackBar 降级贴底 + SafeArea。
+final GlobalKey inputBarKey = GlobalKey();
 
 /// IM 风聊天输入栏。
 ///
@@ -88,7 +94,11 @@ class _MessageInputBarState extends State<MessageInputBar> {
   Widget build(BuildContext context) {
     // 外层 GestureDetector:点输入框之外的区域(键盘区除外)收键盘。
     // onTap 空实现仍触发命中,配合内部 TextField 的 FocusNode unfocus。
-    return GestureDetector(
+    // KeyedSubtree 挂 inputBarKey：AppSnackBar 通过此 key 定位输入栏位置，
+    // 提示条贴输入栏上方显示。用 KeyedSubtree 避免改 GestureDetector 的 key。
+    return KeyedSubtree(
+      key: inputBarKey,
+      child: GestureDetector(
       onTap: () => _focusNode.unfocus(),
       // 颜色 Container 放 SafeArea 外层,确保 SafeArea 的 bottom 安全区
       // (系统导航栏高度)也被填满,不露 Scaffold 背景。
@@ -141,6 +151,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -169,6 +180,13 @@ class _MessageInputBarState extends State<MessageInputBar> {
           border: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         ),
+        // 长按选区弹深色胶囊文字级菜单（统一 AppTextSelectionToolbar 风格）
+        contextMenuBuilder: (context, editableTextState) {
+          return AppTextSelectionToolbar(
+            buttonItems: editableTextState.contextMenuButtonItems,
+            anchors: editableTextState.contextMenuAnchors,
+          );
+        },
       ),
     );
   }

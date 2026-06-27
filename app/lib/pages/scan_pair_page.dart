@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../utils/snackbar.dart';
+
 /// 从扫码内容中提取配对 ticket_id。
 /// 识别 `WLPAIR:` 前缀格式，其他内容返回 null。
 /// 抽成顶层函数便于单元测试（相机层无法在 widget test 里跑）。
@@ -40,9 +42,7 @@ class _ScanPairPageState extends State<ScanPairPage> {
     final ticketId = extractPairTicketId(raw);
     if (ticketId == null) {
       // 非配对码：toast 提示，继续扫
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('非万灵配对码')),
-      );
+      showAppSnackBar(context, '非万灵配对码');
       return;
     }
 

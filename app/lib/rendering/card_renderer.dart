@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/approval.dart';
+import '../utils/snackbar.dart';
 import '../widgets/card_button.dart';
 import '../widgets/card_state_badge.dart';
 import '../widgets/countdown_timer.dart';
@@ -268,7 +269,7 @@ class _CardViewState extends State<_CardView> {
     );
     if (err != null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+        showAppSnackBar(context, err, type: SnackBarType.error);
       }
       setState(() {
         _optimisticState = null;

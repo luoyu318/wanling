@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/settings_provider.dart';
+import '../utils/snackbar.dart';
 
 /// 设置页：当前仅支持服务器地址（baseUrl）配置。
 /// 修改后提示「重新登录生效」，因 apiProvider watch 本设置，
@@ -52,9 +53,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               child: FilledButton(
                 onPressed: () {
                   ref.read(settingsProvider.notifier).setBaseUrl(_ctrl.text.trim());
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('已保存，重新登录生效')),
-                  );
+                  showAppSnackBar(context, '已保存，重新登录生效', type: SnackBarType.success);
                 },
                 child: const Text('保存'),
               ),

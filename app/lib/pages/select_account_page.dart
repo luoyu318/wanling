@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/saved_login.dart';
 import '../providers/saved_logins_provider.dart';
 import '../utils/snackbar.dart';
+import '../widgets/feedback/app_dialog.dart';
 
 /// 独立的选择账号页面。从登录页「切换服务器/账号」入口进入。
 ///
@@ -94,18 +95,12 @@ class SelectAccountPage extends ConsumerWidget {
       context: context,
       title: '添加账号',
       initial: const SavedLogin(server: '', username: '', password: ''),
-      onSubmit: (server, username, password) async {
-        try {
-          await ref
-              .read(savedLoginsProvider.notifier)
-              .add(server, username, password);
-          if (context.mounted) Navigator.pop(context);
-        } catch (e) {
-          if (context.mounted) {
-            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
-          }
-        }
-      },
+      onSubmit: (server, username, password) =>
+          ref.read(savedLoginsProvider.notifier).add(
+                server,
+                username,
+                password,
+              ),
     );
   }
 
@@ -115,45 +110,24 @@ class SelectAccountPage extends ConsumerWidget {
       context: context,
       title: '编辑账号',
       initial: login,
-      onSubmit: (server, username, password) async {
-        try {
-          await ref.read(savedLoginsProvider.notifier).edit(
+      onSubmit: (server, username, password) =>
+          ref.read(savedLoginsProvider.notifier).edit(
                 index,
                 server: server,
                 username: username,
                 password: password,
-              );
-          if (context.mounted) Navigator.pop(context);
-        } catch (e) {
-          if (context.mounted) {
-            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
-          }
-        }
-      },
+              ),
     );
   }
 
   void _showDeleteConfirm(
       BuildContext context, WidgetRef ref, int index, SavedLogin login) {
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确认删除 ${login.username} @ ${login.server}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              ref.read(savedLoginsProvider.notifier).remove(index);
-              Navigator.pop(ctx);
-            },
-            child: const Text('确认'),
-          ),
-        ],
-      ),
+      title: '确认删除',
+      content: Text('确认删除 ${login.username} @ ${login.server}?'),
+      confirmText: '确认',
+      onConfirm: () => ref.read(savedLoginsProvider.notifier).remove(index),
     );
   }
 
@@ -169,55 +143,53 @@ class SelectAccountPage extends ConsumerWidget {
     final serverCtrl = TextEditingController(text: initial.server);
     final usernameCtrl = TextEditingController(text: initial.username);
     final passwordCtrl = TextEditingController(text: initial.password);
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: serverCtrl,
-              decoration: const InputDecoration(
-                  labelText: '服务器地址', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: usernameCtrl,
-              decoration: const InputDecoration(
-                  labelText: '用户名', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: passwordCtrl,
-              obscureText: true,
-              decoration: const InputDecoration(
-                  labelText: '密码', border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+      title: title,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: serverCtrl,
+            decoration: const InputDecoration(
+                labelText: '服务器地址', border: OutlineInputBorder()),
           ),
-          FilledButton(
-            onPressed: () async {
-              final s = serverCtrl.text.trim();
-              final u = usernameCtrl.text.trim();
-              final p = passwordCtrl.text;
-              if (s.isEmpty || u.isEmpty || p.isEmpty) {
-                if (ctx.mounted) {
-                  showAppSnackBar(ctx, '请填写完整', type: SnackBarType.error);
-                }
-                return;
-              }
-              await onSubmit(s, u, p);
-            },
-            child: const Text('保存'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: usernameCtrl,
+            decoration: const InputDecoration(
+                labelText: '用户名', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: passwordCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(
+                labelText: '密码', border: OutlineInputBorder()),
           ),
         ],
       ),
+      confirmText: '保存',
+      dismissOnConfirm: false,
+      onConfirm: () async {
+        final s = serverCtrl.text.trim();
+        final u = usernameCtrl.text.trim();
+        final p = passwordCtrl.text;
+        if (s.isEmpty || u.isEmpty || p.isEmpty) {
+          if (context.mounted) {
+            showAppSnackBar(context, '请填写完整', type: SnackBarType.error);
+          }
+          return;
+        }
+        try {
+          await onSubmit(s, u, p);
+          if (context.mounted) Navigator.of(context).pop();
+        } catch (e) {
+          if (context.mounted) {
+            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
+          }
+        }
+      },
     );
   }
 }

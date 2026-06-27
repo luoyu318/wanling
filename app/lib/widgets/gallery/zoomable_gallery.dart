@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../utils/gallery_image.dart';
+import '../../utils/snackbar.dart';
 import '../long_press_detector.dart';
 import '../panel_item.dart';
 import 'photo_view/photo_view.dart';
@@ -180,12 +181,12 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
     final image = widget.images[_currentIndex];
     final result = await saveToGallery(image);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result == SaveResult.success
-            ? '已保存到相册'
-            : '保存失败，请稍后重试'),
-      ),
+    showAppSnackBar(
+      context,
+      result == SaveResult.success ? '已保存到相册' : '保存失败，请稍后重试',
+      type: result == SaveResult.success
+          ? SnackBarType.success
+          : SnackBarType.error,
     );
   }
 

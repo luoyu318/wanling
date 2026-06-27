@@ -15,11 +15,14 @@ import '../utils/snackbar.dart';
 import '../widgets/avatar.dart';
 import '../widgets/avatar_picker.dart';
 import '../widgets/copyable_field.dart';
+import '../widgets/feedback/app_dialog.dart';
+import '../widgets/settings_group.dart';
+import '../widgets/settings_tile.dart';
 
 /// Agent 详情页：IM 个人资料风格（A 布局）。
-/// - 顶部品牌色横幅 + 大头像 + 名称/状态
+/// - 顶部白底横幅 + 大头像 + 名称/状态
 /// - 分组卡片：AppID + 密钥（眼睛切换 + 复制）
-/// - 分组卡片：编辑昵称、删除 Agent
+/// - 分组卡片：编辑昵称、删除 Agent（SettingsTile）
 /// - 底部"发消息" CTA
 ///
 /// 删除后联动 conversationProvider 移除相关会话并 pop 回列表。
@@ -43,16 +46,16 @@ class AgentDetailPage extends ConsumerWidget {
       backgroundColor: const Color(0xFFEDEDED),
       body: CustomScrollView(
         slivers: [
-          // 顶部品牌色横幅，pinned 让标题区域固定。
+          // 顶部白底横幅，pinned 让标题区域固定。
           SliverAppBar(
             pinned: true,
-            backgroundColor: const Color(0xFF7BB242),
-            foregroundColor: Colors.white,
+            backgroundColor: Colors.white,
+            foregroundColor: const Color(0xFF111111),
             title: const Text(''),
           ),
           SliverToBoxAdapter(
             child: Container(
-              color: const Color(0xFF7BB242),
+              color: Colors.white,
               padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
               child: Row(
                 children: [
@@ -73,15 +76,35 @@ class AgentDetailPage extends ConsumerWidget {
                         Text(
                           agent.name,
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFF111111),
                             fontSize: 18,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                         const SizedBox(height: 3),
-                        Text(
-                          agent.status == AgentStatus.online ? '在线' : '离线',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: agent.status == AgentStatus.online
+                                    ? const Color(0xFF07C160)
+                                    : const Color(0xFF999999),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              agent.status == AgentStatus.online ? '在线' : '离线',
+                              style: TextStyle(
+                                color: agent.status == AgentStatus.online
+                                    ? const Color(0xFF07C160)
+                                    : const Color(0xFF999999),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
                         if (agent.bio != null && agent.bio!.isNotEmpty) ...[
                           const SizedBox(height: 3),
@@ -89,7 +112,7 @@ class AgentDetailPage extends ConsumerWidget {
                             agent.bio!,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            style: const TextStyle(color: Color(0xFF999999), fontSize: 12),
                           ),
                         ],
                       ],
@@ -114,28 +137,24 @@ class AgentDetailPage extends ConsumerWidget {
               ),
             ),
           ),
-          // 操作：编辑昵称、删除 Agent
+          // 操作：编辑昵称、删除 Agent（公共 SettingsTile，统一按下反馈 + 分割线）
           SliverToBoxAdapter(
-            child: Container(
-              color: Colors.white,
-              margin: const EdgeInsets.only(top: 8),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.edit_outlined, size: 20),
-                    title: const Text('编辑资料', style: TextStyle(fontSize: 14)),
-                    trailing: const Icon(Icons.chevron_right, color: Color(0xFFC0C0C0)),
-                    onTap: () => _editProfile(context, ref, agent),
-                  ),
-                  const Divider(height: 1, indent: 56, color: Color(0xFFF0F0F0)),
-                  ListTile(
-                    leading: const Icon(Icons.delete_outline, color: Color(0xFFFA5151), size: 20),
-                    title: const Text('删除 Agent',
-                        style: TextStyle(fontSize: 14, color: Color(0xFFFA5151))),
-                    onTap: () => _delete(context, ref, agent),
-                  ),
-                ],
-              ),
+            child: SettingsGroup(
+              children: [
+                SettingsTile(
+                  icon: Icons.edit_outlined,
+                  label: '编辑资料',
+                  onTap: () => _editProfile(context, ref, agent),
+                ),
+                SettingsTile(
+                  icon: Icons.delete_outline,
+                  label: '删除 Agent',
+                  labelColor: const Color(0xFFFA5151),
+                  iconColor: const Color(0xFFFA5151),
+                  showDivider: false,
+                  onTap: () => _delete(context, ref, agent),
+                ),
+              ],
             ),
           ),
           // 底部"发消息" CTA：用 SliverFillRemaining 把按钮顶到可视区底部
@@ -169,52 +188,40 @@ class AgentDetailPage extends ConsumerWidget {
   void _editProfile(BuildContext context, WidgetRef ref, Agent agent) {
     final nameCtrl = TextEditingController(text: agent.name);
     final bioCtrl = TextEditingController(text: agent.bio ?? '');
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑资料'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '昵称'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: bioCtrl,
-              maxLines: 3,
-              minLines: 1,
-              decoration: const InputDecoration(labelText: '简介'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+      title: '编辑资料',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: nameCtrl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '昵称'),
           ),
-          FilledButton(
-            onPressed: () async {
-              try {
-                await ref.read(agentListProvider.notifier).update(
-                      agent.id,
-                      name: nameCtrl.text.trim(),
-                      bio: bioCtrl.text.trim(),
-                    );
-                if (ctx.mounted) Navigator.pop(ctx);
-              } catch (e) {
-                if (ctx.mounted) {
-                  ScaffoldMessenger.of(ctx)
-                      .showSnackBar(SnackBar(content: Text('修改失败: $e')));
-                }
-              }
-            },
-            child: const Text('保存'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: bioCtrl,
+            maxLines: 3,
+            minLines: 1,
+            decoration: const InputDecoration(labelText: '简介'),
           ),
         ],
       ),
+      confirmText: '保存',
+      onConfirm: () async {
+        try {
+          await ref.read(agentListProvider.notifier).update(
+                agent.id,
+                name: nameCtrl.text.trim(),
+                bio: bioCtrl.text.trim(),
+              );
+        } catch (e) {
+          if (context.mounted) {
+            showAppSnackBar(context, '修改失败: $e', type: SnackBarType.error);
+          }
+        }
+      },
     );
   }
 
@@ -257,35 +264,23 @@ class AgentDetailPage extends ConsumerWidget {
   /// 删除 Agent：二次确认，成功后联动移除消息 tab 中相关会话并 pop 两次
   /// （dialog + 详情页）。
   void _delete(BuildContext context, WidgetRef ref, Agent agent) {
-    showDialog(
+    showAppDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('删除 ${agent.name} 后将无法恢复，且相关会话也会被删除。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFA5151)),
-            onPressed: () async {
-              try {
-                await ref.read(agentListProvider.notifier).delete(agent.id);
-                // 联动移除消息 tab 中该 agent 的会话
-                ref.read(conversationProvider.notifier).removeByAgentId(agent.id);
-                if (!ctx.mounted) return;
-                Navigator.pop(ctx); // 关闭 dialog
-                if (context.mounted) context.pop(); // 退出详情页回列表
-              } catch (e) {
-                if (!ctx.mounted) return;
-                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('删除失败: $e')));
-              }
-            },
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+      title: '确认删除',
+      content: Text('删除 ${agent.name} 后将无法恢复，且相关会话也会被删除。'),
+      confirmText: '删除',
+      onConfirm: () async {
+        try {
+          await ref.read(agentListProvider.notifier).delete(agent.id);
+          // 联动移除消息 tab 中该 agent 的会话
+          ref.read(conversationProvider.notifier).removeByAgentId(agent.id);
+          if (context.mounted) context.pop(); // 退出详情页回列表
+        } catch (e) {
+          if (context.mounted) {
+            showAppSnackBar(context, '删除失败: $e', type: SnackBarType.error);
+          }
+        }
+      },
     );
   }
 }
