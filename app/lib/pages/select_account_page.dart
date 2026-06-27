@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../models/saved_login.dart';
 import '../providers/saved_logins_provider.dart';
+import '../theme/app_colors.dart';
 import '../utils/snackbar.dart';
 import '../widgets/feedback/app_dialog.dart';
 
@@ -20,10 +22,11 @@ class SelectAccountPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(savedLoginsProvider);
     return Scaffold(
+      backgroundColor: AppColors.pageBgLight,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => context.pop(),
         ),
         title: const Text('选择账号'),
       ),
@@ -70,7 +73,7 @@ class SelectAccountPage extends ConsumerWidget {
               selected: i == state.selectedIndex,
               onTap: () {
                 ref.read(savedLoginsProvider.notifier).select(i);
-                Navigator.pop(context);
+                context.pop();
               },
               onEdit: () => _showEditDialog(context, ref, i, state.logins[i]),
               onDelete: () =>

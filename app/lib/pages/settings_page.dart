@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/settings_provider.dart';
+import '../theme/app_colors.dart';
 import '../utils/snackbar.dart';
 
 /// 设置页：当前仅支持服务器地址（baseUrl）配置。
@@ -32,6 +33,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.pageBgLight,
       appBar: AppBar(title: const Text('设置')),
       body: Padding(
         padding: const EdgeInsets.all(16),

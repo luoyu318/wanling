@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/pages/select_account_page.dart';
 import 'package:app/providers/saved_logins_provider.dart';
@@ -29,12 +30,26 @@ void main() {
   });
 
   Future<void> pumpPage(WidgetTester tester) async {
+    // SelectAccountPage 内部用 context.pop 退出，需要 GoRouter 在树上且
+    // 当前页是 push 进来的（go 不行，pop 会抛 "nothing to pop"）。
+    // 故 initialLocation = '/'（占位页），pumpWidget 后 push '/select-account'。
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, __) => const SizedBox.shrink()),
+        GoRoute(
+            path: '/select-account',
+            builder: (_, __) => const SelectAccountPage()),
+      ],
+    );
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: SelectAccountPage()),
+        child: MaterialApp.router(routerConfig: router),
       ),
     );
+    await tester.pump();
+    router.push('/select-account');
     await tester.pumpAndSettle();
   }
 

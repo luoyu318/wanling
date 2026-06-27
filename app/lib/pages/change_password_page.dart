@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
+import '../theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import '../utils/snackbar.dart';
 
@@ -32,6 +33,7 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.pageBgLight,
       appBar: AppBar(title: const Text('修改密码')),
       body: Padding(
         padding: const EdgeInsets.all(24),

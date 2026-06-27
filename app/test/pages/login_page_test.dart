@@ -1,12 +1,12 @@
-import 'package:app/models/user.dart';
 import 'package:app/pages/login_page.dart';
-import 'package:app/providers/auth_provider.dart';
+import 'package:app/pages/select_account_page.dart';
 import 'package:app/providers/saved_logins_provider.dart';
 import 'package:app/providers/settings_provider.dart';
 import 'package:app/utils/secure_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -33,10 +33,21 @@ void main() {
   });
 
   Future<void> pumpPage(WidgetTester tester) async {
+    // 用 router（含 / 和 /select-account）：LoginPage 内部走 context.push，
+    // 必须有 GoRouter 在树上才能找到，否则抛异常。
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, __) => const LoginPage()),
+        GoRoute(
+            path: '/select-account',
+            builder: (_, __) => const SelectAccountPage()),
+      ],
+    );
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: LoginPage()),
+        child: MaterialApp.router(routerConfig: router),
       ),
     );
     await tester.pumpAndSettle();
