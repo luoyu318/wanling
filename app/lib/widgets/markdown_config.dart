@@ -56,6 +56,8 @@ MarkdownConfig markdownStyle({
   // 表格行下方分割线:浅灰细线
   final tableDividerColor =
       isDark ? const Color(0xFF444444) : const Color(0xFFDDDDDD);
+  // 分割线:比 sub 更淡的灰,避免视觉过重
+  final hrColor = isDark ? const Color(0xFF444444) : const Color(0xFFCCCCCC);
   final preBase = isDark ? PreConfig.darkConfig : const PreConfig();
   final base = isDark ? MarkdownConfig.darkConfig : MarkdownConfig.defaultConfig;
   return base.copy(configs: [
@@ -63,18 +65,35 @@ MarkdownConfig markdownStyle({
     _NoDividerHeadingConfig(
       tag: MarkdownTag.h1,
       style: TextStyle(
-          fontSize: 19, fontWeight: FontWeight.bold, color: ink, height: 1.5),
+          fontSize: 21, fontWeight: FontWeight.w600, color: ink, height: 1.5),
     ),
     _NoDividerHeadingConfig(
       tag: MarkdownTag.h2,
       style: TextStyle(
-          fontSize: 17, fontWeight: FontWeight.bold, color: ink, height: 1.5),
+          fontSize: 19, fontWeight: FontWeight.w500, color: ink, height: 1.5),
     ),
     _NoDividerHeadingConfig(
       tag: MarkdownTag.h3,
       style: TextStyle(
-          fontSize: 15, fontWeight: FontWeight.w600, color: ink, height: 1.5),
+          fontSize: 17, fontWeight: FontWeight.w500, color: ink, height: 1.5),
     ),
+    _NoDividerHeadingConfig(
+      tag: MarkdownTag.h4,
+      style: TextStyle(
+          fontSize: 17, fontWeight: FontWeight.w500, color: ink, height: 1.5),
+    ),
+    _NoDividerHeadingConfig(
+      tag: MarkdownTag.h5,
+      style: TextStyle(
+          fontSize: 17, fontWeight: FontWeight.w500, color: ink, height: 1.5),
+    ),
+    _NoDividerHeadingConfig(
+      tag: MarkdownTag.h6,
+      style: TextStyle(
+          fontSize: 17, fontWeight: FontWeight.w500, color: ink, height: 1.5),
+    ),
+    // 分割线:height 0.5(细线),用比 sub 更淡的灰(亮色 #CCCCCC / 暗色 #444444)
+    HrConfig(height: 0.5, color: hrColor),
     preBase.copy(
       wrapper: markdownCodeWrapper,
       theme: isDark ? a11yDarkTheme : a11yLightTheme,
@@ -86,7 +105,7 @@ MarkdownConfig markdownStyle({
     BlockquoteConfig(
       sideColor: isDark ? const Color(0xFF555555) : const Color(0xFFCCCCCC),
       textColor: sub,
-      sideWith: 3,
+      sideWith: 2,
       padding: const EdgeInsets.fromLTRB(10, 6, 0, 6),
       margin: const EdgeInsets.symmetric(vertical: 6),
     ),
@@ -102,12 +121,12 @@ MarkdownConfig markdownStyle({
       bodyPadding: const EdgeInsets.fromLTRB(8, 9, 8, 9),
       // 注意:markdown_widget 2.3.2+8 有 bug,TBodyNode(表内容)的 style 实际读
       // headerStyle 而非 bodyStyle,所以表头表内容共用 headerStyle。
-      // 统一用 #000 黑字、w300 细体、字号 14。
+      // 统一用 #000 黑字、w300 细体、字号 16。
       headerStyle: const TextStyle(
-          color: Color(0xFF000000), fontSize: 14, fontWeight: FontWeight.w300),
+          color: Color(0xFF000000), fontSize: 16, fontWeight: FontWeight.w300),
       // bodyStyle 在当前版本不生效(被上述 bug 绕过),保留与 headerStyle 一致作记录
       bodyStyle: const TextStyle(
-          color: Color(0xFF000000), fontSize: 14, fontWeight: FontWeight.w300),
+          color: Color(0xFF000000), fontSize: 16, fontWeight: FontWeight.w300),
       // 表格包横向滚动:宽表格可横向滑动,避免溢出气泡
       wrapper: _tableScrollWrapper,
     ),
@@ -118,7 +137,14 @@ MarkdownConfig markdownStyle({
     ImgConfig(builder: (url, attrs) => _markdownImageBuilder(url, attrs, baseUrl, token, context, openGallery)),
     // 安全:链接点击收敛到 http/https 白名单,拦截 javascript:/file: 等危险 scheme。
     // 放行的链接仍走 markdown_widget 默认的 launchUrl 外部打开。
-    LinkConfig(onTap: _safeLaunchUrl),
+    // 链接色用品牌绿 #079D55 + 去下划线,对齐 IM 简洁风格。
+    LinkConfig(
+      style: const TextStyle(
+        color: Color(0xFF079D55),
+        decoration: TextDecoration.none,
+      ),
+      onTap: _safeLaunchUrl,
+    ),
   ]);
 }
 
@@ -144,10 +170,14 @@ class _NoDividerHeadingConfig extends HeadingConfig {
 /// 表格外层横向滚动包装:宽表格可横向滑动,避免溢出气泡。
 /// 内层包 SelectAllOrNoneContainer:拉杆碰到表格整块选中(表格单元格是 TextSpan
 /// 天然可选,复制得表格文本)。
+/// 外层 Padding 提供上下间距(默认 TableConfig 无 margin 字段,统一在此控制)。
 Widget _tableScrollWrapper(Widget child) {
-  return SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: SelectAllOrNoneContainer(child: child),
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SelectAllOrNoneContainer(child: child),
+    ),
   );
 }
 
