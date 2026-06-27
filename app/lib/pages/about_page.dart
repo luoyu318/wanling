@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../theme/app_colors.dart';
+
 /// 关于页：静态信息（应用名 + 版本号 + 简介）。
 /// 版本号从原生层读取（pubspec.yaml → build.gradle → PackageInfo），
 /// 避免硬编码导致升级后忘了同步。
@@ -31,12 +33,17 @@ class _AboutPageState extends State<AboutPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.pageBgLight,
       appBar: AppBar(title: const Text('关于')),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset('assets/images/logo.png', width: 72, height: 72),
+            Image.asset(
+              'assets/logo/seal/icon-animated.webp',
+              width: 120,
+              height: 120,
+            ),
             const SizedBox(height: 12),
             const Text('万灵', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500)),
             const SizedBox(height: 4),

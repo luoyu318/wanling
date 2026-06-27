@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/saved_logins_provider.dart';
 import '../providers/settings_provider.dart';
+import '../theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import '../utils/snackbar.dart';
-import 'select_account_page.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -41,6 +42,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final auth = ref.watch(authProvider);
 
     return Scaffold(
+      backgroundColor: AppColors.pageBgLight,
       appBar: AppBar(title: const Text('登录')),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -115,9 +117,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   void _goToSelectAccount() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SelectAccountPage()),
-    );
+    context.push('/select-account');
   }
 
   void _submit() async {

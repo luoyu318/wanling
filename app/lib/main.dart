@@ -10,6 +10,7 @@ import 'providers/saved_logins_provider.dart';
 import 'providers/settings_provider.dart';
 import 'rendering/builtin_renderers.dart';
 import 'router.dart';
+import 'theme/app_colors.dart';
 import 'services/background_chat_service.dart';
 import 'services/notification_service.dart';
 import 'utils/app_lifecycle_observer.dart';
@@ -159,8 +160,18 @@ class _MyAppState extends ConsumerState<MyApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF07C160), // 品牌主色绿
+        colorSchemeSeed: AppColors.accentGreen, // 品牌主色绿
         useMaterial3: true,
+        // 统一页面背景灰：避免每个 Scaffold 自定义。M3 默认 surface 会带绿色 seed
+        // 派生的浅色，与 ProfilePage 等显式 #EDEDED 不一致。
+        scaffoldBackgroundColor: AppColors.pageBgStandard,
+        // 统一 AppBar 白底黑字：避免每个子页面 AppBar 走 M3 默认（浅绿底）。
+        // surfaceTintColor=transparent 去掉 M3 的彩色 tint 阴影，保纯白。
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.appBarBg,
+          foregroundColor: AppColors.appBarFg,
+          surfaceTintColor: Colors.transparent,
+        ),
       ),
       routerConfig: router,
     );

@@ -11,6 +11,7 @@ import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
+import 'pages/select_account_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/splash_page.dart';
 import 'providers/auth_provider.dart';
@@ -88,7 +89,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/',
     redirect: (ctx, state) {
       final loggedIn = auth.isAuthenticated;
-      final isLogin = state.matchedLocation == '/login';
+      // 未登录白名单：登录页 + 账号选择页（后者从登录页 push 进入，必须放行，
+      // 否则会被踢回 /login 导致 SelectAccountPage 进不去）。
+      final authFlowPaths = const {'/login', '/select-account'};
+      final isAuthFlow = authFlowPaths.contains(state.matchedLocation);
 
       // 冷启动从通知拉起：如果未消费的 launchPayload 存在 + 已登录，
       // 优先跳到对应 ChatPage（仅当当前位置还是 / 初始位置才跳，避免覆盖用户手动跳转）
@@ -98,8 +102,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/chat/${launchPayload.convId}?agentId=${launchPayload.agentId}';
       }
 
-      if (!loggedIn && !isLogin) return '/login';
-      if (loggedIn && isLogin) return '/';
+      if (!loggedIn && !isAuthFlow) return '/login';
+      if (loggedIn && isAuthFlow) return '/';
       return null;
     },
     routes: [
@@ -114,6 +118,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/login',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const LoginPage(),
+          key: state.pageKey,
+        ),
+      ),
+      // 账号选择页：从 LoginPage「切换服务器/账号」入口进入。
+      // 注册到 router 而非 Navigator.push(MaterialPageRoute)，让转场跟全局
+      // 200ms 横向平移一致。
+      GoRoute(
+        path: '/select-account',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const SelectAccountPage(),
           key: state.pageKey,
         ),
       ),
