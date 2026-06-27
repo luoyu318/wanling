@@ -69,7 +69,7 @@ func main() {
 	h := hub.NewHub(p, agentRepo)
 	go h.Run()
 
-	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo)
+	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, fileRepo)
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)

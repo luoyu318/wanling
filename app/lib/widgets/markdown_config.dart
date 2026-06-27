@@ -1,12 +1,13 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/a11y-dark.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
+import 'image_thumb.dart';
 import 'markdown_code_wrapper.dart';
 import 'select_all_container.dart';
+import '../utils/gallery_image.dart' show thumbUrl;
 
 /// 允许在 markdown 中点击打开的链接 scheme 白名单。
 ///
@@ -200,33 +201,31 @@ Widget _markdownImageBuilder(
   if (!_isInternalFileUrl(url, baseUrl)) {
     return _markdownImagePlaceholder(attributes);
   }
-  // 相对路径拼 baseUrl;完整 URL 直接用
-  final imageUrl =
-      url.startsWith('http') ? url : '$baseUrl${url.startsWith('/') ? '' : '/'}$url';
+  // 提取 fileId：markdown 里可能是相对路径 /api/files/{id} 或拼好 baseUrl 的完整
+  // URL，统一提取 fileId 后用 thumbUrl 拼（?thumb=1 缩略图，服务端无缩略图时降级原图）。
+  final fileId = _extractFileIdFromUrl(url);
+  final imageUrl = thumbUrl(baseUrl, fileId);
   final headers = token.isEmpty ? <String, String>{} : {'Authorization': 'Bearer $token'};
+  final isDark = Theme.of(context).brightness == Brightness.dark;
   // fileId 作 Hero tag，与 image 类型 'gallery_$fileId' 同口径；点击进会话级
   // 画廊（openGallery），与 image 类型完全对称。openGallery 为 null（测试）
   // 时降级为单图全屏，避免崩溃。
-  final fileId = _extractFileIdFromUrl(url);
+  //
+  // markdown 内嵌图不传 aspect（server 不补 markdown 内嵌图宽高），走 ImageThumb
+  // 内的 resolve 探测兜底。用 contain 不裁切（文档插图保留完整信息）。
   return Hero(
     tag: 'gallery_$fileId',
     child: GestureDetector(
       onTap: () => openGallery?.call(fileId),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 200),
-          child: CachedNetworkImage(
-            imageUrl: imageUrl,
-            httpHeaders: headers,
-            fit: BoxFit.contain,
-            placeholder: (_, __) => const SizedBox(
-              width: 200,
-              height: 150,
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            ),
-            errorWidget: (_, __, ___) => _markdownImagePlaceholder(attributes),
-          ),
+        child: ImageThumb(
+          fileId: fileId,
+          url: imageUrl,
+          headers: headers,
+          // markdown 内嵌图是文档插图，完整显示不裁切（截图/图表带文字）。
+          fit: BoxFit.contain,
+          isDark: isDark,
         ),
       ),
     ),

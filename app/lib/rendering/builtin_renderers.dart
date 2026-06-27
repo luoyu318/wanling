@@ -1,9 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
 import '../models/msg_type.dart';
 import '../utils/emoji_span.dart';
+import '../utils/gallery_image.dart' show thumbUrl;
+import '../widgets/image_thumb.dart';
 import '../widgets/markdown_block_spacing.dart';
 import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
@@ -140,8 +141,17 @@ class ImageContentRenderer implements MessageContentRenderer {
     final fileId = (data?['file_id'] ?? '') as String;
     if (fileId.isEmpty) return const Text('[图片]');
 
-    final url = '${rc.baseUrl}/api/files/$fileId';
+    // 缩略图 URL（?thumb=1）：服务端返回 600px 长边小图，无缩略图时降级原图。
+    // 消息列表 / 气泡场景显示宽 200，600px 已覆盖 3×DPR，清晰度足够。
+    final url = thumbUrl(rc.baseUrl, fileId);
     final headers = {'Authorization': 'Bearer ${rc.token}'};
+
+    // 宽高比：server message processor 已对 image 消息自动补 width/height
+    // （从 files 表查原图尺寸）。有则主路径零跳动；存量消息无此字段为 null，
+    // 走 ImageThumb 内的 resolve 探测兜底。
+    final w = data?['width'];
+    final h = data?['height'];
+    final aspect = (w is int && h is int && w > 0 && h > 0) ? (w / h) : null;
 
     return Hero(
       tag: 'gallery_$fileId',
@@ -151,22 +161,14 @@ class ImageContentRenderer implements MessageContentRenderer {
         onTap: () => rc.openGallery?.call(fileId),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(6),
-          child: CachedNetworkImage(
-            imageUrl: url,
-            httpHeaders: headers,
-            cacheKey: 'file_$fileId',
-            width: 200,
+          child: ImageThumb(
+            fileId: fileId,
+            url: url,
+            headers: headers,
+            aspect: aspect,
+            // image 消息用 cover 裁切成紧凑方块（照片风，主流 IM 风格）。
             fit: BoxFit.cover,
-            placeholder: (_, __) => const SizedBox(
-              width: 200,
-              height: 150,
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            ),
-            errorWidget: (_, __, ___) => const SizedBox(
-              width: 200,
-              height: 150,
-              child: Center(child: Icon(Icons.broken_image, size: 60)),
-            ),
+            isDark: rc.isDark,
           ),
         ),
       ),
