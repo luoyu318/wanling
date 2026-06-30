@@ -225,6 +225,18 @@ func (r *ConversationRepo) MarkRead(convID, userID string) error {
 	return nil
 }
 
+// GetUnreadCount 返回会话的未读数。带 user_id 校验，越权返回 sql.ErrNoRows。
+// 单独提供是因为 model.Conversation 没有 UnreadCount 字段，GetByID 拿不到该值。
+// 供 UnreadInfo handler 使用。
+func (r *ConversationRepo) GetUnreadCount(convID, userID string) (int, error) {
+	var count int
+	err := r.db.QueryRow(
+		`SELECT unread_count FROM conversations WHERE id = $1 AND user_id = $2`,
+		convID, userID,
+	).Scan(&count)
+	return count, err
+}
+
 // Pin 把会话置顶。user_id 校验防越权:他人会话返回 sql.ErrNoRows。
 func (r *ConversationRepo) Pin(convID, userID string) error {
 	res, err := r.db.Exec(

@@ -3,8 +3,10 @@ package handler
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wanling/server/internal/model"
@@ -151,13 +153,81 @@ func (h *ConversationHandler) FindOrCreateAsAgent(c *gin.Context) {
 }
 
 // Messages 分页返回指定会话的历史消息。
+// 支持三种分页方式（优先级：after > before > offset）：
+//   1. offset 分页（旧）：?limit=20&offset=0  — 向后兼容
+//   2. before 游标分页：?limit=20&before=2026-06-29T12:00:00Z  — 上滑加载历史（更老方向）
+//   3. after 游标分页：?limit=20&after=2026-06-29T12:00:00Z   — 定位第一条未读（更新方向）
 func (h *ConversationHandler) Messages(c *gin.Context) {
 	id := c.Param("id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	userID := c.GetString("userID")
 
+	// 越权防护：与 UnreadInfo 一致，GetByID + user_id 比对。
+	// 不区分"会话不存在"和"无权访问"，避免泄露存在性。
+	conv, err := h.convRepo.GetByID(id)
+	if err != nil {
+		log.Printf("[messages] GetByID error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if conv == nil || conv.UserID != userID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在或无权访问"})
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	// limit 边界：防恶意 client 传 0/-1/负数/超大值拖垮 DB。
+	// 0/-1 会让 PG LIMIT 报错或返空；超大值一次拉全表。
+	// 非法值（含 strconv.Atoi 失败的 0）统一回退到默认 50。
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+
+	// after 游标分页（更新方向，定位第一条未读场景）：优先级最高
+	afterStr := c.Query("after")
+	if afterStr != "" {
+		after, err := time.Parse(time.RFC3339Nano, afterStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "after 参数格式错误"})
+			return
+		}
+		msgs, err := h.messageRepo.ListAfter(id, after, limit)
+		if err != nil {
+			log.Printf("[messages] ListAfter error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+			return
+		}
+		if msgs == nil {
+			msgs = []model.Message{}
+		}
+		c.JSON(http.StatusOK, msgs)
+		return
+	}
+
+	beforeStr := c.Query("before")
+
+	if beforeStr != "" {
+		before, err := time.Parse(time.RFC3339Nano, beforeStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "before 参数格式错误"})
+			return
+		}
+		msgs, err := h.messageRepo.ListBefore(id, before, limit)
+		if err != nil {
+			log.Printf("[messages] ListBefore error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+			return
+		}
+		if msgs == nil {
+			msgs = []model.Message{}
+		}
+		c.JSON(http.StatusOK, msgs)
+		return
+	}
+
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	msgs, err := h.messageRepo.ListByConversation(id, limit, offset)
 	if err != nil {
+		log.Printf("[messages] ListByConversation error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
@@ -231,4 +301,74 @@ func (h *ConversationHandler) Hide(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// UnreadInfo 返回会话的未读信息：未读数 + 第一条未读消息的 ID 与 created_at。
+// GET /api/conversations/:id/unread
+// 用于 APP 进入会话时定位第一条未读消息。
+//
+// 返回的 first_unread_created_at 让 APP 直接用作游标分页的 after 参数，
+// 避免 APP 再发一次不可靠的"拉 N 条找 id"查询（未读 > N 时会失效）。
+//
+// has_more_before_first_unread 表示 firstUnread 之前是否还有已读历史消息：
+// ListAfter 只查未读方向，loaded.length 满 _pageSize 不能反映 firstUnread
+// 之前是否还有历史，故服务端独立 count 后告知 APP，让 APP 正确判断是否允许
+// 上滑加载历史（修复 hasMore 误判 bug）。
+//
+// 越权防护：convRepo.GetByID 不校验 user_id，这里手动比对。
+// 不区分"会话不存在"和"无权访问"，避免泄露存在性（与 MarkRead 一致）。
+func (h *ConversationHandler) UnreadInfo(c *gin.Context) {
+	convID := c.Param("id")
+	userID := c.GetString("userID")
+
+	conv, err := h.convRepo.GetByID(convID)
+	if err != nil {
+		log.Printf("[unread] GetByID error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if conv == nil || conv.UserID != userID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在或无权访问"})
+		return
+	}
+
+	firstUnread, err := h.messageRepo.FirstUnread(convID)
+	if err != nil {
+		log.Printf("[unread] FirstUnread error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询未读消息失败"})
+		return
+	}
+
+	// model.Conversation 没有 UnreadCount 字段，单独查
+	unreadCount, err := h.convRepo.GetUnreadCount(convID, userID)
+	if err != nil {
+		log.Printf("[unread] GetUnreadCount error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询未读数失败"})
+		return
+	}
+
+	firstUnreadID := ""
+	var firstUnreadCreatedAt *time.Time
+	hasMoreBeforeFirstUnread := false
+	if firstUnread != nil {
+		firstUnreadID = firstUnread.ID
+		t := firstUnread.CreatedAt
+		firstUnreadCreatedAt = &t
+
+		// 仅在有未读时查 firstUnread 之前的消息数（无未读时此字段无意义）
+		countBefore, err := h.messageRepo.CountBefore(convID, t)
+		if err != nil {
+			log.Printf("[unread] CountBefore error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询历史消息数失败"})
+			return
+		}
+		hasMoreBeforeFirstUnread = countBefore > 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"unread_count":                unreadCount,
+		"first_unread_message_id":     firstUnreadID,
+		"first_unread_created_at":      firstUnreadCreatedAt,
+		"has_more_before_first_unread": hasMoreBeforeFirstUnread,
+	})
 }

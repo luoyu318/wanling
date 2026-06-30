@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wanling/server/internal/repository"
@@ -384,5 +385,427 @@ func TestFindOrCreateAsAgentIdempotent(t *testing.T) {
 	}
 	if id1 != id2 {
 		t.Errorf("expected idempotent conv_id, got %s then %s", id1, id2)
+	}
+}
+
+// TestConversationHandler_UnreadInfo_HasUnread 校验：
+//   - 200 状态；
+//   - 返回 unread_count + first_unread_message_id + first_unread_created_at（非 null）。
+func TestConversationHandler_UnreadInfo_HasUnread(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "uih"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "UIH-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	m, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
+	if err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
+	}
+	// unread_count 自增
+	tx, _ := convRepo.BeginTx()
+	_ = convRepo.IncrUnreadTx(tx, conv.ID)
+	_ = tx.Commit()
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.UnreadInfo(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"unread_count":1`) {
+		t.Errorf("响应缺少 unread_count:1: %s", body)
+	}
+	if !strings.Contains(body, `"first_unread_message_id":"`+m.ID+`"`) {
+		t.Errorf("响应缺少 first_unread_message_id: %s", body)
+	}
+	if !strings.Contains(body, `"first_unread_created_at":"`) {
+		t.Errorf("响应缺少 first_unread_created_at: %s", body)
+	}
+}
+
+// TestConversationHandler_UnreadInfo_NoUnread 校验无未读时：
+//   - first_unread_message_id 为空字符串；
+//   - first_unread_created_at 为 null（指针 nil 序列化）。
+func TestConversationHandler_UnreadInfo_NoUnread(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "uin"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "UIN-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.UnreadInfo(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"first_unread_created_at":null`) {
+		t.Errorf("无未读时 first_unread_created_at 应为 null: %s", body)
+	}
+	if !strings.Contains(body, `"first_unread_message_id":""`) {
+		t.Errorf("无未读时 first_unread_message_id 应为空字符串: %s", body)
+	}
+}
+
+// TestConversationHandler_UnreadInfo_Forbidden 校验越权访问：
+//   - 其他 user 访问不属于自己的会话 → 404（不区分"不存在"和"无权访问"）。
+func TestConversationHandler_UnreadInfo_Forbidden(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "uif1"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	other, err := urepo.Create(shortName(t, "uif2"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create other 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "UIF-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
+		c.Set("userID", other.ID) // 用 other 身份访问 user 的会话
+		h.UnreadInfo(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("越权应返回 404，实际 %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestConversationHandler_Messages_BeforeCursor 校验游标分页：
+//   - before 参数优先于 offset；
+//   - cursor 过滤 + 排序正确（created_at < m2 → m1）；
+//   - limit 截断生效（limit=1 + 1 条匹配 → 返 1 条）。
+func TestConversationHandler_Messages_BeforeCursor(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "mbc"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "MBC-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	// 造 3 条消息（m1 最早，m3 最新）
+	var ids []string
+	for i := 0; i < 3; i++ {
+		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+		if err != nil {
+			t.Fatalf("Create m%d 失败: %v", i, err)
+		}
+		ids = append(ids, m.ID)
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// 拿中间消息 m2 的 created_at 作 cursor
+	m2, _ := msgRepo.Get(ids[1])
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Messages(c)
+	})
+
+	// before=m2.createdAt & limit=1 → 验证 cursor 过滤 + 排序 + limit 截断。
+	// created_at < m2 的有 [m1]（1 条），limit=1 截断后仍返 1 条 m1。
+	url := "/api/conversations/" + conv.ID + "/messages?before=" + m2.CreatedAt.UTC().Format(time.RFC3339Nano) + "&limit=1"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+
+	var got []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("期望 1 条（limit=1 + created_at < m2），实际 %d", len(got))
+	}
+	if got[0]["id"] != ids[0] {
+		t.Errorf("期望 m1（%s），实际 %v", ids[0], got[0]["id"])
+	}
+}
+
+// TestConversationHandler_Messages_BeforeBadFormat 校验 before 参数格式错误返回 400。
+func TestConversationHandler_Messages_BeforeBadFormat(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "mbf"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "MBF-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages?before=not-a-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("before 格式错误应 400，实际 %d", w.Code)
+	}
+}
+
+// TestConversationHandler_Messages_Forbidden 校验越权访问：
+//   - 其他 user 用别人的 conv_id 拉消息 → 404（不区分"不存在"和"无权访问"）。
+//   - 与 UnreadInfo_Forbidden 的越权语义对齐。
+func TestConversationHandler_Messages_Forbidden(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "mforbu"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	other, err := urepo.Create(shortName(t, "mforbo"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create other 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "MFORB-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	if _, err := msgRepo.Create(conv.ID, "user", user.ID, content); err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", other.ID) // 用 other 身份访问 user 的会话
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("越权应返回 404，实际 %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestConversationHandler_Messages_AfterCursor 校验 after 游标分页（更新方向）：
+//   - after 参数拉取 created_at > after 的消息（ASC）；
+//   - 用于进入会话定位第一条未读（firstUnread + 之后的 N-1 条）。
+func TestConversationHandler_Messages_AfterCursor(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "mac"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "MAC-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	// 造 4 条消息（m1 最早，m4 最新）
+	var ids []string
+	for i := 0; i < 4; i++ {
+		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+		if err != nil {
+			t.Fatalf("Create m%d 失败: %v", i, err)
+		}
+		ids = append(ids, m.ID)
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// 拿 m2 的 created_at 作 cursor 起点
+	m2, _ := msgRepo.Get(ids[1])
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Messages(c)
+	})
+
+	// after=m2.createdAt - 1ms → 应返回 m2 + 之后的 [m2, m3, m4] ASC
+	url := "/api/conversations/" + conv.ID + "/messages?after=" +
+		m2.CreatedAt.Add(-time.Millisecond).UTC().Format(time.RFC3339Nano) + "&limit=10"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+
+	var got []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
+	}
+	if len(got) != 3 {
+		t.Fatalf("期望 3 条（m2~m4），实际 %d", len(got))
+	}
+	// ASC 顺序：第一条 m2，最后一条 m4
+	if got[0]["id"] != ids[1] {
+		t.Errorf("ASC 第一条期望 m2（%s），实际 %v", ids[1], got[0]["id"])
+	}
+	if got[2]["id"] != ids[3] {
+		t.Errorf("ASC 最后一条期望 m4（%s），实际 %v", ids[3], got[2]["id"])
+	}
+}
+
+// TestConversationHandler_Messages_AfterBadFormat 校验 after 参数格式错误返回 400。
+func TestConversationHandler_Messages_AfterBadFormat(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	arepo := repository.NewAgentRepo(db)
+
+	user, err := urepo.Create(shortName(t, "mab"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, "MAB-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages?after=not-a-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("after 格式错误应 400，实际 %d", w.Code)
 	}
 }
