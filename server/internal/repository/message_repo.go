@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/wanling/server/internal/model"
@@ -152,4 +153,127 @@ func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// FirstUnread 返回会话中第一条未读消息（is_read = FALSE，按时间正序最早的）。
+// 用于进入会话时定位未读消息位置。
+// 无未读消息时返回 (nil, nil)。
+// 排除软删消息（deleted_at IS NULL）。
+//
+// 排序 ASC：用户离开期间可能有 N 条未读，「第一条未读」= 未读段起点，
+// 进入会话应定位到此处让用户从最早未读开始看（对齐主流 IM 行为）。
+func (r *MessageRepo) FirstUnread(convID string) (*model.Message, error) {
+	m := &model.Message{}
+	err := r.db.QueryRow(
+		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		 FROM messages
+		 WHERE conversation_id = $1 AND is_read = FALSE AND deleted_at IS NULL
+		 ORDER BY created_at ASC
+		 LIMIT 1`,
+		convID,
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// ListBefore 返回 created_at < before 的消息（游标分页），newest first。
+// before 为零值时返回最新 limit 条（等价 ListByConversation 第一页）。
+// 用于消息导航的游标分页加载历史（"更老方向"，上滑加载）。
+// 排除软删消息。
+//
+// 为什么用 created_at 作 cursor：messages.id 是 UUID v4（随机无序），不能作 cursor
+// （id < $2 比较无意义），created_at 是本项目唯一可用的时间序字段。同 created_at
+// 边界的消息（生产环境同毫秒概率极低）用 `<` 严格小于规避。
+func (r *MessageRepo) ListBefore(convID string, before time.Time, limit int) ([]model.Message, error) {
+	var rows *sql.Rows
+	var err error
+	if before.IsZero() {
+		rows, err = r.db.Query(
+			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
+			 ORDER BY created_at DESC LIMIT $2`,
+			convID, limit,
+		)
+	} else {
+		rows, err = r.db.Query(
+			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
+			 AND created_at < $2
+			 ORDER BY created_at DESC LIMIT $3`,
+			convID, before, limit,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []model.Message
+	for rows.Next() {
+		var m model.Message
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// CountBefore 返回 created_at < before 的未删消息数。
+// 用于 APP 进入有未读会话时判断 firstUnread 之前是否还有已读历史，
+// 决定 hasMore（是否允许上滑加载历史）。
+// ListAfter 只取未读方向，loaded.length 满不满 _pageSize 都不能反映
+// firstUnread 之前的已读历史数量，故需独立 count。
+func (r *MessageRepo) CountBefore(convID string, before time.Time) (int, error) {
+	var count int
+	err := r.db.QueryRow(
+		`SELECT COUNT(*) FROM messages
+		 WHERE conversation_id = $1 AND deleted_at IS NULL AND created_at < $2`,
+		convID, before,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// ListAfter 返回 created_at > after 的消息（"未读方向"游标分页），ASC（最老在前）。
+// 与 ListBefore（DESC，更老方向）对称，供"进入会话定位第一条未读"场景使用：
+// firstUnread + 之后的 N-1 条，让 firstUnread 落在 loaded 开头；APP 端 reverse 后
+// 变成 newest first（firstUnread 在末尾=视觉顶部，跳到它，下方是更新的未读）。
+//
+// 排除软删消息。ASC 排序：与 ListBefore 的 DESC 反向，调用方按需 reverse。
+func (r *MessageRepo) ListAfter(convID string, after time.Time, limit int) ([]model.Message, error) {
+	rows, err := r.db.Query(
+		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
+		 AND created_at > $2
+		 ORDER BY created_at ASC LIMIT $3`,
+		convID, after, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []model.Message
+	for rows.Next() {
+		var m model.Message
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }

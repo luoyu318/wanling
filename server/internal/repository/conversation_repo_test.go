@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -494,5 +496,71 @@ func TestConversationRepo_MarkRead_RejectsWrongUser(t *testing.T) {
 	err := repo.MarkRead(conv.ID, other.ID)
 	if err == nil {
 		t.Errorf("期望 err（其他用户），实际 nil")
+	}
+}
+
+// TestConversationRepo_GetUnreadCount 校验 GetUnreadCount：
+//   - 正常返回 unread_count；
+//   - user_id 不匹配（越权）返回 sql.ErrNoRows。
+func TestConversationRepo_GetUnreadCount(t *testing.T) {
+	db := SetupTestDB(t)
+	userRepo := NewUserRepo(db)
+	agentRepo := NewAgentRepo(db)
+	convRepo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+
+	user, err := userRepo.Create(uniqueShortName(t, "uc_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	other, err := userRepo.Create(uniqueShortName(t, "uc2_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create other 失败: %v", err)
+	}
+	agent, err := agentRepo.Create(user.ID, "UC-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	// 制造 2 条未读消息
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+	if _, err := msgRepo.Create(conv.ID, "agent", agent.ID, content); err != nil {
+		t.Fatalf("Create m1 失败: %v", err)
+	}
+	if _, err := msgRepo.Create(conv.ID, "agent", agent.ID, content); err != nil {
+		t.Fatalf("Create m2 失败: %v", err)
+	}
+	// IncrUnreadTx 需要事务
+	tx, err := convRepo.BeginTx()
+	if err != nil {
+		t.Fatalf("BeginTx 失败: %v", err)
+	}
+	if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
+		t.Fatalf("IncrUnreadTx 失败: %v", err)
+	}
+	if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
+		t.Fatalf("IncrUnreadTx 2 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit 失败: %v", err)
+	}
+
+	// 正常调用：返回 2
+	count, err := convRepo.GetUnreadCount(conv.ID, user.ID)
+	if err != nil {
+		t.Fatalf("GetUnreadCount 失败: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("期望未读 2，实际 %d", count)
+	}
+
+	// 越权：用别的 user_id 查，应返回 sql.ErrNoRows
+	_, err = convRepo.GetUnreadCount(conv.ID, other.ID)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("越权应返回 sql.ErrNoRows，实际 %v", err)
 	}
 }

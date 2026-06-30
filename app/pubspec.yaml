@@ -66,6 +66,7 @@ dependencies:
   # 通知头像文件缓存目录(getApplicationDocumentsDirectory),avatar_bitmap 工具用
   path_provider: ^2.1.6
   gal: ^2.3.2
+  scrollview_observer: ^1.26.3  # 消息列表位置保持 + index 滚动(锁 1.26.3 拿 standby 修复)
 
 dev_dependencies:
   flutter_test:

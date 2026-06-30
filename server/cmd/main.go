@@ -177,6 +177,7 @@ func main() {
 		userAuth.DELETE("/api/agents/:id", agentHandler.Delete)
 		userAuth.GET("/api/conversations", convHandler.List)
 		userAuth.POST("/api/conversations", convHandler.FindOrCreate)
+		userAuth.GET("/api/conversations/:id/unread", convHandler.UnreadInfo)
 		userAuth.GET("/api/conversations/:id/messages", convHandler.Messages)
 		userAuth.POST("/api/conversations/:id/read", convHandler.MarkRead)
 		userAuth.POST("/api/conversations/:id/pin", convHandler.Pin)

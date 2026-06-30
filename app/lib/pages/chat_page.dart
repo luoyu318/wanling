@@ -1,8 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/agent.dart' show AgentStatus;
 import '../models/message.dart' show ChatMessage;
@@ -10,13 +13,13 @@ import '../models/msg_type.dart';
 import '../models/ws_message.dart' show WSMessage;
 import '../providers/agent_provider.dart';
 import '../providers/auth_provider.dart';
-import '../providers/chat_provider.dart' show ChatNotifier, chatProvider, wsProvider;
+import '../providers/chat_provider.dart'
+    show ChatNotifier, chatProvider, wsProvider;
 import '../providers/conversation_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/typing_provider.dart';
 import '../services/websocket_service.dart';
-import '../utils/gallery_image.dart'
-    show collectConversationImages;
+import '../utils/gallery_image.dart' show collectConversationImages;
 import '../utils/snackbar.dart';
 import '../widgets/message_bubble.dart' show MessageBubble, formatTimestamp;
 import '../widgets/message_context_menu.dart';
@@ -24,7 +27,11 @@ import '../widgets/gallery/zoomable_gallery.dart' show ZoomableGallery;
 import '../widgets/message_input_bar.dart';
 import '../widgets/avatar_picker.dart' show defaultAssetPickerConfig;
 import '../widgets/feedback/app_dialog.dart';
+import '../widgets/load_more_indicator.dart';
 import '../widgets/typing_bubble.dart';
+import '../widgets/unread_nav_badge.dart';
+import '../widgets/new_message_badge.dart';
+import '../widgets/unread_separator.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 import 'package:wechat_camera_picker/wechat_camera_picker.dart';
 
@@ -59,32 +66,70 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _scrollCtrl = ScrollController();
   bool _pendingScroll = false;
 
+  // scrollview_observer：位置保持 + index 滚动
+  late final ListObserverController _observerController;
+  late final ChatScrollObserver _chatObserver;
+
+  /// 防止未读定位重复触发：_initialize 成功置位 firstUnreadMessageId 后只定位一次。
+  bool _didLocateUnread = false;
+
+  /// jumpTo 定位未读期间为 true，期间禁用 _onScroll 触发的 loadMore。
+  ///
+  /// jumpTo 把 px 跳到接近 maxScrollExtent 处（firstUnread 是视觉顶部），
+  /// 若不拦截 _onScroll 会把"px 接近顶部"当成"用户上滑加载历史"，触发 loadMore。
+  /// loadMore 的 pixels 校正又把 px 推到更顶，循环加载直到 hasMore=false，
+  /// 把 firstUnread 推到列表中段（messages 累积成几十条），完全脱离定位意图。
+  bool _isLocating = false;
+
+  /// 防止 markRead 重复调用 + 推迟到 _initialize 完成后调用。
+  ///
+  /// 关键：markRead 不能在 initState 立即调，否则会与 _initialize 的 getUnreadInfo
+  /// 并发——markRead 把 unread_count 清零 + messages.is_read 全置 TRUE 后，
+  /// getUnreadInfo 拿到 unread_count=0 + FirstUnread 返回 nil，导致 APP 走无未读
+  /// 分支不定位。改为等 _initialize 完成（messages 第一次有内容）后再 markRead。
+  bool _didMarkRead = false;
+
+  /// 滚动位置跟踪：是否在底部（pixels <= 50）
+  bool _isAtBottom = true;
+
+  /// loadMore overlay 显示控制。
+  /// isLoadingMore=true 期间 + 完成后延迟 300ms 内为 true，让用户一定看到反馈。
+  /// 直接用 chatState.isLoadingMore 会因 loadMore 太快（100 条 < 200ms）用户看不到。
+  Timer? _loadingHideTimer;
+
   /// 多选模式状态。
   bool _selectionMode = false;
   final Set<String> _selectedIds = {};
 
   /// 长按菜单 Overlay。同一时间最多一个菜单。
   OverlayEntry? _menuEntry;
+
   /// 每条消息对应一个 GlobalKey,用于拿 RenderObject 算菜单定位/出屏判定。
   final Map<String, GlobalKey> _bubbleKeys = {};
+
   /// 当前长按选择态的消息 id（菜单关闭时清）。
   String? _activeSelectMsgId;
+
   /// 当前菜单的定位缓存（滚动时比较，变化才重建 OverlayEntry）。
   _MenuPlacement? _menuPlacement;
+
   /// 选区文本缓存（SelectableRegion.onSelectionChanged 收集，供复制读取）。
   String? _selectedText;
 
   /// 常驻 SelectableRegion 的 key（包整个消息列表，统一选择区）。
   final GlobalKey<SelectableRegionState> _selectionKey =
       GlobalKey<SelectableRegionState>();
+
   /// 常驻 SelectableRegion 的 focusNode（持久持有，dispose 释放）。
   final FocusNode _selectionFocusNode = FocusNode();
+
   /// ListView 的 key，用于拿它的 RenderBox 算可见区域
   /// （已扣除 AppBar 和输入栏，菜单定位/出屏判定用它而非全屏）。
   final GlobalKey _listViewKey = GlobalKey();
 
   /// 订阅 MESSAGE_CREATE：agent 回复到达时清掉 typing。
   StreamSubscription<WSMessage>? _msgSub;
+
   /// 缓存 dispose 阶段需要的 notifier / ws 引用。
   late final ConversationListNotifier _convNotifier;
   late final TypingNotifier _typingNotifier;
@@ -93,19 +138,28 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
+    debugPrint('[chatPage] initState convId=${widget.convId} agentId=${widget.agentId}');
+    // scrollview_observer 初始化。
+    // ChatScrollObserver 构造是位置参数（observerController），不是命名参数。
+    _observerController = ListObserverController(controller: _scrollCtrl)
+      ..cacheJumpIndexOffset = false; // IM 经常增删消息，关闭偏移缓存
+    _chatObserver = ChatScrollObserver(_observerController)
+      ..fixedPositionOffset = 5
+      ..toRebuildScrollViewCallback = () {
+        if (mounted) setState(() {});
+      };
     _scrollCtrl.addListener(_onScroll);
     _convNotifier = ref.read(conversationProvider.notifier);
     _typingNotifier = ref.read(typingProvider.notifier);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+    // 不在这里 markRead：会与 _initialize 的 getUnreadInfo 并发导致拿不到未读信息。
+    // markRead 改到 ref.listen 内、_initialize 完成（messages 第一次有内容）后触发。
     _convNotifier.setActiveConv(widget.convId);
     _ws = ref.read(wsProvider);
     // 上报当前会话给服务端（op=3）：agent 发消息时该会话不计未读。
     // 与本地 _convNotifier.setActiveConv 互补：本地管 WS 收消息时的乐观计数，
     // 服务端管 unread_count 持久值（列表刷新/多端一致依赖它）。
     _ws.setActiveConv(widget.convId);
-    _msgSub = _ws.messages
-        .where((m) => m.t == 'MESSAGE_CREATE')
-        .listen((m) {
+    _msgSub = _ws.messages.where((m) => m.t == 'MESSAGE_CREATE').listen((m) {
       final d = m.d as Map<String, dynamic>?;
       if (d == null) return;
       if (d['conversation_id'] == widget.convId &&
@@ -113,10 +167,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _typingNotifier.clearTyping(widget.agentId);
       }
     });
+    // 不需要 Bug C initState 兜底：chatProvider 是 autoDispose，重入会话时
+    // state 是全新的（_initialize 重新跑），firstUnreadMessageId 从 null→非 null
+    // 自然触发 ref.listen (1) 的定位逻辑。
   }
 
   @override
   void dispose() {
+    _loadingHideTimer?.cancel();
     _hideMessageMenu(); // 防止页面退出时 Overlay 残留
     _msgSub?.cancel();
     _convNotifier.setActiveConv(null);
@@ -128,17 +186,224 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _onScroll() {
-    if (_scrollCtrl.position.pixels >
-        _scrollCtrl.position.maxScrollExtent - 100) {
-      _notifier.loadMore();
+    // ⚠️ reverse: true 的 ListView 方向语义：
+    //   pixels = 0              → 最新消息端（视觉底部）
+    //   pixels = maxScrollExtent → 最老消息端（视觉顶部）
+    //
+    // "上滑加载历史" = 滑向更老 = 靠近 maxScrollExtent 端。
+    // "是否在底部（最新端）" = 靠近 pixels = 0 端。
+    //
+    // 注意：loadMore 触发**不在这里**，改由 _onUserScroll 处理。
+    // _onScroll 由 ScrollController.addListener 触发，无法区分用户拖动
+    // vs 程序 jumpTo/animateTo。
+    // 若在这里触发 loadMore，定位后 px 贴 maxScrollExtent 会立即触发 →
+    // 加载后 px 又贴 maxScrollExtent → 链式触发到 hasMore=false。
+    final px = _scrollCtrl.position.pixels;
+    final maxExtent = _scrollCtrl.position.maxScrollExtent;
+    debugPrint('[scroll] px=$px, maxExtent=$maxExtent, '
+        'nearTop=${px >= maxExtent - 100}, isAtBottom=${px <= 50}, '
+        'isLocating=$_isLocating');
+    final wasAtBottom = _isAtBottom;
+    _isAtBottom = px <= 50;
+    // 用户主动滑到底部时标记已读：清蓝色未读浮标 + 绿色新消息浮标 + 分割线。
+    // 仅检测 false→true 转变，避免每次 px 微变都触发 state 更新。
+    if (!wasAtBottom && _isAtBottom) {
+      final chatKey = (convId: widget.convId, agentId: widget.agentId);
+      ref.read(chatProvider(chatKey).notifier).markReadAtBottom();
     }
     // 菜单打开时随滚动动态调整定位或取消。
     _updateMenuOnScroll();
   }
 
+  /// 用户主导的滚动事件处理：触发 50% 阈值预加载。
+  ///
+  /// **区分用户滚动 vs 程序动画的关键**：
+  /// 用 `ScrollStartNotification.dragDetails` 一次性判断本次滚动链路是否由
+  /// 用户手指触发。`_isUserScrolling` 标记整个滚动链路（含手指松开后的 fling
+  /// 惯性），让 fling 期间也能触发预加载——这是核心修复点。
+  ///
+  /// **为什么不能直接用 ScrollUpdateNotification.dragDetails**：
+  /// fling 期间 dragDetails=null，所有 ScrollUpdateNotification 被过滤，导致
+  /// 50% 阈值完全失效（用户 fling 下滑时只能等触顶 overdrag 才触发，等于
+  /// 没有预加载）。
+  ///
+  /// **链式触发**：一次手势内允许多次 loadMore，靠 `state.isLoadingMore` 防抖
+  /// （加载期间不重复触发，加载完成下一帧若仍 < threshold 立即再触发）。
+  /// 适合用户长距离 fling 跨越多页的场景，避免触顶。
+  ///
+  /// **触发条件**：
+  /// - _isUserScrolling（用户主导，含 fling 惯性）
+  /// - 距视觉顶部 ≤ 50% 视口高度（预加载，对齐主流 IM）
+  /// - state.isLoadingMore=false + hasMore=true（防抖 + 终止条件）
+  ///
+  /// _isLocating flag 在定位期间禁用本回调，避免 jumpTo 把 px 推到 maxExtent
+  /// 附近时误触发 loadMore。
+  bool _isUserScrolling = false;
+
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (_isLocating) return false;
+    if (!_scrollCtrl.hasClients) return false;
+
+    // 滚动开始：判断本次滚动是否用户主导（dragDetails != null 表示手指触发）
+    // 标记整个滚动链路（含 fling 惯性）为用户主导
+    if (notification is ScrollStartNotification) {
+      _isUserScrolling = notification.dragDetails != null;
+      return false;
+    }
+
+    if (notification is ScrollEndNotification) {
+      _isUserScrolling = false;
+      return false;
+    }
+
+    if (notification is! ScrollUpdateNotification) return false;
+    if (!_isUserScrolling) return false;
+
+    final chatKey = (convId: widget.convId, agentId: widget.agentId);
+    final chatState = ref.read(chatProvider(chatKey));
+    if (chatState.isLoadingMore || !chatState.hasMore) return false;
+
+    // 预加载阈值：距视觉顶部剩余 ≤ 50% 视口高度就触发。配合 _pageSize=100
+    // 和首屏预加载，用户下滑有充足缓冲，避免触顶。
+    final px = _scrollCtrl.position.pixels;
+    final maxExtent = _scrollCtrl.position.maxScrollExtent;
+    final viewport = _scrollCtrl.position.viewportDimension;
+    final distanceToTop = maxExtent - px;
+    final threshold = viewport * 0.5;
+    if (distanceToTop > threshold) return false;
+
+    debugPrint('[scrollUpdate] user scroll near top, distanceToTop=$distanceToTop, '
+        'threshold=$threshold, trigger loadMore');
+    _loadMore();
+    return false;
+  }
+
+  /// 上滑到顶部加载更早的历史消息。
+  ///
+  /// reverse ListView + 数据 append 到 messages 末尾（更老的消息）时，
+  /// Flutter 默认 adjustPositionForNewDimensions 保持 px 不变，视觉锚点
+  /// 自动保持（firstUnread 仍在视口顶部）。**无需任何手动校正**。
+  ///
+  /// 之前版本曾加 `jumpTo(oldPixels + delta)` 校正，那是常规 ListView（数据
+  /// prepend）的公式，套到 reverse + append 会让 px 跳到新的 maxScrollExtent
+  /// （视觉顶部 = 最老消息），表现为「加载历史后跳到顶部」。
+  ///
+  /// 也**不要**调 ChatScrollObserver.standby：它的 normal 模式假设数据 prepend
+  /// 到 refItem 之前（用于新消息到达），append 场景下 refItemIndexAfterUpdate
+  /// 会落到新加载的最老消息上，同样跳顶。standby 留给「新消息 prepend」场景用。
+  Future<void> _loadMore() async {
+    final chatKey = (convId: widget.convId, agentId: widget.agentId);
+    final chatState = ref.read(chatProvider(chatKey));
+    debugPrint('[loadMore] CHECK: isLoadingMore=${chatState.isLoadingMore}, '
+        'hasMore=${chatState.hasMore}');
+    if (chatState.isLoadingMore || !chatState.hasMore) return;
+    await _notifier.loadMoreHistory();
+  }
+
+  /// 滚到底部（最新消息端）。reverse 列表底部 = pixels 0。
   void _doScrollToBottom() {
-    if (!_scrollCtrl.hasClients) return;
-    _scrollCtrl.jumpTo(0);
+    if (!_scrollCtrl.hasClients) {
+      debugPrint('[doScrollToBottom] ABORT: no clients');
+      return;
+    }
+    final px = _scrollCtrl.position.pixels;
+    debugPrint('[doScrollToBottom] CALLED, current px=$px, animating to 0');
+    _chatObserver.standby();
+    _scrollCtrl.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// 进入会话后定位到第一条未读消息。
+  /// 由 build 内的 ref.listen 监听 firstUnreadMessageId 从 null→非null 触发。
+  void _scrollToFirstUnreadIfNeeded() {
+    debugPrint('[locateUnread] CALLED');
+    final chatKey = (convId: widget.convId, agentId: widget.agentId);
+    final chatState = ref.read(chatProvider(chatKey));
+    final firstUnreadId = chatState.firstUnreadMessageId;
+    debugPrint('[locateUnread] firstUnreadId=$firstUnreadId');
+    if (firstUnreadId == null) {
+      debugPrint('[locateUnread] ABORT: firstUnreadId is null');
+      return;
+    }
+    if (!_scrollCtrl.hasClients) {
+      debugPrint('[locateUnread] ABORT: scrollCtrl has no clients');
+      return;
+    }
+
+    // 在 newest first 列表中找到第一条未读的 index
+    final index = chatState.messages.indexWhere((m) => m.id == firstUnreadId);
+    debugPrint('[locateUnread] index=$index, messages.length=${chatState.messages.length}, '
+        'messages.last.id=${chatState.messages.isEmpty ? null : chatState.messages.last.id}');
+    if (index < 0) {
+      debugPrint('[locateUnread] ABORT: firstUnreadId not found in messages');
+      return;
+    }
+
+    // Bug A 自旋等待：ListViewObserver 内部 sliverContexts 在 initState 的
+    // PostFrameCallback 中填充。即使我们用了 loading overlay 让 ListViewObserver
+    // 提前挂载，jumpTo 仍可能在 sliverContexts 还空时被调用 → 静默失败。
+    if (_observerController.sliverContexts.isEmpty) {
+      debugPrint('[locateUnread] sliverContexts empty, retrying next frame');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToFirstUnreadIfNeeded();
+      });
+      return;
+    }
+
+    // 进入定位状态：禁用 _onScroll 触发的 loadMore
+    _isLocating = true;
+
+    // 第一步：用 observerController.jumpTo 把 firstUnread 拉进可视区让其渲染。
+    // jumpTo 是 Future，内部会逐步翻页直到目标 index 进可见区。
+    final pxBefore = _scrollCtrl.position.pixels;
+    debugPrint('[locateUnread] before jumpTo: px=$pxBefore, will jumpTo index=$index, '
+        'sliverContexts=${_observerController.sliverContexts.length}');
+    _observerController.jumpTo(index: index, alignment: 0.3).then((_) async {
+      // jumpTo 完成后 firstUnread 必然已渲染，BuildContext 可拿
+      if (!mounted) {
+        _isLocating = false;
+        debugPrint('[locateUnread] jumpTo completed but not mounted');
+        return;
+      }
+      final key = _bubbleKeys[firstUnreadId];
+      final ctx = key?.currentContext;
+      if (ctx == null) {
+        _isLocating = false;
+        debugPrint('[locateUnread] after jumpTo: still no ctx for $firstUnreadId');
+        return;
+      }
+      final pxBeforeEnsure =
+          _scrollCtrl.hasClients ? _scrollCtrl.position.pixels : null;
+      debugPrint('[locateUnread] jumpTo done, calling ensureVisible, px before=$pxBeforeEnsure');
+      // 第二步：ensureVisible 精确对齐（无动画，消除视觉滚动感）。
+      // jumpTo 的 alignment 在 reverse ListView 下不够精确，需 ensureVisible 兜底。
+      await Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.3,
+        duration: Duration.zero,
+        curve: Curves.easeOut,
+      );
+      if (mounted && _scrollCtrl.hasClients) {
+        debugPrint('[locateUnread] after ensureVisible: px=${_scrollCtrl.position.pixels}');
+      }
+      // 释放定位状态，下一帧恢复 loadMore 监听
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _isLocating = false;
+        debugPrint('[locateUnread] _isLocating released');
+        // 首屏预加载：定位完成后主动拉一页历史。
+        // 定位点（firstUnread）是 messages.last（视觉顶部），若不预加载，
+        // 用户一下滑就 overdrag 触顶，50% 阈值无空间生效。预加载 100 条
+        // 历史后，maxExtent 立即增大，用户下滑到 50% 阈值时正常预加载，
+        // 链式生效避免触顶。
+        final chatKey = (convId: widget.convId, agentId: widget.agentId);
+        ref.read(chatProvider(chatKey).notifier).loadMoreHistory();
+      });
+    });
+    final pxRightAfterJump = _scrollCtrl.hasClients ? _scrollCtrl.position.pixels : null;
+    debugPrint('[locateUnread] rightAfter jumpTo call: px=$pxRightAfterJump');
   }
 
   Future<void> _markRead() async {
@@ -150,8 +415,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  ChatNotifier get _notifier =>
-      ref.read(chatProvider((convId: widget.convId, agentId: widget.agentId)).notifier);
+  ChatNotifier get _notifier => ref.read(
+    chatProvider((convId: widget.convId, agentId: widget.agentId)).notifier,
+  );
 
   String get _agentName {
     final agent = ref.watch(agentByIdProvider(widget.agentId));
@@ -267,17 +533,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     // 锚钉核心:clamp 期望 Y 到可见区内,菜单不溢出 AppBar/输入栏。
     // 消息在中央时 clamp 不生效(跟随);消息溢出时钉在 viewport 边缘。
-    final top = desiredTop.clamp(
-      viewport.top,
-      viewport.bottom - kMenuHeight,
-    );
+    final top = desiredTop.clamp(viewport.top, viewport.bottom - kMenuHeight);
 
     // 水平:菜单居中于消息中心,clamp 不超可见区左右。
-    final left = (rect.center.dx - kMenuWidth / 2)
-        .clamp(viewport.left + 8, viewport.right - kMenuWidth - 8);
+    final left = (rect.center.dx - kMenuWidth / 2).clamp(
+      viewport.left + 8,
+      viewport.right - kMenuWidth - 8,
+    );
     // 三角指向消息中心:菜单内 x = 消息中心 - 菜单左缘
-    final tailOffsetX = (rect.center.dx - left)
-        .clamp(kMenuTailHalfWidth, kMenuWidth - kMenuTailHalfWidth);
+    final tailOffsetX = (rect.center.dx - left).clamp(
+      kMenuTailHalfWidth,
+      kMenuWidth - kMenuTailHalfWidth,
+    );
 
     return _MenuPlacement(
       left: left,
@@ -303,7 +570,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 当前会话的消息列表（用于滚动重算时按 id 查消息）。
   List<ChatMessage> get _currentMessages {
     final chatKey = (convId: widget.convId, agentId: widget.agentId);
-    return ref.read(chatProvider(chatKey));
+    return ref.read(chatProvider(chatKey)).messages;
   }
 
   /// 打开会话级图片画廊：收集会话所有图，定位被点击图索引，Hero 过渡进画廊。
@@ -404,7 +671,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_selectedIds.isEmpty) return;
     final chatKey = (convId: widget.convId, agentId: widget.agentId);
     final chatState = ref.read(chatProvider(chatKey));
-    final texts = chatState
+    final texts = chatState.messages
         .where((m) => _selectedIds.contains(m.id))
         .map(_extractText)
         .where((t) => t.isNotEmpty)
@@ -427,9 +694,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     showAppDialog(
       context: context,
       title: '删除消息',
-      content: Text(ids.length == 1
-          ? '确定删除这条消息吗?'
-          : '确定删除 ${ids.length} 条消息吗?'),
+      content: Text(
+        ids.length == 1 ? '确定删除这条消息吗?' : '确定删除 ${ids.length} 条消息吗?',
+      ),
       confirmText: '删除',
       onConfirm: () async {
         final wasSelectionMode = _selectionMode;
@@ -460,23 +727,149 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final chatKey = (convId: widget.convId, agentId: widget.agentId);
-    ref.listen(
-      chatProvider(chatKey),
-      (prev, next) {
-        if (next.isEmpty) return;
-        if (prev == null || prev.isEmpty || next.first.id != prev.first.id) {
-          _pendingScroll = true;
-        }
-      },
-    );
-
     final chatState = ref.watch(chatProvider(chatKey));
+    // 关键节点日志（只打印关键状态，避免每次 build 刷屏）
+    debugPrint('[build] messages=${chatState.messages.length}, '
+        'firstUnread=${chatState.firstUnreadMessageId}, '
+        'hasMore=${chatState.hasMore}, '
+        'showUnreadSeparator=${chatState.showUnreadSeparator}, '
+        'unreadCount=${chatState.unreadCount}, '
+        '_pendingScroll=$_pendingScroll, _didLocateUnread=$_didLocateUnread');
+    // 监听状态变化，处理四类副作用：
+    // (0) markRead：_initialize 完成（messages 第一次有内容）后触发，避免与 getUnreadInfo 并发。
+    // (1) 未读定位：firstUnreadMessageId 从 null→非null（_initialize 完成）时触发定位。
+    //     用 _didLocateUnread 标记防重复（_initialize 只会成功一次）。
+    // (2) 新消息计数：messages 长度增长时，按 _isAtBottom 决定增哪个计数器。
+    // (3) pendingScroll：自己发的消息 echo 回来时滚到底部。
+    ref.listen(chatProvider(chatKey), (prev, next) {
+      debugPrint('[listen] prev: messages=${prev?.messages.length}, '
+          'firstUnread=${prev?.firstUnreadMessageId}, hasMore=${prev?.hasMore}; '
+          'next: messages=${next.messages.length}, '
+          'firstUnread=${next.firstUnreadMessageId}, hasMore=${next.hasMore}');
+
+      // loadMore overlay 显示控制：开始加载立刻显示，完成后延迟 300ms 隐藏。
+      // 直接绑定 chatState.isLoadingMore 会因 loadMore 太快用户看不到。
+      if (prev?.isLoadingMore == false && next.isLoadingMore) {
+        _loadingHideTimer?.cancel();
+        _loadingHideTimer = null;
+        setState(() {}); // 触发重建显示 overlay
+      } else if (prev?.isLoadingMore == true && !next.isLoadingMore) {
+        final timer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            _loadingHideTimer = null;
+            setState(() {});
+          }
+        });
+        _loadingHideTimer = timer;
+        setState(() {});
+      }
+
+      // (0) _initialize 完成后 markRead（确保 getUnreadInfo 已拿到正确数据）。
+      // 推迟到 messages 第一次有内容时，避免与 _initialize 的 getUnreadInfo 并发
+      // 导致 server 端 unread_count 被提前清零、FirstUnread 返回 nil。
+      if (!_didMarkRead && next.messages.isNotEmpty) {
+        _didMarkRead = true;
+        debugPrint('[listen] (0) markRead scheduled');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _markRead();
+        });
+      }
+
+      // (1) 未读定位
+      final prevFirstUnread = prev?.firstUnreadMessageId;
+      if (prevFirstUnread == null &&
+          next.firstUnreadMessageId != null &&
+          !_didLocateUnread) {
+        _didLocateUnread = true;
+        debugPrint('[listen] (1) locateUnread TRIGGERED, scheduling');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _scrollToFirstUnreadIfNeeded();
+        });
+      } else if (prevFirstUnread == null &&
+          next.firstUnreadMessageId != null &&
+          _didLocateUnread) {
+        debugPrint('[listen] (1) locateUnread already done (_didLocateUnread=true)');
+      }
+
+      // (2) messages 增长：区分「新消息 prepend 头部」vs「loadMore append 末尾」
+      // - 新消息 prepend：视觉底部多了一条，Flutter 默认 px 不变会让所有原 item
+      //   的 offset 下移 newItemHeight，视口漂移、firstUnread 被推出顶部。
+      //   → 不在底部时调 ChatScrollObserver.standby，让 px 同步增加 delta 抵消下推。
+      // - loadMore append：更老消息进 messages 末尾（视觉顶部），Flutter 默认 px
+      //   不变就让 firstUnread 视觉位置自动保持，**不能**调 standby（库假设 prepend，
+      //   会算到新最老消息上跳顶）。
+      final oldLen = prev?.messages.length ?? 0;
+      final newLen = next.messages.length;
+      if (newLen > oldLen && oldLen > 0) {
+        final isPrepend = prev!.messages.first.id != next.messages.first.id;
+        if (isPrepend) {
+          final changeCount = newLen - oldLen;
+          final isSelfEcho = next.messages.first.senderType == 'user';
+          debugPrint('[listen] (2) newMsg prepend $oldLen→$newLen, '
+              '_isAtBottom=$_isAtBottom, changeCount=$changeCount, '
+              'isSelfEcho=$isSelfEcho');
+          if (isSelfEcho) {
+            // 自己发消息的 echo：交给 (3) 分支滚到底看自己消息，不增计数（自己发的不算新消息）
+          } else if (_isAtBottom) {
+            // 在底部 + 对方新消息：滚到底让新消息可见
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _doScrollToBottom(),
+            );
+            _markRead();
+          } else {
+            // 不在底部 + 对方新消息：调 ChatScrollObserver.standby 保持视口锚点 +
+            // 增加新消息计数（绿色浮标提示）。
+            //
+            // 按官方 wiki 标准用法：physics 必须 ChatObserverClampingScrollPhysics，
+            // fixedPositionOffset 设 5，standby 在数据变更前调用。standby 让 px 同步
+            // 增加 newItemHeight 抵消新消息对内容的下推，视口锚点真正保持。
+            // 之前误用 BouncingScrollPhysics + 未设 fixedPositionOffset，导致 standby
+            // delta 算反或 overscroll 反弹冲突，px 暴减。
+            _chatObserver.standby(changeCount: changeCount);
+            _notifier.incrementNewMessage();
+          }
+        } else {
+          debugPrint('[listen] (2) loadMore append $oldLen→$newLen, '
+              'skip standby (Flutter default keeps px)');
+        }
+      }
+
+      // (3) 处理回显消息（自己发的消息到达后滚到底，让用户看到自己刚发的消息）。
+      // 关键约束 1：仅「定位未完成」时跳过——(1) jumpTo 只在 firstUnread 首次设置时
+      //   触发一次（_didLocateUnread 守卫），定位完成后即使 firstUnread 仍在 state 里
+      //   （用户没滚到底清除），自己 echo 也应该滚到底看自己消息。
+      // 关键约束 2：仅「自己 echo」（senderType=user）才触发——对方发的新消息
+      //   由 (2) 分支按 _isAtBottom 处理（在底部滚/不在底部增计数），不能在这里误滚到底。
+      if (next.messages.isEmpty) {
+        debugPrint('[listen] (3) skip pendingScroll: messages empty');
+        return;
+      }
+      if (!_didLocateUnread && next.firstUnreadMessageId != null) {
+        debugPrint('[listen] (3) skip pendingScroll: still locating');
+        return; // 定位进行中：让 (1) 的 jumpTo 生效
+      }
+      if (next.messages.first.senderType != 'user') {
+        debugPrint('[listen] (3) skip pendingScroll: not self echo '
+            '(senderType=${next.messages.first.senderType})');
+        return; // 对方新消息：由 (2) 分支处理
+      }
+      final prevFirstId = prev?.messages.isEmpty == true
+          ? null
+          : prev?.messages.first.id;
+      if (prevFirstId != next.messages.first.id) {
+        debugPrint('[listen] (3) set pendingScroll=true (self echo)');
+        _pendingScroll = true;
+      }
+    });
+
     final agentName = _agentName;
-    final isTyping =
-        ref.watch(typingProvider.select((m) => m[widget.agentId] ?? false));
+    final isTyping = ref.watch(
+      typingProvider.select((m) => m[widget.agentId] ?? false),
+    );
     final agentStatus = ref.watch(agentByIdProvider(widget.agentId))?.status;
 
-    if (_pendingScroll && (chatState.isNotEmpty || isTyping)) {
+    if (_pendingScroll && (chatState.messages.isNotEmpty || isTyping)) {
+      debugPrint('[build] _pendingScroll=true → scheduling _doScrollToBottom');
       _pendingScroll = false;
       WidgetsBinding.instance.addPostFrameCallback((_) => _doScrollToBottom());
     }
@@ -508,9 +901,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             title: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(agentName,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.normal)),
+                Text(
+                  agentName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.normal,
+                  ),
+                ),
                 Text(
                   subtitle,
                   style: TextStyle(
@@ -537,94 +934,226 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         body: Column(
           children: [
             Expanded(
-              child: (chatState.isEmpty && !isTyping)
-                  ? const Center(child: Text('发送消息开始对话'))
-                  // 常驻 SelectableRegion 包整个消息列表：统一选择区，焦点集中。
-                  // 利用 SDK 内置长按选词路径(_selectWordAt)，落点选词+自动拉杆。
-                  // MessageBubble 的 Listener 长按弹菜单与之并存(不抢 arena)。
-                  // onSelectionChanged 缓存选区文本，供菜单"复制"读取。
-                  : SelectableRegion(
-                      key: _selectionKey,
-                      focusNode: _selectionFocusNode,
-                      // materialTextSelectionHandleControls：它是 TextSelectionHandleControls，
-                      // buildHandle 复用父类水滴拉杆（保留），buildToolbar 不再用（被 contextMenuBuilder 覆盖）。
-                      // contextMenuBuilder 返回 SizedBox.shrink()：禁用 SelectableRegion 自带
-                      // 的文字菜单（与 MessageContextMenu 重复），保留拉杆/选中高亮（由
-                      // buildHandle 渲染）。复制功能由 MessageContextMenu「复制」读取
-                      // onSelectionChanged 缓存的 _selectedText 提供。
-                      selectionControls: materialTextSelectionHandleControls,
-                      contextMenuBuilder: (context, selectableRegionState) =>
-                          const SizedBox.shrink(),
-                      onSelectionChanged: (c) =>
-                          _selectedText = c?.plainText,
-                      child: ListView.builder(
-                      key: _listViewKey,
-                      reverse: true,
-                      controller: _scrollCtrl,
-                      // 拖拽列表(离开输入框操作)收键盘
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      itemCount: chatState.length + (isTyping ? 1 : 0),
-                      itemBuilder: (_, i) {
-                        if (isTyping && i == 0) {
-                          return const TypingBubble();
-                        }
-                        final msgIndex = isTyping ? i - 1 : i;
-                        final msg = chatState[msgIndex];
-                        final showTime = msgIndex == chatState.length - 1 ||
-                            msg.createdAt
-                                    .difference(
-                                        chatState[msgIndex + 1].createdAt)
-                                    .inMinutes
-                                    .abs() >=
-                                5;
+              // 始终挂载 SelectableRegion + ListViewObserver + ListView，
+              // 让 ListViewObserver 在 initState 后立即注册 PostFrameCallback 填充
+              // sliverContexts。loading 与空会话提示作为 overlay 叠加在 Stack 中。
+              // 修复 Bug A：原来 messages.isEmpty 时整个 ListView 被替换成 Center(Text)，
+              // ListViewObserver 首次挂载滞后于 jumpTo 的 PostFrameCallback，
+              // 导致 sliverContexts 为空、jumpTo 静默失败。
+              child: SelectableRegion(
+                key: _selectionKey,
+                focusNode: _selectionFocusNode,
+                selectionControls: materialTextSelectionHandleControls,
+                contextMenuBuilder: (context, selectableRegionState) =>
+                    const SizedBox.shrink(),
+                onSelectionChanged: (c) => _selectedText = c?.plainText,
+                child: Stack(
+                  children: [
+                    NotificationListener<ScrollNotification>(
+                      onNotification: _onScrollNotification,
+                      child: ListViewObserver(
+                        controller: _observerController,
+                        child: ListView.builder(
+                        key: _listViewKey,
+                        reverse: true,
+                        controller: _scrollCtrl,
+                        // 实验：用 BouncingScrollPhysics + fixedPositionOffset=5 看是否
+                        // 与 standby 还冲突。之前 fixedPositionOffset=0 时 px 暴减（4176→260），
+                        // 现在按 wiki 设 5 重新测试。Bouncing 能解决 loadMore 拉不动（overscroll
+                        // 弹性反弹让用户继续拽出空间，loadMore 完成后自然落到新内容）。
+                        physics: ChatObserverBouncingScrollPhysics(
+                          observer: _chatObserver,
+                        ),
+                        shrinkWrap: _chatObserver.isShrinkWrap,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemCount:
+                            chatState.messages.length +
+                            (isTyping ? 1 : 0) +
+                            (chatState.hasMore ? 1 : 0),
+                        itemBuilder: (_, i) {
+                          if (isTyping && i == 0) {
+                            return const TypingBubble();
+                          }
+                          final msgIndex = isTyping ? i - 1 : i;
 
-                        // 每条消息一个 GlobalKey,用于拿 RenderObject 算菜单定位/出屏判定。
-                        final bubbleKey = _bubbleKeys.putIfAbsent(
-                            msg.id, () => GlobalKey());
-                        final bubble = MessageBubble(
-                          key: bubbleKey,
-                          message: msg,
-                          isMe: msg.senderType == 'user',
-                          baseUrl: ref.read(settingsProvider),
-                          token: ref.read(authProvider).token ?? '',
-                          conversationMessages: chatState,
-                          openGallery: (fileId) =>
-                              _openGallery(fileId, chatState),
-                          selectionMode: _selectionMode,
-                          selected: _selectedIds.contains(msg.id),
-                          onLongPressStart: _selectionMode
-                              ? null
-                              : (details) => _showMessageMenu(msg),
-                          onTapSelect:
-                              _selectionMode ? () => _toggleSelect(msg.id) : null,
-                        );
+                          // 顶部加载指示器（reverse 列表的最后一项）
+                          final loadIndicatorIndex =
+                              chatState.messages.length +
+                              (isTyping ? 1 : 0);
+                          if (i == loadIndicatorIndex &&
+                              chatState.hasMore) {
+                            return LoadMoreIndicator(
+                              isLoading: chatState.isLoadingMore,
+                            );
+                          }
 
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (showTime)
-                              Center(
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 8),
-                                  child: Text(
-                                    formatTimestamp(msg.createdAt),
-                                    style: const TextStyle(
+                          // msgIndex 越界保护：itemCount 计算含 typing/hasMore，
+                          // 但 itemBuilder 在边界条件下可能被请求超出 messages 范围的 index
+                          // （如 loading overlay 期间 itemCount 临时为 0+1=1，i=0 但 messages 空）。
+                          // 此时返回空 SizedBox 占位，避免 RangeError。
+                          if (msgIndex < 0 ||
+                              msgIndex >= chatState.messages.length) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final msg = chatState.messages[msgIndex];
+                          final showTime =
+                              msgIndex == chatState.messages.length - 1 ||
+                              msg.createdAt
+                                      .difference(
+                                        chatState
+                                            .messages[msgIndex + 1]
+                                            .createdAt,
+                                      )
+                                      .inMinutes
+                                      .abs() >=
+                                  5;
+
+                          // 判断是否在此消息前显示未读分隔线
+                          final showSeparatorBefore =
+                              chatState.showUnreadSeparator &&
+                              chatState.firstUnreadMessageId == msg.id;
+
+                          // 每条消息一个 GlobalKey,用于拿 RenderObject 算菜单定位/出屏判定。
+                          final bubbleKey = _bubbleKeys.putIfAbsent(
+                            msg.id,
+                            () => GlobalKey(),
+                          );
+                          final bubble = MessageBubble(
+                            key: bubbleKey,
+                            message: msg,
+                            isMe: msg.senderType == 'user',
+                            baseUrl: ref.read(settingsProvider),
+                            token: ref.read(authProvider).token ?? '',
+                            conversationMessages: chatState.messages,
+                            openGallery: (fileId) =>
+                                _openGallery(fileId, chatState.messages),
+                            selectionMode: _selectionMode,
+                            selected: _selectedIds.contains(msg.id),
+                            onLongPressStart: _selectionMode
+                                ? null
+                                : (details) => _showMessageMenu(msg),
+                            onTapSelect: _selectionMode
+                                ? () => _toggleSelect(msg.id)
+                                : null,
+                          );
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (showTime)
+                                Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
+                                    child: Text(
+                                      formatTimestamp(msg.createdAt),
+                                      style: const TextStyle(
                                         fontSize: 11,
-                                        color: Color(0xFF999999)),
+                                        color: Color(0xFF999999),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            // 菜单改用绝对定位(锚钉效果),不再需要 LayerLink/follower。
-                            bubble,
-                          ],
-                        );
-                      },
-                    ), // ListView.builder
-                    ), // SelectableRegion
+                              if (showSeparatorBefore)
+                                const UnreadSeparator(),
+                              bubble,
+                            ],
+                          );
+                        },
+                      ), // ListView.builder
+                      ), // ListViewObserver
+                    ), // NotificationListener
+
+                    // 首屏初始化中：loading overlay 覆盖列表
+                    if (chatState.isInitialLoading)
+                      const Positioned.fill(
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF07C160),
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      ),
+
+                    // 加载历史 overlay：顶部细进度条。
+                    // LoadMoreIndicator 是列表 item，预加载时在视口外看不到；此 overlay 固定在
+                    // 视口顶部给用户「正在拉取」的视觉反馈。
+                    // 显示时机：isLoadingMore=true 期间 + 完成后延迟 300ms（_loadingHideTimer 控制），
+                    // 让 loadMore 极快（<100ms）时用户也能看到反馈。
+                    if (chatState.isLoadingMore || _loadingHideTimer != null)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: SizedBox(
+                          height: 1,
+                          child: LinearProgressIndicator(
+                            backgroundColor: Colors.transparent,
+                            valueColor: AlwaysStoppedAnimation(
+                              const Color(0xFF07C160),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // 空会话提示：初始化完成且无消息无 typing 时显示
+                    if (!chatState.isInitialLoading &&
+                        chatState.messages.isEmpty &&
+                        !isTyping)
+                      const Positioned.fill(
+                        child: Center(
+                          child: Text(
+                            '发送消息开始对话',
+                            style: TextStyle(
+                              color: Color(0xFF999999),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // 蓝色未读浮标：未读数 > 阈值且不在底部时显示
+                    if (chatState.shouldShowUnreadBadge && !_isAtBottom)
+                      Positioned(
+                        bottom: 16,
+                        right: 16,
+                        child: UnreadNavBadge(
+                          count: chatState.unreadCount,
+                          onTap: () async {
+                            _doScrollToBottom();
+                            await _notifier.jumpToBottom();
+                          },
+                        ),
+                      ),
+
+                    // 绿色新消息浮标：会话内收到新消息时显示
+                    // 与蓝色未读浮标允许共存（少见场景：进入时历史未读>阈值 + 会话内又来新消息）
+                    if (chatState.shouldShowNewMessageBadge &&
+                        !_isAtBottom)
+                      Positioned(
+                        bottom: 16,
+                        right: 16,
+                        child: NewMessageBadge(
+                          count: chatState.newMessageCount,
+                          onTap: () {
+                            _doScrollToBottom();
+                            // 跳底部 = 看完所有消息，统一走 markReadAtBottom
+                            // （清蓝/绿浮标 + 分割线 + markConversationRead）
+                            _notifier.markReadAtBottom();
+                          },
+                        ),
+                      ),
+                  ], // children of Stack
+                ), // Stack
+              ), // SelectableRegion
             ),
-            if (_selectionMode) _buildSelectionBottomBar() else _buildInputBar(),
+            if (_selectionMode)
+              _buildSelectionBottomBar()
+            else
+              _buildInputBar(),
           ],
         ),
       ),
@@ -652,9 +1181,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
-              color: hasSelection
-                  ? const Color(0xFFFA5151)
-                  : Colors.grey,
+              color: hasSelection ? const Color(0xFFFA5151) : Colors.grey,
               onPressed: hasSelection
                   ? () => _confirmDelete(_selectedIds.toList())
                   : null,
@@ -683,7 +1210,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final file = result.files.first;
       final fileId = await api.uploadFile(file.path!);
 
-      final ext = file.path!.toLowerCase().substring(file.path!.lastIndexOf('.'));
+      final ext = file.path!.toLowerCase().substring(
+        file.path!.lastIndexOf('.'),
+      );
       final msgType = _imageExts.contains(ext) ? MsgType.image : MsgType.file;
       _notifier.sendFile(fileId, msgType);
     } catch (e) {
@@ -742,10 +1271,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 class _MenuPlacement {
   /// 菜单左缘屏幕 x（clamp 不超屏）。
   final double left;
+
   /// 菜单顶缘屏幕 y（clamp 在可见区内，钉边缘）。
   final double top;
+
   /// 三角在菜单内的水平偏移（指向消息中心）。
   final double tailOffsetX;
+
   /// 三角朝向：true=朝下（菜单在消息上方），false=朝上。
   final bool pointDown;
 
@@ -766,6 +1298,5 @@ class _MenuPlacement {
           pointDown == other.pointDown;
 
   @override
-  int get hashCode =>
-      Object.hash(left, top, tailOffsetX, pointDown);
+  int get hashCode => Object.hash(left, top, tailOffsetX, pointDown);
 }
