@@ -147,7 +147,9 @@ class MessageBubble extends StatelessWidget {
         child: Row(
           mainAxisAlignment:
               isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-          children: [bubble],
+          children: [
+            Flexible(child: bubble),
+          ],
         ),
       ),
     );

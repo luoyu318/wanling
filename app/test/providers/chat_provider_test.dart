@@ -17,7 +17,16 @@ void main() {
   setUp(() {
     api = MockApi();
     ws = FakeWS();
-    // getMessages 返回空(初始 history)
+    // _initialize 现在调 getUnreadInfo + getMessagesBefore（无未读路径）。
+    // 兜底 catch 分支仍可能调 getMessages，保留 mock。
+    when(() => api.getUnreadInfo(any())).thenAnswer((_) async => {
+          'unread_count': 0,
+          'first_unread_message_id': '',
+          'first_unread_created_at': null,
+        });
+    when(() => api.getMessagesBefore(any(),
+            limit: any(named: 'limit'), before: any(named: 'before')))
+        .thenAnswer((_) async => []);
     when(() => api.getMessages(any(),
             limit: any(named: 'limit'), offset: any(named: 'offset')))
         .thenAnswer((_) async => []);
@@ -29,6 +38,13 @@ void main() {
       wsProvider.overrideWithValue(ws),
     ]);
     addTearDown(container.dispose);
+    // chatProvider 是 autoDispose.family：没有 listener 时容器会在帧间隙回收
+    // provider 实例。测试用例同步 emit WS 消息后 await Future.delayed，
+    // 期间若 provider 被 dispose，下次 read 会拿到全新 ChatNotifier（state 重置、
+    // 新 _initialize 重跑），导致 emitCreate 注入的消息丢失、_initialize 抛
+    // `Bad state: Tried to use ChatNotifier after dispose`。
+    // 测试用例统一用 c1/a1 key，在 makeContainer 内建立长期 listener 锁定实例。
+    container.listen(chatProvider((convId: 'c1', agentId: 'a1')), (_, __) {});
     return container;
   }
 
@@ -56,15 +72,15 @@ void main() {
     emitCreate('m1', 'one');
     emitCreate('m2', 'two');
     await Future.delayed(Duration.zero); // 让 stream listener 处理
-    expect(container.read(chatProvider(key)).length, 2);
+    expect(container.read(chatProvider(key)).messages.length, 2);
 
     when(() => api.deleteMessage('m1')).thenAnswer((_) async {});
 
     await notifier.deleteMessages(['m1']);
 
     final state = container.read(chatProvider(key));
-    expect(state.length, 1);
-    expect(state.any((m) => m.id == 'm1'), isFalse);
+    expect(state.messages.length, 1);
+    expect(state.messages.any((m) => m.id == 'm1'), isFalse);
     verify(() => api.deleteMessage('m1')).called(1);
   });
 
@@ -81,7 +97,7 @@ void main() {
 
     await notifier.deleteMessages(['m1', 'm2']);
 
-    expect(container.read(chatProvider(key)), isEmpty);
+    expect(container.read(chatProvider(key)).messages, isEmpty);
     verify(() => api.batchDeleteMessages(['m1', 'm2'])).called(1);
   });
 
@@ -92,7 +108,7 @@ void main() {
 
     emitCreate('m1', '1');
     await Future.delayed(Duration.zero);
-    expect(container.read(chatProvider(key)).length, 1);
+    expect(container.read(chatProvider(key)).messages.length, 1);
 
     // 另一端删除,广播 MESSAGE_DELETE
     ws.emit(WSMessage(
@@ -105,7 +121,7 @@ void main() {
     ));
     await Future.delayed(Duration.zero);
 
-    expect(container.read(chatProvider(key)), isEmpty);
+    expect(container.read(chatProvider(key)).messages, isEmpty);
   });
 
   test('MESSAGE_DELETE 不影响其他会话的消息', () async {
@@ -115,7 +131,7 @@ void main() {
 
     emitCreate('m1', '1', convId: 'c1');
     await Future.delayed(Duration.zero);
-    expect(container.read(chatProvider(key)).length, 1);
+    expect(container.read(chatProvider(key)).messages.length, 1);
 
     // 其他会话的删除事件不应影响本会话
     ws.emit(WSMessage(
@@ -128,6 +144,128 @@ void main() {
     ));
     await Future.delayed(Duration.zero);
 
-    expect(container.read(chatProvider(key)).length, 1);
+    expect(container.read(chatProvider(key)).messages.length, 1);
+  });
+
+  test('incrementUnread: unreadCount 累加 +1', () async {
+    final container = makeContainer();
+    final key = (convId: 'c1', agentId: 'a1');
+    final notifier = container.read(chatProvider(key).notifier);
+    // 等 _initialize 完成（setUp 的 mock 让 unreadCount=0）
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    notifier.incrementUnread();
+    expect(container.read(chatProvider(key)).unreadCount, 1);
+
+    notifier.incrementUnread();
+    expect(container.read(chatProvider(key)).unreadCount, 2);
+  });
+
+  test('incrementNewMessage: newMessageCount 累加 +1', () async {
+    final container = makeContainer();
+    final key = (convId: 'c1', agentId: 'a1');
+    final notifier = container.read(chatProvider(key).notifier);
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    notifier.incrementNewMessage();
+    expect(container.read(chatProvider(key)).newMessageCount, 1);
+
+    notifier.incrementNewMessage();
+    notifier.incrementNewMessage();
+    expect(container.read(chatProvider(key)).newMessageCount, 3);
+  });
+
+  test('markReadAtBottom: 清零 unread/newMessage/separator + 清空 firstUnreadMessageId',
+      () async {
+    final container = makeContainer();
+    final key = (convId: 'c1', agentId: 'a1');
+    final notifier = container.read(chatProvider(key).notifier);
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 模拟有未读状态
+    notifier.incrementUnread();
+    notifier.incrementNewMessage();
+    expect(container.read(chatProvider(key)).unreadCount, 1);
+    expect(container.read(chatProvider(key)).newMessageCount, 1);
+
+    when(() => api.markConversationRead(any())).thenAnswer((_) async => {});
+
+    await notifier.markReadAtBottom();
+
+    final state = container.read(chatProvider(key));
+    expect(state.unreadCount, 0);
+    expect(state.newMessageCount, 0);
+    expect(state.firstUnreadMessageId, isNull);
+  });
+
+  test('jumpToBottom: 清零 unread/newMessage/separator + 清空 firstUnreadMessageId',
+      () async {
+    final container = makeContainer();
+    final key = (convId: 'c1', agentId: 'a1');
+    final notifier = container.read(chatProvider(key).notifier);
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 模拟有未读状态：手动构造 state（通过 incrementUnread 触发）
+    notifier.incrementUnread();
+    notifier.incrementNewMessage();
+    expect(container.read(chatProvider(key)).unreadCount, 1);
+    expect(container.read(chatProvider(key)).newMessageCount, 1);
+
+    when(() => api.markConversationRead(any())).thenAnswer((_) async => {});
+
+    await notifier.jumpToBottom();
+
+    final state = container.read(chatProvider(key));
+    expect(state.unreadCount, 0);
+    expect(state.newMessageCount, 0);
+    expect(state.showUnreadSeparator, false);
+    expect(state.firstUnreadMessageId, isNull); // clearFirstUnread: true 的效果
+  });
+
+  // 回归测试：jumpToBottom 在 hasMore=true 时调 getMessagesBefore 拉最新一页，
+  // 与 state.messages（含较老历史）合并后必须按 createdAt 降序（newest first）。
+  // 历史 bug：_mergeHistory 用 [...extra, ...loaded] 假设 extra 永远更新，
+  // jumpToBottom 场景下 extra 是较老历史，结果最老消息被推到 messages[0]
+  // （视觉底部），用户看到「历史压在最新消息下方」。
+  test('jumpToBottom: 合并后按 createdAt 降序排序（修复历史/最新顺序颠倒）',
+      () async {
+    final container = makeContainer();
+    final key = (convId: 'c1', agentId: 'a1');
+    final notifier = container.read(chatProvider(key).notifier);
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 模拟首屏预加载后的 state：6 条较老历史（T1..T6）+ WS 推送的 2 条最新消息（T7, T8）
+    // emitCreate 用固定 created_at 升序注入，state.messages 内部已是 newest first
+    for (var i = 1; i <= 8; i++) {
+      emitCreate('m$i', 'msg$i');
+    }
+    await Future.delayed(const Duration(milliseconds: 50));
+    expect(container.read(chatProvider(key)).messages.length, 8);
+
+    // jumpToBottom 会拉最新 5 条（loaded = m4..m8），state.messages 中 extra = m1..m3（最老）
+    when(() => api.getMessagesBefore(any(), limit: any(named: 'limit'),
+            before: any(named: 'before')))
+        .thenAnswer((_) async => [
+              // 服务端返回 ASC（最老在前），ChatNotifier 内 _parseMessages 不反转
+              // 但 _mergeHistory 排序后会归位
+              for (var i = 4; i <= 8; i++)
+                {
+                  'id': 'm$i',
+                  'conversation_id': 'c1',
+                  'sender_type': 'user',
+                  'sender_id': 'u1',
+                  'content': {'msg_type': 'text', 'data': {'text': 'msg$i'}},
+                  'created_at': '2026-06-20T10:00:0${i}Z',
+                },
+            ]);
+    when(() => api.markConversationRead(any())).thenAnswer((_) async => {});
+
+    await notifier.jumpToBottom();
+
+    final msgs = container.read(chatProvider(key)).messages;
+    expect(msgs.length, 8);
+    // newest first：m8 在 [0]，m1 在 [7]
+    expect(msgs.first.id, 'm8');
+    expect(msgs.last.id, 'm1');
   });
 }

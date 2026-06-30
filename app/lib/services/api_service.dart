@@ -129,6 +129,51 @@ class ApiService {
     return res.data;
   }
 
+  /// 获取会话未读信息（未读数 + 第一条未读消息 id + createdAt）。
+  /// 进入 ChatPage 时调用，用于定位未读消息。
+  /// 返回原始 JSON，由调用方用 UnreadInfo.fromJson 解析。
+  Future<Map<String, dynamic>> getUnreadInfo(String convId) async {
+    final res = await _dio.get('/api/conversations/$convId/unread');
+    return res.data;
+  }
+
+  /// 游标分页拉取历史消息。
+  /// [before] 为指定时间戳（RFC3339），返回 created_at < before 的消息。
+  /// 不传 before 时返回最新 limit 条。
+  Future<List<dynamic>> getMessagesBefore(
+    String conversationId, {
+    DateTime? before,
+    int limit = 20,
+  }) async {
+    final params = <String, dynamic>{'limit': limit};
+    if (before != null) {
+      params['before'] = before.toUtc().toIso8601String();
+    }
+    final res = await _dio.get(
+      '/api/conversations/$conversationId/messages',
+      queryParameters: params,
+    );
+    return res.data;
+  }
+
+  /// 游标分页拉取"未读方向"消息（created_at > after）。
+  /// 服务端返回 ASC（最老在前），调用方按需 reverse。
+  /// 用于进入会话定位第一条未读：firstUnread + 之后的 N-1 条。
+  Future<List<dynamic>> getMessagesAfter(
+    String conversationId, {
+    required DateTime after,
+    int limit = 20,
+  }) async {
+    final res = await _dio.get(
+      '/api/conversations/$conversationId/messages',
+      queryParameters: {
+        'limit': limit,
+        'after': after.toUtc().toIso8601String(),
+      },
+    );
+    return res.data;
+  }
+
   /// 置顶会话。
   Future<void> pinConversation(String convId) async {
     await _dio.post('/api/conversations/$convId/pin');
