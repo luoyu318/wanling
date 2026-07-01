@@ -1,7 +1,3 @@
-//go:build legacy_repos
-
-// 临时屏蔽:Batch 1 中途状态,本测试引用 ConversationRepo / MessageRepo API(Task 1.6 改造)。
-// Task 1.6 移除此 build tag。
 package repository
 
 import (
@@ -14,7 +10,7 @@ import (
 )
 
 // approvalTestFixture 创建一条 user + agent + conversation + message 准备审批用。
-// 复用 SetupTestDB 跑过的 migration 001-008。
+// participants 模型重构后,conv 用 FindOrCreateDM 创建(带 2 个 participants)。
 func approvalTestFixture(t *testing.T) (*ApprovalRepo, *MessageRepo, string, string, string, string) {
 	t.Helper()
 	db := SetupTestDB(t)
@@ -33,7 +29,11 @@ func approvalTestFixture(t *testing.T) (*ApprovalRepo, *MessageRepo, string, str
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	// participants 模型:用 FindOrCreateDM 创建 dm_user_agent 会话
+	conv, err := convRepo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: user.ID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: agent.ID, MemberType: "agent"},
+	})
 	if err != nil {
 		t.Fatalf("create conv: %v", err)
 	}

@@ -1,131 +1,71 @@
-//go:build legacy_repos
-
-// 临时屏蔽:Batch 1 中途状态,本测试引用 model.Conversation.UserID/AgentID/IsPinned 等
-// 老字段(Task 1.2 删了)和 ConversationRepo API(Task 1.6 改造)。
-// uniqueShortName 已抽到 testhelpers_test.go 供其他测试共用。
-// Task 1.6 移除此 build tag。
 package repository
 
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/wanling/server/internal/model"
 )
 
-// TestConversationRepo_FindOrCreate_WithLastMessageContent 验证新建会话时
-// last_message_content 应为 NULL（NullJSON.Valid=false）。
-// 这是 scan NULL JSONB 的关键回归保护：不能 panic、不能报错。
+// === 测试 fixture ===
+//
+// participants 模型重构后,本测试包所有测试在新 schema(015 已应用)上跑。
+// seedConvFixture 起 DB + seed 1 user + 1 agent(归属该 user),供多个测试复用。
+type convTestSeed struct {
+	userID  string
+	agentID string
+}
+
+func seedConvFixture(t *testing.T, db *sql.DB) convTestSeed {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	var s convTestSeed
+	if err := db.QueryRow(`
+		INSERT INTO users (username, password_hash, avatar_url, created_at)
+		VALUES ($1, $2, '', $3) RETURNING id
+	`, uniqueShortName(t, "u_"), "hash", now).Scan(&s.userID); err != nil {
+		t.Fatalf("seed user 失败: %v", err)
+	}
+	if err := db.QueryRow(`
+		INSERT INTO agents (owner_id, name, avatar_url, secret_key, status, created_at)
+		VALUES ($1, $2, '', $3, 'offline', $4) RETURNING id
+	`, s.userID, "Agent", "sk-conv-test", now).Scan(&s.agentID); err != nil {
+		t.Fatalf("seed agent 失败: %v", err)
+	}
+	return s
+}
+
+// insertConvDirect 用裸 SQL 插一条 conversation(默认 type=dm_user_agent),
+// 供测试构造 seed 数据用(绕过 repo 方法,避免循环依赖)。
+func insertConvDirect(t *testing.T, db *sql.DB, lastMsgAt time.Time) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRow(`
+		INSERT INTO conversations (last_message_at, created_at) VALUES ($1, $1) RETURNING id
+	`, lastMsgAt).Scan(&id); err != nil {
+		t.Fatalf("insert conversation 失败: %v", err)
+	}
+	return id
+}
+
+// === GetByID 测试 ===
+
+// TestConversationRepo_GetByID_NullLastMessageContent 验证新建会话时
+// last_message_content 应为 NULL(NullJSON.Valid=false)。
+// 这是 scan NULL JSONB 的关键回归保护:不能 panic、不能报错。
 // 直接用 json.RawMessage 会触发 "unsupported Scan, storing driver.Value type <nil>"。
-func TestConversationRepo_FindOrCreate_WithLastMessageContent(t *testing.T) {
+func TestConversationRepo_GetByID_NullLastMessageContent(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
 
-	urepo := NewUserRepo(db)
-	user, err := urepo.Create(uniqueShortName(t, "u_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	arepo := NewAgentRepo(db)
-	// 注意：实际 AgentRepo.Create 签名为 Create(ownerID, name, secretKey)，plan 文档遗漏了 secretKey
-	agent, err := arepo.Create(user.ID, "TestAgent", "test-secret-key")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
+	convID := insertConvDirect(t, db, time.Now().UTC())
+	// 用裸 SQL 把 last_message_at 设过去时间,避免 NOW() 与 last_message_content 不同步
+	// (这只是 seed,不写 last_message_content 即 NULL)
 
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-	if conv.LastMessageContent.Valid {
-		t.Errorf("新会话 last_message_content 应为 NULL（Valid=false），实际 Valid=true, Raw=%s",
-			conv.LastMessageContent.RawMessage)
-	}
-}
-
-// TestConversationRepo_ListByUser_ReadsLastMessageContent 验证：
-//  1. 已写入 last_message_content 的会话能正确 scan 出来；
-//  2. scan 出的字节切片是合法 JSON，且字段值正确。
-// 通过 repo.UpdateLastMessage 写缓存，不再绕过到裸 SQL。
-// 排序（last_message_at DESC）的覆盖见 TestConversationRepo_ListWithAgent_OrdersByLastMessageAtDesc。
-func TestConversationRepo_ListByUser_ReadsLastMessageContent(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	user, err := urepo.Create(uniqueShortName(t, "l_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	arepo := NewAgentRepo(db)
-	agent, err := arepo.Create(user.ID, "ListAgent", "test-secret-key")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	// 写入一条消息（让 last_message_content 有内容可灌）
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hello"},
-	})
-	mrepo := NewMessageRepo(db)
-	if _, err := mrepo.Create(conv.ID, "user", user.ID, content); err != nil {
-		t.Fatalf("Create message 失败: %v", err)
-	}
-	// 通过 UpdateLastMessage 写缓存（content 与 last_message_at=NOW()）
-	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
-	}
-
-	list, err := repo.ListByUser(user.ID)
-	if err != nil {
-		t.Fatalf("ListByUser 失败: %v", err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("列表数量异常: %d (期望 1)", len(list))
-	}
-	if !list[0].LastMessageContent.Valid {
-		t.Fatalf("LastMessageContent 未读出，期望 Valid=true")
-	}
-	// 反序列化校验：scan 出来的字节切片必须是合法 JSON，且字段值正确
-	var got map[string]interface{}
-	if err := json.Unmarshal(list[0].LastMessageContent.RawMessage, &got); err != nil {
-		t.Fatalf("反序列化 LastMessageContent 失败: %v", err)
-	}
-	if got["msg_type"] != "text" {
-		t.Errorf("msg_type 字段不正确: %v", got["msg_type"])
-	}
-}
-
-// TestConversationRepo_GetByID_LastMessageContentIsNull 兜底 GetByID：
-// 空会话（无消息）的 last_message_content 为 NULL，scan 不能报错。
-func TestConversationRepo_GetByID_LastMessageContentIsNull(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	user, err := urepo.Create(uniqueShortName(t, "g_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	arepo := NewAgentRepo(db)
-	agent, err := arepo.Create(user.ID, "GetByIDAgent", "test-secret-key")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	got, err := repo.GetByID(conv.ID)
+	got, err := repo.GetByID(convID)
 	if err != nil {
 		t.Fatalf("GetByID 失败: %v", err)
 	}
@@ -133,13 +73,17 @@ func TestConversationRepo_GetByID_LastMessageContentIsNull(t *testing.T) {
 		t.Fatalf("GetByID 返回 nil")
 	}
 	if got.LastMessageContent.Valid {
-		t.Errorf("空会话 last_message_content 应为 NULL，实际 Valid=true, Raw=%s",
+		t.Errorf("新会话 last_message_content 应为 NULL(Valid=false), 实际 Valid=true, Raw=%s",
 			got.LastMessageContent.RawMessage)
 	}
+	if got.Type != "dm_user_agent" {
+		t.Errorf("默认 type 错误: 期望 dm_user_agent, 实际 %s", got.Type)
+	}
+	_ = seed // 此用例不需要 user/agent,但保留 fixture 让 schema 初始化一致
 }
 
-// TestNullJSON_JSONSerialization 校验 NullJSON 的 JSON 序列化行为符合预期：
-//   - NULL → 输出 "null"；
+// TestNullJSON_JSONSerialization 校验 NullJSON 的 JSON 序列化行为符合预期:
+//   - NULL → 输出 "null";
 //   - 非 NULL → 透传 JSON 内容。
 // 避免 handler 层因 JSON 输出格式变化踩坑。
 func TestNullJSON_JSONSerialization(t *testing.T) {
@@ -169,252 +113,31 @@ func TestNullJSON_JSONSerialization(t *testing.T) {
 	}
 }
 
-// TestConversationRepo_ListWithAgent_ReturnsAgentAndLastMessage 验证 ListWithAgent：
-//  1. JOIN agents 表，返回的 item.Agent 字段填充正确；
-//  2. last_message_content 非 NULL 时正确读出 Valid=true。
-// 这是 IM 风格会话列表的数据来源测试。
-func TestConversationRepo_ListWithAgent_ReturnsAgentAndLastMessage(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	arepo := NewAgentRepo(db)
+// === UpdateLastMessage / ClearLastMessage / UpdateLastMessageTx 测试 ===
 
-	user, err := urepo.Create(uniqueShortName(t, "lwauser"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "LWAAgent", "secret-key-placeholder")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hi"},
-	})
-	// 通过 UpdateLastMessage 写缓存（content 与 last_message_at=NOW()）
-	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
-	}
-
-	items, err := repo.ListWithAgent(user.ID)
-	if err != nil {
-		t.Fatalf("ListWithAgent 失败: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("期望 1 条，实际: %d", len(items))
-	}
-	if items[0].Agent.ID != agent.ID {
-		t.Errorf("agent.id 不匹配: got=%s want=%s", items[0].Agent.ID, agent.ID)
-	}
-	if items[0].Agent.Name != "LWAAgent" {
-		t.Errorf("agent.name 不匹配: %s", items[0].Agent.Name)
-	}
-	if !items[0].LastMessageContent.Valid {
-		t.Errorf("last_message_content 不应为 NULL")
-	}
-}
-
-// TestConversationRepo_ListWithAgent_ExcludesNoMessageConversations 验证：
-// 无消息会话（last_message_content IS NULL）不应进入 IM 列表。
-// 这是 IM 列表的核心语义：列表里只展示已经发生过对话的会话。
-func TestConversationRepo_ListWithAgent_ExcludesNoMessageConversations(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	arepo := NewAgentRepo(db)
-
-	user, err := urepo.Create(uniqueShortName(t, "excluser"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "ExclAgent", "secret-key-placeholder")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	if _, err := repo.FindOrCreate(user.ID, agent.ID); err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	items, err := repo.ListWithAgent(user.ID)
-	if err != nil {
-		t.Fatalf("ListWithAgent 失败: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("无消息会话不应进列表，实际: %d 条", len(items))
-	}
-}
-
-// TestConversationRepo_ListWithAgent_OrdersByLastMessageAtDesc 验证排序：
-// 插入 2 条会话（A 早 B 晚），期望首条为 B。
-// ListByUser 测试没覆盖排序，这里补齐 IM 列表的排序语义。
-func TestConversationRepo_ListWithAgent_OrdersByLastMessageAtDesc(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	arepo := NewAgentRepo(db)
-
-	user, err := urepo.Create(uniqueShortName(t, "orduser"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agentA, err := arepo.Create(user.ID, "AgentA", "key-a")
-	if err != nil {
-		t.Fatalf("Create agentA 失败: %v", err)
-	}
-	agentB, err := arepo.Create(user.ID, "AgentB", "key-b")
-	if err != nil {
-		t.Fatalf("Create agentB 失败: %v", err)
-	}
-
-	convA, err := repo.FindOrCreate(user.ID, agentA.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate A 失败: %v", err)
-	}
-	convB, err := repo.FindOrCreate(user.ID, agentB.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate B 失败: %v", err)
-	}
-
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hi"},
-	})
-	// 注意：这里不能用 repo.UpdateLastMessage。
-	// UpdateLastMessage 总是用 NOW() 写 last_message_at，无法手动设置过去时间，
-	// 而本测试要构造 A 早 1 小时、B 当前的对比场景来验证 DESC 排序，
-	// 所以只能用裸 SQL 直接控制 last_message_at。
-	// A 早 1 小时
-	if _, err := db.Exec(
-		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '1 hour' WHERE id = $2`,
-		content, convA.ID,
-	); err != nil {
-		t.Fatalf("UPDATE A 失败: %v", err)
-	}
-	// B 当前
-	if _, err := db.Exec(
-		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`,
-		content, convB.ID,
-	); err != nil {
-		t.Fatalf("UPDATE B 失败: %v", err)
-	}
-
-	items, err := repo.ListWithAgent(user.ID)
-	if err != nil {
-		t.Fatalf("ListWithAgent 失败: %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("期望 2 条，实际: %d", len(items))
-	}
-	if items[0].Agent.Name != "AgentB" {
-		t.Errorf("期望首条为 AgentB（最新），实际: %s", items[0].Agent.Name)
-	}
-}
-
-// TestConversationRepo_FindOrCreate_DoesNotUpdateLastMessageAtOnConflict 回归保护：
-// 再次对已存在会话调用 FindOrCreate 不应污染 last_message_at。
-// 之前的实现用 DO UPDATE SET last_message_at = NOW()，会让"重新打开空会话"也更新时间戳，
-// 干扰 ListWithAgent 按 last_message_at DESC 的排序。
-// 改造为 ON CONFLICT DO NOTHING + 二次 SELECT 后，必须保证时间戳保持原值。
-func TestConversationRepo_FindOrCreate_DoesNotUpdateLastMessageAtOnConflict(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	arepo := NewAgentRepo(db)
-
-	user, err := urepo.Create(uniqueShortName(t, "dupuser"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "DupAgent", "secret-key-placeholder")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-
-	// 首次创建
-	conv1, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("首次 FindOrCreate 失败: %v", err)
-	}
-
-	// 用裸 SQL 写入一个"过去"的 last_message_at（与新建时 NOW() 区分开）
-	// 仅在 last_message_content 也写入的情况下才有意义；否则字段会保持 NULL/默认。
-	pastContent := []byte(`{"msg_type":"text","data":{"text":"past"}}`)
-	if _, err := db.Exec(
-		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '2 hours' WHERE id = $2`,
-		pastContent, conv1.ID,
-	); err != nil {
-		t.Fatalf("写过去时间戳失败: %v", err)
-	}
-
-	// 再次 FindOrCreate（命中 ON CONFLICT 路径）
-	conv2, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("二次 FindOrCreate 失败: %v", err)
-	}
-	if conv2.ID != conv1.ID {
-		t.Fatalf("二次返回的会话 ID 不一致: %s vs %s", conv1.ID, conv2.ID)
-	}
-
-	// 取出真实存储的 last_message_at，验证没有被 NOW() 覆盖
-	var storedAt time.Time
-	if err := db.QueryRow(
-		`SELECT last_message_at FROM conversations WHERE id = $1`, conv1.ID,
-	).Scan(&storedAt); err != nil {
-		t.Fatalf("SELECT last_message_at 失败: %v", err)
-	}
-	// 期望仍然在 1 小时之前（即 2 小时 - 1 小时容差），证明没有被 NOW() 改成"现在"
-	if time.Since(storedAt) < time.Hour {
-		t.Errorf("二次 FindOrCreate 污染了 last_message_at: storedAt=%v, 距现在=%v",
-			storedAt, time.Since(storedAt))
-	}
-}
-
-// TestConversationRepo_UpdateLastMessage_WritesCache 验证 UpdateLastMessage：
+// TestConversationRepo_UpdateLastMessage_WritesCache 验证 UpdateLastMessage:
 // 写入后 GetByID 应能读出 LastMessageContent.Valid=true 且内容正确。
-// 这是写消息路径的缓存更新点（消息 processor 在持久化消息后调用）。
 func TestConversationRepo_UpdateLastMessage_WritesCache(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
-	urepo := NewUserRepo(db)
-	arepo := NewAgentRepo(db)
-
-	user, err := urepo.Create(uniqueShortName(t, "ulmuser"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "ULMAgent", "secret-key-placeholder")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
+	seedConvFixture(t, db)
+	convID := insertConvDirect(t, db, time.Now().UTC())
 
 	content, _ := json.Marshal(map[string]interface{}{
 		"msg_type": "text",
 		"data":     map[string]string{"text": "cached"},
 	})
-	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
+	if err := repo.UpdateLastMessage(convID, content); err != nil {
 		t.Fatalf("UpdateLastMessage 失败: %v", err)
 	}
 
-	got, err := repo.GetByID(conv.ID)
-	if err != nil {
-		t.Fatalf("GetByID 失败: %v", err)
-	}
-	if got == nil {
-		t.Fatalf("GetByID 返回 nil")
+	got, err := repo.GetByID(convID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v %v", got, err)
 	}
 	if !got.LastMessageContent.Valid {
 		t.Fatalf("UpdateLastMessage 后 LastMessageContent 应为 Valid")
 	}
-	// 反序列化校验：内容正确写入
 	var m map[string]interface{}
 	if err := json.Unmarshal(got.LastMessageContent.RawMessage, &m); err != nil {
 		t.Fatalf("反序列化失败: %v", err)
@@ -425,243 +148,526 @@ func TestConversationRepo_UpdateLastMessage_WritesCache(t *testing.T) {
 	}
 }
 
-// TestConversationRepo_IncrUnreadTx_AndMarkRead 验证事务内未读++，
-// 以及 MarkRead 重置为 0（含 user_id 校验）。
-func TestConversationRepo_IncrUnreadTx_AndMarkRead(t *testing.T) {
+// TestConversationRepo_ClearLastMessage 验证 ClearLastMessage 把 last_message_content 置 NULL。
+func TestConversationRepo_ClearLastMessage(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
+	convID := insertConvDirect(t, db, time.Now().UTC())
 
-	user, _ := NewUserRepo(db).Create(uniqueShortName(t, "ur_"), "$2a$10$hash")
-	agent, _ := NewAgentRepo(db).Create(user.ID, "Agent", "secret-key-placeholder")
-	conv, err := repo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate: %v", err)
+	content, _ := json.Marshal(map[string]string{"k": "v"})
+	if err := repo.UpdateLastMessage(convID, content); err != nil {
+		t.Fatalf("UpdateLastMessage 失败: %v", err)
 	}
-
-	// 2 次 IncrUnreadTx
-	for i := 0; i < 2; i++ {
-		tx, err := repo.BeginTx()
-		if err != nil {
-			t.Fatalf("BeginTx: %v", err)
-		}
-		if err := repo.IncrUnreadTx(tx, conv.ID); err != nil {
-			t.Fatalf("IncrUnreadTx: %v", err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatalf("Commit: %v", err)
-		}
+	if err := repo.ClearLastMessage(convID); err != nil {
+		t.Fatalf("ClearLastMessage 失败: %v", err)
 	}
-
-	// 验证 unread_count = 2（直接 raw query，因为 GetByID 不返回该字段）
-	var n int
-	if err := db.QueryRow(`SELECT unread_count FROM conversations WHERE id = $1`, conv.ID).Scan(&n); err != nil {
-		t.Fatalf("query unread_count: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("unread_count = %d, want 2", n)
-	}
-
-	// MarkRead 清零
-	if err := repo.MarkRead(conv.ID, user.ID); err != nil {
-		t.Fatalf("MarkRead: %v", err)
-	}
-	if err := db.QueryRow(`SELECT unread_count FROM conversations WHERE id = $1`, conv.ID).Scan(&n); err != nil {
-		t.Fatalf("query after MarkRead: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("after MarkRead unread_count = %d, want 0", n)
+	got, _ := repo.GetByID(convID)
+	if got.LastMessageContent.Valid {
+		t.Errorf("ClearLastMessage 后 LastMessageContent 应为 NULL, 实际 Valid=true Raw=%s",
+			got.LastMessageContent.RawMessage)
 	}
 }
 
-// TestConversationRepo_MarkRead_RejectsWrongUser 验证 user_id 校验：
-// 其他用户调 MarkRead 返回 sql.ErrNoRows。
-func TestConversationRepo_MarkRead_RejectsWrongUser(t *testing.T) {
+// TestConversationRepo_UpdateLastMessageTx 验证 UpdateLastMessageTx 在外部事务中工作。
+func TestConversationRepo_UpdateLastMessageTx(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
+	convID := insertConvDirect(t, db, time.Now().UTC())
 
-	owner, _ := NewUserRepo(db).Create(uniqueShortName(t, "own_"), "$2a$10$hash")
-	other, _ := NewUserRepo(db).Create(uniqueShortName(t, "oth_"), "$2a$10$hash")
-	agent, _ := NewAgentRepo(db).Create(owner.ID, "Agent", "secret-key-placeholder")
-	conv, _ := repo.FindOrCreate(owner.ID, agent.ID)
-
-	err := repo.MarkRead(conv.ID, other.ID)
-	if err == nil {
-		t.Errorf("期望 err（其他用户），实际 nil")
-	}
-}
-
-// TestConversationRepo_GetUnreadCount 校验 GetUnreadCount：
-//   - 正常返回 unread_count；
-//   - user_id 不匹配（越权）返回 sql.ErrNoRows。
-func TestConversationRepo_GetUnreadCount(t *testing.T) {
-	db := SetupTestDB(t)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
-
-	user, err := userRepo.Create(uniqueShortName(t, "uc_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	other, err := userRepo.Create(uniqueShortName(t, "uc2_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create other 失败: %v", err)
-	}
-	agent, err := agentRepo.Create(user.ID, "UC-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	// 制造 2 条未读消息
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
-	if _, err := msgRepo.Create(conv.ID, "agent", agent.ID, content); err != nil {
-		t.Fatalf("Create m1 失败: %v", err)
-	}
-	if _, err := msgRepo.Create(conv.ID, "agent", agent.ID, content); err != nil {
-		t.Fatalf("Create m2 失败: %v", err)
-	}
-	// IncrUnreadTx 需要事务
-	tx, err := convRepo.BeginTx()
+	content, _ := json.Marshal(map[string]string{"k": "tx"})
+	tx, err := repo.BeginTx()
 	if err != nil {
 		t.Fatalf("BeginTx 失败: %v", err)
 	}
-	if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
-		t.Fatalf("IncrUnreadTx 失败: %v", err)
-	}
-	if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
-		t.Fatalf("IncrUnreadTx 2 失败: %v", err)
+	if err := repo.UpdateLastMessageTx(tx, convID, content); err != nil {
+		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit 失败: %v", err)
 	}
 
-	// 正常调用：返回 2
-	count, err := convRepo.GetUnreadCount(conv.ID, user.ID)
-	if err != nil {
-		t.Fatalf("GetUnreadCount 失败: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("期望未读 2，实际 %d", count)
-	}
-
-	// 越权：用别的 user_id 查，应返回 sql.ErrNoRows
-	_, err = convRepo.GetUnreadCount(conv.ID, other.ID)
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("越权应返回 sql.ErrNoRows，实际 %v", err)
+	got, _ := repo.GetByID(convID)
+	if !got.LastMessageContent.Valid {
+		t.Fatalf("UpdateLastMessageTx 后 LastMessageContent 应为 Valid")
 	}
 }
 
-// TestConversationRepo_MarkMessagesRead 批量按 messageId 标记已读 + 重算 unread_count。
-// 覆盖：单条/多条/不属于该会话的 id 自动过滤/越权返 sql.ErrNoRows/空数组返当前值。
-func TestConversationRepo_MarkMessagesRead(t *testing.T) {
+// === FindOrCreateDM 测试 ===
+
+// TestConversationRepo_FindOrCreateDM_New 验证 FindOrCreateDM 新建 dm:
+//   - 首次调用创建新会话 + 2 行 participants
+//   - Initiator=owner, Other=member
+//   - 返回的 Conversation.type = typeStr
+func TestConversationRepo_FindOrCreateDM_New(t *testing.T) {
 	db := SetupTestDB(t)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
 
-	user, err := NewUserRepo(db).Create(uniqueShortName(t, "mr_"), "$2a$10$hash")
+	conv, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	})
 	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
 	}
-	agent, err := NewAgentRepo(db).Create(user.ID, "MarkMsgReadAgent", "secret-key-placeholder")
+	if conv == nil || conv.ID == "" {
+		t.Fatalf("返回的 conversation 异常: %+v", conv)
+	}
+	if conv.Type != "dm_user_agent" {
+		t.Errorf("type 错误: 期望 dm_user_agent, 实际 %s", conv.Type)
+	}
+
+	// 校验 participants 行
+	pRepo := NewParticipantRepo(db)
+	parts, err := pRepo.ListByConversation(conv.ID)
 	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
+		t.Fatalf("ListByConversation 失败: %v", err)
 	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if len(parts) != 2 {
+		t.Fatalf("participants 行数错误: 期望 2, 实际 %d", len(parts))
+	}
+	roleOf := map[string]string{}
+	for _, p := range parts {
+		roleOf[p.MemberType+":"+p.MemberID] = p.Role
+	}
+	if roleOf["user:"+seed.userID] != "owner" {
+		t.Errorf("initiator(user)role 错误: 期望 owner, 实际 %s", roleOf["user:"+seed.userID])
+	}
+	if roleOf["agent:"+seed.agentID] != "member" {
+		t.Errorf("other(agent)role 错误: 期望 member, 实际 %s", roleOf["agent:"+seed.agentID])
+	}
+}
+
+// TestConversationRepo_FindOrCreateDM_Existing 验证 FindOrCreateDM 命中已存在:
+//   - 首次创建一个 dm
+//   - 二次 FindOrCreateDM 同 (type, members) → 返回同一 conv, 不重复加 participants
+//   - 二次 FindOrCreateDM 同 members 但 Initiator/Other 互换 → 仍返回同一 conv(member set 一致)
+func TestConversationRepo_FindOrCreateDM_Existing(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
+
+	conv1, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	})
 	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
+		t.Fatalf("首次 FindOrCreateDM 失败: %v", err)
 	}
 
-	// 制造 5 条 agent 消息（每条都 IncrUnreadTx，让 unread_count=5）
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"m"}}`)
-	msgIDs := make([]string, 5)
-	for i := 0; i < 5; i++ {
-		tx, err := convRepo.BeginTx()
-		if err != nil {
-			t.Fatalf("BeginTx %d 失败: %v", i, err)
-		}
-		m, err := msgRepo.CreateTx(tx, conv.ID, "agent", agent.ID, content)
-		if err != nil {
-			t.Fatalf("CreateTx %d 失败: %v", i, err)
-		}
-		msgIDs[i] = m.ID
-		if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
-			t.Fatalf("IncrUnreadTx %d 失败: %v", i, err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatalf("Commit %d 失败: %v", i, err)
-		}
-	}
-
-	// 验证初始 unread_count=5
-	initial, err := convRepo.GetUnreadCount(conv.ID, user.ID)
+	// 二次(同 Initiator/Other 顺序)→ 同 conv
+	conv2, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	})
 	if err != nil {
-		t.Fatalf("GetUnreadCount 失败: %v", err)
+		t.Fatalf("二次 FindOrCreateDM 失败: %v", err)
 	}
-	if initial != 5 {
-		t.Fatalf("初始 unread_count = %d, want 5", initial)
+	if conv1.ID != conv2.ID {
+		t.Errorf("二次应返回同 conv, conv1=%s conv2=%s", conv1.ID, conv2.ID)
 	}
 
-	t.Run("单条标记", func(t *testing.T) {
-		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{msgIDs[0]})
-		if err != nil {
-			t.Fatalf("MarkMessagesRead 失败: %v", err)
+	// 三次(Initiator/Other 互换)→ 仍同 conv(member set 一致)
+	conv3, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+		Other:     ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+	})
+	if err != nil {
+		t.Fatalf("三次 FindOrCreateDM 失败: %v", err)
+	}
+	if conv1.ID != conv3.ID {
+		t.Errorf("members 互换应返回同 conv, conv1=%s conv3=%s", conv1.ID, conv3.ID)
+	}
+
+	// 校验 participants 行只有 2 行(没重复加)
+	pRepo := NewParticipantRepo(db)
+	parts, _ := pRepo.ListByConversation(conv1.ID)
+	if len(parts) != 2 {
+		t.Errorf("重复 FindOrCreateDM 后 participants 行数错误: 期望 2, 实际 %d", len(parts))
+	}
+}
+
+// === CreateTx 测试 ===
+
+// TestConversationRepo_CreateTx 验证 CreateTx 只 INSERT conversations 不加 participants。
+// 群聊场景由 handler 调 CreateTx + AddParticipantsTx 协作。
+func TestConversationRepo_CreateTx(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
+
+	tx, err := repo.BeginTx()
+	if err != nil {
+		t.Fatalf("BeginTx 失败: %v", err)
+	}
+	conv, err := repo.CreateTx(tx, "group_user", "群名", "/avatar.png")
+	if err != nil {
+		t.Fatalf("CreateTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit 失败: %v", err)
+	}
+	if conv.Type != "group_user" {
+		t.Errorf("type 错误: 期望 group_user, 实际 %s", conv.Type)
+	}
+	if conv.Title != "群名" {
+		t.Errorf("title 错误: %s", conv.Title)
+	}
+	if conv.AvatarURL != "/avatar.png" {
+		t.Errorf("avatar_url 错误: %s", conv.AvatarURL)
+	}
+
+	// 校验 participants 表无此 conv 的行(由 handler 调 AddParticipantsTx 加)
+	pRepo := NewParticipantRepo(db)
+	parts, err := pRepo.ListByConversation(conv.ID)
+	if err != nil {
+		t.Fatalf("ListByConversation 失败: %v", err)
+	}
+	if len(parts) != 0 {
+		t.Errorf("CreateTx 不应自动加 participants, 实际 %d 行", len(parts))
+	}
+}
+
+// === UpdateProfile 测试 ===
+
+// TestConversationRepo_UpdateProfile 验证群名/群头像更新。
+// COALESCE(NULLIF) 模式: 空串=不动。
+func TestConversationRepo_UpdateProfile(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
+
+	tx, _ := repo.BeginTx()
+	conv, _ := repo.CreateTx(tx, "group_user", "旧名", "/old.png")
+	tx.Commit()
+
+	// 改 title 不传 avatarURL(空串不动)
+	if err := repo.UpdateProfile(conv.ID, "新名", ""); err != nil {
+		t.Fatalf("UpdateProfile 失败: %v", err)
+	}
+	got, _ := repo.GetByID(conv.ID)
+	if got.Title != "新名" {
+		t.Errorf("title 应更新为 新名, 实际 %s", got.Title)
+	}
+	if got.AvatarURL != "/old.png" {
+		t.Errorf("avatar_url 应保持 /old.png, 实际 %s", got.AvatarURL)
+	}
+}
+
+// === ListForUser 测试 ===
+
+// TestConversationRepo_ListForUser_Basic 验证 ListForUser 的基础场景:
+//   - user 有 1 个 dm_user_agent 会话(带 last_message_content)
+//   - ListForUser 返回该会话,带 unread_count + Agent 摘要 + 对端 Participants
+//   - hidden_at IS NULL 的会话才返回
+//   - last_message_content IS NULL 的会话不返回(IM 列表只展示有消息的)
+func TestConversationRepo_ListForUser_Basic(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
+
+	conv, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+	// 写 last_message_content(没消息的会话不进列表)
+	content, _ := json.Marshal(map[string]string{"k": "v"})
+	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
+		t.Fatalf("UpdateLastMessage 失败: %v", err)
+	}
+
+	items, err := repo.ListForUser(seed.userID)
+	if err != nil {
+		t.Fatalf("ListForUser 失败: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("期望 1 条, 实际 %d", len(items))
+	}
+	if items[0].ID != conv.ID {
+		t.Errorf("conv id 不匹配: got=%s want=%s", items[0].ID, conv.ID)
+	}
+	if items[0].Type != "dm_user_agent" {
+		t.Errorf("type 错误: %s", items[0].Type)
+	}
+	if items[0].UnreadCount != 0 {
+		t.Errorf("初始 unread_count 应为 0, 实际 %d", items[0].UnreadCount)
+	}
+	// dm_user_agent 应填 Agent 摘要
+	if items[0].Agent == nil {
+		t.Errorf("dm_user_agent 应填 Agent 摘要, 实际 nil")
+	} else {
+		if items[0].Agent.ID != seed.agentID {
+			t.Errorf("agent.id 不匹配: got=%s want=%s", items[0].Agent.ID, seed.agentID)
 		}
-		if newCount != 4 {
-			t.Errorf("单条标记后 unread_count = %d, want 4", newCount)
+		if items[0].Agent.Name != "Agent" {
+			t.Errorf("agent.name 不匹配: %s", items[0].Agent.Name)
 		}
+	}
+}
+
+// TestConversationRepo_ListForUser_ExcludesNoMessage 验证无消息会话不进列表。
+func TestConversationRepo_ListForUser_ExcludesNoMessage(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
+
+	// 创建一个 dm 但不写 last_message_content
+	if _, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	}); err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+
+	items, err := repo.ListForUser(seed.userID)
+	if err != nil {
+		t.Fatalf("ListForUser 失败: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("无消息会话不应进列表, 实际 %d 条", len(items))
+	}
+}
+
+// TestConversationRepo_ListForUser_ExcludesHidden 验证用户维度隐藏的会话不进列表。
+// spec §3.5:WHERE p.hidden_at IS NULL
+func TestConversationRepo_ListForUser_ExcludesHidden(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	pRepo := NewParticipantRepo(db)
+	seed := seedConvFixture(t, db)
+
+	conv, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
+	})
+	content, _ := json.Marshal(map[string]string{"k": "v"})
+	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
+		t.Fatalf("UpdateLastMessage 失败: %v", err)
+	}
+
+	// 用户隐藏该会话
+	if err := pRepo.SetHidden(conv.ID, seed.userID, "user", true); err != nil {
+		t.Fatalf("SetHidden 失败: %v", err)
+	}
+	items, _ := repo.ListForUser(seed.userID)
+	if len(items) != 0 {
+		t.Errorf("隐藏的会话不应进列表, 实际 %d 条", len(items))
+	}
+}
+
+// TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt 验证排序:
+//   - 置顶组在前(pinned_at DESC NULLS LAST)
+//   - 组内按 last_message_at DESC
+//
+// 场景:user 有 3 个 dm:
+//   - convA 早 1 小时,置顶
+//   - convB 当前,未置顶
+//   - convC 早 2 小时,未置顶
+//
+// 期望顺序:[A(置顶), B(当前), C(早 2 小时)]
+func TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	pRepo := NewParticipantRepo(db)
+	seed := seedConvFixture(t, db)
+
+	// 3 个 agent + 3 个 dm
+	now := time.Now().UTC()
+	makeDMAgent := func(name string) string {
+		t.Helper()
+		var id string
+		if err := db.QueryRow(`
+			INSERT INTO agents (owner_id, name, avatar_url, secret_key, status, created_at)
+			VALUES ($1, $2, '', $3, 'offline', $4) RETURNING id
+		`, seed.userID, name, "sk-"+name, now).Scan(&id); err != nil {
+			t.Fatalf("seed agent %s 失败: %v", name, err)
+		}
+		return id
+	}
+	agentA := makeDMAgent("AgentA")
+	agentB := makeDMAgent("AgentB")
+	agentC := makeDMAgent("AgentC")
+
+	convA, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: agentA, MemberType: "agent"},
+	})
+	convB, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: agentB, MemberType: "agent"},
+	})
+	convC, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: agentC, MemberType: "agent"},
 	})
 
-	t.Run("多条标记", func(t *testing.T) {
-		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{msgIDs[1], msgIDs[2], msgIDs[3]})
-		if err != nil {
-			t.Fatalf("MarkMessagesRead 失败: %v", err)
-		}
-		if newCount != 1 {
-			t.Errorf("多条标记后 unread_count = %d, want 1", newCount)
-		}
+	content, _ := json.Marshal(map[string]string{"k": "v"})
+	// A: 早 1 小时 + 置顶
+	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '1 hour' WHERE id = $2`, content, convA.ID); err != nil {
+		t.Fatalf("UPDATE A 失败: %v", err)
+	}
+	if err := pRepo.SetPinned(convA.ID, seed.userID, "user", true); err != nil {
+		t.Fatalf("SetPinned A 失败: %v", err)
+	}
+	// B: 当前
+	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`, content, convB.ID); err != nil {
+		t.Fatalf("UPDATE B 失败: %v", err)
+	}
+	// C: 早 2 小时
+	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '2 hours' WHERE id = $2`, content, convC.ID); err != nil {
+		t.Fatalf("UPDATE C 失败: %v", err)
+	}
+
+	items, err := repo.ListForUser(seed.userID)
+	if err != nil {
+		t.Fatalf("ListForUser 失败: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("期望 3 条, 实际 %d", len(items))
+	}
+	// 期望顺序:A(置顶), B(当前), C(早 2 小时)
+	if items[0].ID != convA.ID {
+		t.Errorf("首条期望 convA(置顶), 实际 %s", items[0].ID)
+	}
+	if items[1].ID != convB.ID {
+		t.Errorf("第二条期望 convB(最新), 实际 %s", items[1].ID)
+	}
+	if items[2].ID != convC.ID {
+		t.Errorf("第三条期望 convC(最早), 实际 %s", items[2].ID)
+	}
+	// items[0] 应有 PinnedAt 非 nil
+	if items[0].PinnedAt == nil {
+		t.Errorf("convA 的 PinnedAt 应非 nil(已置顶)")
+	}
+}
+
+// === BatchLoadParticipantSummaries 测试 ===
+
+// TestConversationRepo_BatchLoadParticipantSummaries 验证批量加载 participant 摘要:
+//   - 2 个 conv,各 2 个 participant(user + agent)
+//   - BatchLoadParticipantSummaries 返回 map[convID] -> []ParticipantSummary
+//   - 每个 summary 含 username/nickname/avatar_url 字段正确
+//   - user 的 nickname 取 COALESCE(nickname, username)
+//   - agent 的 nickname 取 name
+func TestConversationRepo_BatchLoadParticipantSummaries(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
+
+	// 给 user 设 nickname
+	nick := "用户A"
+	if _, err := db.Exec(`UPDATE users SET nickname = $1 WHERE id = $2`, nick, seed.userID); err != nil {
+		t.Fatalf("set nickname 失败: %v", err)
+	}
+
+	conv1, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
 	})
 
-	t.Run("不属于该会话的 id 自动过滤", func(t *testing.T) {
-		// 一个合法格式但实际不存在的 UUID，应被 WHERE 过滤；msgIDs[4] 是真实的，应被标记
-		nonExistentUUID := "00000000-0000-0000-0000-000000000000"
-		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{nonExistentUUID, msgIDs[4]})
-		if err != nil {
-			t.Fatalf("MarkMessagesRead 失败: %v", err)
-		}
-		if newCount != 0 {
-			t.Errorf("过滤后 unread_count = %d, want 0", newCount)
-		}
+	// 第二个 dm(用第二个 agent)
+	var agent2ID string
+	if err := db.QueryRow(`
+		INSERT INTO agents (owner_id, name, avatar_url, secret_key, status, created_at)
+		VALUES ($1, 'AgentB', '', 'sk-b', 'offline', NOW()) RETURNING id
+	`, seed.userID).Scan(&agent2ID); err != nil {
+		t.Fatalf("seed agent B 失败: %v", err)
+	}
+	conv2, _ := repo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: agent2ID, MemberType: "agent"},
 	})
 
-	// fakeOwnerID：合法 UUID 格式但 DB 中不存在的 user_id（触发越权 ErrNoRows）
-	const fakeOwnerID = "11111111-1111-1111-1111-111111111111"
+	result, err := repo.BatchLoadParticipantSummaries([]string{conv1.ID, conv2.ID})
+	if err != nil {
+		t.Fatalf("BatchLoadParticipantSummaries 失败: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("result map 大小错误: 期望 2, 实际 %d", len(result))
+	}
+	parts1, ok := result[conv1.ID]
+	if !ok {
+		t.Fatalf("缺 conv1 的 participants")
+	}
+	if len(parts1) != 2 {
+		t.Fatalf("conv1 participants 行数错误: 期望 2, 实际 %d", len(parts1))
+	}
+	// 按 member_type 找出 user/agent
+	var userPS, agentPS *model.ParticipantSummary
+	for i := range parts1 {
+		if parts1[i].MemberType == "user" {
+			userPS = &parts1[i]
+		} else if parts1[i].MemberType == "agent" {
+			agentPS = &parts1[i]
+		}
+	}
+	if userPS == nil || agentPS == nil {
+		t.Fatalf("conv1 应有 user + agent participant, 实际 %+v", parts1)
+	}
+	// user 的 nickname = "用户A"(COALESCE 取 nickname)
+	if userPS.Nickname != nick {
+		t.Errorf("user nickname 错误: 期望 %s, 实际 %s", nick, userPS.Nickname)
+	}
+	if userPS.Role != "owner" {
+		t.Errorf("user role 错误: 期望 owner, 实际 %s", userPS.Role)
+	}
+	// agent 的 nickname = name("Agent")
+	if agentPS.Nickname != "Agent" {
+		t.Errorf("agent nickname 错误: 期望 Agent, 实际 %s", agentPS.Nickname)
+	}
+	if agentPS.Role != "member" {
+		t.Errorf("agent role 错误: 期望 member, 实际 %s", agentPS.Role)
+	}
+}
 
-	t.Run("越权返 sql.ErrNoRows", func(t *testing.T) {
-		_, err := convRepo.MarkMessagesRead(conv.ID, fakeOwnerID, []string{msgIDs[0]})
-		if !errors.Is(err, sql.ErrNoRows) {
-			t.Errorf("越权应返 sql.ErrNoRows, got %v", err)
-		}
-	})
+// TestConversationRepo_BatchLoadParticipantSummaries_EmptyInput 验证空 convIDs 不报错返空 map。
+func TestConversationRepo_BatchLoadParticipantSummaries_EmptyInput(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
 
-	t.Run("空数组返当前 unread_count", func(t *testing.T) {
-		count, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{})
-		if err != nil {
-			t.Fatalf("MarkMessagesRead 失败: %v", err)
-		}
-		if count != 0 {
-			t.Errorf("空数组后 unread_count = %d, want 0", count)
-		}
-	})
+	result, err := repo.BatchLoadParticipantSummaries(nil)
+	if err != nil {
+		t.Fatalf("空 input 不应报错: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("空 input 应返空 map, 实际 %d 个 key", len(result))
+	}
+}
 
-	t.Run("空数组+越权返 sql.ErrNoRows", func(t *testing.T) {
-		_, err := convRepo.MarkMessagesRead(conv.ID, fakeOwnerID, []string{})
-		if !errors.Is(err, sql.ErrNoRows) {
-			t.Errorf("空数组越权应返 sql.ErrNoRows, got %v", err)
-		}
-	})
+// === 越权 / 不存在场景 ===
+
+// TestConversationRepo_GetByID_NotExists 验证 GetByID 不存在返 (nil, nil)。
+func TestConversationRepo_GetByID_NotExists(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seedConvFixture(t, db)
+
+	got, err := repo.GetByID("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatalf("GetByID 不存在应返 nil err, 实际 %v", err)
+	}
+	if got != nil {
+		t.Errorf("不存在应返 nil, 实际 %+v", got)
+	}
+}
+
+// TestConversationRepo_ListForUser_NoConv 验证 user 没参与任何会话时返空切片。
+func TestConversationRepo_ListForUser_NoConv(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	seed := seedConvFixture(t, db)
+
+	items, err := repo.ListForUser(seed.userID)
+	if err != nil {
+		t.Fatalf("ListForUser 失败: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("无会话 user 应返空切片, 实际 %d 条", len(items))
+	}
 }

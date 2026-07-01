@@ -1,7 +1,3 @@
-//go:build legacy_repos
-
-// 临时屏蔽:Batch 1 中途状态,本测试引用 MessageRepo API(Task 1.6 改造)。
-// Task 1.6 移除此 build tag。
 package repository
 
 import (
@@ -9,9 +5,102 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
 	"github.com/wanling/server/internal/model"
 )
+
+// === 测试 fixture ===
+//
+// participants 模型重构后,messages 表去掉了 is_read 字段。本测试包所有 seed
+// 都在 015 新 schema 上做。createMessage 不再写 is_read,改由 DeliveryRepo 维护
+// per-recipient 投递状态。
+
+// msgTestSeed 起 DB + seed 1 user + 1 agent + 1 conversation(dm_user_agent)。
+// conversation 用 FindOrCreateDM 创建,带 2 个 participants。
+type msgTestSeed struct {
+	userID  string
+	agentID string
+	convID  string
+}
+
+func seedMsgFixture(t *testing.T) (*MessageRepo, msgTestSeed) {
+	t.Helper()
+	db := SetupTestDB(t)
+	convSeed := seedConvFixture(t, db)
+	convRepo := NewConversationRepo(db)
+	conv, err := convRepo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: convSeed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: convSeed.agentID, MemberType: "agent"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+	return NewMessageRepo(db), msgTestSeed{
+		userID:  convSeed.userID,
+		agentID: convSeed.agentID,
+		convID:  conv.ID,
+	}
+}
+
+// === Create / CreateTx 测试 ===
+
+// TestMessageRepo_Create_NoIsReadField 验证 createMessage 不再写 is_read 字段。
+// participants 模型重构后,is_read 字段已从 messages 表 DROP,所有 createMessage
+// 入参不再带 is_read;返回的 Message struct 也没有 IsRead 字段。
+func TestMessageRepo_Create_NoIsReadField(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+
+	// user 发的消息:createMessage 应成功(不写 is_read)
+	userMsg, err := repo.Create(seed.convID, "user", seed.userID, content)
+	if err != nil {
+		t.Fatalf("Create user 消息失败: %v", err)
+	}
+	if userMsg.ID == "" {
+		t.Errorf("应返回非空 message id")
+	}
+	if userMsg.ConversationID != seed.convID {
+		t.Errorf("conversation_id 不匹配: got=%s want=%s", userMsg.ConversationID, seed.convID)
+	}
+
+	// agent 发的消息:createMessage 应成功(不写 is_read)
+	agentMsg, err := repo.Create(seed.convID, "agent", seed.agentID, content)
+	if err != nil {
+		t.Fatalf("Create agent 消息失败: %v", err)
+	}
+	if agentMsg.ID == "" {
+		t.Errorf("应返回非空 message id")
+	}
+}
+
+// TestMessageRepo_CreateTx 验证 CreateTx 在外部事务中工作。
+func TestMessageRepo_CreateTx(t *testing.T) {
+	db := SetupTestDB(t)
+	convSeed := seedConvFixture(t, db)
+	convRepo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+	conv, _ := convRepo.FindOrCreateDM("dm_user_agent", DMMembers{
+		Initiator: ParticipantInput{MemberID: convSeed.userID, MemberType: "user"},
+		Other:     ParticipantInput{MemberID: convSeed.agentID, MemberType: "agent"},
+	})
+
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"tx"}}`)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin 失败: %v", err)
+	}
+	m, err := msgRepo.CreateTx(tx, conv.ID, "user", convSeed.userID, content)
+	if err != nil {
+		t.Fatalf("CreateTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit 失败: %v", err)
+	}
+	if m.ID == "" {
+		t.Errorf("应返回非空 message id")
+	}
+}
+
+// === SoftDelete / LastNonDeleted / ListByConversation 测试 ===
 
 // TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation 过软删除全链路:
 //  1. Create 两条消息
@@ -21,254 +110,119 @@ import (
 //  5. LastNonDeleted 返回未删的那条
 //  6. SoftDelete 剩余那条后 LastNonDeleted 返回 nil
 func TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation(t *testing.T) {
-	db := SetupTestDB(t)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-
-	user, err := userRepo.Create(uniqueShortName(t, "u_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := agentRepo.Create(user.ID, "Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
+	repo, seed := seedMsgFixture(t)
 
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
-	m1, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+	m1, err := repo.Create(seed.convID, "user", seed.userID, content)
 	if err != nil {
 		t.Fatalf("Create m1 失败: %v", err)
 	}
-	m2, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
+	m2, err := repo.Create(seed.convID, "agent", seed.agentID, content)
 	if err != nil {
 		t.Fatalf("Create m2 失败: %v", err)
 	}
 
 	// 两条都能查到
-	list, err := msgRepo.ListByConversation(conv.ID, 50, 0)
+	list, err := repo.ListByConversation(seed.convID, 50, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
 	if len(list) != 2 {
-		t.Fatalf("应有 2 条消息,实际 %d", len(list))
+		t.Fatalf("应有 2 条消息, 实际 %d", len(list))
 	}
 
 	// 软删 m1
-	if err := msgRepo.SoftDelete(m1.ID); err != nil {
+	if err := repo.SoftDelete(m1.ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
-	list, _ = msgRepo.ListByConversation(conv.ID, 50, 0)
+	list, _ = repo.ListByConversation(seed.convID, 50, 0)
 	if len(list) != 1 {
-		t.Fatalf("软删后应剩 1 条,实际 %d", len(list))
+		t.Fatalf("软删后应剩 1 条, 实际 %d", len(list))
 	}
 	if list[0].ID != m2.ID {
-		t.Errorf("剩余应为 m2,实际 %s", list[0].ID)
+		t.Errorf("剩余应为 m2, 实际 %s", list[0].ID)
 	}
 
 	// LastNonDeleted 返回 m2(最新未删)
-	last, err := msgRepo.LastNonDeleted(conv.ID)
+	last, err := repo.LastNonDeleted(seed.convID)
 	if err != nil {
 		t.Fatalf("LastNonDeleted 失败: %v", err)
 	}
 	if last == nil || last.ID != m2.ID {
-		t.Errorf("LastNonDeleted 应为 m2,实际 %v", last)
+		t.Errorf("LastNonDeleted 应为 m2, 实际 %v", last)
 	}
 
 	// Get 能查到已删的吗?设计上 Get 不过滤 deleted_at(权限校验需要知道消息存在与否),
-	// 但 Get 返回的消息可用于判断已删状态。这里只断言能查到(id 存在)。
-	got, err := msgRepo.Get(m1.ID)
+	// 这里只断言能查到(id 存在)。
+	got, err := repo.Get(m1.ID)
 	if err != nil {
 		t.Fatalf("Get m1 失败: %v", err)
 	}
 	if got == nil {
-		t.Fatal("Get 应返回消息(即使已软删),实际 nil")
+		t.Fatal("Get 应返回消息(即使已软删), 实际 nil")
 	}
 
 	// 软删 m2 后 LastNonDeleted 返回 nil
-	if err := msgRepo.SoftDelete(m2.ID); err != nil {
+	if err := repo.SoftDelete(m2.ID); err != nil {
 		t.Fatalf("SoftDelete m2 失败: %v", err)
 	}
-	last, err = msgRepo.LastNonDeleted(conv.ID)
+	last, err = repo.LastNonDeleted(seed.convID)
 	if err != nil {
 		t.Fatalf("LastNonDeleted 全删后失败: %v", err)
 	}
 	if last != nil {
-		t.Errorf("全删后 LastNonDeleted 应为 nil,实际 %v", last)
+		t.Errorf("全删后 LastNonDeleted 应为 nil, 实际 %v", last)
 	}
 }
 
 // TestMessageRepo_SoftDeleteByIDs_GetByIDs 验证批量软删 + 批量查询。
 func TestMessageRepo_SoftDeleteByIDs_GetByIDs(t *testing.T) {
-	db := SetupTestDB(t)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-
-	user, _ := userRepo.Create(uniqueShortName(t, "u_"), "$2a$10$hash")
-	agent, _ := agentRepo.Create(user.ID, "Agent", "secret")
-	conv, _ := convRepo.FindOrCreate(user.ID, agent.ID)
+	repo, seed := seedMsgFixture(t)
 
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"x"}}`)
-	m1, _ := msgRepo.Create(conv.ID, "user", user.ID, content)
-	m2, _ := msgRepo.Create(conv.ID, "user", user.ID, content)
-	m3, _ := msgRepo.Create(conv.ID, "user", user.ID, content)
+	m1, _ := repo.Create(seed.convID, "user", seed.userID, content)
+	m2, _ := repo.Create(seed.convID, "user", seed.userID, content)
+	m3, _ := repo.Create(seed.convID, "user", seed.userID, content)
 
 	// GetByIDs 返回 3 条
-	got, err := msgRepo.GetByIDs([]string{m1.ID, m2.ID, m3.ID})
+	got, err := repo.GetByIDs([]string{m1.ID, m2.ID, m3.ID})
 	if err != nil {
 		t.Fatalf("GetByIDs 失败: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("GetByIDs 应返回 3 条,实际 %d", len(got))
+		t.Fatalf("GetByIDs 应返回 3 条, 实际 %d", len(got))
 	}
 
-	// 批量软删 m1 + m2,返回受影响 2 行
-	n, err := msgRepo.SoftDeleteByIDs([]string{m1.ID, m2.ID})
+	// 批量软删 m1 + m2, 返回受影响 2 行
+	n, err := repo.SoftDeleteByIDs([]string{m1.ID, m2.ID})
 	if err != nil {
 		t.Fatalf("SoftDeleteByIDs 失败: %v", err)
 	}
 	if n != 2 {
-		t.Errorf("受影响行数应为 2,实际 %d", n)
+		t.Errorf("受影响行数应为 2, 实际 %d", n)
 	}
 
 	// ListByConversation 只剩 m3
-	list, _ := msgRepo.ListByConversation(conv.ID, 50, 0)
+	list, _ := repo.ListByConversation(seed.convID, 50, 0)
 	if len(list) != 1 || list[0].ID != m3.ID {
-		t.Errorf("批量软删后应剩 m3,实际 %v", list)
+		t.Errorf("批量软删后应剩 m3, 实际 %v", list)
 	}
 }
 
-// TestMessageRepo_FirstUnread 校验 FirstUnread：
-//   - 有未读 → 返回最早的未读消息；
-//   - 全部已读 → 返回 (nil, nil)；
-//   - 未读消息软删后自动跳过。
-func TestMessageRepo_FirstUnread(t *testing.T) {
-	db := SetupTestDB(t)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
+// === ListBefore / ListAfter / CountBefore 测试 ===
 
-	user, err := userRepo.Create(uniqueShortName(t, "fu_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := agentRepo.Create(user.ID, "FU-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
-
-	// 没消息时返回 nil
-	got, err := msgRepo.FirstUnread(conv.ID)
-	if err != nil {
-		t.Fatalf("FirstUnread 空会话失败: %v", err)
-	}
-	if got != nil {
-		t.Errorf("空会话 FirstUnread 应为 nil，实际 %+v", got)
-	}
-
-	// 造 3 条消息：m1（user 发，is_read=TRUE）、m2（agent 发，is_read=FALSE）、m3（agent 发，is_read=FALSE）
-	// 注：createMessage 对 user 发的消息落地 is_read=TRUE（自发不算未读），agent 发的落地 FALSE。
-	// 这里把 m1~m3 全部 UPDATE 成 TRUE，模拟「全部已读」，再单独 Insert 一条 m4（agent，未读）。
-	m1, err := msgRepo.Create(conv.ID, "user", user.ID, content)
-	if err != nil {
-		t.Fatalf("Create m1 失败: %v", err)
-	}
-	m2, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
-	if err != nil {
-		t.Fatalf("Create m2 失败: %v", err)
-	}
-	m3, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
-	if err != nil {
-		t.Fatalf("Create m3 失败: %v", err)
-	}
-	_ = m1
-	_ = m3
-
-	// 标记会话已读 → 全部消息 is_read=true
-	if err := convRepo.MarkRead(conv.ID, user.ID); err != nil {
-		t.Fatalf("MarkRead 失败: %v", err)
-	}
-
-	// 再插一条 is_read=false 的（DirectSQL 制造"第一条未读"）
-	m4, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
-	if err != nil {
-		t.Fatalf("Create m4 失败: %v", err)
-	}
-	// 创建时默认 is_read=false，但为了不被 m1~m3 干扰（它们也是 false），
-	// 我们手动把 m1~m3 设为 true
-	if _, err := db.Exec(
-		`UPDATE messages SET is_read = TRUE WHERE id = ANY($1)`,
-		pq.Array([]string{m1.ID, m2.ID, m3.ID}),
-	); err != nil {
-		t.Fatalf("UPDATE m1~m3 is_read 失败: %v", err)
-	}
-
-	// 期望 FirstUnread 返回 m4
-	got, err = msgRepo.FirstUnread(conv.ID)
-	if err != nil {
-		t.Fatalf("FirstUnread 失败: %v", err)
-	}
-	if got == nil || got.ID != m4.ID {
-		t.Errorf("期望 m4，实际 %+v", got)
-	}
-
-	// 软删 m4 → FirstUnread 返回 nil（无未读）
-	if err := msgRepo.SoftDelete(m4.ID); err != nil {
-		t.Fatalf("SoftDelete m4 失败: %v", err)
-	}
-	got, err = msgRepo.FirstUnread(conv.ID)
-	if err != nil {
-		t.Fatalf("SoftDelete 后 FirstUnread 失败: %v", err)
-	}
-	if got != nil {
-		t.Errorf("未读已软删应返回 nil，实际 %+v", got)
-	}
-}
-
-// TestMessageRepo_ListBefore 校验游标分页：
-//   - before 为空 → 返回最新 limit 条（newest first）；
-//   - before 有值 → 返回 created_at < before 的消息（newest first）；
+// TestMessageRepo_ListBefore 校验游标分页:
+//   - before 为空 → 返回最新 limit 条(newest first);
+//   - before 有值 → 返回 created_at < before 的消息(newest first);
 //   - 排除软删消息。
 func TestMessageRepo_ListBefore(t *testing.T) {
-	db := SetupTestDB(t)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
-
-	user, err := userRepo.Create(uniqueShortName(t, "lb_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := agentRepo.Create(user.ID, "LB-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
+	repo, seed := seedMsgFixture(t)
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
 
-	// 造 5 条消息（m1 最早，m5 最新）
+	// 造 5 条消息(m1 最早, m5 最新)
 	var msgs []*model.Message
 	for i := 0; i < 5; i++ {
-		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+		m, err := repo.Create(seed.convID, "user", seed.userID, content)
 		if err != nil {
 			t.Fatalf("Create m%d 失败: %v", i, err)
 		}
@@ -277,73 +231,83 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// before 为空 → 返回最新 limit=3 条，应为 [m5, m4, m3]
-	got, err := msgRepo.ListBefore(conv.ID, time.Time{}, 3)
+	// before 为空 → 返回最新 limit=3 条, 应为 [m5, m4, m3]
+	got, err := repo.ListBefore(seed.convID, time.Time{}, 3)
 	if err != nil {
 		t.Fatalf("ListBefore 空 cursor 失败: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("期望 3 条，实际 %d", len(got))
+		t.Fatalf("期望 3 条, 实际 %d", len(got))
 	}
 	if got[0].ID != msgs[4].ID || got[1].ID != msgs[3].ID || got[2].ID != msgs[2].ID {
-		t.Errorf("空 cursor 期望 [m5,m4,m3]，实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
+		t.Errorf("空 cursor 期望 [m5,m4,m3], 实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
 	}
 
-	// before = m3.created_at → 返回 created_at < m3 的消息，应为 [m2, m1]
-	got, err = msgRepo.ListBefore(conv.ID, msgs[2].CreatedAt, 10)
+	// before = m3.created_at → 返回 created_at < m3 的消息, 应为 [m2, m1]
+	got, err = repo.ListBefore(seed.convID, msgs[2].CreatedAt, 10)
 	if err != nil {
 		t.Fatalf("ListBefore m3 失败: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("期望 2 条，实际 %d", len(got))
+		t.Fatalf("期望 2 条, 实际 %d", len(got))
 	}
 	if got[0].ID != msgs[1].ID || got[1].ID != msgs[0].ID {
-		t.Errorf("cursor=m3 期望 [m2,m1]，实际 %s,%s", got[0].ID, got[1].ID)
+		t.Errorf("cursor=m3 期望 [m2,m1], 实际 %s,%s", got[0].ID, got[1].ID)
 	}
 
 	// 软删 m1 → ListBefore 应排除
-	if err := msgRepo.SoftDelete(msgs[0].ID); err != nil {
+	if err := repo.SoftDelete(msgs[0].ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
-	got, err = msgRepo.ListBefore(conv.ID, msgs[2].CreatedAt, 10)
+	got, err = repo.ListBefore(seed.convID, msgs[2].CreatedAt, 10)
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListBefore 失败: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != msgs[1].ID {
-		t.Errorf("软删 m1 后期望 [m2]，实际 %+v", got)
+		t.Errorf("软删 m1 后期望 [m2], 实际 %+v", got)
 	}
 }
 
-// TestMessageRepo_ListAfter 校验"未读方向"游标分页：
-//   - after 有值 → 返回 created_at > after 的消息（ASC，最老在前）；
-//   - 排除软删消息；
-//   - 用于进入会话定位第一条未读（firstUnread + 之后的 N-1 条）。
-func TestMessageRepo_ListAfter(t *testing.T) {
-	db := SetupTestDB(t)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
-
-	user, err := userRepo.Create(uniqueShortName(t, "la_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := agentRepo.Create(user.ID, "LA-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
+// TestMessageRepo_CountBefore 校验 CountBefore 返回 created_at < before 的未删消息数。
+func TestMessageRepo_CountBefore(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
 
-	// 造 5 条消息（m1 最早，m5 最新）
+	var msgs []*model.Message
+	for i := 0; i < 3; i++ {
+		m, _ := repo.Create(seed.convID, "user", seed.userID, content)
+		msgs = append(msgs, m)
+		time.Sleep(2 * time.Millisecond)
+	}
+	// m3 之前的消息数应为 2(m1 + m2)
+	n, err := repo.CountBefore(seed.convID, msgs[2].CreatedAt)
+	if err != nil {
+		t.Fatalf("CountBefore 失败: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("CountBefore(m3) 期望 2, 实际 %d", n)
+	}
+
+	// 软删 m1 → CountBefore(m3) 应返 1
+	if err := repo.SoftDelete(msgs[0].ID); err != nil {
+		t.Fatalf("SoftDelete m1 失败: %v", err)
+	}
+	n, _ = repo.CountBefore(seed.convID, msgs[2].CreatedAt)
+	if n != 1 {
+		t.Errorf("软删 m1 后 CountBefore(m3) 期望 1, 实际 %d", n)
+	}
+}
+
+// TestMessageRepo_ListAfter 校验"未读方向"游标分页:
+//   - after 有值 → 返回 created_at > after 的消息(ASC, 最老在前);
+//   - 排除软删消息。
+func TestMessageRepo_ListAfter(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+
 	var msgs []*model.Message
 	for i := 0; i < 5; i++ {
-		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+		m, err := repo.Create(seed.convID, "user", seed.userID, content)
 		if err != nil {
 			t.Fatalf("Create m%d 失败: %v", i, err)
 		}
@@ -351,92 +315,70 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// after = m2.createdAt - 1ms → 包含 m2 + 之后的（[m2, m3, m4, m5] ASC）
+	// after = m2.createdAt - 1ms → 包含 m2 + 之后的([m2, m3, m4, m5] ASC)
 	after := msgs[1].CreatedAt.Add(-time.Millisecond)
-	got, err := msgRepo.ListAfter(conv.ID, after, 10)
+	got, err := repo.ListAfter(seed.convID, after, 10)
 	if err != nil {
 		t.Fatalf("ListAfter 失败: %v", err)
 	}
 	if len(got) != 4 {
-		t.Fatalf("期望 4 条（m2~m5），实际 %d", len(got))
+		t.Fatalf("期望 4 条(m2~m5), 实际 %d", len(got))
 	}
-	// ASC 顺序：第一条 m2，最后一条 m5
 	if got[0].ID != msgs[1].ID {
-		t.Errorf("ASC 第一条期望 m2，实际 %s", got[0].ID)
+		t.Errorf("ASC 第一条期望 m2, 实际 %s", got[0].ID)
 	}
 	if got[3].ID != msgs[4].ID {
-		t.Errorf("ASC 最后一条期望 m5，实际 %s", got[3].ID)
+		t.Errorf("ASC 最后一条期望 m5, 实际 %s", got[3].ID)
 	}
 
-	// limit 截断：limit=2 → 返回 [m2, m3]
-	got, err = msgRepo.ListAfter(conv.ID, after, 2)
+	// limit 截断:limit=2 → 返回 [m2, m3]
+	got, err = repo.ListAfter(seed.convID, after, 2)
 	if err != nil {
 		t.Fatalf("ListAfter limit=2 失败: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("limit=2 期望 2 条，实际 %d", len(got))
+		t.Fatalf("limit=2 期望 2 条, 实际 %d", len(got))
 	}
 	if got[0].ID != msgs[1].ID || got[1].ID != msgs[2].ID {
-		t.Errorf("limit=2 期望 [m2,m3]，实际 %s,%s", got[0].ID, got[1].ID)
+		t.Errorf("limit=2 期望 [m2,m3], 实际 %s,%s", got[0].ID, got[1].ID)
 	}
 
 	// 软删 m3 → ListAfter 排除
-	if err := msgRepo.SoftDelete(msgs[2].ID); err != nil {
+	if err := repo.SoftDelete(msgs[2].ID); err != nil {
 		t.Fatalf("SoftDelete m3 失败: %v", err)
 	}
-	got, err = msgRepo.ListAfter(conv.ID, after, 10)
+	got, err = repo.ListAfter(seed.convID, after, 10)
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListAfter 失败: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("软删 m3 后期望 3 条，实际 %d", len(got))
+		t.Fatalf("软删 m3 后期望 3 条, 实际 %d", len(got))
 	}
 	if got[0].ID != msgs[1].ID || got[1].ID != msgs[3].ID || got[2].ID != msgs[4].ID {
-		t.Errorf("软删后期望 [m2,m4,m5]，实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
+		t.Errorf("软删后期望 [m2,m4,m5], 实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
 	}
 }
 
-// TestMessageRepo_Create_IsReadSemantics 验证 is_read 字段语义:
-// user 发的消息一律视为已读(TRUE,不参与未读计数),agent 发的消息初始未读(FALSE)。
-// 这层语义收敛后,client 端只需 !msg.isRead 单一过滤即可,
-// 不再需要 senderType 兜底(参见 chat_page.dart::_checkUnreadSeen)。
-func TestMessageRepo_Create_IsReadSemantics(t *testing.T) {
-	db := SetupTestDB(t)
-	userRepo := NewUserRepo(db)
-	agentRepo := NewAgentRepo(db)
-	convRepo := NewConversationRepo(db)
-	msgRepo := NewMessageRepo(db)
+// TestMessageRepo_Get_NotExists 验证 Get 不存在返 (nil, nil)。
+func TestMessageRepo_Get_NotExists(t *testing.T) {
+	repo, _ := seedMsgFixture(t)
+	got, err := repo.Get("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Errorf("不存在应返 nil err, 实际 %v", err)
+	}
+	if got != nil {
+		t.Errorf("不存在应返 nil, 实际 %+v", got)
+	}
+}
 
-	user, err := userRepo.Create(uniqueShortName(t, "ir_"), "$2a$10$hash")
+// TestMessageRepo_LastNonDeleted_NoMessages 验证空会话(无消息/全删)LastNonDeleted 返 nil。
+func TestMessageRepo_LastNonDeleted_NoMessages(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
+	last, err := repo.LastNonDeleted(seed.convID)
 	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
+		t.Fatalf("LastNonDeleted 空会话失败: %v", err)
 	}
-	agent, err := agentRepo.Create(user.ID, "IR-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
-
-	// user 发的消息 → is_read 必须为 TRUE
-	userMsg, err := msgRepo.Create(conv.ID, "user", user.ID, content)
-	if err != nil {
-		t.Fatalf("Create user 消息失败: %v", err)
-	}
-	if !userMsg.IsRead {
-		t.Errorf("user 发的消息 is_read 期望 TRUE,实际 FALSE(字段语义: user 自发不参与未读计数)")
-	}
-
-	// agent 发的消息 → is_read 必须为 FALSE
-	agentMsg, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
-	if err != nil {
-		t.Fatalf("Create agent 消息失败: %v", err)
-	}
-	if agentMsg.IsRead {
-		t.Errorf("agent 发的消息 is_read 期望 FALSE,实际 TRUE(agent 发的初始未读)")
+	if last != nil {
+		t.Errorf("空会话 LastNonDeleted 应返 nil, 实际 %+v", last)
 	}
 }

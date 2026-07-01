@@ -24,13 +24,12 @@ type participantTestSeed struct {
 	conv2ID  string // 第二个 conversation(测 ListByMember 跨会话用)
 }
 
-// seedParticipantsTestDB 起 DB + 跑 015 + seed 基础数据。
+// seedParticipantsTestDB 起 DB(已自动应用 015) + seed 基础数据。
 // userA/userB 必填,agent owner 设为 userA(满足 agents.owner_id 外键约束)。
 // 两个 conversation 都不绑 user_id/agent_id(015 后这俩字段已删),由测试自行 AddParticipants。
 func seedParticipantsTestDB(t *testing.T) (*sql.DB, *ParticipantRepo, participantTestSeed) {
 	t.Helper()
-	db := SetupTestDB(t)
-	ExecMigration015(t, db) // 015 默认被 SetupTestDB 跳过,这里手动跑切到 participants 模型
+	db := SetupTestDB(t) // Batch 1 完成后 SetupTestDB 默认应用 015
 	repo := NewParticipantRepo(db)
 
 	var seed participantTestSeed

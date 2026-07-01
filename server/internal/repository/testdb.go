@@ -15,32 +15,43 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// migrationSkipPrefixes 列出 SetupTestDB 默认跳过的 migration 文件前缀。
+// migrationSkipPrefixes 用于在 schema 重构过渡期跳过特定 migration。
 //
-// 背景:migration 015 是 participants 模型的不可逆 schema 重构,会 DROP
-// conversations.user_id/agent_id/unread_count/hidden_at/pinned_at 和 messages.is_read
-// 等老字段。Batch 1 后续 task 才会改造 model/repo/business 代码切换到新 schema,
-// 在此窗口期内,所有引用老字段的老 repo 测试必须继续工作。
+// 当前为空:Batch 1 已完成(Task 1.6 收尾),所有 repo 都跑在新 schema 上,
+// SetupTestDB 默认应用完整 001-015 migration 链。
 //
-// 因此 SetupTestDB 默认只跑到 014(老 schema),保证现有测试不受影响。
-// migration_015_test 用 SetupTestDB(跑到 014) seed 老数据后,手动 db.Exec 执行
-// 015 SQL 验证回填逻辑。
-//
-// 等 Batch 1 完成(代码全部切换到新 schema),从此切片移除 "015_" 即可让
-// SetupTestDB 自动应用 015。
-var migrationSkipPrefixes = []string{"015_"}
+// 如需跳过某 migration(未来 schema 重构过渡期),加入前缀(如 "016_")。
+// isMigrationSkipped 用 strings.HasPrefix 做前缀匹配。
+var migrationSkipPrefixes = []string{}
 
 // SetupTestDB 起一个一次性 Postgres 容器，跑 migrations，返回 *sql.DB。
 // 跳过条件：CI=1 时跳过（在 CI 上跑 docker 太重）；本地默认启用。
 //
-// 默认行为:跑 migrations 目录下所有 .sql,但跳过 migrationSkipPrefixes 列出的
-// 前缀(目前是 015_participants_model.sql,见注释)。
+// 默认行为:跑 migrations 目录下所有 .sql(当前 migrationSkipPrefixes 为空,
+// 即完整跑 001-015 链)。
+//
+// migration_015_test 验证「老 schema seed + 跑 015 回填」逻辑,需要先在 001-014
+// 老 schema 上 seed 数据,用 SetupTestDBSkipping015 拿到只跑 001-014 的 DB。
 func SetupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	return setupTestDBWithSkip(t, nil)
+}
+
+// SetupTestDBSkipping015 起 DB 并跑 001-014,跳过 015。
+// 仅 migration_015_test 用(在老 schema 上 seed 数据,再手动 ExecMigration015 验证回填)。
+// 业务测试应直接调 SetupTestDB(已自动应用 015)。
+func SetupTestDBSkipping015(t *testing.T) *sql.DB {
+	t.Helper()
+	return setupTestDBWithSkip(t, []string{"015_"})
+}
+
+// setupTestDBWithSkip 是 SetupTestDB / SetupTestDBSkipping015 的共享实现。
+// extraSkip 在全局 migrationSkipPrefixes 基础上额外临时跳过的前缀。
+func setupTestDBWithSkip(t *testing.T, extraSkip []string) *sql.DB {
 	t.Helper()
 	// 设计权衡：CI=1 时跳过 testcontainers 测试。
 	// 原因：CI runner 通常无法直接访问 Docker daemon（需 docker-in-docker 或 socket 映射），
 	// 配置成本高。本地开发默认启用，保证 repo 层测试有真库回归保护。
-	// 后续接入 CI 时如果 runner 支持 docker，改为相反方向（默认开、显式 SKIP_TESTCONTAINERS=1 才跳过）。
 	if os.Getenv("CI") == "1" {
 		t.Skip("CI 环境跳过 testcontainers 测试")
 	}
@@ -89,13 +100,14 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		time.Sleep(time.Second)
 	}
 
-	// 跑所有 migrations(跳过 migrationSkipPrefixes 列出的前缀)
+	// 跑所有 migrations(跳过 migrationSkipPrefixes + extraSkip 列出的前缀)
 	migrations, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.sql"))
 	if err != nil {
 		t.Fatalf("glob migrations 失败: %v", err)
 	}
 	for _, m := range migrations {
-		if isMigrationSkipped(filepath.Base(m)) {
+		name := filepath.Base(m)
+		if isMigrationSkipped(name) || isAnyPrefixMatched(name, extraSkip) {
 			continue
 		}
 		sql, err := os.ReadFile(m)
@@ -112,7 +124,12 @@ func SetupTestDB(t *testing.T) *sql.DB {
 
 // isMigrationSkipped 判断给定 migration 文件名是否被 SetupTestDB 默认跳过。
 func isMigrationSkipped(name string) bool {
-	for _, p := range migrationSkipPrefixes {
+	return isAnyPrefixMatched(name, migrationSkipPrefixes)
+}
+
+// isAnyPrefixMatched 通用前缀匹配 helper。
+func isAnyPrefixMatched(name string, prefixes []string) bool {
+	for _, p := range prefixes {
 		if strings.HasPrefix(name, p) {
 			return true
 		}

@@ -1,9 +1,14 @@
-//go:build legacy_repos
-
-// 临时屏蔽:Batch 1 中途状态,本文件引用 model.Conversation 老字段(UserID/AgentID)
-// 和 model.ConversationListItem 老字段(IsPinned),Task 1.2 把这些字段删了但本文件
-// 还没改造(Task 1.6 才会做)。加 build tag 暂时绕开编译,让 Task 1.3-1.5 的 repo 测试能跑。
-// Task 1.6 移除此 build tag。
+// ConversationRepo 操作 conversations 表(N 方参与者通用模型)。
+//
+// participants 模型重构后,本 repo 职责瘦身:
+//   - 不再读写 user_id / agent_id / unread_count / hidden_at / pinned_at(全部下沉
+//     到 conversation_participants 表,由 ParticipantRepo 管)
+//   - 不再管「未读 / 已读 / 置顶 / 隐藏」状态(由 ParticipantRepo / DeliveryRepo 接管)
+//   - 新增 FindOrCreateDM(按 type + 双方 member 去重)和 CreateTx(群聊用)
+//   - ListForUser JOIN participants 取个人维度 unread_count/pinned_at/hidden_at,
+//     并用 subquery 取 dm_user_agent 的对端 agent 摘要
+//
+// 设计见 docs/superpowers/specs/2026-07-02-participants-model-refactor-design.md §3.5。
 package repository
 
 import (
@@ -23,113 +28,66 @@ func NewConversationRepo(db *sql.DB) *ConversationRepo {
 	return &ConversationRepo{db: db}
 }
 
-// FindOrCreate 按 (user_id, agent_id) 唯一约束获取会话；不存在则创建。
-// last_message_content 在新建时为 NULL（无消息），scan 到 json.RawMessage 得到 nil 切片。
+// GetByID 返回单个会话(只读 conversations 表本身字段);不存在返 (nil, nil)。
+// 个人维度字段(unread_count/pinned_at/hidden_at)在 participants 表,本方法不返回,
+// 由调用方按需用 ParticipantRepo.Get 取。
 //
-// 实现细节：用 ON CONFLICT DO NOTHING + RETURNING。
-// - 新插入：RETURNING 返回新行，1 次 roundtrip。
-// - 已存在：DO NOTHING 让 RETURNING 不返回任何行（sql.ErrNoRows），此时二次 SELECT。
-//
-// 关键 WHY：之前的实现用 `DO UPDATE SET last_message_at = NOW()`，会让"再次打开已有
-// 空会话"也污染 last_message_at（无新消息却更新时间戳）。虽然 IM 列表当前用
-// `WHERE last_message_content IS NOT NULL` 过滤掉空会话，但该无意义更新仍可能干扰排序。
-// 改用 DO NOTHING 保持原 last_message_at，逻辑更纯。
-func (r *ConversationRepo) FindOrCreate(userID, agentID string) (*model.Conversation, error) {
-	c := &model.Conversation{}
-	err := r.db.QueryRow(
-		`INSERT INTO conversations (user_id, agent_id)
-		 VALUES ($1, $2)
-		 ON CONFLICT (user_id, agent_id) DO NOTHING
-		 RETURNING id, user_id, agent_id, last_message_content, last_message_at, created_at`,
-		userID, agentID,
-	).Scan(&c.ID, &c.UserID, &c.AgentID, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
-	if err == nil {
-		return c, nil // 新插入
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return r.findByUserAndAgent(userID, agentID)
-	}
-	return nil, err
-}
-
-// findByUserAndAgent 命中已存在会话时的二次 SELECT。私有，仅 FindOrCreate 调用。
-// 同时取消隐藏(hidden_at = NULL):用户发消息表示重新激活该会话。
-func (r *ConversationRepo) findByUserAndAgent(userID, agentID string) (*model.Conversation, error) {
-	c := &model.Conversation{}
-	err := r.db.QueryRow(
-		`SELECT id, user_id, agent_id, last_message_content, last_message_at, created_at
-		 FROM conversations WHERE user_id = $1 AND agent_id = $2`,
-		userID, agentID,
-	).Scan(&c.ID, &c.UserID, &c.AgentID, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		// 理论上不会发生：DO NOTHING 后该行必然存在。
-		// 出现即并发删除或唯一约束被改，按 fail-fast 暴露。
-		return nil, err
-	}
-	if err != nil {
-		return nil, err
-	}
-	// 取消隐藏:用户发消息 = 重新激活会话。pinned_at 不动(置顶状态保持)。
-	_, _ = r.db.Exec(
-		`UPDATE conversations SET hidden_at = NULL WHERE id = $1`,
-		c.ID,
-	)
-	return c, nil
-}
-
-// ListByUser 按最近消息时间倒序返回该用户所有会话。
-// SQL 字段顺序与 Scan 顺序必须一致（last_message_content 在 last_message_at 之前）。
-func (r *ConversationRepo) ListByUser(userID string) ([]model.Conversation, error) {
-	rows, err := r.db.Query(
-		`SELECT id, user_id, agent_id, last_message_content, last_message_at, created_at
-		 FROM conversations WHERE user_id = $1 ORDER BY last_message_at DESC`,
-		userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var convos []model.Conversation
-	for rows.Next() {
-		var c model.Conversation
-		if err := rows.Scan(&c.ID, &c.UserID, &c.AgentID, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt); err != nil {
-			return nil, err
-		}
-		convos = append(convos, c)
-	}
-	return convos, nil
-}
-
-// GetByID 返回单个会话；不存在时 (nil, nil)。
+// title/avatar_url 是可空字段(1-1 dm 为 NULL,群聊有值),用 sql.NullString scan
+// 再转 string(NULL → 空串),保持 model.Conversation 字段类型为 string 不变。
 func (r *ConversationRepo) GetByID(id string) (*model.Conversation, error) {
 	c := &model.Conversation{}
+	var title, avatarURL sql.NullString
 	err := r.db.QueryRow(
-		`SELECT id, user_id, agent_id, last_message_content, last_message_at, created_at FROM conversations WHERE id = $1`,
+		`SELECT id, type, title, avatar_url, last_message_content, last_message_at, created_at
+		 FROM conversations WHERE id = $1`,
 		id,
-	).Scan(&c.ID, &c.UserID, &c.AgentID, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
+	).Scan(&c.ID, &c.Type, &title, &avatarURL, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	c.Title = title.String
+	c.AvatarURL = avatarURL.String
+	return c, nil
 }
 
-// ListWithAgent 列出用户所有有消息且未隐藏的会话（IM 风格列表）。
-// 过滤:hidden_at IS NULL(软删除不显示) + last_message_content IS NOT NULL(无消息不进列表)。
-// 排序:置顶组在前(pinned_at IS NOT NULL DESC),组内按 last_message_at DESC。
-// SELECT 不含 a.secret_key / a.owner_id：IM 列表无需敏感字段，避免泄漏。
-// Scan 顺序与 SELECT 列顺序严格一致：
-//  1. c.id, c.last_message_content, c.last_message_at, c.created_at, c.unread_count, (pinned_at IS NOT NULL) is_pinned
-//  2. a.id, a.name, a.avatar_url, a.bio, a.status, a.created_at
-func (r *ConversationRepo) ListWithAgent(userID string) ([]model.ConversationListItem, error) {
-	rows, err := r.db.Query(
-		`SELECT c.id, c.last_message_content, c.last_message_at, c.created_at, c.unread_count,
-		        (c.pinned_at IS NOT NULL) AS is_pinned,
-		        a.id, a.name, a.avatar_url, a.bio, a.status, a.created_at
-		 FROM conversations c
-		 JOIN agents a ON a.id = c.agent_id
-		 WHERE c.user_id = $1 AND c.last_message_content IS NOT NULL AND c.hidden_at IS NULL
-		 ORDER BY (c.pinned_at IS NOT NULL) DESC, c.last_message_at DESC`,
+// ListForUser 列出某 user 参与的所有有消息且未隐藏的会话(IM 风格列表)。
+//
+// JOIN conversation_participants 取个人维度 unread_count / pinned_at / hidden_at;
+// 用 subquery 取 dm_user_agent 场景的对端 agent 摘要(group_* 场景由应用层组装
+// Participants 字段,Agent 留 nil)。
+//
+// 过滤:p.hidden_at IS NULL(用户维度软删除) + c.last_message_content IS NOT NULL(无消息不进列表)。
+// 排序:置顶在前(pinned_at DESC NULLS LAST),组内按 last_message_at DESC。
+//
+// 应用层组装:调用方拿到 items 后,用 BatchLoadParticipantSummaries 一次性批量查
+// participants 摘要,group by conv_id 拼装到 ConversationListItem.Participants。
+//
+// SQL 见 spec §3.5。subquery 取「任一 agent」(LIMIT 1),dm_user_agent 通常只有 1 个。
+func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListItem, error) {
+	rows, err := r.db.Query(`
+		SELECT c.id, c.type, c.title, c.avatar_url,
+		       c.last_message_content, c.last_message_at, c.created_at,
+		       p.unread_count, p.pinned_at, p.hidden_at,
+		       (SELECT ag.id FROM agents ag
+		          JOIN conversation_participants pa
+		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
+		          LIMIT 1) AS agent_id,
+		       (SELECT ag.name FROM agents ag
+		          JOIN conversation_participants pa
+		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
+		          LIMIT 1) AS agent_name,
+		       (SELECT ag.avatar_url FROM agents ag
+		          JOIN conversation_participants pa
+		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
+		          LIMIT 1) AS agent_avatar
+		FROM conversations c
+		JOIN conversation_participants p
+		  ON p.conv_id = c.id AND p.member_id = $1 AND p.member_type = 'user'
+		WHERE p.hidden_at IS NULL AND c.last_message_content IS NOT NULL
+		ORDER BY p.pinned_at DESC NULLS LAST, c.last_message_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -139,26 +97,84 @@ func (r *ConversationRepo) ListWithAgent(userID string) ([]model.ConversationLis
 
 	var items []model.ConversationListItem
 	for rows.Next() {
-		var item model.ConversationListItem
+		var (
+			item         model.ConversationListItem
+			titleNS      sql.NullString
+			avatarURLNS  sql.NullString
+			agentID      sql.NullString
+			agentName    sql.NullString
+			agentAvatar  sql.NullString
+		)
 		if err := rows.Scan(
-			&item.ID, &item.LastMessageContent, &item.LastMessageAt, &item.CreatedAt, &item.UnreadCount,
-			&item.IsPinned,
-			&item.Agent.ID, &item.Agent.Name, &item.Agent.AvatarURL, &item.Agent.Bio, &item.Agent.Status, &item.Agent.CreatedAt,
+			&item.ID, &item.Type, &titleNS, &avatarURLNS,
+			&item.LastMessageContent, &item.LastMessageAt, &item.CreatedAt,
+			&item.UnreadCount, &item.PinnedAt, &item.HiddenAt,
+			&agentID, &agentName, &agentAvatar,
 		); err != nil {
 			return nil, err
 		}
+		item.Title = titleNS.String
+		item.AvatarURL = avatarURLNS.String
+		// dm_user_agent 才填 Agent 摘要;其他 type 留 nil(UI 走 Title/AvatarURL)
+		if agentID.Valid {
+			item.Agent = &model.AgentSummary{
+				ID:        agentID.String,
+				Name:      agentName.String,
+				AvatarURL: agentAvatar.String,
+			}
+		}
 		items = append(items, item)
 	}
-	// rows.Err 处理迭代过程中的错误（DB 连接断开等）
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
-// UpdateLastMessage 在消息持久化后调用，更新会话的 last_message_content 与 last_message_at。
-// 写入时间用 NOW()（数据库时间），避免应用服务器时钟不一致。
-// content 是消息的完整 JSON（含 msg_type/data 字段）。
+// BatchLoadParticipantSummaries 批量查多个会话的 participant 摘要,group by conv_id 拼装。
+// 用一条 SQL(LEFT JOIN users + LEFT JOIN agents 按 member_type CASE 取摘要)避免 N+1。
+// 调用方(ListForUser 的上层 handler)把结果按 conv_id 分配到每个 ConversationListItem.Participants。
+//
+// convIDs 为空时返空 map 不报错(防御性,避免 ANY($1::uuid[]) 空 array 语义歧义)。
+func (r *ConversationRepo) BatchLoadParticipantSummaries(convIDs []string) (map[string][]model.ParticipantSummary, error) {
+	result := map[string][]model.ParticipantSummary{}
+	if len(convIDs) == 0 {
+		return result, nil
+	}
+	rows, err := r.db.Query(`
+		SELECT p.conv_id, p.member_id, p.member_type, p.role,
+		       CASE WHEN p.member_type = 'user' THEN u.username ELSE a.name END AS username,
+		       CASE WHEN p.member_type = 'user' THEN COALESCE(u.nickname, u.username) ELSE a.name END AS nickname,
+		       CASE WHEN p.member_type = 'user' THEN COALESCE(u.avatar_url, '') ELSE COALESCE(a.avatar_url, '') END AS avatar_url
+		FROM conversation_participants p
+		LEFT JOIN users u ON p.member_type = 'user' AND u.id = p.member_id
+		LEFT JOIN agents a ON p.member_type = 'agent' AND a.id = p.member_id
+		WHERE p.conv_id = ANY($1::uuid[])`,
+		pq.Array(convIDs),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			convID string
+			ps     model.ParticipantSummary
+		)
+		if err := rows.Scan(
+			&convID, &ps.MemberID, &ps.MemberType, &ps.Role,
+			&ps.Username, &ps.Nickname, &ps.AvatarURL,
+		); err != nil {
+			return nil, err
+		}
+		result[convID] = append(result[convID], ps)
+	}
+	return result, rows.Err()
+}
+
+// UpdateLastMessage 在消息持久化后调用,更新会话的 last_message_content 与 last_message_at。
+// 写入时间用 NOW()(数据库时间),避免应用服务器时钟不一致。
+// content 是消息的完整 JSON(含 msg_type/data 字段)。
 func (r *ConversationRepo) UpdateLastMessage(convID string, content json.RawMessage) error {
 	_, err := r.db.Exec(
 		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`,
@@ -178,13 +194,13 @@ func (r *ConversationRepo) ClearLastMessage(convID string) error {
 	return err
 }
 
-// BeginTx 启动一个事务，供 MessageProcessor 在事务内同时写消息 + 更新缓存。
+// BeginTx 启动一个事务,供 MessageProcessor 在事务内同时写消息 + 更新缓存 + 写 deliveries + 更新 participants。
 func (r *ConversationRepo) BeginTx() (*sql.Tx, error) {
 	return r.db.Begin()
 }
 
-// UpdateLastMessageTx 与 UpdateLastMessage 行为一致，但在外部事务中执行。
-// 调用方负责 Commit/Rollback。用于保证"写消息 + 更新缓存"的原子性。
+// UpdateLastMessageTx 与 UpdateLastMessage 行为一致,但在外部事务中执行。
+// 调用方负责 Commit/Rollback。用于保证"写消息 + 写 deliveries + 更新 participants + 更新缓存"的原子性。
 func (r *ConversationRepo) UpdateLastMessageTx(tx *sql.Tx, convID string, content json.RawMessage) error {
 	_, err := tx.Exec(
 		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`,
@@ -193,212 +209,134 @@ func (r *ConversationRepo) UpdateLastMessageTx(tx *sql.Tx, convID string, conten
 	return err
 }
 
-// IncrUnreadTx 在外部事务内把会话 unread_count++ 并取消隐藏。
-// 调用方（MessageProcessor）负责 Commit。
-// agent → user 方向调用:新消息来时会话自动恢复显示(即使之前被用户软删除)。
+// CreateTx 在外部事务中创建一个会话(只 INSERT conversations 表,不加 participants)。
+// 群聊创建用:handler 调本方法后,接着调 ParticipantRepo.AddParticipantsTx 加成员。
+// 1-1 dm 用 FindOrCreateDM(内部会处理 participants)。
 //
-// TODO(participants-refactor): 当前「未读 = user 未读 agent 的消息」假设,
-// 引入 conversation_participants 模型后,unread_count 应移到 participants 表,
-// 按每个 participant 各自维护。grep 此 tag 可定位所有需改点。
-func (r *ConversationRepo) IncrUnreadTx(tx *sql.Tx, convID string) error {
-	_, err := tx.Exec(
-		`UPDATE conversations
-		 SET unread_count = unread_count + 1, hidden_at = NULL
-		 WHERE id = $1`,
-		convID,
-	)
-	return err
+// 调用方负责 Commit/Rollback。
+// typeStr 取值见 spec:dm_user_user / dm_user_agent / group_user / group_mixed。
+// title/avatarURL 仅群聊用,1-1 为空串(传入空串 → DB 存 NULL)。
+func (r *ConversationRepo) CreateTx(tx *sql.Tx, typeStr, title, avatarURL string) (*model.Conversation, error) {
+	c := &model.Conversation{}
+	var titleNS, avatarURLNS sql.NullString
+	err := tx.QueryRow(
+		`INSERT INTO conversations (type, title, avatar_url)
+		 VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+		 RETURNING id, type, title, avatar_url, last_message_content, last_message_at, created_at`,
+		typeStr, title, avatarURL,
+	).Scan(&c.ID, &c.Type, &titleNS, &avatarURLNS, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Title = titleNS.String
+	c.AvatarURL = avatarURLNS.String
+	return c, nil
 }
 
-// MarkRead 把指定会话的 unread_count 重置为 0。
-// 同时把该会话所有未读消息的 is_read 置 TRUE。
-// user_id 校验防越权：其他用户调本接口返回 sql.ErrNoRows。
-//
-// TODO(participants-refactor): 「重置 unread_count=0」目前只重置 user 视角。
-// participants 模型下需要按 participant 维度重置,且应记录 last_read_message_id 游标。
-func (r *ConversationRepo) MarkRead(convID, userID string) error {
-	res, err := r.db.Exec(
-		`UPDATE conversations SET unread_count = 0 WHERE id = $1 AND user_id = $2`,
-		convID, userID,
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-	// 同步标记消息已读（best effort，失败不致命）
-	_, _ = r.db.Exec(
-		`UPDATE messages SET is_read = TRUE WHERE conversation_id = $1 AND is_read = FALSE`,
-		convID,
-	)
-	return nil
+// DMMembers 是 FindOrCreateDM 的入参。
+// Initiator 是发起方(role=owner),Other 是对方(role=member)。
+// 显式区分 Initiator/Other 是为了让 owner 角色不依赖参数顺序。
+type DMMembers struct {
+	Initiator ParticipantInput // 发起方(user 通常是 owner)
+	Other     ParticipantInput // 对方
 }
 
-// MarkMessagesRead 批量按 messageId 标记已读，并重算会话 unread_count。
-// 用于"用户上滑阅读未读消息时按 messageId 同步进度"。
+// FindOrCreateDM 1-1 单聊按 (type + 两方 member set) 去重:
+//   - 已存在 → 返回已有会话(只读不改,不加新 participants 行)
+//   - 不存在 → CreateTx 新建 + 在同事务内 INSERT 2 行 participants
 //
-// 事务保证：
-//  1. UPDATE messages SET is_read=TRUE WHERE id IN(...) AND conversation_id AND sender_type='agent'
-//  2. 重算 unread_count = 该会话 remaining 未读 agent 消息数（含 deleted_at IS NULL 过滤）
-//  3. UPDATE conversations SET unread_count=$new WHERE id AND user_id（越权 0 行 → ErrNoRows）
+// 内部直接 SQL INSERT participants(不调 ParticipantRepo),原因:
+//  1. 只有 2 行固定 INSERT,代码量小;
+//  2. 避免 repo 间循环依赖(ConversationRepo 持有 ParticipantRepo 实例);
+//  3. 同事务保证「会话 + 成员」原子性。
 //
-// 越权防护：conversation_id 必须属于该 user（UPDATE conversations 的 user_id 校验 + 空 ID 分支的 SELECT 校验）。
-// messageIDs 中不属于该会话的 id 自动被 WHERE 过滤（不报错，幂等）。
-// 空 messageIDs 直接 SELECT 当前 unread_count，不执行 UPDATE（防御性，避免 IN () 语法错）。
+// role 约定:Initiator=owner,Other=member。dm_user_user / dm_user_agent 都适用
+// (发起方 user 是 owner,对端 user 或 agent 是 member)。
 //
-// 返回新的 unread_count 供调用方同步本地。会话不存在或越权时返回 sql.ErrNoRows。
-func (r *ConversationRepo) MarkMessagesRead(convID, userID string, messageIDs []string) (int, error) {
-	tx, err := r.BeginTx()
+// 事务所有权归 FindOrCreateDM 内部:不接收外部 tx,内部 Begin/Commit/Rollback。
+// 因为本方法的语义是「得到一个可用的 dm 会话」,调用方(handler)拿到结果后
+// 直接用,不需要把会话创建和后续操作(发消息等)绑在同一事务里。
+//
+// race window:并发 FindOrCreateDM 同 (type, members) 时,可能两方都进入「不存在」
+// 分支,第二个 INSERT conversations 会因无 UNIQUE 约束成功(产生重复会话)。
+// 这是已知限制,本期用应用层 mutex 或后续加 UNIQUE(type, canonical_member_set) 修复。
+// 不在事务内加 SELECT FOR UPDATE,因为 conversations 表无相关唯一键可锁。
+func (r *ConversationRepo) FindOrCreateDM(typeStr string, members DMMembers) (*model.Conversation, error) {
+	tx, err := r.db.Begin()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer tx.Rollback() // commit 后 noop
 
-	// 空 messageIDs：直接返回当前 unread_count（防御性，避免 ANY($1::text[]) 空 array 语义歧义）
-	// SELECT 带 user_id 校验，越权同样返 sql.ErrNoRows
-	if len(messageIDs) == 0 {
-		var current int
-		err = tx.QueryRow(
-			`SELECT unread_count FROM conversations WHERE id = $1 AND user_id = $2`,
-			convID, userID,
-		).Scan(&current)
-		if err != nil {
-			return 0, err
-		}
+	// 1. 查已存在的 dm(同 type + 同两方 participants)
+	var convID string
+	err = tx.QueryRow(`
+		SELECT c.id FROM conversations c
+		WHERE c.type = $1
+		  AND EXISTS(SELECT 1 FROM conversation_participants p
+		             WHERE p.conv_id = c.id AND p.member_id = $2 AND p.member_type = $3)
+		  AND EXISTS(SELECT 1 FROM conversation_participants p
+		             WHERE p.conv_id = c.id AND p.member_id = $4 AND p.member_type = $5)
+		LIMIT 1`,
+		typeStr,
+		members.Initiator.MemberID, members.Initiator.MemberType,
+		members.Other.MemberID, members.Other.MemberType,
+	).Scan(&convID)
+
+	if err == nil {
+		// 已存在,提交只读事务并返回会话
 		if err := tx.Commit(); err != nil {
-			return 0, err
+			return nil, err
 		}
-		return current, nil
+		return r.GetByID(convID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
 
-	// TODO(participants-refactor): 此处 sender_type='agent' 硬编码假设「未读 = user 未读 agent 的消息」。
-	// 引入 conversation_participants 模型后,改为按 participant 维度过滤(只标对应接收方的消息)。
-	//
-	// 1. 批量标记消息已读（只标记该会话的 agent 消息，防越权 + 防误标 user 消息）
-	// messages.id 是 UUID 类型，必须 cast 成 uuid[]（text[] 会触发 "operator does not exist: uuid = text"）
-	// 用 ANY($1::uuid[]) 比 IN (...) 更适合动态数组（lib/pq Array 编码）
-	_, err = tx.Exec(
-		`UPDATE messages SET is_read = TRUE
-		 WHERE id = ANY($1::uuid[])
-		   AND conversation_id = $2
-		   AND sender_type = 'agent'
-		   AND is_read = FALSE`,
-		pq.Array(messageIDs), convID,
-	)
+	// 2. 不存在,创建会话
+	conv, err := r.CreateTx(tx, typeStr, "", "")
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	// 2. 重算 unread_count：该会话 remaining 未读 agent 消息数
-	// 命中 idx_messages_conv_unread partial index（migration 013，仅含未读+未删的行，
-	// 扫描量 O(log N + 未读数)）。
-	var newUnread int
-	err = tx.QueryRow(
-		`SELECT COUNT(*) FROM messages
-		 WHERE conversation_id = $1
-		   AND sender_type = 'agent'
-		   AND is_read = FALSE
-		   AND deleted_at IS NULL`,
-		convID,
-	).Scan(&newUnread)
+	// 3. 加 2 行 participants(Initiator=owner, Other=member)
+	stmt, err := tx.Prepare(`
+		INSERT INTO conversation_participants (conv_id, member_id, member_type, role)
+		VALUES ($1, $2, $3, $4)
+	`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-
-	// 3. 更新 conversations.unread_count（带 user_id 校验防越权）
-	// 0 行 = 会话不存在或不属于该 user → ErrNoRows（让 handler 返 404）
-	convRes, err := tx.Exec(
-		`UPDATE conversations SET unread_count = $3
-		 WHERE id = $1 AND user_id = $2`,
-		convID, userID, newUnread,
-	)
-	if err != nil {
-		return 0, err
-	}
-	convRows, err := convRes.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if convRows == 0 {
-		return 0, sql.ErrNoRows
+	defer stmt.Close()
+	for _, m := range []struct {
+		input ParticipantInput
+		role  string
+	}{
+		{members.Initiator, "owner"},
+		{members.Other, "member"},
+	} {
+		if _, err := stmt.Exec(conv.ID, m.input.MemberID, m.input.MemberType, m.role); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return newUnread, nil
+	return conv, nil
 }
 
-// GetUnreadCount 返回会话的未读数。带 user_id 校验，越权返回 sql.ErrNoRows。
-// 单独提供是因为 model.Conversation 没有 UnreadCount 字段，GetByID 拿不到该值。
-// 供 UnreadInfo handler 使用。
-func (r *ConversationRepo) GetUnreadCount(convID, userID string) (int, error) {
-	var count int
-	err := r.db.QueryRow(
-		`SELECT unread_count FROM conversations WHERE id = $1 AND user_id = $2`,
-		convID, userID,
-	).Scan(&count)
-	return count, err
-}
-
-// Pin 把会话置顶。user_id 校验防越权:他人会话返回 sql.ErrNoRows。
-func (r *ConversationRepo) Pin(convID, userID string) error {
-	res, err := r.db.Exec(
-		`UPDATE conversations SET pinned_at = NOW() WHERE id = $1 AND user_id = $2`,
-		convID, userID,
+// UpdateProfile 更新会话自身的 title / avatar_url(群聊用)。
+// 用 COALESCE(NULLIF) 模式:空串=不动(不支持清空,语义同 AgentRepo.Update)。
+// 越权防护(仅 owner/admin 可改)由 handler 层做,本方法只做字段更新。
+func (r *ConversationRepo) UpdateProfile(convID, title, avatarURL string) error {
+	_, err := r.db.Exec(
+		`UPDATE conversations
+		 SET title = COALESCE(NULLIF($2, ''), title),
+		     avatar_url = COALESCE(NULLIF($3, ''), avatar_url)
+		 WHERE id = $1`,
+		convID, title, avatarURL,
 	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// Unpin 取消置顶。幂等:重复取消也会 affect 1 行(覆盖 NULL 为 NULL)。
-func (r *ConversationRepo) Unpin(convID, userID string) error {
-	res, err := r.db.Exec(
-		`UPDATE conversations SET pinned_at = NULL WHERE id = $1 AND user_id = $2`,
-		convID, userID,
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// Hide 软删除会话:hidden_at = NOW()。聊天记录保留,新消息来时 IncrUnreadTx 自动取消隐藏。
-func (r *ConversationRepo) Hide(convID, userID string) error {
-	res, err := r.db.Exec(
-		`UPDATE conversations SET hidden_at = NOW() WHERE id = $1 AND user_id = $2`,
-		convID, userID,
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return err
 }

@@ -45,7 +45,7 @@ func indexExists(t *testing.T, db *sql.DB, indexName string) bool {
 //   - 老字段/索引被 DROP
 //
 // 测试分阶段执行:
-//  1. SetupTestDB 跑 001-014(015 默认被 testdb.go 跳过)
+//  1. SetupTestDBSkipping015 跑 001-014(015 不跑,保留老 schema)
 //  2. seed 老格式数据:user / agent / conversation(user_id+agent_id+unread_count+hidden_at+pinned_at) /
 //     messages(混合 is_read TRUE/FALSE,sender 是 user/agent 各若干)
 //  3. 手动执行 015 SQL
@@ -53,7 +53,7 @@ func indexExists(t *testing.T, db *sql.DB, indexName string) bool {
 //
 // 见 docs/superpowers/specs/2026-07-02-participants-model-refactor-design.md §2 详细回填逻辑
 func TestMigration015_ParticipantsBackfill(t *testing.T) {
-	db := SetupTestDB(t) // testcontainers 起 PG,跑 001-014(015 被 migrationSkipPrefixes 排除)
+	db := SetupTestDBSkipping015(t) // testcontainers 起 PG,跑 001-014(015 被显式跳过)
 
 	// === 1. seed 老格式数据 ===
 
@@ -379,7 +379,7 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 // TestMigration015_BackfillEmptyDB 验证空库(无 conversation / message)下跑 015 不报错。
 // 这是部署到全新环境的回归保护:回填 SQL 用 LEFT/JOIN 时不能因无数据 NPE。
 func TestMigration015_BackfillEmptyDB(t *testing.T) {
-	db := SetupTestDB(t)
+	db := SetupTestDBSkipping015(t)
 
 	// 不 seed 任何数据,直接跑 015
 	ExecMigration015(t, db)

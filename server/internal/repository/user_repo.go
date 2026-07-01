@@ -147,3 +147,56 @@ func (r *UserRepo) List() ([]*model.User, error) {
 	}
 	return users, rows.Err()
 }
+
+// SearchByUsername 按 username 前缀模糊搜索,返回 UserSummary 列表(不含 user_id 防泄漏)。
+// 用于「加好友」搜索框:用户输入 username 前缀,APP 展示匹配候选。
+//
+// 用 ILIKE 前缀匹配(`query%`),走 idx_users_username(UNIQUE 索引支持前缀范围扫描)。
+// 大小写不敏感对齐主流 IM 习惯。limit 上限由调用方控制(spec 建议 ≤ 20)。
+//
+// 返回结果不含调用方自己(由 handler 层用 WHERE id != $me 过滤,本方法不知调用者身份)。
+// 不存在的 username 返回空切片 + nil err,不报错。
+func (r *UserRepo) SearchByUsername(query string, limit int) ([]model.UserSummary, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.Query(
+		`SELECT username, nickname, avatar_url
+		 FROM users WHERE username ILIKE $1 || '%'
+		 ORDER BY username
+		 LIMIT $2`,
+		query, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.UserSummary
+	for rows.Next() {
+		var s model.UserSummary
+		if err := rows.Scan(&s.Username, &s.Nickname, &s.AvatarURL); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetSummaryByID 按 user_id 查展示型摘要(不含 password_hash / id)。
+// 用于 participant 摘要渲染等场景:服务端内部用 user_id 查,但对外暴露时不带 id。
+//
+// 用户不存在返 (nil, nil) 让调用方用 nil 判断分支。
+func (r *UserRepo) GetSummaryByID(id string) (*model.UserSummary, error) {
+	s := &model.UserSummary{}
+	err := r.db.QueryRow(
+		`SELECT username, nickname, avatar_url FROM users WHERE id = $1`,
+		id,
+	).Scan(&s.Username, &s.Nickname, &s.AvatarURL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}

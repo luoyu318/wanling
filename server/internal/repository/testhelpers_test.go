@@ -10,10 +10,6 @@ import (
 
 // uniqueShortName 把测试函数名压成不超过 32 字符的稳定短串，避免超出 users.username varchar(64) 限制。
 // plan 原文用 "testuser_" + t.Name() 会超长（测试函数名本身常 > 50 字符），这里加一层裁剪。
-//
-// 原定义在 conversation_repo_test.go,因 Batch 1 中途 conversation_repo(_test).go 加了
-// legacy_repos build tag 暂时绕开编译(Task 1.6 才改造 ConversationRepo/MessageRepo),
-// uniqueShortName 被多处其他测试文件引用,提出来作为公共 helper 避免连带屏蔽。
 func uniqueShortName(t *testing.T, prefix string) string {
 	t.Helper()
 	name := strings.ToLower(t.Name())
@@ -43,13 +39,13 @@ func migration015Path(t *testing.T) string {
 
 // ExecMigration015 在已连到 001-014 schema 的 DB 上手动执行 015 SQL。
 //
-// 背景:SetupTestDB 默认跳过 015_participants_model.sql(见 testdb.go 的
-// migrationSkipPrefixes),因为 Batch 1 中途 ConversationRepo/MessageRepo 还没改造,
-// 大部分 repo 测试仍依赖老 schema。需要新 schema 的测试(participants/deliveries/
-// friendship 等)在 SetupTestDB 之后手动调本函数跑 015。
+// 背景:SetupTestDB 默认跑完整 001-015 migration 链(Batch 1 完成后)。
+// 仅 migration_015_test.go 用本函数验证「老 schema seed + 跑 015 回填」逻辑:
+//   1. 用 setupTestDBSkipping015 拿到只跑 001-014 的 DB(老 schema)
+//   2. seed 老格式数据(user_id/agent_id/is_read 等)
+//   3. 调本函数跑 015,验证回填到 participants/deliveries 等新表
 //
-// 原 helper 是 migration_015_test.go 内的私有 execMigration015,因 Task 1.3 开始
-// 多个 repo 测试文件都要用,提取为公共导出 helper(测试包内可见)。
+// 普通业务测试不应调本函数(SetupTestDB 已自动应用 015)。
 func ExecMigration015(t *testing.T, db *sql.DB) {
 	t.Helper()
 	sqlBytes, err := os.ReadFile(migration015Path(t))

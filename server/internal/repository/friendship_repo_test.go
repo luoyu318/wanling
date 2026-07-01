@@ -19,12 +19,11 @@ type friendshipTestSeed struct {
 	userCID string // 第三个 user(双向 / 多人查询场景)
 }
 
-// seedFriendshipTestDB 起 DB + 跑 015 + seed 3 个 user。
+// seedFriendshipTestDB 起 DB(已自动应用 015) + seed 3 个 user。
 // 不预置 friendships 行,各测试用例自行调 repo 构造状态机起点。
 func seedFriendshipTestDB(t *testing.T) (*sql.DB, *FriendshipRepo, friendshipTestSeed) {
 	t.Helper()
-	db := SetupTestDB(t)
-	ExecMigration015(t, db)
+	db := SetupTestDB(t) // Batch 1 完成后 SetupTestDB 默认应用 015
 	repo := NewFriendshipRepo(db)
 
 	var seed friendshipTestSeed
