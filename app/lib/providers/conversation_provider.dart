@@ -104,8 +104,10 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
         ? DateTime.parse(createdAtStr)
         : item.lastMessageAt;
 
-    // agent → user 方向时本地 unreadCount++（与服务端逻辑对齐）。
-    // 但若用户当前正在该会话（_activeConvId），不计未读 —— 用户已经在看了。
+    // agent → user 方向时本地 unreadCount++。
+    // 但若用户当前正在该会话（_activeConvId），本地不计未读 —— 避免用户在看的
+    // 会话还闪烁徽章。server 端已不再据此跳过 IncrUnread（一律计未读,client 端
+    // _markRead 归零）,此处的本地判断纯属徽章 UX 优化。
     final isActive = convId == _activeConvId;
     final newUnread =
         (isAgent && !isActive) ? item.unreadCount + 1 : item.unreadCount;
@@ -152,10 +154,13 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
 
   /// 会话内收到 agent 新消息时 +1 本地 unread（与 chatProvider 浮标保持一致）。
   ///
-  /// conversationProvider 内置的 _onMessageCreate 在 isActive=true 时不 +1（与
-  /// server hub.IsUserViewingConv 对齐，避免用户在看的会话还显示徽章）。但
-  /// chatProvider 浮标会 +1（让用户感知到新消息），导致两端不一致。
-  /// 本方法供 ChatPage ref.listen (2) 分支同步两端使用。
+  /// conversationProvider 内置的 _onMessageCreate 在 isActive=true 时不 +1
+  /// （本地 UX 优化:避免用户在看的会话还显示徽章）。但 chatProvider 浮标会 +1
+  /// （让用户感知到新消息）,导致两端不一致。本方法供 ChatPage ref.listen (2)
+  /// 分支同步两端使用。
+  ///
+  /// 注:server 端已不再据此跳过 IncrUnread（所有 agent 消息一律计未读）,
+  /// 此处的 isActive 判断纯属本地徽章 UX 优化,不影响 server unread_count。
   void incrementUnreadLocally(String convId) {
     final idx = state.indexWhere((c) => c.id == convId);
     if (idx == -1) return;

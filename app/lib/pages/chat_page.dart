@@ -190,9 +190,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _typingNotifier = ref.read(typingProvider.notifier);
     _convNotifier.setActiveConv(widget.convId);
     _ws = ref.read(wsProvider);
-    // 上报当前会话给服务端（op=3）：agent 发消息时该会话不计未读。
-    // 与本地 _convNotifier.setActiveConv 互补：本地管 WS 收消息时的乐观计数，
-    // 服务端管 unread_count 持久值（列表刷新/多端一致依赖它）。
+    // 上报当前会话给服务端（op=3）+ 本地 conversationProvider。
+    // 注:op=3 服务端原本用于「跳过未读计数」,但该守卫已移除,所有 agent 消息一律
+    // 计未读,client 端在底部时 _markRead() 归零。op=3 当前主要服务于本地
+    // conversationProvider（避免用户在看的会话还闪烁徽章）,服务端仅记录
+    // activeConv 状态供后续 participants 模型或其他扩展复用。
     _ws.setActiveConv(widget.convId);
     _msgSub = _ws.messages.where((m) => m.t == 'MESSAGE_CREATE').listen((m) {
       final d = m.d as Map<String, dynamic>?;
