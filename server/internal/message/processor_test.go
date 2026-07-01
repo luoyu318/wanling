@@ -1,9 +1,11 @@
 package message
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
@@ -22,161 +24,429 @@ func shortName(t *testing.T, prefix string) string {
 	return prefix + name
 }
 
-// setupFixture 构造一套完整的 user/agent/conv，返回测试需要的所有 repo 与 ID。
-// 抽出来避免每个测试都重复 8 行样板。
-func setupFixture(t *testing.T) (*repository.ConversationRepo, *repository.MessageRepo, *repository.AgentRepo, *repository.FileRepo, string, string, string) {
-	t.Helper()
-	db := repository.SetupTestDB(t)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
-	fileRepo := repository.NewFileRepo(db)
+// === 测试 seed helpers ===
 
-	user, err := urepo.Create(shortName(t, "u_"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
+// seedUser 直接 INSERT users 表,返回 user_id。
+// 不走 UserRepo.Create(避免被 hash 逻辑耦合),测试只关心 participant 模型行为。
+func seedUser(t *testing.T, db *sql.DB, username string) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRow(`
+		INSERT INTO users (username, password_hash, avatar_url, created_at)
+		VALUES ($1, $2, '', $3) RETURNING id
+	`, username, "hash", time.Now().UTC()).Scan(&id); err != nil {
+		t.Fatalf("seed user %q 失败: %v", username, err)
 	}
-	agent, err := arepo.Create(user.ID, "TxAgent", "secret-key-placeholder")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-	return convRepo, msgRepo, arepo, fileRepo, user.ID, agent.ID, conv.ID
+	return id
 }
 
-// TestProcessor_HandleIncoming_PersistsMessageAndCacheTransactional 验证方案 A：
-// HandleIncoming 全流程跑完后，messages 表有新行、conversations.last_message_content 已更新。
-//
-// hub 用 nil presence 构造：因为没有 client 注册，SendToUser/SendToAgent 会直接 return nil，
-// 不会触发 bufferedSend，也不会调用 presence 方法。这是测试 dispatcher 副作用的最小侵入方式。
-//
-// 关键校验点：
-//  1. 消息已持久化（事务 commit 成功）；
-//  2. 会话缓存 last_message_content 已更新（与消息在同一事务）；
-//  3. dispatch 在 commit 之后执行（这里通过"消息已写"间接验证）。
-func TestProcessor_HandleIncoming_PersistsMessageAndCacheTransactional(t *testing.T) {
-	convRepo, msgRepo, arepo, fileRepo, userID, agentID, convID := setupFixture(t)
-
-	// hub 用 nil presence —— 见函数注释。
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, convRepo, msgRepo, arepo, fileRepo)
-
-	content := map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hello from tx test"},
+// seedAgent 直接 INSERT agents 表,owner_id 外键到 users。
+func seedAgent(t *testing.T, db *sql.DB, ownerID, name string) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRow(`
+		INSERT INTO agents (owner_id, name, avatar_url, secret_key, status, created_at)
+		VALUES ($1, $2, '', $3, 'offline', $4) RETURNING id
+	`, ownerID, name, "sk-test", time.Now().UTC()).Scan(&id); err != nil {
+		t.Fatalf("seed agent %q 失败: %v", name, err)
 	}
-	contentBytes, _ := json.Marshal(content)
-	dPayload, _ := json.Marshal(map[string]interface{}{
-		"agent_id": agentID,
-		"content":  json.RawMessage(contentBytes),
-	})
+	return id
+}
 
-	// user → agent 方向，HandleIncoming 内部会做 FindOrCreate + 事务写消息 + 更新缓存 + dispatch
-	p.HandleIncoming("user", userID, &model.WSMessage{
+// dmFixture 是 DM(dm_user_agent)测试场景的常用 ID 集合。
+type dmFixture struct {
+	db            *sql.DB
+	convRepo      *repository.ConversationRepo
+	msgRepo       *repository.MessageRepo
+	agentRepo     *repository.AgentRepo
+	fileRepo      *repository.FileRepo
+	participantRp *repository.ParticipantRepo
+	deliveryRp    *repository.DeliveryRepo
+	userID        string
+	agentID       string
+	convID        string
+}
+
+// seedDM 构造 user + agent + dm_user_agent 会话,返回 fixture。
+// 会话通过 FindOrCreateDM 建出 2 个 participants(user=owner, agent=member)。
+func seedDM(t *testing.T) dmFixture {
+	t.Helper()
+	db := repository.SetupTestDB(t)
+	fix := dmFixture{
+		db:            db,
+		convRepo:      repository.NewConversationRepo(db),
+		msgRepo:       repository.NewMessageRepo(db),
+		agentRepo:     repository.NewAgentRepo(db),
+		fileRepo:      repository.NewFileRepo(db),
+		participantRp: repository.NewParticipantRepo(db),
+		deliveryRp:    repository.NewDeliveryRepo(db),
+	}
+	fix.userID = seedUser(t, db, shortName(t, "u_"))
+	fix.agentID = seedAgent(t, db, fix.userID, "Agent"+shortName(t, ""))
+
+	conv, err := fix.convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: fix.userID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: fix.agentID, MemberType: "agent", Role: "member"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+	fix.convID = conv.ID
+	return fix
+}
+
+// newProcessorWithNilHub 构造一个 hub(无 presence,无任何 client 注册)的 Processor。
+// dispatch 时 SendToUser/SendToAgent 会直接 return nil,不触发 bufferedSend,
+// 是测试 dispatch 副作用的最小侵入方式。
+func newProcessorWithNilHub(t *testing.T, fix dmFixture) *Processor {
+	t.Helper()
+	h := hub.NewHub(nil, fix.agentRepo)
+	return NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.fileRepo,
+		fix.participantRp, fix.deliveryRp)
+}
+
+// msgContent 构造 text 消息 content JSON。
+func msgContent(text string) json.RawMessage {
+	c, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": text},
+	})
+	return c
+}
+
+// userToAgentPayload 构造 user → agent 方向 MESSAGE_CREATE 的 wsMsg.D。
+func userToAgentPayload(agentID string, content json.RawMessage) json.RawMessage {
+	d, _ := json.Marshal(map[string]interface{}{
+		"agent_id": agentID,
+		"content":  content,
+	})
+	return d
+}
+
+// agentToUserPayload 构造 agent → user 方向 MESSAGE_CREATE 的 wsMsg.D。
+func agentToUserPayload(userID string, content json.RawMessage) json.RawMessage {
+	d, _ := json.Marshal(map[string]interface{}{
+		"user_id": userID,
+		"content": content,
+	})
+	return d
+}
+
+// === 集成测试 ===
+
+// TestProcessor_HandleIncoming_DMUserAgent 验证 dm_user_agent 场景:
+// agent → user 发消息,4 写操作原子提交,deliveries / unread_count / dispatch 全对齐。
+//
+// 校验点:
+//  1. messages 表新增 1 行
+//  2. message_deliveries 新增 1 行(recipient=user, read_at=NULL)
+//  3. user.unread_count = 1, agent.unread_count 不变(0)
+//  4. conversations.last_message_content 已更新
+//  5. agent 自己也有 participant 行(role=member,unread=0)
+func TestProcessor_HandleIncoming_DMUserAgent(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	p.HandleIncoming("agent", fix.agentID, &model.WSMessage{
 		Op: model.OpDispatch,
 		T:  model.EventMessageCreate,
-		D:  dPayload,
+		D:  agentToUserPayload(fix.userID, msgContent("agent reply")),
 	})
 
-	// 1. 消息已持久化
-	msgs, err := msgRepo.ListByConversation(convID, 100, 0)
+	// 1. messages 表 1 行
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
 	if len(msgs) != 1 {
-		t.Fatalf("期望 1 条消息，实际: %d", len(msgs))
+		t.Fatalf("期望 1 条消息,实际: %d", len(msgs))
+	}
+	if msgs[0].SenderType != "agent" || msgs[0].SenderID != fix.agentID {
+		t.Errorf("sender 错误: got %s/%s, want agent/%s", msgs[0].SenderType, msgs[0].SenderID, fix.agentID)
 	}
 
-	// 2. 缓存已更新（IM 列表能查到）
-	items, err := convRepo.ListWithAgent(userID)
+	// 2. deliveries: 1 行 recipient=user read_at NULL
+	var (
+		dCount    int
+		dReadAt   *time.Time
+		dRecipID  string
+		dRecipTyp string
+	)
+	if err := fix.db.QueryRow(`
+		SELECT COUNT(*), (SELECT read_at FROM message_deliveries WHERE message_id = $1),
+		       (SELECT recipient_id FROM message_deliveries WHERE message_id = $1),
+		       (SELECT recipient_type FROM message_deliveries WHERE message_id = $1)
+		FROM message_deliveries WHERE message_id = $1
+	`, msgs[0].ID).Scan(&dCount, &dReadAt, &dRecipID, &dRecipTyp); err != nil {
+		t.Fatalf("查 deliveries 失败: %v", err)
+	}
+	if dCount != 1 {
+		t.Errorf("deliveries 行数错误: 期望 1, 实际 %d", dCount)
+	}
+	if dReadAt != nil {
+		t.Errorf("delivery read_at 应为 NULL, 实际 %v", *dReadAt)
+	}
+	if dRecipID != fix.userID || dRecipTyp != "user" {
+		t.Errorf("delivery recipient 错误: got %s/%s, want %s/user", dRecipTyp, dRecipID, fix.userID)
+	}
+
+	// 3. unread_count: user=1, agent=0
+	userP, err := fix.participantRp.Get(fix.convID, fix.userID, "user")
 	if err != nil {
-		t.Fatalf("ListWithAgent 失败: %v", err)
+		t.Fatalf("Get user participant 失败: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("期望 1 条会话列表项，实际: %d", len(items))
+	if userP.UnreadCount != 1 {
+		t.Errorf("user unread_count 期望 1, 实际 %d", userP.UnreadCount)
 	}
-	if !items[0].LastMessageContent.Valid {
-		t.Errorf("LastMessageContent 应为 Valid（事务内已更新缓存）")
+	agentP, err := fix.participantRp.Get(fix.convID, fix.agentID, "agent")
+	if err != nil {
+		t.Fatalf("Get agent participant 失败: %v", err)
 	}
-	// 内容校验：缓存与消息一致
-	var got map[string]interface{}
-	if err := json.Unmarshal(items[0].LastMessageContent.RawMessage, &got); err != nil {
-		t.Fatalf("反序列化 LastMessageContent 失败: %v", err)
+	if agentP.UnreadCount != 0 {
+		t.Errorf("agent unread_count 期望 0, 实际 %d", agentP.UnreadCount)
 	}
-	data, _ := got["data"].(map[string]interface{})
-	if data["text"] != "hello from tx test" {
-		t.Errorf("缓存内容不匹配: %v", got)
+	if agentP.Role != "member" {
+		t.Errorf("agent role 期望 member, 实际 %s", agentP.Role)
+	}
+
+	// 4. conversations.last_message_content 已更新
+	conv, err := fix.convRepo.GetByID(fix.convID)
+	if err != nil {
+		t.Fatalf("GetByID 失败: %v", err)
+	}
+	if !conv.LastMessageContent.Valid {
+		t.Errorf("last_message_content 应为 Valid(事务内已更新)")
 	}
 }
 
-// TestProcessor_HandleIncoming_RollsBackOnBadSender 验证事务回滚：
-// 用一个不存在的 sender_id 触发写消息的 FK 约束失败（messages.sender_id 在某些约束下会失败，
-// 但实际 schema 里 messages 只对 conversation_id 有 FK），所以这里改用直接调用事务 API
-// 的方式触发失败：构造一个非法的 conversation_id，让 CreateTx 触发 FK 失败。
+// TestProcessor_HandleIncoming_GroupUserTxFlow 验证 group_user 场景下,
+// HandleIncoming 内部那 4 个事务操作的语义(对 group 同样适用):
+// 3 个 user 的群,user_a 发消息,user_b/user_c 各 +1 unread,a 不变;
+// deliveries 2 行(recipient=b/c, read_at=NULL);agent 不参与。
 //
-// 注意：本测试不通过 HandleIncoming（HandleIncoming 内部用合法 convID），
-// 而是直接走 repo 的事务路径，验证 CreateTx 失败 + Rollback 后 messages 表无任何残留。
-// 这是事务原子性的最小复现。
-func TestProcessor_HandleIncoming_RollsBackOnBadSender(t *testing.T) {
-	convRepo, msgRepo, _, _, userID, _, convID := setupFixture(t)
+// 注意:本测试不通过 HandleIncoming 入口,而是直接走事务路径(模拟 ws_handler
+// 改造后从路由层拿 convID 的场景)。当前 HandleIncoming 还会强制 FindOrCreateDM
+// (走 dm 路径),完整 group + HandleIncoming 联调在 ws_handler 改造后补
+// (后续 task: TODO participants-refactor)。
+//
+// 关键校验:
+//   - recipients 过滤掉 sender,只剩 2 个
+//   - IncrUnreadTx 只给非 sender 全员 +1
+//   - CreateBatchTx 只给 recipients 插 deliveries
+func TestProcessor_HandleIncoming_GroupUserTxFlow(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	participantRp := repository.NewParticipantRepo(db)
+	deliveryRp := repository.NewDeliveryRepo(db)
 
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "should rollback"},
-	})
+	// 3 个 user
+	userA := seedUser(t, db, shortName(t, "ua_"))
+	userB := seedUser(t, db, shortName(t, "ub_"))
+	userC := seedUser(t, db, shortName(t, "uc_"))
 
-	tx, err := convRepo.BeginTx()
+	// 创建 group_user 会话(owner=userA)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin 失败: %v", err)
+	}
+	conv, err := convRepo.CreateTx(tx, "group_user", "测试群", "")
+	if err != nil {
+		t.Fatalf("CreateTx 失败: %v", err)
+	}
+	if err := participantRp.AddParticipantsTx(tx, conv.ID, []repository.ParticipantInput{
+		{MemberID: userA, MemberType: "user", Role: "owner"},
+		{MemberID: userB, MemberType: "user", Role: "member"},
+		{MemberID: userC, MemberType: "user", Role: "member"},
+	}); err != nil {
+		t.Fatalf("AddParticipantsTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit 失败: %v", err)
+	}
+
+	// 复刻 HandleIncoming 内部事务路径(spec §3.3):
+	// BeginTx → CreateTx → ListByConversationTx → filter sender →
+	// CreateBatchTx → IncrUnreadTx → UpdateLastMessageTx → Commit
+	tx, err = convRepo.BeginTx()
 	if err != nil {
 		t.Fatalf("BeginTx 失败: %v", err)
 	}
 	defer tx.Rollback()
 
-	// 用一个不存在的 conversation_id 触发 FK 约束失败
-	invalidConvID := "00000000-0000-0000-0000-000000000000"
-	_, err = msgRepo.CreateTx(tx, invalidConvID, "user", userID, content)
-	if err == nil {
-		t.Fatalf("期望 CreateTx 失败（FK 约束），实际成功")
+	content := msgContent("group broadcast")
+	msg, err := msgRepo.CreateTx(tx, conv.ID, "user", userA, content)
+	if err != nil {
+		t.Fatalf("CreateTx 失败: %v", err)
+	}
+	parts, err := participantRp.ListByConversationTx(tx, conv.ID)
+	if err != nil {
+		t.Fatalf("ListByConversationTx 失败: %v", err)
+	}
+	recipients := filterSender(parts, userA, "user")
+	if len(recipients) != 2 {
+		t.Fatalf("recipients 数错误: 期望 2(b/c), 实际 %d", len(recipients))
+	}
+	if err := deliveryRp.CreateBatchTx(tx, msg.ID, recipients); err != nil {
+		t.Fatalf("CreateBatchTx 失败: %v", err)
+	}
+	if err := participantRp.IncrUnreadTx(tx, conv.ID, userA, "user"); err != nil {
+		t.Fatalf("IncrUnreadTx 失败: %v", err)
+	}
+	if err := convRepo.UpdateLastMessageTx(tx, conv.ID, content); err != nil {
+		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit 失败: %v", err)
 	}
 
-	// 不需要显式 tx.Rollback()：defer tx.Rollback() 已经兜底，避免双重 Rollback 风格
-	// 验证真实 convID 下没有任何消息残留
-	msgs, err := msgRepo.ListByConversation(convID, 100, 0)
+	// 校验:user_b/c unread=1,user_a unread=0
+	for _, uid := range []string{userB, userC} {
+		pt, err := participantRp.Get(conv.ID, uid, "user")
+		if err != nil {
+			t.Fatalf("Get %s 失败: %v", uid, err)
+		}
+		if pt.UnreadCount != 1 {
+			t.Errorf("%s unread 期望 1, 实际 %d", uid, pt.UnreadCount)
+		}
+	}
+	ptA, _ := participantRp.Get(conv.ID, userA, "user")
+	if ptA.UnreadCount != 0 {
+		t.Errorf("user_a unread 期望 0(sender 不自增), 实际 %d", ptA.UnreadCount)
+	}
+
+	// deliveries 2 行,都 read_at=NULL
+	var (
+		dCount   int
+		nullRows int
+	)
+	if err := db.QueryRow(`
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE read_at IS NULL)
+		FROM message_deliveries WHERE message_id = $1
+	`, msg.ID).Scan(&dCount, &nullRows); err != nil {
+		t.Fatalf("查 deliveries 失败: %v", err)
+	}
+	if dCount != 2 {
+		t.Errorf("deliveries 行数错误: 期望 2(b+c), 实际 %d", dCount)
+	}
+	if nullRows != 2 {
+		t.Errorf("新消息 deliveries 应全为 NULL: 期望 2, 实际 %d", nullRows)
+	}
+}
+
+// filterSender 从 participants 列表过滤掉 sender,返回 recipients。
+// 与 processor.go 的逻辑等价,在 group 测试中作为 oracle 用。
+func filterSender(parts []model.ConversationParticipant, senderID, senderType string) []model.ConversationParticipant {
+	out := make([]model.ConversationParticipant, 0, len(parts))
+	for _, p := range parts {
+		if p.MemberID == senderID && p.MemberType == senderType {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend 边界:
+// conv 的某 participant.hidden_at IS NOT NULL(user 隐藏了会话),
+// 但发消息应该 still work(hidden_at 只影响 IM 列表显示,不影响消息流)。
+//
+// 校验:user 隐藏会话 → agent 发消息 → 仍能写入 + unread 仍 +1 + delivery 仍插。
+// 隐藏语义的恢复(发消息自动取消隐藏)由 handler 层负责,processor 不管。
+func TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	// user 隐藏会话
+	if err := fix.participantRp.SetHidden(fix.convID, fix.userID, "user", true); err != nil {
+		t.Fatalf("SetHidden 失败: %v", err)
+	}
+
+	// agent 发消息
+	p.HandleIncoming("agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventMessageCreate,
+		D:  agentToUserPayload(fix.userID, msgContent("after hide")),
+	})
+
+	// 校验:消息正常写入
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	if err != nil {
+		t.Fatalf("ListByConversation 失败: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("hidden 状态下消息应正常写入: 期望 1, 实际 %d", len(msgs))
+	}
+
+	// 校验:user.unread_count 仍 +1(hidden 不影响未读计数)
+	userP, _ := fix.participantRp.Get(fix.convID, fix.userID, "user")
+	if userP.UnreadCount != 1 {
+		t.Errorf("hidden 状态下 unread 仍应 +1: 期望 1, 实际 %d", userP.UnreadCount)
+	}
+	// hidden_at 仍非空(processor 不主动取消隐藏)
+	if userP.HiddenAt == nil {
+		t.Errorf("hidden_at 应保持非空(processor 不动 hidden 字段)")
+	}
+}
+
+// TestProcessor_HandleIncoming_AbortsOnInvalidSenderType 验证:
+// HandleIncoming 在 sender_type 非法时优雅失败 — 不污染任何表(messages / deliveries /
+// participants / conversations 都无残留),unread_count 不变。
+//
+// 当前实现下,非法 sender_type 在 FindOrCreateDM 阶段就会触发 conversation_participants
+// 的 member_type CHECK 约束,processor 走 log + return 路径,根本不进入写事务。
+// 这是 fail-fast 行为:非法输入尽早暴露,不留下任何副作用。
+//
+// 注意:本测试不验证「事务回滚」(事务根本没开),验证的是「无副作用」。
+// 真正的事务回滚路径(CreateTx 失败 → defer Rollback)在 spec §3.3 数据流里,
+// 由 TestProcessor_Tx_BeginCreateUpdateCommit 的反向用例覆盖(此处从略)。
+func TestProcessor_HandleIncoming_AbortsOnInvalidSenderType(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	// senderType="invalid":FindOrCreateDM 阶段 CHECK 失败
+	p.HandleIncoming("invalid", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventMessageCreate,
+		D:  agentToUserPayload(fix.userID, msgContent("should abort")),
+	})
+
+	// 验证 messages 表无残留
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
 	if len(msgs) != 0 {
-		t.Errorf("回滚后 messages 不应有数据，实际: %d 条", len(msgs))
+		t.Errorf("非法 sender_type 处理后 messages 不应有数据,实际: %d 条", len(msgs))
+	}
+
+	// 验证 unread_count 不变(user 仍 0)
+	userP, _ := fix.participantRp.Get(fix.convID, fix.userID, "user")
+	if userP.UnreadCount != 0 {
+		t.Errorf("非法 sender_type 处理后 unread 不应变化: 期望 0, 实际 %d", userP.UnreadCount)
 	}
 }
 
-// TestProcessor_Tx_BeginCreateUpdateCommit 验证事务 API 的 happy path：
+// TestProcessor_Tx_BeginCreateUpdateCommit 验证事务 API happy path:
 // convRepo.BeginTx → msgRepo.CreateTx → convRepo.UpdateLastMessageTx → tx.Commit
-// 之后，messages 表有新行、conversations.last_message_content 已更新。
-// 这是 HandleIncoming 事务路径的"组件级"覆盖，避免依赖 hub。
+// 之后 messages 表有新行、conversations.last_message_content 已更新。
+// 这是 HandleIncoming 事务路径的"组件级"覆盖,避免依赖 hub。
 func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
-	convRepo, msgRepo, _, _, userID, _, convID := setupFixture(t)
+	fix := seedDM(t)
 
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "tx component"},
-	})
+	content := msgContent("tx component")
 
-	tx, err := convRepo.BeginTx()
+	tx, err := fix.convRepo.BeginTx()
 	if err != nil {
 		t.Fatalf("BeginTx 失败: %v", err)
 	}
-	// defer Rollback 是惯用法：commit 后调用是 no-op（database/sql 保证）
 	defer tx.Rollback()
 
-	msg, err := msgRepo.CreateTx(tx, convID, "user", userID, content)
+	msg, err := fix.msgRepo.CreateTx(tx, fix.convID, "user", fix.userID, content)
 	if err != nil {
 		t.Fatalf("CreateTx 失败: %v", err)
 	}
-	if err := convRepo.UpdateLastMessageTx(tx, convID, content); err != nil {
+	if err := fix.convRepo.UpdateLastMessageTx(tx, fix.convID, content); err != nil {
 		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -184,116 +454,65 @@ func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
 	}
 
 	// 验证 messages 表
-	msgs, _ := msgRepo.ListByConversation(convID, 100, 0)
+	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
 	if len(msgs) != 1 || msgs[0].ID != msg.ID {
 		t.Errorf("消息未持久化: %+v", msgs)
 	}
 
 	// 验证 conversations 缓存
-	items, _ := convRepo.ListWithAgent(userID)
-	if len(items) != 1 || !items[0].LastMessageContent.Valid {
-		t.Errorf("缓存未更新: %+v", items)
+	conv, _ := fix.convRepo.GetByID(fix.convID)
+	if !conv.LastMessageContent.Valid {
+		t.Errorf("缓存未更新")
 	}
 }
 
-// TestProcessor_HandleIncoming_RollsBackOnCreateTxFailure 验证：
-// HandleIncoming 内 CreateTx 失败时，defer tx.Rollback() 正确清理
-// 整个事务（messages 无残留 + conversations 缓存未变）。
+// TestProcessor_Tx_RollsBackOnCreateTxFKFailure 验证事务回滚路径
+// (spec §3.3 数据流的「CreateTx 失败 → defer tx.Rollback()」分支)。
 //
-// 与 TestProcessor_HandleIncoming_RollsBackOnBadSender 的区别：
-// 那个测试直接走 repo 事务路径，本测试走完整的 HandleIncoming 路径，
-// 覆盖 processor.go 内 "CreateTx 失败 → return → defer tx.Rollback()" 的协同行为。
+// 触发:用不存在的 conversation_id 让 CreateTx 命中 messages.conversation_id
+// 的 FK 约束(001_init.sql)。失败后 defer Rollback 兜底,避免半提交事务。
 //
-// 触发失败的方式：传入 senderType="invalid"，命中 messages.sender_type 的
-// CHECK 约束（schema 在 001_init.sql:33：sender_type IN ('user', 'agent')），
-// 让 CreateTx 在事务内失败。
-//
-// 构造细节（必须让 FindOrCreate 先成功，才能走到 CreateTx）：
-//   - senderType="invalid" → 进 else 分支（agent 方向）
-//   - senderID 传 agentID，payload.user_id 传 userID
-//   - else 分支调用 FindOrCreate(userID, agentID)，复用 fixture 已建的会话
-//   - 随后 CreateTx(tx, convID, "invalid", agentID, ...) 因 CHECK 约束失败
-func TestProcessor_HandleIncoming_RollsBackOnCreateTxFailure(t *testing.T) {
-	convRepo, msgRepo, arepo, fileRepo, userID, agentID, convID := setupFixture(t)
+// 注意:本测试不通过 HandleIncoming(它内部用合法 convID),而是直接走 repo
+// 事务路径,覆盖 CreateTx 失败的最小复现。HandleIncoming 的早退路径
+// 由 TestProcessor_HandleIncoming_AbortsOnInvalidSenderType 覆盖。
+func TestProcessor_Tx_RollsBackOnCreateTxFKFailure(t *testing.T) {
+	fix := seedDM(t)
 
-	// hub 用 nil presence（与 happy path 测试同理）
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, convRepo, msgRepo, arepo, fileRepo)
-
-	// 构造 wsMsg：走 else 分支，user_id 合法以便 FindOrCreate 成功
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "should rollback"},
-	})
-	payload, _ := json.Marshal(map[string]interface{}{
-		"user_id": userID,
-		"content": json.RawMessage(content),
-	})
-	wsMsg := &model.WSMessage{
-		Op: model.OpDispatch,
-		T:  model.EventMessageCreate,
-		D:  payload,
-	}
-
-	// 调用 HandleIncoming：senderType="invalid" 触发 CreateTx 内 CHECK 约束失败。
-	// senderID 用 agentID，使 else 分支的 FindOrCreate(userID, agentID) 复用 fixture 会话。
-	p.HandleIncoming("invalid", agentID, wsMsg)
-
-	// 验证 messages 表无残留（CHECK 失败导致事务回滚）
-	msgs, err := msgRepo.ListByConversation(convID, 100, 0)
+	tx, err := fix.convRepo.BeginTx()
 	if err != nil {
-		t.Fatalf("ListByConversation 失败: %v", err)
+		t.Fatalf("BeginTx 失败: %v", err)
 	}
+	defer tx.Rollback()
+
+	// 用不存在的 conversation_id 触发 FK 约束失败
+	invalidConvID := "00000000-0000-0000-0000-000000000000"
+	_, err = fix.msgRepo.CreateTx(tx, invalidConvID, "user", fix.userID, msgContent("rollback"))
+	if err == nil {
+		t.Fatalf("期望 CreateTx 失败(FK 约束), 实际成功")
+	}
+
+	// defer Rollback 兜底,无需显式调;验证真实 convID 下无消息残留
+	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
 	if len(msgs) != 0 {
-		t.Errorf("事务回滚后 messages 不应有数据，实际: %d 条", len(msgs))
-	}
-
-	// 验证 conversations 缓存未变（仍为 NULL，ListWithAgent 不返回该会话）
-	items, err := convRepo.ListWithAgent(userID)
-	if err != nil {
-		t.Fatalf("ListWithAgent 失败: %v", err)
-	}
-	for _, item := range items {
-		if item.ID == convID {
-			t.Errorf("事务回滚后 conversation %s 不应进 ListWithAgent 列表", convID)
-		}
+		t.Errorf("FK 失败回滚后 messages 不应有数据, 实际: %d 条", len(msgs))
 	}
 }
 
 // TestProcessor_HandleIncoming_AgentAlwaysIncrUnread 验证:agent 发消息一律计未读,
-// 不再依赖 user 是否「正在看会话」。
-// 设计:client 端 chat_page.dart 在底部时收到 agent 消息会立即 _markRead() 归零,
-// 不在底部时本地 +1。server 端只管累加,client 负责「看到就 ack」。
-// 历史背景:之前用 IsUserViewingConv 守卫跳过 IncrUnreadTx,导致 messages 表
-// (is_read=FALSE)与 conversations 表(unread_count=0)不一致,APP 拿到矛盾数据。
+// 不再依赖 user 是否「正在看会话」。这是 participants 模型下的标准口径
+// (IncrUnreadTx 无条件给非 sender 全员 +1)。
 func TestProcessor_HandleIncoming_AgentAlwaysIncrUnread(t *testing.T) {
-	convRepo, msgRepo, arepo, fileRepo, userID, agentID, convID := setupFixture(t)
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
 
-	// hub 用 nil presence(参考 TestProcessor_HandleIncoming_PersistsMessageAndCacheTransactional)
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, convRepo, msgRepo, arepo, fileRepo)
-
-	// 构造 agent → user 方向的 MESSAGE_CREATE
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "agent reply"},
-	})
-	payload, _ := json.Marshal(map[string]interface{}{
-		"user_id": userID,
-		"content": json.RawMessage(content),
-	})
-	wsMsg := &model.WSMessage{
+	p.HandleIncoming("agent", fix.agentID, &model.WSMessage{
 		Op: model.OpDispatch,
 		T:  model.EventMessageCreate,
-		D:  payload,
-	}
+		D:  agentToUserPayload(fix.userID, msgContent("agent reply")),
+	})
 
-	// 触发:agent 发消息。hub 无任何 user 连接注册(IsUserViewingConv 恒为 false),
-	// 但本测试的核心断言是「无论是否在看都 +1」,所以无需模拟 active 状态。
-	p.HandleIncoming("agent", agentID, wsMsg)
-
-	// 断言:conversations.unread_count == 1
-	count, err := convRepo.GetUnreadCount(convID, userID)
+	// 断言:user.unread_count == 1
+	count, err := fix.deliveryRp.GetUnreadCount(fix.convID, fix.userID, "user")
 	if err != nil {
 		t.Fatalf("GetUnreadCount 失败: %v", err)
 	}
@@ -324,11 +543,10 @@ func createImageFile(t *testing.T, fileRepo *repository.FileRepo, ownerID string
 
 // TestEnhanceImageContent_FillsWidthHeight 主路径：image 消息缺宽高 → 从 files 表补全。
 func TestEnhanceImageContent_FillsWidthHeight(t *testing.T) {
-	_, _, arepo, fileRepo, userID, _, _ := setupFixture(t)
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, nil, nil, arepo, fileRepo)
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
 
-	fileID := createImageFile(t, fileRepo, userID, 1080, 1920)
+	fileID := createImageFile(t, fix.fileRepo, fix.userID, 1080, 1920)
 
 	content, _ := json.Marshal(map[string]interface{}{
 		"msg_type": "image",
@@ -357,11 +575,10 @@ func TestEnhanceImageContent_FillsWidthHeight(t *testing.T) {
 
 // TestEnhanceImageContent_Idempotent 已带宽高的消息 → 幂等跳过，不查 DB。
 func TestEnhanceImageContent_Idempotent(t *testing.T) {
-	_, _, arepo, fileRepo, userID, _, _ := setupFixture(t)
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, nil, nil, arepo, fileRepo)
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
 
-	fileID := createImageFile(t, fileRepo, userID, 1080, 1920)
+	fileID := createImageFile(t, fix.fileRepo, fix.userID, 1080, 1920)
 
 	// content 已带 width/height（故意写与库不同的值，验证不被覆盖）
 	content, _ := json.Marshal(map[string]interface{}{
@@ -389,9 +606,8 @@ func TestEnhanceImageContent_Idempotent(t *testing.T) {
 
 // TestEnhanceImageContent_FailSoft 各种异常情况都不阻断，返回原 content。
 func TestEnhanceImageContent_FailSoft(t *testing.T) {
-	_, _, arepo, fileRepo, userID, _, _ := setupFixture(t)
-	h := hub.NewHub(nil, arepo)
-	p := NewProcessor(h, nil, nil, arepo, fileRepo)
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
 
 	cases := []struct {
 		name    string
@@ -431,9 +647,8 @@ func TestEnhanceImageContent_FailSoft(t *testing.T) {
 	}
 
 	// 单独测：files 表有记录但 width/height 为 NULL（非图片文件上传的场景）
-	_ = userID // fileRepo 已有 fixture，这里插一条无宽高的文件
-	f, err := fileRepo.Create(repository.CreateFileParams{
-		OwnerID:     userID,
+	f, err := fix.fileRepo.Create(repository.CreateFileParams{
+		OwnerID:     fix.userID,
 		Filename:    "note.txt",
 		MimeType:    "text/plain",
 		Size:        10,

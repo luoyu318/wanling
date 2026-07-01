@@ -10,22 +10,57 @@ import (
 	"github.com/wanling/server/internal/repository"
 )
 
-// Processor 处理 WebSocket 消息的持久化和转发
+// Processor 处理 WebSocket 消息的持久化和转发。
+//
+// participants 模型重构后,事务内 4 个写操作:
+//  1. msgRepo.CreateTx    — INSERT messages
+//  2. deliveryRepo.CreateBatchTx — 给非 sender 全员插 message_deliveries(read_at=NULL)
+//  3. participantRepo.IncrUnreadTx — 给非 sender 全员 unread_count+1
+//  4. convRepo.UpdateLastMessageTx — 更新 conversations.last_message_content 缓存
+//
+// 原子提交保证「消息可见 ⟺ 未读计数对齐 ⟺ 投递状态对齐 ⟺ IM 列表缓存对齐」。
+// 设计见 docs/superpowers/specs/2026-07-02-participants-model-refactor-design.md §3.3。
 type Processor struct {
-	hub       *hub.Hub
-	convRepo  *repository.ConversationRepo
-	msgRepo   *repository.MessageRepo
-	agentRepo *repository.AgentRepo
-	fileRepo  *repository.FileRepo
-	seq       int64
+	hub             *hub.Hub
+	convRepo        *repository.ConversationRepo
+	msgRepo         *repository.MessageRepo
+	agentRepo       *repository.AgentRepo
+	fileRepo        *repository.FileRepo
+	participantRepo *repository.ParticipantRepo
+	deliveryRepo    *repository.DeliveryRepo
+	seq             int64
 }
 
-// NewProcessor 创建新的消息处理器
-func NewProcessor(h *hub.Hub, convRepo *repository.ConversationRepo, msgRepo *repository.MessageRepo, agentRepo *repository.AgentRepo, fileRepo *repository.FileRepo) *Processor {
-	return &Processor{hub: h, convRepo: convRepo, msgRepo: msgRepo, agentRepo: agentRepo, fileRepo: fileRepo}
+// NewProcessor 创建新的消息处理器。
+// 调用方(main.go)负责提前实例化所有 repo 并注入。
+func NewProcessor(
+	h *hub.Hub,
+	convRepo *repository.ConversationRepo,
+	msgRepo *repository.MessageRepo,
+	agentRepo *repository.AgentRepo,
+	fileRepo *repository.FileRepo,
+	participantRepo *repository.ParticipantRepo,
+	deliveryRepo *repository.DeliveryRepo,
+) *Processor {
+	return &Processor{
+		hub:             h,
+		convRepo:        convRepo,
+		msgRepo:         msgRepo,
+		agentRepo:       agentRepo,
+		fileRepo:        fileRepo,
+		participantRepo: participantRepo,
+		deliveryRepo:    deliveryRepo,
+	}
 }
 
-// HandleIncoming 处理收到的 WebSocket 消息
+// HandleIncoming 处理收到的 WebSocket 消息。
+//
+// 协议:wsMsg.D 含 {agent_id?, user_id?, content}。user 发给 agent 带 agent_id;
+// agent 回复带 user_id。一次解析全字段,避免分支重复 Unmarshal。
+//
+// 在 participants 模型下:用 sender + payload 推导 dm 的对端,FindOrCreateDM
+// 拿/建会话(自动按 member_type 选 dm_user_user / dm_user_agent)。后续 N 方
+// 群聊由 handler 显式 POST /api/conversations 创建,processor 不负责建群。
 func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSMessage) {
 	// TYPING_START：agent → user 直接透传，不持久化（typing 是瞬态状态）。
 	// payload 里 user_id 是目标 user；agent_id 用于 APP 端 typingProvider 路由。
@@ -48,8 +83,7 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		return
 	}
 
-	// payload 同时包含两端 ID（user 发给 agent 带 agent_id，agent 回复带 user_id），
-	// content 是消息正文。一次解析全字段，避免 user/agent 分支重复 Unmarshal。
+	// payload 同时包含两端 ID + content。
 	var payload struct {
 		AgentID string          `json:"agent_id"`
 		UserID  string          `json:"user_id"`
@@ -60,21 +94,45 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		return
 	}
 
-	// 根据 sender 推导对端与会话双方 ID：
-	// - user 发送：自己是 user，agent 来自 payload.agent_id；
-	// - agent 发送：自己是 agent，user 来自 payload.user_id。
-	var userID, agentID string
+	// 根据 sender 推导对端与会话双方 ID + 类型。
+	// user 发送：sender=(userID, user)，对端 agent；agent 发送：sender=(agentID, agent)，对端 user。
+	var otherID, otherType string
 	if senderType == "user" {
-		userID = senderID
-		agentID = payload.AgentID
+		otherID = payload.AgentID
+		otherType = "agent"
 	} else {
-		userID = payload.UserID
-		agentID = senderID
+		otherID = payload.UserID
+		otherType = "user"
+	}
+	if otherID == "" {
+		log.Printf("消息缺对端 ID: sender=%s/%s", senderType, senderID)
+		return
 	}
 
-	conv, err := p.convRepo.FindOrCreate(userID, agentID)
+	// dm type 按对端 member_type 自动选:
+	//   user ↔ agent → dm_user_agent
+	//   user ↔ user  → dm_user_user
+	//   agent ↔ agent → 不支持(本期 hermes 不发 agent↔agent 消息,且 agents.owner_id 外键
+	//                   到 users,业务上 agent 不应作为 dm_user_user 的发起方)
+	dmType := "dm_user_agent"
+	if senderType == "user" && otherType == "user" {
+		dmType = "dm_user_user"
+	}
+
+	conv, err := p.convRepo.FindOrCreateDM(dmType, repository.DMMembers{
+		Initiator: repository.ParticipantInput{
+			MemberID:   senderID,
+			MemberType: senderType,
+			Role:       "owner",
+		},
+		Other: repository.ParticipantInput{
+			MemberID:   otherID,
+			MemberType: otherType,
+			Role:       "member",
+		},
+	})
 	if err != nil {
-		log.Println("创建会话失败:", err)
+		log.Printf("创建会话失败 (%s): %v", dmType, err)
 		return
 	}
 	convID := conv.ID
@@ -82,8 +140,8 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 	// seq 是 dispatch 序号，与持久化无关，放在事务外即可（避免事务内提序列号在回滚时漏号）。
 	newSeq := atomic.AddInt64(&p.seq, 1)
 
-	// 事务边界：消息写入 + last_message_content 缓存更新必须原子化。
-	// 否则 crash 时会出现"消息已写但缓存未更新"的不一致，IM 列表会显示旧 last_message。
+	// 事务边界：4 个写操作(message + deliveries + participants + conversation)原子提交。
+	// 否则 crash / 并发会出现"消息可见但未读计数错"或"IM 列表缓存陈旧"等不一致。
 	tx, err := p.convRepo.BeginTx()
 	if err != nil {
 		log.Println("开启事务失败:", err)
@@ -96,32 +154,61 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 	// fail-soft：查不到 / 解析失败都不阻断消息发送，保留原 content（前端走探测兜底）。
 	enhancedContent := p.enhanceImageContent(payload.Content)
 
+	// 1. 创建 message(已无 is_read 字段,per-recipient 状态走 deliveries 表)
 	msg, err := p.msgRepo.CreateTx(tx, convID, senderType, senderID, enhancedContent)
 	if err != nil {
-		log.Println("保存消息失败:", err)
-		return
-	}
-	if err := p.convRepo.UpdateLastMessageTx(tx, convID, enhancedContent); err != nil {
-		log.Println("更新会话缓存失败:", err)
-		return
-	}
-	// agent → user 方向累加未读（user 给 agent 的消息不算 user 自己的未读）。
-	// 所有 agent 消息一律计未读:client 端 chat_page.dart 在底部时收到新消息会立即
-	// _markRead() 同步归零,不在底部时本地 +1(显示浮标)。server 端不再用
-	// IsUserViewingConv 守卫——「在会话」≠「看到了消息」(用户可能滚到顶部看历史)。
-	// TODO(participants-refactor): participants 模型下,unread_count 应按每个 participant
-	// 各自维护,client 端「看到就 ack」语义对齐主流 IM 标准模型。
-	if senderType == "agent" {
-		if err := p.convRepo.IncrUnreadTx(tx, convID); err != nil {
-			log.Println("未读计数失败:", err)
-			return
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		log.Println("提交事务失败:", err)
+		log.Printf("保存消息失败 conv=%s sender=%s/%s: %v", convID, senderType, senderID, err)
 		return
 	}
 
+	// 2. 同事务查 participants(避免并发邀请 / 退群脏读)
+	participants, err := p.participantRepo.ListByConversationTx(tx, convID)
+	if err != nil {
+		log.Printf("查 participants 失败 conv=%s: %v", convID, err)
+		return
+	}
+
+	// 3. 过滤 sender,得到 recipients(本消息的接收方)
+	recipients := make([]model.ConversationParticipant, 0, len(participants))
+	senderRole := "member" // fallback:sender 不在 participants 时(理论不应发生)
+	for _, pt := range participants {
+		if pt.MemberID == senderID && pt.MemberType == senderType {
+			senderRole = pt.Role
+			continue
+		}
+		recipients = append(recipients, pt)
+	}
+
+	// 4. 批量插 deliveries(每 recipient 一行,read_at=NULL)
+	if err := p.deliveryRepo.CreateBatchTx(tx, msg.ID, recipients); err != nil {
+		log.Printf("插 deliveries 失败 msg=%s: %v", msg.ID, err)
+		return
+	}
+
+	// 5. 全员 unread_count+1(除 sender)
+	//    IncrUnreadTx 是无条件给非 sender 全员 +1,与「是否在看会话」无关;
+	//    client 端 chat_page.dart 在底部时收到消息立即 _markRead() 归零,
+	//    不在底部时本地 +1(显示浮标)。这是 N 方模型的标准口径。
+	if err := p.participantRepo.IncrUnreadTx(tx, convID, senderID, senderType); err != nil {
+		log.Printf("未读计数失败 conv=%s: %v", convID, err)
+		return
+	}
+
+	// 6. 更新 last_message 缓存(IM 列表用,避免 JOIN messages 表)
+	if err := p.convRepo.UpdateLastMessageTx(tx, convID, enhancedContent); err != nil {
+		log.Printf("更新会话缓存失败 conv=%s: %v", convID, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("提交事务失败 conv=%s: %v", convID, err)
+		return
+	}
+
+	// 7. dispatch(commit 之后):遍历 recipients 按 member_type 路由
+	//    必须在 commit 之后才 dispatch,否则 dispatch 了的消息可能因 rollback 没真存。
+	//    payload 加 sender_role 字段(spec §5.2):client 不破坏(忽略未知字段),新版 APP
+	//    可用于权限按钮显隐(owner/admin/member 显示不同的会话操作)。
 	dispatch := model.WSMessage{
 		Op: model.OpDispatch,
 		T:  model.EventMessageCreate,
@@ -132,18 +219,18 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		"conversation_id": convID,
 		"sender_type":     senderType,
 		"sender_id":       senderID,
+		"sender_role":     senderRole,
 		"content":         msg.Content,
-		"is_read":         msg.IsRead,
 		"created_at":      msg.CreatedAt,
 	})
 	dispatch.D = dispatchData
 
-	// 投递：user 发送时同时回显给自己（多端同步），agent 发送时只投递给 user。
-	if senderType == "user" {
-		p.hub.SendToAgent(agentID, &dispatch)
-		p.hub.SendToUser(userID, &dispatch)
-	} else {
-		p.hub.SendToUser(userID, &dispatch)
+	for _, r := range recipients {
+		if r.MemberType == "user" {
+			p.hub.SendToUser(r.MemberID, &dispatch)
+		} else {
+			p.hub.SendToAgent(r.MemberID, &dispatch)
+		}
 	}
 }
 

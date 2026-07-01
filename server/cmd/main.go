@@ -49,6 +49,12 @@ func main() {
 	msgRepo := repository.NewMessageRepo(db)
 	fileRepo := repository.NewFileRepo(db)
 	pairRepo := repository.NewPairingRepo(db)
+	// participants 模型新增的两 repo:
+	// - participantRepo:N 方参与者关系 + 个人维度(unread_count/pin/hide)
+	// - deliveryRepo:per-recipient 投递状态(read_at)
+	// MessageProcessor 在事务内调它们的 *Tx 方法保证 4 个写操作原子性。
+	participantRepo := repository.NewParticipantRepo(db)
+	deliveryRepo := repository.NewDeliveryRepo(db)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Host + ":" + strconv.Itoa(cfg.Redis.Port),
@@ -69,7 +75,7 @@ func main() {
 	h := hub.NewHub(p, agentRepo)
 	go h.Run()
 
-	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, fileRepo)
+	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, fileRepo, participantRepo, deliveryRepo)
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)
