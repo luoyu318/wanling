@@ -209,7 +209,8 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
   }
 
   /// 根据 aIndex 构建 AppBar 标题。
-  /// - 消息（0）：标题「消息」，无 action
+  /// - 消息（0）：标题「消息」，带「+」PopupMenu（加好友 / 发起群聊）
+  ///   加好友路由 /friends/add 是 Task 4.2 范围,本期占位。
   /// - 万灵（1）：标题「万灵」，带「+」PopupMenuItem（扫一扫 / 创建 Agent）
   PreferredSizeWidget _buildAppBar() {
     if (widget.aIndex == 1) {
@@ -234,9 +235,32 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
         ],
       );
     }
+    // 消息 tab:加好友(占位)+ 发起群聊。
     return AppBar(
       title: const Text('消息'),
       backgroundColor: const Color(0xFFF7F7F7),
+      actions: [
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.add, color: Color(0xFF07C160)),
+          onSelected: (v) {
+            if (v == 'add_friend') {
+              // /friends/add 路由是 Task 4.2 范围,本期占位:用户点了提示待开放。
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('好友系统即将开放'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            } else if (v == 'create_group') {
+              context.push('/conversations/new/group');
+            }
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'add_friend', child: Text('加好友')),
+            PopupMenuItem(value: 'create_group', child: Text('发起群聊')),
+          ],
+        ),
+      ],
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/agent.dart' show AgentStatus;
@@ -1040,6 +1041,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ),
               ],
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.more_vert),
+                tooltip: '会话详情',
+                onPressed: () =>
+                    context.push('/conversations/${widget.convId}/detail'),
+              ),
+            ],
           );
 
     // PopScope:多选模式拦截返回键(优先退出多选,而非离开页面)。

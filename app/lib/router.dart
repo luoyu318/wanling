@@ -6,6 +6,8 @@ import 'pages/about_page.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/change_password_page.dart';
 import 'pages/chat_page.dart';
+import 'pages/conversation_detail_page.dart';
+import 'pages/create_group_page.dart';
 import 'pages/edit_profile_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
@@ -158,6 +160,25 @@ final routerProvider = Provider<GoRouter>((ref) {
             key: state.pageKey,
           );
         },
+      ),
+      // 会话详情路由:群资料 / 1-1 资料 / 成员列表 / 退群。
+      // 注意顺序:'/conversations/new/group' 必须在 '/conversations/:id/detail'
+      // 之前,否则 GoRouter 会把 'new' 当成 :id。
+      GoRoute(
+        path: '/conversations/new/group',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const CreateGroupPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/conversations/:id/detail',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: ConversationDetailPage(
+            convId: state.pathParameters['id']!,
+          ),
+          key: state.pageKey,
+        ),
       ),
       GoRoute(
         path: '/change-password',
