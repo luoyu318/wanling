@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/auth_provider.dart';
+import '../providers/friend_provider.dart';
 import '../providers/saved_logins_provider.dart';
 import '../utils/permission_helper.dart';
 import '../widgets/avatar.dart';
@@ -47,6 +48,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     final user = ref.watch(authProvider).user;
     // 仅当有 2 个以上账号时才显示「切换账号」入口(单账号无切换意义)
     final showSwitchAccount = ref.watch(savedLoginsProvider).logins.length >= 2;
+    // 收到的好友请求数,用于入口 tile 红点提示
+    final incomingCount = ref.watch(friendIncomingCountProvider);
 
     // 与 AgentDetailPage 同款结构：CustomScrollView + SliverAppBar（覆盖 status bar）
     // + SliverToBoxAdapter（资料区）。样式/颜色保持自己的（#F7F7F7 + 黑字）。
@@ -128,6 +131,33 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
           SliverToBoxAdapter(
             child: SettingsGroup(
               children: [
+                // 我的好友入口:incoming 请求 > 0 时显示红点 Badge
+                SettingsTile(
+                  icon: Icons.people_outline,
+                  label: '我的好友',
+                  trailing: incomingCount > 0
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFA5151),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          constraints: const BoxConstraints(minWidth: 16),
+                          child: Text(
+                            incomingCount > 99 ? '99+' : '$incomingCount',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        )
+                      : const Icon(Icons.chevron_right,
+                          size: 20, color: Color(0xFFC0C0C0)),
+                  onTap: () => context.push('/friends'),
+                ),
                 // 设置内页（服务器地址配置）已移除，入口暂时隐藏。
                 // 切换账号功能上线后，服务器地址改由「切换账号」管理。
                 if (showSwitchAccount)

@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'pages/about_page.dart';
+import 'pages/add_friend_page.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/change_password_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/conversation_detail_page.dart';
 import 'pages/create_group_page.dart';
 import 'pages/edit_profile_page.dart';
+import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'pages/pair_select_agent_page.dart';
@@ -177,6 +179,23 @@ final routerProvider = Provider<GoRouter>((ref) {
           child: ConversationDetailPage(
             convId: state.pathParameters['id']!,
           ),
+          key: state.pageKey,
+        ),
+      ),
+      // 好友中心 + 添加好友。
+      // 顺序约束:'/friends/add' 必须在 '/friends/:xxx' 之前(若有),
+      // 否则 GoRouter 会把 'add' 当成 path 参数。当前只有 2 个静态路由,无冲突。
+      GoRoute(
+        path: '/friends/add',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const AddFriendPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/friends',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const FriendsListPage(),
           key: state.pageKey,
         ),
       ),
