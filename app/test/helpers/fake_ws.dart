@@ -10,17 +10,28 @@ import 'package:app/services/websocket_service.dart';
 class FakeWS extends WebSocketService {
   final StreamController<WSMessage> _controller =
   StreamController<WSMessage>.broadcast();
+  final StreamController<WSMessage> _friendController =
+  StreamController<WSMessage>.broadcast();
 
   @override
   Stream<WSMessage> get messages => _controller.stream;
 
-  /// 测试 helper：注入一条 WSMessage 到流，模拟服务端推送。
+  @override
+  Stream<WSMessage> get friendUpdates => _friendController.stream;
+
+  /// 测试 helper：注入一条 WSMessage 到 messages 流，模拟服务端推送。
   void emit(WSMessage msg) {
     _controller.add(msg);
+  }
+
+  /// 测试 helper：注入一条 WSMessage 到 friendUpdates 流，模拟好友事件推送。
+  void emitFriend(WSMessage msg) {
+    _friendController.add(msg);
   }
 
   @override
   void disconnect() {
     _controller.close();
+    _friendController.close();
   }
 }
