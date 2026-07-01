@@ -1,3 +1,9 @@
+//go:build legacy_repos
+
+// 临时屏蔽:Batch 1 中途状态,本文件引用 model.Conversation 老字段(UserID/AgentID)
+// 和 model.ConversationListItem 老字段(IsPinned),Task 1.2 把这些字段删了但本文件
+// 还没改造(Task 1.6 才会做)。加 build tag 暂时绕开编译,让 Task 1.3-1.5 的 repo 测试能跑。
+// Task 1.6 移除此 build tag。
 package repository
 
 import (

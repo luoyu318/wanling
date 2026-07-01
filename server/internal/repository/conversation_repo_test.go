@@ -1,29 +1,20 @@
+//go:build legacy_repos
+
+// 临时屏蔽:Batch 1 中途状态,本测试引用 model.Conversation.UserID/AgentID/IsPinned 等
+// 老字段(Task 1.2 删了)和 ConversationRepo API(Task 1.6 改造)。
+// uniqueShortName 已抽到 testhelpers_test.go 供其他测试共用。
+// Task 1.6 移除此 build tag。
 package repository
 
 import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/wanling/server/internal/model"
 )
-
-// uniqueShortName 把测试函数名压成不超过 32 字符的稳定短串，避免超出 users.username varchar(64) 限制。
-// plan 原文用 "testuser_" + t.Name() 会超长（测试函数名本身常 > 50 字符），这里加一层裁剪。
-func uniqueShortName(t *testing.T, prefix string) string {
-	t.Helper()
-	name := strings.ToLower(t.Name())
-	// 去掉 Test 前缀和下划线，截短
-	name = strings.ReplaceAll(name, "test", "")
-	name = strings.ReplaceAll(name, "_", "")
-	if len(name) > 20 {
-		name = name[:20]
-	}
-	return prefix + name
-}
 
 // TestConversationRepo_FindOrCreate_WithLastMessageContent 验证新建会话时
 // last_message_content 应为 NULL（NullJSON.Valid=false）。

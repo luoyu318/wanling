@@ -2,39 +2,12 @@ package repository
 
 import (
 	"database/sql"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
-// migration015Path 返回 015 migration SQL 文件绝对路径。
-// 失败时 fail 测试。
-func migration015Path(t *testing.T) string {
-	t.Helper()
-	// 测试工作目录是 server/internal/repository/,../../migrations 是 server/migrations
-	p := filepath.Join("..", "..", "migrations", "015_participants_model.sql")
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		t.Fatalf("解析 migration 015 路径失败: %v", err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("migration 015 文件不存在 %s: %v", abs, err)
-	}
-	return abs
-}
-
-// execMigration015 在已连到 001-014 schema 的 DB 上手动执行 015 SQL。
-func execMigration015(t *testing.T, db *sql.DB) {
-	t.Helper()
-	sqlBytes, err := os.ReadFile(migration015Path(t))
-	if err != nil {
-		t.Fatalf("读 migration 015 失败: %v", err)
-	}
-	if _, err := db.Exec(string(sqlBytes)); err != nil {
-		t.Fatalf("执行 migration 015 失败: %v", err)
-	}
-}
+// migration015Path / ExecMigration015 已抽到 testhelpers_test.go 作为公共 helper,
+// 让其他 repo 测试(participants/deliveries/friendship)共用,避免每个测试文件 copy 一份。
 
 // columnExists 查 information_schema.columns 判断列是否存在。
 func columnExists(t *testing.T, db *sql.DB, table, column string) bool {
@@ -157,7 +130,7 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	}
 
 	// === 2. 手动执行 015 ===
-	execMigration015(t, db)
+	ExecMigration015(t, db)
 
 	// === 3. 校验 schema:老字段/索引已 DROP,新表已建 ===
 
@@ -409,7 +382,7 @@ func TestMigration015_BackfillEmptyDB(t *testing.T) {
 	db := SetupTestDB(t)
 
 	// 不 seed 任何数据,直接跑 015
-	execMigration015(t, db)
+	ExecMigration015(t, db)
 
 	// 校验:三新表为空但存在,participants/deliveries/unread_count 都为 0
 	for _, q := range []struct {
