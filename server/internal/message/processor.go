@@ -130,6 +130,7 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		"sender_type":     senderType,
 		"sender_id":       senderID,
 		"content":         msg.Content,
+		"is_read":         msg.IsRead,
 		"created_at":      msg.CreatedAt,
 	})
 	dispatch.D = dispatchData

@@ -38,15 +38,15 @@ func (r *MessageRepo) createMessage(
 	err := queryRow(
 		`INSERT INTO messages (conversation_id, sender_type, sender_id, content)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, conversation_id, sender_type, sender_id, content, created_at`,
+		 RETURNING id, conversation_id, sender_type, sender_id, content, is_read, created_at`,
 		convID, senderType, senderID, content,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt)
 	return m, err
 }
 
 func (r *MessageRepo) ListByConversation(convID string, limit, offset int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		convID, limit, offset,
@@ -59,7 +59,7 @@ func (r *MessageRepo) ListByConversation(convID string, limit, offset int) ([]mo
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -76,10 +76,10 @@ func (r *MessageRepo) ListByConversation(convID string, limit, offset int) ([]mo
 func (r *MessageRepo) Get(id string) (*model.Message, error) {
 	m := &model.Message{}
 	err := r.db.QueryRow(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages WHERE id = $1`,
 		id,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -92,7 +92,7 @@ func (r *MessageRepo) Get(id string) (*model.Message, error) {
 // GetByIDs 批量查询消息（不过滤 deleted_at）。供 BatchDelete 权限校验用。
 func (r *MessageRepo) GetByIDs(ids []string) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages WHERE id = ANY($1)`,
 		pq.Array(ids),
 	)
@@ -104,7 +104,7 @@ func (r *MessageRepo) GetByIDs(ids []string) ([]model.Message, error) {
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -141,11 +141,11 @@ func (r *MessageRepo) SoftDeleteByIDs(ids []string) (int64, error) {
 func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 	m := &model.Message{}
 	err := r.db.QueryRow(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 		 ORDER BY created_at DESC LIMIT 1`,
 		convID,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -165,13 +165,13 @@ func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 func (r *MessageRepo) FirstUnread(convID string) (*model.Message, error) {
 	m := &model.Message{}
 	err := r.db.QueryRow(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages
 		 WHERE conversation_id = $1 AND is_read = FALSE AND deleted_at IS NULL
 		 ORDER BY created_at ASC
 		 LIMIT 1`,
 		convID,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -194,14 +194,14 @@ func (r *MessageRepo) ListBefore(convID string, before time.Time, limit int) ([]
 	var err error
 	if before.IsZero() {
 		rows, err = r.db.Query(
-			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+			`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 			 ORDER BY created_at DESC LIMIT $2`,
 			convID, limit,
 		)
 	} else {
 		rows, err = r.db.Query(
-			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+			`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 			 AND created_at < $2
 			 ORDER BY created_at DESC LIMIT $3`,
@@ -216,7 +216,7 @@ func (r *MessageRepo) ListBefore(convID string, before time.Time, limit int) ([]
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -253,7 +253,7 @@ func (r *MessageRepo) CountBefore(convID string, before time.Time) (int, error) 
 // 排除软删消息。ASC 排序：与 ListBefore 的 DESC 反向，调用方按需 reverse。
 func (r *MessageRepo) ListAfter(convID string, after time.Time, limit int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, is_read, created_at
 		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 		 AND created_at > $2
 		 ORDER BY created_at ASC LIMIT $3`,
@@ -267,7 +267,7 @@ func (r *MessageRepo) ListAfter(convID string, after time.Time, limit int) ([]mo
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)

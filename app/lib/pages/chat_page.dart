@@ -248,8 +248,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     final newlySeen = <String>[];
     int skippedSeen = 0;
+    int skippedRead = 0; // 跳过的已读消息（isRead / 非 agent，不可能是未读）
     for (var i = 0; i <= firstUnreadIdx; i++) {
       final msg = chatState.messages[i];
+      // 核心修复：server 的 unread_count 只统计「未读的 agent 消息」，
+      // 客户端检测口径必须一致，否则会把已读 agent 消息 / user 自己发的消息
+      // 误当未读计入 newlySeen → decrement clamp 到 0 但 server 重算后仍剩未读 → 徽章残留。
+      // isRead 为主过滤（接口已返回 is_read），senderType=='agent' 作防御性双保险。
+      if (msg.isRead || msg.senderType != 'agent') {
+        skippedRead++;
+        continue;
+      }
       if (_seenUnreadMsgIds.contains(msg.id)) {
         skippedSeen++;
         continue;
@@ -262,7 +271,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     debugPrint('[unreadCheck] idx=$firstUnreadIdx, unread=${chatState.unreadCount}, '
         'seen=${_seenUnreadMsgIds.length}, skipped=$skippedSeen, '
-        'newlySeen=${newlySeen.length}');
+        'skippedRead=$skippedRead, newlySeen=${newlySeen.length}');
     _seenUnreadMsgIds.addAll(newlySeen);
     ref.read(chatProvider(chatKey).notifier).decrementUnread(newlySeen.length);
     _scheduleMarkReadSync(newlySeen);
