@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +15,26 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// migrationSkipPrefixes 列出 SetupTestDB 默认跳过的 migration 文件前缀。
+//
+// 背景:migration 015 是 participants 模型的不可逆 schema 重构,会 DROP
+// conversations.user_id/agent_id/unread_count/hidden_at/pinned_at 和 messages.is_read
+// 等老字段。Batch 1 后续 task 才会改造 model/repo/business 代码切换到新 schema,
+// 在此窗口期内,所有引用老字段的老 repo 测试必须继续工作。
+//
+// 因此 SetupTestDB 默认只跑到 014(老 schema),保证现有测试不受影响。
+// migration_015_test 用 SetupTestDB(跑到 014) seed 老数据后,手动 db.Exec 执行
+// 015 SQL 验证回填逻辑。
+//
+// 等 Batch 1 完成(代码全部切换到新 schema),从此切片移除 "015_" 即可让
+// SetupTestDB 自动应用 015。
+var migrationSkipPrefixes = []string{"015_"}
+
 // SetupTestDB 起一个一次性 Postgres 容器，跑 migrations，返回 *sql.DB。
 // 跳过条件：CI=1 时跳过（在 CI 上跑 docker 太重）；本地默认启用。
+//
+// 默认行为:跑 migrations 目录下所有 .sql,但跳过 migrationSkipPrefixes 列出的
+// 前缀(目前是 015_participants_model.sql,见注释)。
 func SetupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	// 设计权衡：CI=1 时跳过 testcontainers 测试。
@@ -70,12 +89,15 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		time.Sleep(time.Second)
 	}
 
-	// 跑所有 migrations
+	// 跑所有 migrations(跳过 migrationSkipPrefixes 列出的前缀)
 	migrations, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.sql"))
 	if err != nil {
 		t.Fatalf("glob migrations 失败: %v", err)
 	}
 	for _, m := range migrations {
+		if isMigrationSkipped(filepath.Base(m)) {
+			continue
+		}
 		sql, err := os.ReadFile(m)
 		if err != nil {
 			t.Fatalf("读 migration 失败 %s: %v", m, err)
@@ -86,4 +108,14 @@ func SetupTestDB(t *testing.T) *sql.DB {
 	}
 
 	return db
+}
+
+// isMigrationSkipped 判断给定 migration 文件名是否被 SetupTestDB 默认跳过。
+func isMigrationSkipped(name string) bool {
+	for _, p := range migrationSkipPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
