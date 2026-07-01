@@ -391,12 +391,12 @@ func TestFriendshipHandler_RemoveFriend_HappyPath(t *testing.T) {
 
 	h := newFriendshipHandler(f)
 	r := gin.New()
-	r.DELETE("/api/users/me/friends/:id", func(c *gin.Context) {
+	r.DELETE("/api/users/me/friends/:username", func(c *gin.Context) {
 		c.Set("userID", f.from.ID)
 		h.RemoveFriend(c)
 	})
 
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/me/friends/%s", f.to.ID), nil)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/me/friends/%s", f.to.Username), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -416,12 +416,12 @@ func TestFriendshipHandler_RemoveFriend_NotFriend_404(t *testing.T) {
 	f := seedFriendship(t)
 	h := newFriendshipHandler(f)
 	r := gin.New()
-	r.DELETE("/api/users/me/friends/:id", func(c *gin.Context) {
+	r.DELETE("/api/users/me/friends/:username", func(c *gin.Context) {
 		c.Set("userID", f.from.ID)
 		h.RemoveFriend(c)
 	})
 
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/me/friends/%s", f.to.ID), nil)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/me/friends/%s", f.to.Username), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

@@ -248,11 +248,29 @@ func (h *FriendshipHandler) decide(c *gin.Context, newState string) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// RemoveFriend DELETE /api/users/me/friends/:id
+// RemoveFriend DELETE /api/users/me/friends/:username
 // 删除好友关系(双向)。非 accepted / 无关系 → 404。成功后 WS 通知对方。
+//
+// path 参数用 username 而非 user_id:client 端不持有 user_id(防 user_id 枚举泄漏,
+// spec §4.2),好友列表 API 返 UserSummary 不含 id。client 调本接口时传 username,
+// server 内部用 userRepo.GetIDByUsername 反查 friend_user_id。
 func (h *FriendshipHandler) RemoveFriend(c *gin.Context) {
 	userID := c.GetString("userID")
-	friendID := c.Param("id")
+	friendUsername := c.Param("username")
+	if friendUsername == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "username required"})
+		return
+	}
+	friendID, err := h.userRepo.GetIDByUsername(friendUsername)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		}
+		log.Printf("[friend-remove] GetIDByUsername error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
 	if err := h.friendshipRepo.RemoveFriend(userID, friendID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not friend"})

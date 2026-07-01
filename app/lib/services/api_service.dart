@@ -234,8 +234,11 @@ class ApiService {
   }
 
   /// 删除好友(任一方都可)。
-  Future<void> removeFriend(String friendId) async {
-    await _dio.delete('/api/users/me/friends/$friendId');
+  ///
+  /// 路径参数用 username(spec §4.2:client 不持有 user_id 防泄漏),
+  /// server 内部 username → user_id 反查 + 调 FriendshipRepo.RemoveFriend。
+  Future<void> removeFriend(String friendUsername) async {
+    await _dio.delete('/api/users/me/friends/$friendUsername');
   }
 
 

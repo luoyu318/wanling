@@ -231,7 +231,7 @@ func main() {
 		userAuth.GET("/api/users/me/friend-requests/incoming", friendshipHandler.ListIncoming)
 		userAuth.GET("/api/users/me/friend-requests/outgoing", friendshipHandler.ListOutgoing)
 		userAuth.GET("/api/users/me/friends", friendshipHandler.ListFriends)
-		userAuth.DELETE("/api/users/me/friends/:id", friendshipHandler.RemoveFriend)
+		userAuth.DELETE("/api/users/me/friends/:username", friendshipHandler.RemoveFriend)
 		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
 		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
 		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
