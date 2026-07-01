@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -241,7 +240,7 @@ func (r *ConversationRepo) MarkRead(convID, userID string) error {
 //
 // 返回新的 unread_count 供调用方同步本地。会话不存在或越权时返回 sql.ErrNoRows。
 func (r *ConversationRepo) MarkMessagesRead(convID, userID string, messageIDs []string) (int, error) {
-	tx, err := r.db.BeginTx(context.Background(), nil)
+	tx, err := r.BeginTx()
 	if err != nil {
 		return 0, err
 	}
@@ -280,7 +279,8 @@ func (r *ConversationRepo) MarkMessagesRead(convID, userID string, messageIDs []
 	}
 
 	// 2. 重算 unread_count：该会话 remaining 未读 agent 消息数
-	// deleted_at IS NULL 过滤软删的（migration 006）
+	// 命中 idx_messages_conv_unread partial index（migration 013，仅含未读+未删的行，
+	// 扫描量 O(log N + 未读数)）。
 	var newUnread int
 	err = tx.QueryRow(
 		`SELECT COUNT(*) FROM messages
