@@ -6,7 +6,7 @@ const (
 	OpDispatch      = 0
 	OpHeartbeat     = 1
 	OpIdentify      = 2
-	OpSetActiveConv = 3 // client 上报当前正在看的会话，供服务端判断要不要计未读
+	OpSetActiveConv = 3 // client 上报当前正在看的会话（服务端记录 activeConv 状态,不再用于跳过未读计数;client 端 conversationProvider 据此避免徽章闪烁）
 	OpResume        = 6
 	OpReconnect     = 7
 	OpHello         = 10

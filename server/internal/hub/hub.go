@@ -214,10 +214,15 @@ func (h *Hub) GetMissedMessages(role, id string, afterSeq int64) [][]byte {
 	return v.(*dispatchBuffer).getAfter(afterSeq)
 }
 
-// IsUserViewingConv 判断 user 是否正在看某个会话（用于决定要不要计未读）。
-// 多端登录时，任一连接的 ActiveConvID == convID 即算在看。
-// 无连接或所有连接都没在看 → false（要计未读）。
-// 用途：processor 在 agent 发消息前调用，避免给「用户正在看的会话」计未读。
+// IsUserViewingConv 判断 user 是否正在看某个会话（任一 WS 连接的 ActiveConvID == convID 即算在看）。
+// 多端登录时返回 true；无连接或所有连接都没在看 → false。
+//
+// 历史用途:之前 processor 在 agent 发消息前调用本函数跳过 IncrUnreadTx
+// (假设「在会话 = 看到新消息」)。该守卫已移除,所有 agent 消息一律计未读,
+// client 端 chat_page.dart 在底部时 _markRead() 归零。
+//
+// 当前状态:无业务消费方。保留供 participants 模型重构或 client ack 模型复用,
+// grep TODO(participants-refactor) 可定位相关改造点。
 func (h *Hub) IsUserViewingConv(userID, convID string) bool {
 	if userID == "" || convID == "" {
 		return false
