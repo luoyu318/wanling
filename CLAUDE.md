@@ -65,6 +65,9 @@ migration 列表：
 - `008_approvals.sql` — 审批卡片表 `approvals`（state 状态机 + 会话级 allow_pattern 白名单 + card_type CHECK 约束）
 - `009_approval_confirm_id.sql` — `approvals.confirm_id`（slash_confirm 类型用，存 hermes `tools/slash_confirm` 的 confirm_id）
 - `010_approval_slash_confirm_type.sql` — 放宽 `approvals_card_type_check` 加 `slash_confirm`（008 源文件已同步）
+- `011_file_thumbnail.sql` — `files.thumbnail_path` + `width` + `height`（图片缩略图字段，可空，存量为 NULL 时 `?thumb=1` 降级原图）
+- `012_message_navigation.sql` — `idx_messages_conv_created`（messages 表 `(conversation_id, created_at DESC)`，游标分页 ListBefore 专用索引）
+- `013_first_unread_index.sql` — `idx_messages_conv_unread` **partial index**（`messages(conversation_id, created_at) WHERE is_read=FALSE AND deleted_at IS NULL`，FirstUnread 查询 LIMIT 1 命中）
 
 也可用 `scripts/init_db.sh` 一键执行。
 
@@ -81,7 +84,7 @@ Agent 平台插件 (plugin/hermes-plugin)
 ### 服务端核心组件
 
 - **cmd/main.go** — 入口，组装所有依赖，注册路由。修改路由或新增 Handler 在此接入。**注意路由组角色限制**：
-  - `userAuth` 组（仅 user role）管 `/api/users/me*`、`/api/conversations*`（含 `/read`、`/pin`、`/unpin`、hide 等子路由）
+  - `userAuth` 组（仅 user role）管 `/api/users/me*`、`/api/conversations*`（含 `/read`、`/messages/read`、`/unread`、`/pin`、`/unpin`、hide 等子路由）
   - `agentAuth` 组（仅 agent role）管 `/api/agents/me/conversations`（agent 视角 findOrCreate，跟 user 版 `/api/conversations` 对称）
   - `approvalAuth` 组（user + agent role）管审批 API：`/api/conversations/:id/approvals`（agent 创建审批卡片，**逻辑上仅 agent 用**但挂在双角色组）、`/api/approvals/:id`（GET 查详情双角色用）。`POST /api/approvals/:id/decide` 挂 `userAuth`（仅 user 决策）。审批 API 限流 20/min（`internal/ratelimit/`）
   - `fileAuth` 组（user + agent role）管 `/api/upload`、`/api/files/:id`，因为 agent 也要上传/下载文件
@@ -93,7 +96,7 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `auth_handler.go` — 注册/登录/Agent token 换取
   - `user_handler.go` — `GET /api/users/me`（restoreSession 拉取用户信息）+ `PUT /api/users/me`（更新 nickname / bio / avatar_url）+ `PUT /api/users/me/password`（改密码，校验旧密码）
   - `agent_handler.go` — Agent CRUD
-  - `conversation_handler.go` — 会话列表（IM 风格，含 agent + last_message_content + unread_count + 置顶/隐藏标记）+ FindOrCreate + `POST /:id/read`（标记已读）+ `POST/DELETE /:id/pin`（置顶/取消）+ `DELETE /:id`（隐藏 / 软删除）。**`FindOrCreateAsAgent`** 是 agent 视角的对称版（`POST /api/agents/me/conversations`，body `{user_id}`），供 agent 主动 findOrCreate（如发起审批卡片时定位会话）
+  - `conversation_handler.go` — 会话列表（IM 风格，含 agent + last_message_content + unread_count + 置顶/隐藏标记）+ FindOrCreate + `POST /:id/read`（标记已读）+ `POST /:id/messages/read`（**按 messageId 批量标记已读**，body `{message_ids:[...]}`，调 `convRepo.MarkMessagesRead` 重算 unread_count；用于 APP 未读浮标链路：用户向上加载历史后把已扫到的未读消息一次性标已读，避免逐条调 `/read` 闪烁）+ `GET /:id/unread`（**未读信息查询**，返 `{unread_count, first_unread_id, first_unread_created_at}`，APP 据此定位首条未读并按 created_at 游标分页加载历史）+ `POST/DELETE /:id/pin`（置顶/取消）+ `DELETE /:id`（隐藏 / 软删除）。**`FindOrCreateAsAgent`** 是 agent 视角的对称版（`POST /api/agents/me/conversations`，body `{user_id}`），供 agent 主动 findOrCreate（如发起审批卡片时定位会话）
   - `approval_handler.go` — 审批卡片 3 接口。`CreateApproval`（agent，事务内创建 msg_type=card 消息 + last_message_content，事务外创建 approval 记录，广播 MESSAGE_CREATE；command + allow_pattern 时先查会话级白名单匹配，命中返 auto_approved 不发卡片）、`Decide`（user，调 approval.Service 推进状态机）、`Get`（双角色兜底查询）。**WS payload 必须含 conversation_id/sender_type/sender_id/created_at**（APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填校验，缺字段会被丢弃）
   - `ws_handler.go` — WebSocket 协议（Hello → Identify → Heartbeat → Dispatch）
   - `message_handler.go` — 消息软删除。`DELETE /api/messages/:id`（单删）+ `POST /api/messages/batch-delete`（批量，必须同一会话，上限 100）。权限：user 必须是会话 owner，agent 必须是该会话 agent。删除后重算 `last_message_content` 缓存（全删完用 `ClearLastMessage` 置 NULL）+ 广播 `MESSAGE_DELETE`（`hub.SendToConv` 双端，payload 含 ids + conversation_id）
@@ -102,7 +105,7 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `middleware.go` — JWT AuthMiddleware，把 `userID`/`role` 写入 gin.Context
   - `access_log.go` — `BusinessAccessLog()` 自定义 access log 中间件，只记录命中注册路由的请求（`c.FullPath()` 非空），扫描器探测的 NoRoute 404 静默。main.go 用 `gin.New() + Recovery + BusinessAccessLog` 替代 `gin.Default()`
 - **internal/auth/jwt.go** — JWT 认证，通过 `role` 字段区分 user 和 agent 两种身份。
-- **internal/repository/** — 数据库操作层。`ConversationRepo.ListWithAgent` JOIN agents 表返回 IM 列表，SELECT 故意不含 `secret_key`（用 `AgentSummary` 模型避免误用）。
+- **internal/repository/** — 数据库操作层。`ConversationRepo.ListWithAgent` JOIN agents 表返回 IM 列表，SELECT 故意不含 `secret_key`（用 `AgentSummary` 模型避免误用）。**未读链路相关方法**：`ConversationRepo.MarkMessagesRead(convID, userID, messageIDs)` 在事务内 UPDATE messages.is_read + 重算 conversations.unread_count（基于 `messages` 表 `WHERE conversation_id AND is_read=FALSE AND deleted_at IS NULL` 计数），返回新 unread_count；`ConversationRepo.GetUnreadCount` 单独查未读数（不写）。**MessageRepo 游标分页**：`FirstUnread(convID)` 走 partial index `idx_messages_conv_unread` LIMIT 1；`ListBefore(convID, before, limit)` / `CountBefore(convID, before)` 走 `idx_messages_conv_created` 游标分页（before=created_at，APP 向上加载历史）；`ListAfter(convID, after, limit)` 反向（向下加载新消息，较少用）。所有查询都加 `WHERE deleted_at IS NULL`。
 - **internal/model/null_json.go** — `NullJSON` 类型（实现 Scanner/Valuer/Marshaler/Unmarshaler），处理可空 JSONB 字段。**不要加 `omitempty` tag**（实现了 MarshalJSON 后 omitempty 是死代码）。
 - **internal/storage/** — 文件存储抽象，当前为本地存储，接口预留 MinIO 扩展。`Provider.SaveThumbnail(storageName, data)` 按指定名落盘缩略图字节（`LocalStorage` 实现写同 baseDir，文件名 `{原fileID}_thumb.jpg`）。
 - **internal/imaging/** — 图片缩略图生成（`golang.org/x/image/draw` Catmull-Rom 高质量缩放）。`GenerateThumbnail(reader)` 解码 jpeg/png/webp/gif → 按长边 600 等比缩放（不放大）→ 透明图填白底合成（JPEG 不支持 alpha）→ 编码 JPEG(q85) 返回 `(bytes, w, h, err)`；非图片解码失败返回 error 供上游 fail-soft。
@@ -134,7 +137,7 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `MessagesPage` — 消息 tab，IM 风格列表（未读小红点 + 置顶分组）
   - `AgentListPage` — Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
   - `AgentDetailPage` — 详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA
-  - `ChatPage` — 聊天，入参 `(convId, agentId)` record。长按消息弹浮动菜单（复制/删除/多选），多选模式：顶部深色 AppBar（左取消/居中"已选择 N 条"）+ 左侧统一勾选框 + 底部固定操作栏（复制/删除纯 icon，N=0 置灰）。删除走 `ChatNotifier.deleteMessages`（乐观更新+WS MESSAGE_DELETE 同步）。`PopScope` 多选模式拦截返回键。**IM 风输入栏**：AppBar 居中标题（昵称 + 在线/正在输入副标题，正在输入绿色）+ `MessageInputBar`（加号↔发送动态切换 + 加号九宫格面板）。上传通道：文件（file_picker）/相册（wechat_assets_picker）/拍照（wechat_camera_picker），统一走 `_uploadAndSendAsset`
+  - `ChatPage` — 聊天，入参 `(convId, agentId)` record。**未读定位链路**：进会话先 `GET /api/conversations/:id/unread` 拿首条未读 id + created_at → 若有未读则游标分页 `MessageRepo.ListBefore` 一次性加载从首条未读到顶的历史 → `ScrollController.jumpTo` 定位到首条未读（定位期间用 `_isLocating` 标志禁用 loadMore 防循环触发）→ 渲染 `UnreadSeparator`（"以下是新消息"）在首条未读上方。**滚动加载历史**：用户上滑到顶部触发 loadMore（`ListBefore`，每次 50 条），头部显示 `LoadMoreIndicator`。**未读浮标动态减少**：`_checkUnreadSeen` 在滚动时检测视口内的未读消息，新进入视口的批量加入 `_seenUnreadMsgIds`，本地 unreadCount 立即减（500ms debounce 后调 `POST /messages/read` 一次性批量标已读 + 重算 unread_count，避免逐条闪烁）。**两个浮标互斥**：`unreadCount>0 && !isAtBottom` 显示绿色胶囊 `UnreadNavBadge`（点击跳最新并标已读）；`unreadCount==0 && !isAtBottom` 显示白色圆形 `JumpToBottomButton`。长按消息弹浮动菜单（复制/删除/多选），多选模式：顶部深色 AppBar（左取消/居中"已选择 N 条"）+ 左侧统一勾选框 + 底部固定操作栏（复制/删除纯 icon，N=0 置灰）。删除走 `ChatNotifier.deleteMessages`（乐观更新+WS MESSAGE_DELETE 同步）。`PopScope` 多选模式拦截返回键。**IM 风输入栏**：AppBar 居中标题（昵称 + 在线/正在输入副标题，正在输入绿色）+ `MessageInputBar`（加号↔发送动态切换 + 加号九宫格面板）。上传通道：文件（file_picker）/相册（wechat_assets_picker）/拍照（wechat_camera_picker），统一走 `_uploadAndSendAsset`
   - `ProfilePage` — 我的 tab 入口，展示用户信息 + 头像。设置项分组：切换账号（≥2 账号才显示，拉起 `SwitchAccountSheet`）/ 通知权限跳转 / 修改密码 / 关于 / 退出登录。**原设置内页入口已隐藏**
   - `ScanPairPage` / `PairSelectAgentPage` — 扫码配对两件套（见「扫码配对」节），AgentListPage 右上角 `+` 拉起
   - `EditProfilePage` / `CropAvatarPage` / `ChangePasswordPage` — 个人资料编辑三件套
@@ -163,7 +166,12 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `markdown_block_spacing` — 自定义块级元素（标题/分割线）的上下间距。markdown_widget 2.3.2+8 默认无法直接配置这两类元素 margin，用 `SpanNodeGeneratorWithTag` 注入自定义节点重写 padding
   - `SelectAllOrNoneContainer` — 块级整体选中（主流 IM 式）。`SelectionContainer` + `SelectAllOrNoneContainerDelegate`（照搬 Flutter 官方示例，落块即全选）。`fallbackText` 兜底非文本块（如 LaTeX 图形）的复制。注入到代码块 wrapper / 块级 LaTeX / 表格 wrapper
   - `TypingBubble` — 对方"正在输入"动画气泡
-  - `UnreadBadge` — 未读数红点
+  - `UnreadBadge` — 未读数红点（IM 列表用）
+  - `UnreadNavBadge` — **聊天页内未读浮标**（绿色胶囊样式，带数字）。仅当 `unreadCount > 0 && !isAtBottom` 时显示。点击跳到最新消息并标记已读。合并历史未读 + 会话内新消息计数（按 messageId 批量调 `/messages/read` 一次性标已读，避免逐条闪烁）
+  - `JumpToBottomButton` — **跳转底部浮标**（白色圆形，与未读胶囊视觉区分）。仅当 `unreadCount == 0 && !isAtBottom` 时显示。主流 IM 同款
+  - `UnreadSeparator` — 首条未读消息上方的分隔条（"以下是新消息"），普通非粘性，随列表滚动
+  - `LoadMoreIndicator` — 顶部加载更多指示器（细进度条样式），仅在 `isLoading` 时显示
+  - `ImageThumb` — **图片消息显示组件**。按宽高比缩放显示（宽固定 200px，高 clamp 120~280px 防极宽图变扁条 / 极高图占满屏）。用 `thumbUrl` 走服务端 600px 缩略图 + `memCacheWidth:600` + `cacheKey=thumbCacheKey`，与 markdown 内嵌图、Avatar 共享内存缓存口径。点击进画廊（与 image 类型一致）
   - `ConnectionBanner` — WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvider` + `authProvider`（用 `ref.listenManual` + `fireImmediately`）。**3 秒防抖**：disconnected 不立即显示，先启 Timer，期间恢复（connected/connecting）则 cancel；超时才显示。认证过渡期（isSwitching/isRestoring/isLoading）和 connecting/loading 态都静默，消除切换/登录时的闪烁。
   - `gallery/zoomable_gallery` — 会话级图片画廊（PageView 翻页 + Hero 共享元素过渡）。点击聊天图片（image 类型 / markdown 内嵌图）打开全屏画廊，可左右滑动切换会话内所有图片。`_openGallery`（ChatPage）收集会话图片去重反转成正序 + 定位初始页。放大态下图片平移到边缘后跟随手指翻页（photo_view 原版 shouldMove 协调：到边让 PageView drag 赢得手势）；翻页时离开页完全滑出屏幕外（监听 `_pageController` 连续 page 值，`|page-oldIndex|>=1.0`）才重置 position/scaleState，避免半屏可见时缩回原大小的突兀感。单击/下拉关闭。**ImageProvider 用原图（高清，支持 4× 缩放）+ `cacheKey=originCacheKey`** 与缩略图场景隔离（避免缩略图小 bitmap 把原图大 bitmap 从内存 LRU 顶掉；同图重复打开画廊命中内存免重解码）。**长按弹 BottomSheet**（外包 `LongPressDetector`，pointer 层不与缩放冲突）→ 复用 `PanelItem` 菜单项样式（顶部圆角 12）→ 点保存调 `saveToGallery`（鉴权下载 + gal 写相册）+ SnackBar 反馈
   - `gallery/photo_view/` — **内化的 photo_view 0.15.0 源码**（脱离 pub 依赖作内部组件，package 自引用改为 `package:app/widgets/gallery/photo_view/`）。提供缩放/平移/fling 惯性。关键改动点：`photo_view_core.dart` 的 fling 用 `velocity/drag`（drag=0.018）替代原版写死 100px；`clampPosition` 拆严格版与 overscroll 版；`photo_view_gesture_detector.dart` 移除 DoubleTapGestureRecognizer 的 pointer 层方案（已废弃，现恢复竞技场仲裁）；`_blindScaleListener` 不钳制 position（避免双指缩放频闪）。photo_view 源码既有大量 info/warning 是内化时自带的，非本次引入
@@ -178,22 +186,25 @@ Agent 平台插件 (plugin/hermes-plugin)
     - `app_dialog` — 统一风格全局 Dialog helper（圆角 12 / 标题 17·w500 / 内容 14·w300 / 品牌绿确认按钮）。替代各页 showDialog + AlertDialog 拼装
     - `app_snackbar` — 统一位置轻量提示条。位置策略用 SafeArea bottom 80px（不再依赖 inputBarKey），覆盖输入栏但不遮挡。替代 utils/snackbar.dart 的旧实现
     - `app_text_selection_toolbar` — 文字级系统选区菜单（commit e51366b）。覆写 Flutter 系统 `TextSelectionToolbar`，深色配色对齐 `app_menu_style`，让长按文字选词后的系统菜单与消息级浮动菜单视觉统一。估算菜单宽度（4 中文按钮 + 分隔线）对齐 anchor
-- **lib/utils/** — 7 个工具：
+- **lib/utils/** — 工具集合：
   - `app_lifecycle_observer.dart` — 监听 app 前后台切换，触发后台服务启停
   - `avatar_bitmap.dart` — 通知头像加载（URL 下载 → 裁方形(192x192)+圆角 → 文件缓存；失败兜底首字母色块，复用 `Avatar.colorFor`）。纯函数不依赖 Riverpod，isolate 可用
   - `dio_error.dart` — 统一 Dio 异常 → 用户可读文案
+  - `emoji_span.dart` + `emoji_editing_controller.dart` — **Android emoji 单色修复**。背景：Android Roboto 字体 cmap 含 ♻⚠✂ 等单色字形，主字体先抢到会渲染成单色（而非彩色 emoji）。方案：精确 span 分割，只给 emoji 字符段单独设 `fontFamily: 'Noto Color Emoji'`（pubspec 打包字体子集），普通文本仍走 Roboto 度量不受污染。弃用过全局 `fontFamilyFallback`（Noto Color Emoji cmap 含宽空格/宽数字会污染普通文本）。`EmojiEditingController` 是 `TextEditingController` 子类，覆盖 `buildTextSpan` 让输入框也走彩色 emoji
   - `gallery_image.dart` — 画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`GalleryImage.fromInternal` 拼**原图** URL（画廊全屏看大图用高清）；`thumbUrl(baseUrl, fileId)` 拼**缩略图** URL（`?thumb=1`，服务端返回 600px 长边小图，无缩略图时自动降级原图，消息列表/气泡/markdown 内嵌图场景用）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载字节，3 秒超时 → `Gal.putImageBytes` 写相册，gal 按 magic bytes 自动推断格式免临时文件，返回 `SaveResult` 枚举，gal 写入免权限）
   - `image_cache_key.dart` — **图片内存缓存 key 统一约定**。`thumbCacheKey(fileId)`='thumb_$fileId'（缩略图场景：消息列表/气泡/markdown 内嵌图共用）；`originCacheKey(fileId)`='origin_$fileId'（画廊原图独用）。key 用稳定前缀+fileId，不含 baseUrl/host，切服务器/账号时同一张图内存缓存仍命中。根治「每次打开重新加载」：缩略图与画廊原图 cacheKey 隔离，避免小 bitmap 把大 bitmap 从 LRU 顶掉；同图多处复用同一 key 不重复解码
+  - `image_normalizer.dart` — **头像裁剪 HEIC 黑屏修复**（commit ba9ba25）。把相册选图原始字节转码为标准 JPEG 喂给 `crop_your_image`。解码用 `dart:ui`（Skia 支持全格式含 HEIC），编码用 `image` 包的 `encodeJpg`（dart:ui 无 jpg 格式常量），中间走 RGBA 像素桥接。同时等比缩放到长边 ≤2048px 降内存，Canvas 铺白底防 PNG 透明转 JPEG 黑边。`AvatarPicker` 选图后先 `normalizeImageForCrop` 再喂裁剪库
   - `notification_payload.dart` — 通知点击 payload 解析（路由到对应会话）
   - `permission_helper.dart` — `permission_handler` 封装，运行时权限申请（图片/通知）
   - `secure_storage.dart` — `flutter_secure_storage` 封装，加密存储 token / 多账号
   - `snackbar.dart` — 全局 Snackbar helper
-- **lib/models/** — `User`、`Agent`、`Conversation`（含 `lastMessagePreview` / `unreadCount` / `isPinned` / `isHidden` getter）、`Message`、`WSMessage`
+- **lib/models/** — `User`、`Agent`、`Conversation`（含 `lastMessagePreview` / `unreadCount` / `isPinned` / `isHidden` getter）、`Message`、`WSMessage`、`Approval`、`Pairing`、`SavedLogin`、`AccountMark`、`UnreadInfo`（GET `/api/conversations/:id/unread` 响应模型，含 unread_count + first_unread_id + first_unread_created_at）
 - **scripts/** — 项目级运维脚本：
   - `init_db.sh` — 一键建库 + 跑 migrations
   - `deploy.sh` — 本地编译 → rsync → systemctl restart（生产部署）
   - `admin.sh` — 交互式管理菜单（加用户/重置密码/构建 APK/重启服务等）
   - `publish-plugin.sh` — 把 `plugin/` 同步到公开镜像 repo（`gitee.com/luoyu318/wanling-plugin`），用 `PUBLISH_REPO_DIR=<路径>` 指定本地 clone
+  - `send_test_message.py` — **消息测试工具**（开发调试用）。以 agent 身份给指定 user 发消息，支持 `--count N --interval X` 连发测试未读浮标链路。流程：agent_id+secret_key 换 JWT → 连 WS 完成 Hello/Identify → 发 MESSAGE_CREATE。环境变量 `WANLING_AGENT_ID` / `WANLING_SECRET_KEY` / `WANLING_USER_ID` 兜底（凭证可写在 `scripts/.test_env.local`，被 `scripts/.gitignore` 忽略）
   - `migrate-rename-to-wanling.sh` — 一次性生产迁移脚本（agent-chat→wanling 改名用，已执行完）
 
 ## WebSocket 协议

@@ -229,7 +229,7 @@ CREATE DATABASE wanling OWNER agent;
 
 ```bash
 # 一键执行全部 migration
-for m in server/migrations/00{1,2,3,4,5,6,7}_*.sql; do
+for m in server/migrations/*.sql; do
   psql -U agent -d wanling -h localhost -f "$m"
 done
 ```
@@ -244,6 +244,12 @@ migration 清单：
 - `005_profile_fields.sql` — `users.nickname` + `users.bio` + `agents.bio`（个人资料扩展）
 - `006_message_soft_delete.sql` — `messages.deleted_at`（软删除）+ 部分索引 `idx_messages_conv_not_deleted`
 - `007_pairing_tickets.sql` — `pairing_tickets` 扫码配对票据表（非业务表，仅握手用，5min TTL）
+- `008_approvals.sql` — `approvals` 审批卡片表（state 状态机 + 会话级 allow_pattern 白名单 + card_type CHECK 约束）
+- `009_approval_confirm_id.sql` — `approvals.confirm_id`（slash_confirm 类型用）
+- `010_approval_slash_confirm_type.sql` — 放宽 `approvals_card_type_check` 加 `slash_confirm`
+- `011_file_thumbnail.sql` — `files.thumbnail_path` + `width` + `height`（图片缩略图）
+- `012_message_navigation.sql` — `idx_messages_conv_created`（游标分页查询索引）
+- `013_first_unread_index.sql` — `idx_messages_conv_unread` partial index（定位首条未读）
 
 ### 3.3 启动 Redis（可选）
 

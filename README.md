@@ -126,7 +126,7 @@ MSYS_NO_PATHCONV=1 docker compose run --rm \
 ├── server/          # Go 服务端（Gin + PostgreSQL）
 │   ├── cmd/             # 入口（main / migrate / admin-tool）
 │   ├── internal/        # 业务代码（handler / hub / repository / ...）
-│   └── migrations/      # PostgreSQL migration（001~010）
+│   └── migrations/      # PostgreSQL migration（001~013）
 ├── plugin/          # Agent 平台接入插件（hermes-plugin）
 ├── scripts/         # 运维脚本（部署 / 建库 / 管理）
 ├── deploy/          # 部署配置模板（nginx 反代示例）
