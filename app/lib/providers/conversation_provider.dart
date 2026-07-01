@@ -171,7 +171,7 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   }
 
   void removeByAgentId(String agentId) {
-    state = state.where((c) => c.agent.id != agentId).toList();
+    state = state.where((c) => c.agent!.id != agentId).toList();
   }
 
   void upsert(Conversation conv) {
@@ -249,11 +249,11 @@ void syncAgentAvatarsToBgService(List<Conversation> conversations) {
   try {
     final service = FlutterBackgroundService();
     for (final c in conversations) {
-      final agentId = c.agent.id;
+      final agentId = c.agent!.id;
       if (agentId.isEmpty) continue;
       service.invoke('syncAgentAvatar', {
         'agentId': agentId,
-        'avatarUrl': c.agent.avatarUrl,
+        'avatarUrl': c.agent!.avatarUrl,
       });
     }
   } catch (_) {

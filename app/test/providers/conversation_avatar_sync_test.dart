@@ -1,4 +1,4 @@
-import 'package:app/models/agent.dart' show Agent, AgentStatus;
+import 'package:app/models/agent.dart' show Agent, AgentStatus, AgentSummary;
 import 'package:app/models/conversation.dart';
 import 'package:app/providers/conversation_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,12 +32,14 @@ void main() {
 Conversation _mkConv(String agentId, String? avatarUrl) {
   return Conversation(
     id: 'conv-$agentId',
-    agent: Agent(
+    type: 'dm_user_agent',
+    agent: AgentSummary(
       id: agentId,
       name: 'test',
       status: AgentStatus.offline,
       avatarUrl: avatarUrl,
     ),
+    participants: [],
     lastMessageContent: null,
     lastMessageAt: DateTime.now(),
     createdAt: DateTime.now(),

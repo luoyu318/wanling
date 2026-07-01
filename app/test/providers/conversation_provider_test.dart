@@ -55,7 +55,7 @@ void main() {
     await notifier.load();
     final list = container.read(conversationProvider);
     expect(list.length, 1);
-    expect(list.first.agent.name, 'Bot');
+    expect(list.first.agent!.name, 'Bot');
     expect(list.first.lastMessagePreview, 'old');
   });
 
@@ -177,7 +177,7 @@ void main() {
     final list = container.read(conversationProvider);
     expect(list.length, 1);
     expect(list.first.id, 'c2');
-    expect(list.first.agent.id, 'a2');
+    expect(list.first.agent!.id, 'a2');
   });
 
   // ========== pin/unpin/hide + _resort 测试(直接构造 Notifier) ==========
@@ -190,13 +190,15 @@ void main() {
             {bool pinned = false, int unread = 0}) =>
         Conversation(
           id: id,
-          agent: Agent(
+          type: 'dm_user_agent',
+          agent: AgentSummary(
               id: 'a-$id', name: agentName, status: AgentStatus.online),
+          participants: [],
           lastMessageContent: null,
           lastMessageAt: at,
           createdAt: DateTime(2026),
           unreadCount: unread,
-          isPinned: pinned,
+          pinnedAt: pinned ? DateTime.now() : null,
         );
 
     setUp(() {
@@ -290,12 +292,14 @@ void main() {
       notifier3.state = [
         Conversation(
           id: 'c1',
-          agent: Agent(
+          type: 'dm_user_agent',
+          agent: AgentSummary(
               id: 'a1', name: 'Bot', status: AgentStatus.online),
+          participants: [],
           lastMessageContent: null,
           lastMessageAt: DateTime(2026, 6, 17, 10),
           createdAt: DateTime(2026),
-          isPinned: true,
+          pinnedAt: DateTime.now(),
         ),
       ];
 
@@ -323,13 +327,15 @@ void main() {
       notifier3.state = [
         Conversation(
           id: 'c1',
-          agent: Agent(
+          type: 'dm_user_agent',
+          agent: AgentSummary(
               id: 'a1', name: 'Bot', status: AgentStatus.online),
+          participants: [],
           lastMessageContent: null,
           lastMessageAt: DateTime(2026, 6, 17, 10),
           createdAt: DateTime(2026),
           unreadCount: 3,
-          isPinned: true,
+          pinnedAt: DateTime.now(),
         ),
       ];
 
@@ -345,21 +351,24 @@ void main() {
       notifier3.state = [
         Conversation(
           id: 'pinned',
-          agent: Agent(
+          type: 'dm_user_agent',
+          agent: AgentSummary(
               id: 'a-p', name: 'Pinned', status: AgentStatus.online),
+          participants: [],
           lastMessageContent: null,
           lastMessageAt: DateTime(2026, 6, 17, 9), // 更早
           createdAt: DateTime(2026),
-          isPinned: true,
+          pinnedAt: DateTime.now(),
         ),
         Conversation(
           id: 'normal',
-          agent: Agent(
+          type: 'dm_user_agent',
+          agent: AgentSummary(
               id: 'a-n', name: 'Normal', status: AgentStatus.online),
+          participants: [],
           lastMessageContent: null,
           lastMessageAt: DateTime(2026, 6, 17, 10),
           createdAt: DateTime(2026),
-          isPinned: false,
         ),
       ];
 

@@ -17,8 +17,8 @@ void main() {
       };
       final c = Conversation.fromJson(raw);
       expect(c.id, 'c1');
-      expect(c.agent.name, 'Bot');
-      expect(c.agent.status, AgentStatus.online);
+      expect(c.agent!.name, 'Bot');
+      expect(c.agent!.status, AgentStatus.online);
       expect(c.lastMessagePreview, 'hi');
       expect(c.lastMessageAt.year, 2026);
     });

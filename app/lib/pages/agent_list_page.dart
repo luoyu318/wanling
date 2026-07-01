@@ -90,7 +90,7 @@ class _AgentListView extends ConsumerWidget {
     // 一次性算出 agentId → 未读累加 map（O(convs)）
     final unreadByAgent = <String, int>{};
     for (final c in convs) {
-      final aid = c.agent.id;
+      final aid = c.agent!.id;
       unreadByAgent[aid] = (unreadByAgent[aid] ?? 0) + c.unreadCount;
     }
 

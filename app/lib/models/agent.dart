@@ -68,3 +68,27 @@ class Agent {
         secretKey: secretKey,
       );
 }
+
+/// Agent 摘要(IM 列表 / 会话详情用)。
+/// 与 [Agent] 区别:不含 secretKey / bio,只渲染所需的最小字段。
+/// N 方 participants 模型下,仅 dm_user_agent 场景会填,其他 type 为 null。
+class AgentSummary {
+  final String id;
+  final String name;
+  final String? avatarUrl;
+  final AgentStatus status;
+
+  AgentSummary({
+    required this.id,
+    required this.name,
+    this.avatarUrl,
+    required this.status,
+  });
+
+  factory AgentSummary.fromJson(Map<String, dynamic> json) => AgentSummary(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        avatarUrl: json['avatar_url'] as String?,
+        status: AgentStatusX.fromString(json['status'] as String?),
+      );
+}
