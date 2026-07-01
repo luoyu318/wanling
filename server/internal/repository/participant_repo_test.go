@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"github.com/wanling/server/internal/model"
 )
 
 // === 测试公共 seed helper ===
@@ -225,8 +224,7 @@ func TestParticipantRepo_AddAndList(t *testing.T) {
 	if !exists {
 		t.Errorf("Exists(user_a in conv1) 期望 true, 实际 false")
 	}
-	// user_a 不在 conv2 的非 owner 行(实际上 owner 也算 in),换一个不存在场景测:
-	// 让我们用一个未加入 conv1 的"假 user id"测 Exists=false
+	// 用一个未加入 conv1 的假 user_id 测 Exists=false
 	fakeUserID := "00000000-0000-0000-0000-000000000001"
 	exists2, err := repo.Exists(seed.convID, fakeUserID, "user")
 	if err != nil {
@@ -667,6 +665,3 @@ func TestParticipantRepo_OwnerLeaveDestroyConversation(t *testing.T) {
 		t.Errorf("deliveries 应被级联删, 实际 count=%d", dRemain)
 	}
 }
-
-// 引用 model.ConversationParticipant 仅供编译期检查 model 字段对齐
-var _ = model.ConversationParticipant{}

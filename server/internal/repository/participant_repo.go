@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/lib/pq"
@@ -52,9 +53,16 @@ func (r *ParticipantRepo) AddParticipantsTx(tx *sql.Tx, convID string, participa
 	return nil
 }
 
-// ListByConversation 返回会话所有参与者(发消息 / 推送 / 详情页用)。
-func (r *ParticipantRepo) ListByConversation(convID string) ([]model.ConversationParticipant, error) {
-	rows, err := r.db.Query(`
+// rowsQueryer 抽象 *sql.DB 和 *sql.Tx 共有的 Query 方法,
+// 让 ListByConversation / ListByConversationTx 共享同一份 SQL 实现。
+type rowsQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// listParticipantsByConv 是 ListByConversation / ListByConversationTx 的共享实现。
+// 同事务读避免并发写消息时的脏读(读到旧 participants 漏算新成员未读)。
+func listParticipantsByConv(q rowsQueryer, convID string) ([]model.ConversationParticipant, error) {
+	rows, err := q.Query(`
 		SELECT conv_id, member_id, member_type, role, unread_count, last_read_message_id, joined_at, hidden_at, pinned_at
 		FROM conversation_participants WHERE conv_id = $1
 	`, convID)
@@ -65,18 +73,14 @@ func (r *ParticipantRepo) ListByConversation(convID string) ([]model.Conversatio
 	return scanParticipants(rows)
 }
 
+// ListByConversation 返回会话所有参与者(发消息 / 推送 / 详情页用)。
+func (r *ParticipantRepo) ListByConversation(convID string) ([]model.ConversationParticipant, error) {
+	return listParticipantsByConv(r.db, convID)
+}
+
 // ListByConversationTx 事务版本(MessageProcessor 同事务查 participants 用)。
-// 同事务读避免并发写消息时的脏读(读到旧 participants 漏算新成员未读)。
 func (r *ParticipantRepo) ListByConversationTx(tx *sql.Tx, convID string) ([]model.ConversationParticipant, error) {
-	rows, err := tx.Query(`
-		SELECT conv_id, member_id, member_type, role, unread_count, last_read_message_id, joined_at, hidden_at, pinned_at
-		FROM conversation_participants WHERE conv_id = $1
-	`, convID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanParticipants(rows)
+	return listParticipantsByConv(tx, convID)
 }
 
 // ListByMember 返回某 user/agent 参与的所有会话(IM 列表用)。
@@ -117,7 +121,7 @@ func (r *ParticipantRepo) Get(convID, memberID, memberType string) (*model.Conve
 		&p.ConvID, &p.MemberID, &p.MemberType, &p.Role, &p.UnreadCount,
 		&lastReadID, &p.JoinedAt, &hiddenAt, &pinnedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -132,6 +136,10 @@ func (r *ParticipantRepo) Get(convID, memberID, memberType string) (*model.Conve
 // IncrUnreadTx 发消息时给非 sender 全员 +1 unread_count。
 // exceptMember 是 (sender_id, sender_type) 元组。
 // 调用方必须在外层事务里调,确保 unread_count 自增与消息落库原子性。
+//
+// 调用方责任:必须先校验 sender 是该会话 participant(用 Exists 方法),
+// 否则 UPDATE 会给该会话所有成员 +1 unread(包括 sender 不在的"幽灵消息"场景),
+// 这是 fail-open 行为,MessageProcessor 在消息落库前需加 Exists 守卫。
 func (r *ParticipantRepo) IncrUnreadTx(tx *sql.Tx, convID, exceptMemberID, exceptMemberType string) error {
 	_, err := tx.Exec(`
 		UPDATE conversation_participants
@@ -144,6 +152,10 @@ func (r *ParticipantRepo) IncrUnreadTx(tx *sql.Tx, convID, exceptMemberID, excep
 
 // MarkMessagesReadTx 批量标已读:UPDATE deliveries + 重算 unread_count + 更新 last_read_message_id。
 // 返回新的 unread_count(供 WS 推送 / IM 列表 refresh 用)。
+//
+// 事务所有权归调用方:本方法只接收 tx,不做 BeginTx/Commit/Rollback。
+// 调用方负责 Commit(成功路径)或 Rollback(err 路径)。
+// 不存在该 (conv, member) 时返 sql.ErrNoRows,调用方据此转 404。
 //
 // unread_count 必须按 conv 维度重算(不能按 member 全局),因为同一 member 可能参与多个会话,
 // 只把"本会话内未读 delivery"计入。
@@ -180,7 +192,8 @@ func (r *ParticipantRepo) MarkMessagesReadTx(tx *sql.Tx, convID, memberID, membe
 	//    WHERE 必须加 conv_id 限定,避免 member 参与多个 conv 时一次性改所有行的 unread_count。
 	//    last_read_message_id 取该 conv 内已读 deliveries 中最新消息(m.created_at DESC LIMIT 1)
 	//    子查询若返 NULL(无已读 delivery)不影响 unread_count 更新。
-	_, err = tx.Exec(`
+	//    RowsAffected=0 表示该 member 不在此 conv(越权 / 未邀请),返 sentinel 让 handler 转 404。
+	res, err := tx.Exec(`
 		UPDATE conversation_participants p
 		SET unread_count = $3,
 		    last_read_message_id = (
@@ -194,6 +207,13 @@ func (r *ParticipantRepo) MarkMessagesReadTx(tx *sql.Tx, convID, memberID, membe
 	`, memberID, memberType, newUnread, convID)
 	if err != nil {
 		return 0, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		return 0, sql.ErrNoRows // 越权 / 该 member 不在此 conv
 	}
 	return newUnread, nil
 }
@@ -240,9 +260,11 @@ func (r *ParticipantRepo) RemoveParticipantTx(tx *sql.Tx, convID, memberID, memb
 	return err
 }
 
-// DestroyConversationTx owner 退群 → 删整个会话。
-// 利用 conversations ON DELETE CASCADE 自动级联删 participants + messages + deliveries。
-// 调用方必须在外层事务里调。
+// DestroyConversationTx owner 退群 → 删整个会话(走 conversations ON DELETE CASCADE 级联删 participants + messages + deliveries)。
+//
+// 安全约束:本方法不做 owner 身份校验,调用方必须在 handler 层先校验
+// caller 是该会话 owner(spec §6.2),否则任何 member 都能销群。
+// 调用方(Leave / Disband handler)必须查 participant.role='owner' 才调本方法。
 func (r *ParticipantRepo) DestroyConversationTx(tx *sql.Tx, convID string) error {
 	_, err := tx.Exec(`DELETE FROM conversations WHERE id = $1`, convID)
 	return err
