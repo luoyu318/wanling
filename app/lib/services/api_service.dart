@@ -123,6 +123,122 @@ class ApiService {
     return res.data;
   }
 
+  // === N 方 participants 模型 API ===
+
+  /// 创建会话(支持 4 种 type + group_mixed 群聊)。
+  ///
+  /// member_ids / member_types 一一对应(同长度数组)。
+  /// type=dm_user_user 时 server 会前置校验好友关系,非好友返 403。
+  /// type=group_user/group_mixed 时 title/avatarUrl 可填(群聊用)。
+  Future<Map<String, dynamic>> createConversation({
+    required String type,
+    required List<String> memberIds,
+    required List<String> memberTypes,
+    String? title,
+    String? avatarUrl,
+  }) async {
+    final res = await _dio.post('/api/conversations', data: {
+      'type': type,
+      'member_ids': memberIds,
+      'member_types': memberTypes,
+      if (title != null) 'title': title,
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
+    });
+    return res.data;
+  }
+
+  /// 单会话详情(含 participants[] 摘要 + 群元信息)。
+  Future<Map<String, dynamic>> getConversation(String convId) async {
+    final res = await _dio.get('/api/conversations/$convId');
+    return res.data;
+  }
+
+  /// 更新群名 / 群头像(owner / admin 才有权限)。
+  Future<void> updateConversation(String convId,
+      {String? title, String? avatarUrl}) async {
+    await _dio.patch('/api/conversations/$convId', data: {
+      if (title != null) 'title': title,
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
+    });
+  }
+
+  /// 邀请成员加入会话(所有 role 都可邀请)。
+  Future<void> inviteMember(
+      String convId, String memberId, String memberType) async {
+    await _dio.post('/api/conversations/$convId/participants', data: {
+      'member_id': memberId,
+      'member_type': memberType,
+    });
+  }
+
+  /// 踢人(owner / admin,且不能踢 owner)。
+  Future<void> kickMember(String convId, String memberId) async {
+    await _dio.delete('/api/conversations/$convId/participants/$memberId');
+  }
+
+  /// 退群(所有 role 可调;owner 退群 → 销群)。
+  Future<void> leaveConversation(String convId) async {
+    await _dio.post('/api/conversations/$convId/leave');
+  }
+
+  // === 好友系统 API ===
+
+  /// 按 username 模糊搜索(server 响应不含 user_id 防枚举)。
+  Future<List<dynamic>> searchUsers(String username) async {
+    final res = await _dio.get(
+      '/api/users/search',
+      queryParameters: {'username': username},
+    );
+    return (res.data as Map)['users'] as List;
+  }
+
+  /// 发起好友请求(body 用 username,不暴露 user_id)。
+  Future<Map<String, dynamic>> createFriendRequest(String toUsername) async {
+    final res = await _dio.post('/api/users/me/friend-requests', data: {
+      'to_username': toUsername,
+    });
+    return res.data;
+  }
+
+  /// 收到的好友请求(pending,我是接收方)。
+  Future<List<dynamic>> listIncomingFriendRequests() async {
+    final res = await _dio.get('/api/users/me/friend-requests/incoming');
+    return (res.data as Map)['requests'] as List;
+  }
+
+  /// 发出的好友请求(pending,我是发起方)。
+  Future<List<dynamic>> listOutgoingFriendRequests() async {
+    final res = await _dio.get('/api/users/me/friend-requests/outgoing');
+    return (res.data as Map)['requests'] as List;
+  }
+
+  /// 好友列表(accepted)。
+  Future<List<dynamic>> listFriends() async {
+    final res = await _dio.get('/api/users/me/friends');
+    return (res.data as Map)['friends'] as List;
+  }
+
+  /// 接受好友请求(我是接收方)。
+  Future<void> acceptFriendRequest(String requestId) async {
+    await _dio.post('/api/friend-requests/$requestId/accept');
+  }
+
+  /// 拒绝好友请求(我是接收方)。
+  Future<void> rejectFriendRequest(String requestId) async {
+    await _dio.post('/api/friend-requests/$requestId/reject');
+  }
+
+  /// 取消好友请求(我是发起方)。
+  Future<void> cancelFriendRequest(String requestId) async {
+    await _dio.post('/api/friend-requests/$requestId/cancel');
+  }
+
+  /// 删除好友(任一方都可)。
+  Future<void> removeFriend(String friendId) async {
+    await _dio.delete('/api/users/me/friends/$friendId');
+  }
+
+
   /// 标记会话已读：unread_count 清零。进入 ChatPage 时调一次。
   Future<Map<String, dynamic>> markConversationRead(String convId) async {
     final res = await _dio.post('/api/conversations/$convId/read');
