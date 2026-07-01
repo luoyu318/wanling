@@ -1,2 +1,0 @@
-wanling-sdk
-mcp>=1.0

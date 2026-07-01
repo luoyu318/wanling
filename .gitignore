@@ -66,3 +66,4 @@ server/wanling-migrate
 server/wanling-admin
 # air 热重载构建产物（dev 模式 .air.toml 的 tmp_dir = "tmp"）
 server/tmp/
+*.egg-info/
