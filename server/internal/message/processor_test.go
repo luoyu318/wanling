@@ -260,6 +260,48 @@ func TestProcessor_HandleIncoming_RollsBackOnCreateTxFailure(t *testing.T) {
 	}
 }
 
+// TestProcessor_HandleIncoming_AgentAlwaysIncrUnread 验证:agent 发消息一律计未读,
+// 不再依赖 user 是否「正在看会话」。
+// 设计:client 端 chat_page.dart 在底部时收到 agent 消息会立即 _markRead() 归零,
+// 不在底部时本地 +1。server 端只管累加,client 负责「看到就 ack」。
+// 历史背景:之前用 IsUserViewingConv 守卫跳过 IncrUnreadTx,导致 messages 表
+// (is_read=FALSE)与 conversations 表(unread_count=0)不一致,APP 拿到矛盾数据。
+func TestProcessor_HandleIncoming_AgentAlwaysIncrUnread(t *testing.T) {
+	convRepo, msgRepo, arepo, fileRepo, userID, agentID, convID := setupFixture(t)
+
+	// hub 用 nil presence(参考 TestProcessor_HandleIncoming_PersistsMessageAndCacheTransactional)
+	h := hub.NewHub(nil, arepo)
+	p := NewProcessor(h, convRepo, msgRepo, arepo, fileRepo)
+
+	// 构造 agent → user 方向的 MESSAGE_CREATE
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "agent reply"},
+	})
+	payload, _ := json.Marshal(map[string]interface{}{
+		"user_id": userID,
+		"content": json.RawMessage(content),
+	})
+	wsMsg := &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventMessageCreate,
+		D:  payload,
+	}
+
+	// 触发:agent 发消息。hub 无任何 user 连接注册(IsUserViewingConv 恒为 false),
+	// 但本测试的核心断言是「无论是否在看都 +1」,所以无需模拟 active 状态。
+	p.HandleIncoming("agent", agentID, wsMsg)
+
+	// 断言:conversations.unread_count == 1
+	count, err := convRepo.GetUnreadCount(convID, userID)
+	if err != nil {
+		t.Fatalf("GetUnreadCount 失败: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("agent 消息应一律 +1 unread, 实际: %d", count)
+	}
+}
+
 // createImageFile 往 files 表插一条带 width/height 的图片记录，返回 fileID。
 // 复用 repository.CreateFileParams，供 enhanceImageContent 测试。
 func createImageFile(t *testing.T, fileRepo *repository.FileRepo, ownerID string, w, h int) string {

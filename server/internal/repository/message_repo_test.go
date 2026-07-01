@@ -176,9 +176,9 @@ func TestMessageRepo_FirstUnread(t *testing.T) {
 		t.Errorf("空会话 FirstUnread 应为 nil，实际 %+v", got)
 	}
 
-	// 造 3 条消息：m1（user 发，已读）、m2（agent 发，未读）、m3（agent 发，未读）
-	// is_read 列默认值 false，user 发的消息 is_read 不影响未读判定（仍按 is_read=false）
-	// 这里 MarkRead 后所有消息都置 true，再单独 Insert 一条 is_read=false 的来制造"第一条未读"
+	// 造 3 条消息：m1（user 发，is_read=TRUE）、m2（agent 发，is_read=FALSE）、m3（agent 发，is_read=FALSE）
+	// 注：createMessage 对 user 发的消息落地 is_read=TRUE（自发不算未读），agent 发的落地 FALSE。
+	// 这里把 m1~m3 全部 UPDATE 成 TRUE，模拟「全部已读」，再单独 Insert 一条 m4（agent，未读）。
 	m1, err := msgRepo.Create(conv.ID, "user", user.ID, content)
 	if err != nil {
 		t.Fatalf("Create m1 失败: %v", err)
@@ -389,5 +389,50 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 	}
 	if got[0].ID != msgs[1].ID || got[1].ID != msgs[3].ID || got[2].ID != msgs[4].ID {
 		t.Errorf("软删后期望 [m2,m4,m5]，实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
+	}
+}
+
+// TestMessageRepo_Create_IsReadSemantics 验证 is_read 字段语义:
+// user 发的消息一律视为已读(TRUE,不参与未读计数),agent 发的消息初始未读(FALSE)。
+// 这层语义收敛后,client 端只需 !msg.isRead 单一过滤即可,
+// 不再需要 senderType 兜底(参见 chat_page.dart::_checkUnreadSeen)。
+func TestMessageRepo_Create_IsReadSemantics(t *testing.T) {
+	db := SetupTestDB(t)
+	userRepo := NewUserRepo(db)
+	agentRepo := NewAgentRepo(db)
+	convRepo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+
+	user, err := userRepo.Create(uniqueShortName(t, "ir_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := agentRepo.Create(user.ID, "IR-Agent", "secret")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+
+	// user 发的消息 → is_read 必须为 TRUE
+	userMsg, err := msgRepo.Create(conv.ID, "user", user.ID, content)
+	if err != nil {
+		t.Fatalf("Create user 消息失败: %v", err)
+	}
+	if !userMsg.IsRead {
+		t.Errorf("user 发的消息 is_read 期望 TRUE,实际 FALSE(字段语义: user 自发不参与未读计数)")
+	}
+
+	// agent 发的消息 → is_read 必须为 FALSE
+	agentMsg, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
+	if err != nil {
+		t.Fatalf("Create agent 消息失败: %v", err)
+	}
+	if agentMsg.IsRead {
+		t.Errorf("agent 发的消息 is_read 期望 FALSE,实际 TRUE(agent 发的初始未读)")
 	}
 }

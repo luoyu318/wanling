@@ -68,6 +68,7 @@ migration 列表：
 - `011_file_thumbnail.sql` — `files.thumbnail_path` + `width` + `height`（图片缩略图字段，可空，存量为 NULL 时 `?thumb=1` 降级原图）
 - `012_message_navigation.sql` — `idx_messages_conv_created`（messages 表 `(conversation_id, created_at DESC)`，游标分页 ListBefore 专用索引）
 - `013_first_unread_index.sql` — `idx_messages_conv_unread` **partial index**（`messages(conversation_id, created_at) WHERE is_read=FALSE AND deleted_at IS NULL`，FirstUnread 查询 LIMIT 1 命中）
+- `014_user_message_is_read.sql` — 存量 user 消息 `is_read` 回填(user 一律 TRUE,对齐「不计未读」语义;不加 CHECK 约束保留 participants 模型扩展空间)
 
 也可用 `scripts/init_db.sh` 一键执行。
 
@@ -258,7 +259,7 @@ PostgreSQL，表结构见 `server/migrations/`。核心表：users、agents、co
 - `conversations.last_message_content`（migration 002）— JSONB，缓存最后一条消息内容，写消息时由 MessageProcessor 在事务内同步更新，避免 IM 列表 JOIN messages 表。NULL 表示从未发过消息的会话（IM 列表 `WHERE last_message_content IS NOT NULL` 过滤）。
 - `conversations.unread_count`（migration 003）— int，IM 列表未读数。
 - `conversations.hidden_at` / `pinned_at`（migration 004）— TIMESTAMPTZ，非空表示已隐藏/已置顶。新消息来时 `hidden_at` 置空（自动恢复显示）。IM 列表排序：置顶组在前 + `last_message_at` 倒序。
-- `messages.is_read`（migration 003）— bool，预留"已读回执"扩展。
+- `messages.is_read`（migration 003 / 语义收敛于 014）— bool，`TRUE ⇔ 该消息不参与 unread_count 计数`（user 自发一律 TRUE，agent 自发初始 FALSE，markread 后转 TRUE）。当前为单向 user 视角,participants 模型重构后会废弃/迁移。
 - `users.nickname` / `users.bio` / `agents.bio`（migration 005）— 个人资料扩展，`nickname` 为空时回退 `username`。
 - `messages.deleted_at`（migration 006）— TIMESTAMPTZ，软删除（NULL=未删）。查询须加 `WHERE deleted_at IS NULL`，配合部分索引 `idx_messages_conv_not_deleted`。
 - `pairing_tickets` 表（migration 007）— 扫码配对票据表（**非业务表**），仅握手用。5 分钟 TTL（查询时计算），`secret_key` 领完即焚。后台 goroutine 每 10 分钟清理 1 小时前的记录（`internal/pair/cleanup.go`）。
