@@ -41,6 +41,19 @@ class WebSocketService {
   final _messageUpdateController = StreamController<WSMessage>.broadcast();
   Stream<WSMessage> get messageUpdates => _messageUpdateController.stream;
 
+  /// 会话管理事件流(N 方 participants 模型):
+  /// CONVERSATION_PARTICIPANT_JOIN / LEAVE / UPDATE。
+  /// conversationProvider 监听本流,本地增删 participants / 更新 title/avatar。
+  final _conversationUpdatesController = StreamController<WSMessage>.broadcast();
+  Stream<WSMessage> get conversationUpdates =>
+      _conversationUpdatesController.stream;
+
+  /// 好友系统事件流:
+  /// FRIEND_REQUEST_RECEIVED / DECIDED / REMOVED。
+  /// friendProvider 监听本流,本地更新请求列表 / 好友列表 + 触发系统通知。
+  final _friendUpdatesController = StreamController<WSMessage>.broadcast();
+  Stream<WSMessage> get friendUpdates => _friendUpdatesController.stream;
+
   // 连接状态：private setter，对外只读 currentValue + 流。
   final _connStateController = StreamController<ConnState>.broadcast();
   Stream<ConnState> get connectionStateStream => _connStateController.stream;
@@ -147,6 +160,24 @@ class WebSocketService {
           _messageUpdateController.add(msg);
           return;
         }
+        // 会话管理事件分流(N 方 participants 模型):
+        // CONVERSATION_PARTICIPANT_JOIN / LEAVE / UPDATE
+        if (msg.t == 'CONVERSATION_PARTICIPANT_JOIN' ||
+            msg.t == 'CONVERSATION_PARTICIPANT_LEAVE' ||
+            msg.t == 'CONVERSATION_UPDATE') {
+          if (msg.s != null) _lastSeq = msg.s;
+          _conversationUpdatesController.add(msg);
+          return;
+        }
+        // 好友系统事件分流:
+        // FRIEND_REQUEST_RECEIVED / DECIDED / REMOVED
+        if (msg.t == 'FRIEND_REQUEST_RECEIVED' ||
+            msg.t == 'FRIEND_REQUEST_DECIDED' ||
+            msg.t == 'FRIEND_REMOVED') {
+          if (msg.s != null) _lastSeq = msg.s;
+          _friendUpdatesController.add(msg);
+          return;
+        }
         if (msg.s != null) _lastSeq = msg.s;
         _messageController.add(msg);
         break;
@@ -205,5 +236,7 @@ class WebSocketService {
     _setConnState(ConnState.disconnected);
     _typingController.close();
     _messageUpdateController.close();
+    _conversationUpdatesController.close();
+    _friendUpdatesController.close();
   }
 }
