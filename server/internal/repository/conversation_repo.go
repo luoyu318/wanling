@@ -190,6 +190,10 @@ func (r *ConversationRepo) UpdateLastMessageTx(tx *sql.Tx, convID string, conten
 // IncrUnreadTx 在外部事务内把会话 unread_count++ 并取消隐藏。
 // 调用方（MessageProcessor）负责 Commit。
 // agent → user 方向调用:新消息来时会话自动恢复显示(即使之前被用户软删除)。
+//
+// TODO(participants-refactor): 当前「未读 = user 未读 agent 的消息」假设,
+// 引入 conversation_participants 模型后,unread_count 应移到 participants 表,
+// 按每个 participant 各自维护。grep 此 tag 可定位所有需改点。
 func (r *ConversationRepo) IncrUnreadTx(tx *sql.Tx, convID string) error {
 	_, err := tx.Exec(
 		`UPDATE conversations
@@ -203,6 +207,9 @@ func (r *ConversationRepo) IncrUnreadTx(tx *sql.Tx, convID string) error {
 // MarkRead 把指定会话的 unread_count 重置为 0。
 // 同时把该会话所有未读消息的 is_read 置 TRUE。
 // user_id 校验防越权：其他用户调本接口返回 sql.ErrNoRows。
+//
+// TODO(participants-refactor): 「重置 unread_count=0」目前只重置 user 视角。
+// participants 模型下需要按 participant 维度重置,且应记录 last_read_message_id 游标。
 func (r *ConversationRepo) MarkRead(convID, userID string) error {
 	res, err := r.db.Exec(
 		`UPDATE conversations SET unread_count = 0 WHERE id = $1 AND user_id = $2`,
@@ -263,6 +270,9 @@ func (r *ConversationRepo) MarkMessagesRead(convID, userID string, messageIDs []
 		return current, nil
 	}
 
+	// TODO(participants-refactor): 此处 sender_type='agent' 硬编码假设「未读 = user 未读 agent 的消息」。
+	// 引入 conversation_participants 模型后,改为按 participant 维度过滤(只标对应接收方的消息)。
+	//
 	// 1. 批量标记消息已读（只标记该会话的 agent 消息，防越权 + 防误标 user 消息）
 	// messages.id 是 UUID 类型，必须 cast 成 uuid[]（text[] 会触发 "operator does not exist: uuid = text"）
 	// 用 ANY($1::uuid[]) 比 IN (...) 更适合动态数组（lib/pq Array 编码）

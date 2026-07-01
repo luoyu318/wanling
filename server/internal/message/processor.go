@@ -106,9 +106,12 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		return
 	}
 	// agent → user 方向累加未读（user 给 agent 的消息不算 user 自己的未读）。
-	// 但若用户正在看该会话（前端 op=3 上报了 activeConv），不计未读——
-	// 否则会出现「用户明明看过了，刷新列表却显示未读」的矛盾。
-	if senderType == "agent" && !p.hub.IsUserViewingConv(userID, convID) {
+	// 所有 agent 消息一律计未读:client 端 chat_page.dart 在底部时收到新消息会立即
+	// _markRead() 同步归零,不在底部时本地 +1(显示浮标)。server 端不再用
+	// IsUserViewingConv 守卫——「在会话」≠「看到了消息」(用户可能滚到顶部看历史)。
+	// TODO(participants-refactor): participants 模型下,unread_count 应按每个 participant
+	// 各自维护,client 端「看到就 ack」语义对齐主流 IM 标准模型。
+	if senderType == "agent" {
 		if err := p.convRepo.IncrUnreadTx(tx, convID); err != nil {
 			log.Println("未读计数失败:", err)
 			return

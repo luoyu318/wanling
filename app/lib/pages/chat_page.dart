@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -36,6 +37,36 @@ import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 import 'package:wechat_camera_picker/wechat_camera_picker.dart';
 
 const _imageExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp'};
+
+/// 计算当前视口内新进入的未读消息 id 列表。
+///
+/// 提取为顶层 pure function 便于 unit test 直接驱动（避免依赖 ScrollController / viewport）。
+/// 由 _ChatPageState._checkUnreadSeen 调用，语义保持一致。
+///
+/// 三个过滤维度：
+///   1. msg.isRead == false（server 端 user 自发落地 TRUE，故 user 消息自动跳过）
+///   2. 不在 seenUnreadMsgIds 内（已计入过的不再重复 decrement）
+///   3. isInViewport(msg.id) == true（由调用方注入 viewport 检查函数）
+@visibleForTesting
+List<String> computeNewlySeenUnread({
+  required List<ChatMessage> messages,
+  required int firstUnreadIdx,
+  required Set<String> seenUnreadMsgIds,
+  required bool Function(String messageId) isInViewport,
+}) {
+  final newlySeen = <String>[];
+  for (var i = 0; i <= firstUnreadIdx; i++) {
+    final msg = messages[i];
+    // 过滤口径：只看 isRead 单一字段。
+    // server 端 createMessage 对 user 发的消息落地 is_read=TRUE（自己发的不计未读），
+    // 故 client 不再需要 senderType 兜底。参与者模型重构后，client 这层逻辑天然兼容
+    // （只看字段不看角色）。
+    if (msg.isRead) continue;
+    if (seenUnreadMsgIds.contains(msg.id)) continue;
+    if (isInViewport(msg.id)) newlySeen.add(msg.id);
+  }
+  return newlySeen;
+}
 
 /// 聊天页：入参为 convId + agentId。
 ///
@@ -246,32 +277,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     if (firstUnreadIdx < 0) return;
 
-    final newlySeen = <String>[];
-    int skippedSeen = 0;
-    int skippedRead = 0; // 跳过的已读消息（isRead / 非 agent，不可能是未读）
-    for (var i = 0; i <= firstUnreadIdx; i++) {
-      final msg = chatState.messages[i];
-      // 核心修复：server 的 unread_count 只统计「未读的 agent 消息」，
-      // 客户端检测口径必须一致，否则会把已读 agent 消息 / user 自己发的消息
-      // 误当未读计入 newlySeen → decrement clamp 到 0 但 server 重算后仍剩未读 → 徽章残留。
-      // isRead 为主过滤（接口已返回 is_read），senderType=='agent' 作防御性双保险。
-      if (msg.isRead || msg.senderType != 'agent') {
-        skippedRead++;
-        continue;
-      }
-      if (_seenUnreadMsgIds.contains(msg.id)) {
-        skippedSeen++;
-        continue;
-      }
-      if (_isMessageInViewport(msg.id)) {
-        newlySeen.add(msg.id);
-      }
-    }
+    final newlySeen = computeNewlySeenUnread(
+      messages: chatState.messages,
+      firstUnreadIdx: firstUnreadIdx,
+      seenUnreadMsgIds: _seenUnreadMsgIds,
+      isInViewport: _isMessageInViewport,
+    );
     if (newlySeen.isEmpty) return;
 
     debugPrint('[unreadCheck] idx=$firstUnreadIdx, unread=${chatState.unreadCount}, '
-        'seen=${_seenUnreadMsgIds.length}, skipped=$skippedSeen, '
-        'skippedRead=$skippedRead, newlySeen=${newlySeen.length}');
+        'seen=${_seenUnreadMsgIds.length}, newlySeen=${newlySeen.length}');
     _seenUnreadMsgIds.addAll(newlySeen);
     ref.read(chatProvider(chatKey).notifier).decrementUnread(newlySeen.length);
     _scheduleMarkReadSync(newlySeen);

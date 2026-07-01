@@ -30,16 +30,23 @@ func (r *MessageRepo) CreateTx(tx *sql.Tx, convID, senderType, senderID string, 
 
 // createMessage 是 Create / CreateTx 的公共实现，用闭包接收 QueryRow 能力。
 // *sql.DB 和 *sql.Tx 的 QueryRow 方法签名相同，闭包方案比 interface 更轻量。
+//
+// is_read 语义(2026-07-01 收敛):TRUE ⇔ 该消息不参与未读计数。
+//   - sender_type=user: 一律 TRUE(user 自己发的不算未读)
+//   - sender_type=agent: 初始 FALSE(待 user 读),被 MarkMessagesRead 后转 TRUE
+// 注:本字段语义为单向 user 视角,participants 模型重构后将废弃/迁移,
+//     grep TODO(participants-refactor) 可定位所有相关改动点。
 func (r *MessageRepo) createMessage(
 	queryRow func(query string, args ...interface{}) *sql.Row,
 	convID, senderType, senderID string, content json.RawMessage,
 ) (*model.Message, error) {
+	isRead := senderType == "user"
 	m := &model.Message{}
 	err := queryRow(
-		`INSERT INTO messages (conversation_id, sender_type, sender_id, content)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO messages (conversation_id, sender_type, sender_id, content, is_read)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, conversation_id, sender_type, sender_id, content, is_read, created_at`,
-		convID, senderType, senderID, content,
+		convID, senderType, senderID, content, isRead,
 	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.IsRead, &m.CreatedAt)
 	return m, err
 }
