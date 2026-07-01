@@ -137,6 +137,34 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
     state = updated;
   }
 
+  /// 按 server 返回的精确值更新本地 unread（不是简单清零）。
+  /// 用于 markMessagesRead API 同步：server 重算后的 unread_count 反映真实剩余未读，
+  /// 直接覆写本地值让会话列表徽章立即对齐。
+  void setUnreadCountLocally(String convId, int newUnread) {
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) return;
+    final old = state[idx];
+    if (old.unreadCount == newUnread) return;
+    final updated = List<Conversation>.from(state);
+    updated[idx] = old.copyWith(unreadCount: newUnread);
+    state = updated;
+  }
+
+  /// 会话内收到 agent 新消息时 +1 本地 unread（与 chatProvider 浮标保持一致）。
+  ///
+  /// conversationProvider 内置的 _onMessageCreate 在 isActive=true 时不 +1（与
+  /// server hub.IsUserViewingConv 对齐，避免用户在看的会话还显示徽章）。但
+  /// chatProvider 浮标会 +1（让用户感知到新消息），导致两端不一致。
+  /// 本方法供 ChatPage ref.listen (2) 分支同步两端使用。
+  void incrementUnreadLocally(String convId) {
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) return;
+    final old = state[idx];
+    final updated = List<Conversation>.from(state);
+    updated[idx] = old.copyWith(unreadCount: old.unreadCount + 1);
+    state = updated;
+  }
+
   void removeByAgentId(String agentId) {
     state = state.where((c) => c.agent.id != agentId).toList();
   }

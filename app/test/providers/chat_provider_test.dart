@@ -147,35 +147,21 @@ void main() {
     expect(container.read(chatProvider(key)).messages.length, 1);
   });
 
-  test('incrementUnread: unreadCount 累加 +1', () async {
+  test('incrementUnread: unreadCount 累加 +1（合并 newMessageCount）', () async {
     final container = makeContainer();
     final key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
-    // 等 _initialize 完成（setUp 的 mock 让 unreadCount=0）
     await Future.delayed(const Duration(milliseconds: 50));
 
     notifier.incrementUnread();
     expect(container.read(chatProvider(key)).unreadCount, 1);
 
     notifier.incrementUnread();
-    expect(container.read(chatProvider(key)).unreadCount, 2);
+    notifier.incrementUnread();
+    expect(container.read(chatProvider(key)).unreadCount, 3);
   });
 
-  test('incrementNewMessage: newMessageCount 累加 +1', () async {
-    final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
-    final notifier = container.read(chatProvider(key).notifier);
-    await Future.delayed(const Duration(milliseconds: 50));
-
-    notifier.incrementNewMessage();
-    expect(container.read(chatProvider(key)).newMessageCount, 1);
-
-    notifier.incrementNewMessage();
-    notifier.incrementNewMessage();
-    expect(container.read(chatProvider(key)).newMessageCount, 3);
-  });
-
-  test('markReadAtBottom: 清零 unread/newMessage/separator + 清空 firstUnreadMessageId',
+  test('markReadAtBottom: 清零 unread/separator + 清空 firstUnreadMessageId',
       () async {
     final container = makeContainer();
     final key = (convId: 'c1', agentId: 'a1');
@@ -184,9 +170,7 @@ void main() {
 
     // 模拟有未读状态
     notifier.incrementUnread();
-    notifier.incrementNewMessage();
     expect(container.read(chatProvider(key)).unreadCount, 1);
-    expect(container.read(chatProvider(key)).newMessageCount, 1);
 
     when(() => api.markConversationRead(any())).thenAnswer((_) async => {});
 
@@ -194,11 +178,10 @@ void main() {
 
     final state = container.read(chatProvider(key));
     expect(state.unreadCount, 0);
-    expect(state.newMessageCount, 0);
     expect(state.firstUnreadMessageId, isNull);
   });
 
-  test('jumpToBottom: 清零 unread/newMessage/separator + 清空 firstUnreadMessageId',
+  test('jumpToBottom: 清零 unread/separator + 清空 firstUnreadMessageId',
       () async {
     final container = makeContainer();
     final key = (convId: 'c1', agentId: 'a1');
@@ -207,9 +190,7 @@ void main() {
 
     // 模拟有未读状态：手动构造 state（通过 incrementUnread 触发）
     notifier.incrementUnread();
-    notifier.incrementNewMessage();
     expect(container.read(chatProvider(key)).unreadCount, 1);
-    expect(container.read(chatProvider(key)).newMessageCount, 1);
 
     when(() => api.markConversationRead(any())).thenAnswer((_) async => {});
 
@@ -217,7 +198,6 @@ void main() {
 
     final state = container.read(chatProvider(key));
     expect(state.unreadCount, 0);
-    expect(state.newMessageCount, 0);
     expect(state.showUnreadSeparator, false);
     expect(state.firstUnreadMessageId, isNull); // clearFirstUnread: true 的效果
   });
@@ -267,5 +247,90 @@ void main() {
     // newest first：m8 在 [0]，m1 在 [7]
     expect(msgs.first.id, 'm8');
     expect(msgs.last.id, 'm1');
+  });
+
+  group('decrementUnread', () {
+    test('单条减少: unreadCount -= n', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      for (var i = 0; i < 10; i++) {
+        notifier.incrementUnread();
+      }
+      expect(container.read(chatProvider(key)).unreadCount, 10);
+
+      notifier.decrementUnread(3);
+      expect(container.read(chatProvider(key)).unreadCount, 7);
+    });
+
+    test('n=0 或负数: no-op', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      notifier.incrementUnread();
+      expect(container.read(chatProvider(key)).unreadCount, 1);
+
+      notifier.decrementUnread(0);
+      expect(container.read(chatProvider(key)).unreadCount, 1);
+
+      notifier.decrementUnread(-1);
+      expect(container.read(chatProvider(key)).unreadCount, 1);
+    });
+
+    test('超减 clamp 到 0: unreadCount=2 → decrement(5) → 0', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      notifier.incrementUnread();
+      notifier.incrementUnread();
+
+      notifier.decrementUnread(5);
+      expect(container.read(chatProvider(key)).unreadCount, 0);
+    });
+
+    test('减到 0 时清 firstUnreadMessageId + showUnreadSeparator', () async {
+      // override mock 让 _initialize 走「有未读」分支
+      when(() => api.getUnreadInfo(any())).thenAnswer((_) async => {
+            'unread_count': 2,
+            'first_unread_message_id': 'm-unread-1',
+            'first_unread_created_at': '2026-06-20T10:00:00Z',
+            'has_more_before_first_unread': false,
+          });
+      when(() => api.getMessagesAfter(any(),
+              after: any(named: 'after'), limit: any(named: 'limit')))
+          .thenAnswer((_) async => [
+                {
+                  'id': 'm-unread-1',
+                  'conversation_id': 'c1',
+                  'sender_type': 'agent',
+                  'sender_id': 'a1',
+                  'content': {'msg_type': 'text', 'data': {'text': 'unread'}},
+                  'created_at': '2026-06-20T10:00:00Z',
+                },
+              ]);
+
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(container.read(chatProvider(key)).unreadCount, 2);
+      expect(
+          container.read(chatProvider(key)).firstUnreadMessageId, 'm-unread-1');
+      expect(container.read(chatProvider(key)).showUnreadSeparator, isTrue);
+
+      notifier.decrementUnread(2);
+
+      final state = container.read(chatProvider(key));
+      expect(state.unreadCount, 0);
+      expect(state.firstUnreadMessageId, isNull);
+      expect(state.showUnreadSeparator, isFalse);
+    });
   });
 }

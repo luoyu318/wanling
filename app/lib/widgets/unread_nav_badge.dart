@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// 聊天页内的未读消息导航浮标（蓝色）。
-/// 仅当未读数 > ChatState.badgeThreshold 且不在底部时显示。
-/// 点击跳到最新消息。
+/// 聊天页内的未读消息导航浮标（统一胶囊）。
+/// 仅当 ChatState.unreadCount > 0 且不在底部时显示（由 ChatPage build 内 Positioned 控制）。
+/// 合并历史未读 + 会话内新消息计数。点击跳到最新消息并标记已读。
 class UnreadNavBadge extends StatelessWidget {
   final int count;
   final VoidCallback onTap;
@@ -23,7 +23,7 @@ class UnreadNavBadge extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: Theme.of(context).primaryColor,
+            color: const Color(0xFF07C160), // 万灵品牌绿
             borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
@@ -36,17 +36,17 @@ class UnreadNavBadge extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const Icon(Icons.keyboard_arrow_down,
+                  color: Colors.white, size: 18),
+              const SizedBox(width: 4),
               Text(
-                '$count',
+                '$count 条新消息',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(width: 4),
-              const Icon(Icons.keyboard_arrow_down,
-                  color: Colors.white, size: 18),
             ],
           ),
         ),
