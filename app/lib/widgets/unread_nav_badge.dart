@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 /// 聊天页内的未读消息导航浮标（统一胶囊）。
 /// 仅当 ChatState.unreadCount > 0 且不在底部时显示（由 ChatPage build 内 Positioned 控制）。
 /// 合并历史未读 + 会话内新消息计数。点击跳到最新消息并标记已读。
@@ -23,7 +25,7 @@ class UnreadNavBadge extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF07C160), // 万灵品牌绿
+            color: AppColors.accentGreen,
             borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(

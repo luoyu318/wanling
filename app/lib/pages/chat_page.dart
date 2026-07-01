@@ -196,35 +196,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _onScroll() {
-    // ⚠️ reverse: true 的 ListView 方向语义：
-    //   pixels = 0              → 最新消息端（视觉底部）
-    //   pixels = maxScrollExtent → 最老消息端（视觉顶部）
-    //
-    // "上滑加载历史" = 滑向更老 = 靠近 maxScrollExtent 端。
-    // "是否在底部（最新端）" = 靠近 pixels = 0 端。
-    //
-    // 注意：loadMore 触发**不在这里**，改由 _onUserScroll 处理。
-    // _onScroll 由 ScrollController.addListener 触发，无法区分用户拖动
-    // vs 程序 jumpTo/animateTo。
-    // 若在这里触发 loadMore，定位后 px 贴 maxScrollExtent 会立即触发 →
-    // 加载后 px 又贴 maxScrollExtent → 链式触发到 hasMore=false。
+    // reverse: true 的 ListView 方向语义：pixels=0 → 最新端（视觉底部），
+    // pixels=maxScrollExtent → 最老端（视觉顶部）。loadMore 不在这里触发
+    //（改由 _onScrollNotification 的 50% 阈值处理，避免定位后链式触发）。
     final px = _scrollCtrl.position.pixels;
-    final maxExtent = _scrollCtrl.position.maxScrollExtent;
-    debugPrint('[scroll] px=$px, maxExtent=$maxExtent, '
-        'nearTop=${px >= maxExtent - 100}, isAtBottom=${px <= 50}, '
-        'isLocating=$_isLocating');
     final wasAtBottom = _isAtBottom;
     _isAtBottom = px <= 50;
-    // _isAtBottom 变化时触发 rebuild：跳转底部浮标 / 未读浮标的显示条件都依赖
-    // !_isAtBottom，不 rebuild 它们不会消失/出现。
     if (wasAtBottom != _isAtBottom) {
+      // _isAtBottom 变化时触发 rebuild：跳转底部浮标 / 未读浮标的显示条件都依赖
+      // !_isAtBottom，不 rebuild 它们不会消失/出现。
       setState(() {});
     }
-    // 用户主动滑到底部时标记已读：清未读浮标 + 分割线。
-    // 仅检测 false→true 转变，避免每次 px 微变都触发 state 更新。
     if (!wasAtBottom && _isAtBottom) {
-      final chatKey = (convId: widget.convId, agentId: widget.agentId);
-      ref.read(chatProvider(chatKey).notifier).markReadAtBottom();
+      // 用户主动滑到底部时标记已读：清未读浮标 + 分割线。
+      ref.read(chatProvider(
+          (convId: widget.convId, agentId: widget.agentId)).notifier).markReadAtBottom();
     }
     // 菜单打开时随滚动动态调整定位或取消。
     _updateMenuOnScroll();
@@ -247,28 +233,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// messages[firstUnreadIdx] = 第一条未读（最老）。
   /// 未读段 = messages[0..firstUnreadIdx]，遍历找「在视口内 + 未在 seen 集合」的。
   void _checkUnreadSeen() {
-    if (!mounted || _isLocating) {
-      // 不打印（每帧调用，会刷屏）。仅在入口失败时静默。
-      return;
-    }
+    if (!mounted || _isLocating) return;
     final chatKey = (convId: widget.convId, agentId: widget.agentId);
     final chatState = ref.read(chatProvider(chatKey));
     if (chatState.unreadCount == 0 || chatState.firstUnreadMessageId == null) {
-      return; // 无未读或未定位，静默
+      return;
     }
 
-    // 每次 indexWhere 而非缓存：messages 长度可能因新消息 prepend / 删除变化，
-    // 缓存 idx 会在数组结构变化时偏移导致误算。messages 通常 ≤ 几百条，
-    // O(n) 字符串比较每帧一次成本可接受（实际瓶颈是 _isMessageInViewport
-    // 的 localToGlobal，且只对未 seen 的消息调用）。
+    // 不缓存 idx：messages 长度可能因新消息 prepend / 删除变化，缓存会偏移导致误算。
     final firstUnreadIdx = chatState.messages.indexWhere(
       (m) => m.id == chatState.firstUnreadMessageId,
     );
     if (firstUnreadIdx < 0) return;
-
-    // 用 firstUnread.createdAt 过滤会话内新消息的逻辑已移除：
-    // 合并后所有未读（历史未读 + 会话内新消息）都计入 unreadCount，
-    // 进入视口即减。
 
     final newlySeen = <String>[];
     int skippedSeen = 0;
@@ -282,32 +258,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         newlySeen.add(msg.id);
       }
     }
-
-    // 仅 newlySeen 非空时打印，避免每帧刷屏（_onScroll 每帧触发）
     if (newlySeen.isEmpty) return;
-    debugPrint('[unreadCheck] firstUnreadIdx=$firstUnreadIdx, '
-        'unreadCount=${chatState.unreadCount}, '
-        'seenSetSize=${_seenUnreadMsgIds.length}, '
-        'skippedSeen=$skippedSeen, newlySeen=${newlySeen.length}');
 
-    if (newlySeen.isEmpty) return;
+    debugPrint('[unreadCheck] idx=$firstUnreadIdx, unread=${chatState.unreadCount}, '
+        'seen=${_seenUnreadMsgIds.length}, skipped=$skippedSeen, '
+        'newlySeen=${newlySeen.length}');
     _seenUnreadMsgIds.addAll(newlySeen);
-    debugPrint('[unreadCheck] TRIGGER decrement: ids=$newlySeen');
     ref.read(chatProvider(chatKey).notifier).decrementUnread(newlySeen.length);
     _scheduleMarkReadSync(newlySeen);
   }
 
-  /// 判断消息当前是否在 ListView 视口内（任何部分可见）。
-  /// 复用 _bubbleKeys + localToGlobal 算屏幕坐标，与菜单定位同源。
-  bool _isMessageInViewport(String msgId) {
+  /// 拿消息 bubble 在屏幕的全局 Rect（context 不可用 / 未渲染时返 null）。
+  /// 视口检测与菜单定位共用，避免两处重复 localToGlobal 计算。
+  Rect? _bubbleGlobalRect(String msgId) {
     final ctx = _bubbleKeys[msgId]?.currentContext;
-    if (ctx == null) return false;
+    if (ctx == null) return null;
     final box = ctx.findRenderObject();
-    if (box is! RenderBox || !box.hasSize) return false;
-    final rect = Rect.fromPoints(
+    if (box is! RenderBox || !box.hasSize) return null;
+    return Rect.fromPoints(
       box.localToGlobal(Offset.zero),
       box.localToGlobal(Offset(box.size.width, box.size.height)),
     );
+  }
+
+  /// 判断消息当前是否在 ListView 视口内（任何部分可见）。
+  bool _isMessageInViewport(String msgId) {
+    final rect = _bubbleGlobalRect(msgId);
+    if (rect == null) return false;
     final viewport = _listViewRect();
     return rect.bottom > viewport.top && rect.top < viewport.bottom;
   }
@@ -618,15 +595,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// - tailOffsetX: 三角在菜单内的位置，指向消息中心
   /// - pointDown: 菜单在消息上方→三角朝下
   _MenuPlacement? _computeMenuPlacement(String msgId) {
-    final ctx = _bubbleKeys[msgId]?.currentContext;
-    if (ctx == null) return null;
-    final box = ctx.findRenderObject();
-    if (box is! RenderBox || !box.hasSize) return null;
-
-    final rect = Rect.fromPoints(
-      box.localToGlobal(Offset.zero),
-      box.localToGlobal(Offset(box.size.width, box.size.height)),
-    );
+    final rect = _bubbleGlobalRect(msgId);
+    if (rect == null) return null;
 
     // 可见区 = ListView 在屏幕的矩形（扣除 AppBar 和输入栏）。
     final viewport = _listViewRect();

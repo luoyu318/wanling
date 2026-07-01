@@ -260,9 +260,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     final oldCount = state.unreadCount;
     final newCount = oldCount - n;
-    debugPrint('[decrement] CALLED: n=$n, oldCount=$oldCount, newCount=$newCount');
     if (newCount <= 0) {
-      debugPrint('[decrement] clamp to 0 + clear firstUnread + hide separator');
       state = state.copyWith(
         unreadCount: 0,
         clearFirstUnread: true,
@@ -271,9 +269,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } else {
       state = state.copyWith(unreadCount: newCount);
     }
-    debugPrint('[decrement] DONE: unreadCount=${state.unreadCount}, '
-        'firstUnread=${state.firstUnreadMessageId}, '
-        'showSeparator=${state.showUnreadSeparator}');
+    debugPrint('[decrement] $oldCount - $n = ${state.unreadCount}'
+        '${newCount <= 0 ? " (clamp+clear)" : ""}');
   }
 
   /// 收到新 WS 消息：仅头部插入 + 去重。
