@@ -186,6 +186,25 @@ func (r *FriendshipRepo) listRequests(userID, roleCol string) ([]model.Friendshi
 	return result, rows.Err()
 }
 
+// GetByID 按 request id 查 Friendship 详情。供 handler 在 Accept/Reject/Cancel 后
+// 查请求信息以广播通知发起方。不存在返 (nil, nil)。
+func (r *FriendshipRepo) GetByID(requestID string) (*model.Friendship, error) {
+	f := &model.Friendship{}
+	err := r.db.QueryRow(`
+		SELECT id, user_id, friend_id, status, created_at, responded_at
+		FROM friendships WHERE id = $1
+	`, requestID).Scan(
+		&f.ID, &f.UserID, &f.FriendID, &f.Status, &f.CreatedAt, &f.RespondedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
 // RemoveFriend 删除好友关系(双向:A→B 或 B→A 任一 accepted 都删)。
 // 非 accepted(pending / rejected / canceled / 无关系)→ sql.ErrNoRows。
 func (r *FriendshipRepo) RemoveFriend(userID, friendID string) error {

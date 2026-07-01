@@ -148,6 +148,18 @@ func (r *UserRepo) List() ([]*model.User, error) {
 	return users, rows.Err()
 }
 
+// GetIDByUsername 反查 username → user_id(server 内部用,不暴露到 API)。
+// 用于 friend request handler:client 发 to_username,server 反查 id 后写 friendships 表。
+// 用户不存在返 sql.ErrNoRows,handler 转 404。
+func (r *UserRepo) GetIDByUsername(username string) (string, error) {
+	var id string
+	err := r.db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // SearchByUsername 按 username 前缀模糊搜索,返回 UserSummary 列表(不含 user_id 防泄漏)。
 // 用于「加好友」搜索框:用户输入 username 前缀,APP 展示匹配候选。
 //
