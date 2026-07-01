@@ -32,11 +32,20 @@ func setupApprovalFixture(t *testing.T, db *sql.DB) (userID, agentID, convID str
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	conv, err := convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
 	if err != nil {
 		t.Fatalf("create conv: %v", err)
 	}
 	return user.ID, agent.ID, conv.ID
+}
+
+// newTestHub 构造测试用 Hub(不启动 Run),统一带 participantRepo 依赖。
+// approval handler 测试用例较多,抽出 helper 避免每个 case 重复构造。
+func newTestHub(db *sql.DB) *hub.Hub {
+	return hub.NewHub(nil, repository.NewAgentRepo(db), repository.NewParticipantRepo(db))
 }
 
 // TestCreateApprovalSuccess agent 发起审批卡片，返回 approval_id + state=pending，
@@ -47,10 +56,11 @@ func TestCreateApprovalSuccess(t *testing.T) {
 	repo := repository.NewApprovalRepo(db)
 	agentRepo := repository.NewAgentRepo(db)
 	// 不启动 hub.Run(测试不需真实广播)，SendToConv 对没注册的 client 是 noop。
-	h := hub.NewHub(nil, agentRepo)
+	h := newTestHub(db)
 	hnd := NewApprovalHandler(
 		repo, repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), agentRepo,
+		repository.NewParticipantRepo(db),
 		h, nil, // service 暂时 nil，CreateApproval 不调 service
 	)
 
@@ -108,7 +118,8 @@ func TestCreateApprovalRejectsNonAgent(t *testing.T) {
 	hnd := NewApprovalHandler(
 		repository.NewApprovalRepo(db), repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), agentRepo,
-		hub.NewHub(nil, agentRepo), nil,
+		repository.NewParticipantRepo(db),
+		newTestHub(db), nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -132,14 +143,17 @@ func TestCreateApprovalRejectsWrongAgent(t *testing.T) {
 	hnd := NewApprovalHandler(
 		repository.NewApprovalRepo(db), repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), agentRepo,
-		hub.NewHub(nil, agentRepo), nil,
+		repository.NewParticipantRepo(db),
+		newTestHub(db), nil,
 	)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/", bytes.NewReader([]byte(`{"card_type":"command","title":"t","session_key":"k"}`)))
 	c.Params = gin.Params{{Key: "id", Value: convID}}
-	c.Set("userID", "another-agent-id")
+	// participants 模型走 participantRepo.Exists 查询,member_id 列为 UUID 类型,
+	// 必须用合法 UUID(任意非该会话 agent 的 UUID 即可触发 not member 分支)。
+	c.Set("userID", "00000000-0000-0000-0000-000000000000")
 	c.Set("role", "agent")
 
 	hnd.CreateApproval(c)
@@ -181,9 +195,10 @@ func TestDecideApprovalSuccess(t *testing.T) {
 	})
 
 	// service 用真 repo + 真 hub（但 hub 不开 Run，noop 广播）
-	h := hub.NewHub(nil, agentRepo)
+	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
-	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo, h, svc)
+	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo,
+		repository.NewParticipantRepo(db), h, svc)
 
 	body, _ := json.Marshal(map[string]string{"action_id": "allow_once"})
 	w := httptest.NewRecorder()
@@ -209,10 +224,11 @@ func TestDecideApprovalRejectsAgent(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	_, agentID, _ := setupApprovalFixture(t, db)
 	repo := repository.NewApprovalRepo(db)
-	h := hub.NewHub(nil, repository.NewAgentRepo(db))
+	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
 	hnd := NewApprovalHandler(repo, repository.NewMessageRepo(db),
-		repository.NewConversationRepo(db), repository.NewAgentRepo(db), h, svc)
+		repository.NewConversationRepo(db), repository.NewAgentRepo(db),
+		repository.NewParticipantRepo(db), h, svc)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -259,9 +275,10 @@ func TestDecideApprovalConflict(t *testing.T) {
 	// 推到 approved
 	repo.MarkDecided(a.ID, "allow_once", userID, "", nil)
 
-	h := hub.NewHub(nil, agentRepo)
+	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
-	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo, h, svc)
+	hnd := NewApprovalHandler(repo, msgRepo, convRepo, agentRepo,
+		repository.NewParticipantRepo(db), h, svc)
 
 	body, _ := json.Marshal(map[string]string{"action_id": "deny"})
 	w := httptest.NewRecorder()
@@ -303,7 +320,7 @@ func TestGetApprovalSuccess(t *testing.T) {
 	})
 
 	hnd := NewApprovalHandler(repo, msgRepo, repository.NewConversationRepo(db),
-		repository.NewAgentRepo(db), hub.NewHub(nil, repository.NewAgentRepo(db)), nil)
+		repository.NewAgentRepo(db), repository.NewParticipantRepo(db), newTestHub(db), nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -328,7 +345,7 @@ func TestGetApprovalNotFound(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	hnd := NewApprovalHandler(repository.NewApprovalRepo(db), repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), repository.NewAgentRepo(db),
-		hub.NewHub(nil, repository.NewAgentRepo(db)), nil)
+		repository.NewParticipantRepo(db), newTestHub(db), nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

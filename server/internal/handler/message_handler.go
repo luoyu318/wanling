@@ -15,14 +15,26 @@ const maxBatchDelete = 100
 // MessageHandler 处理消息删除请求（单删 + 批量删）。
 // 删除采用软删除（messages.deleted_at）,删除后重算会话 last_message_content 缓存,
 // 并通过 Hub.SendToConv 广播 MESSAGE_DELETE 给会话双端(多端同步)。
+//
+// participants 模型:权限校验改走 participantRepo.Exists,不再读 conv.UserID/AgentID
+// (conversations 表本身已无这两字段)。
 type MessageHandler struct {
-	msgRepo  *repository.MessageRepo
-	convRepo *repository.ConversationRepo
-	hub      *hub.Hub
+	msgRepo         *repository.MessageRepo
+	convRepo        *repository.ConversationRepo
+	participantRepo *repository.ParticipantRepo
+	hub             *hub.Hub
 }
 
-func NewMessageHandler(msgRepo *repository.MessageRepo, convRepo *repository.ConversationRepo, h *hub.Hub) *MessageHandler {
-	return &MessageHandler{msgRepo: msgRepo, convRepo: convRepo, hub: h}
+func NewMessageHandler(
+	msgRepo *repository.MessageRepo, convRepo *repository.ConversationRepo,
+	participantRepo *repository.ParticipantRepo, h *hub.Hub,
+) *MessageHandler {
+	return &MessageHandler{
+		msgRepo:         msgRepo,
+		convRepo:        convRepo,
+		participantRepo: participantRepo,
+		hub:             h,
+	}
 }
 
 // Delete 软删单条消息。DELETE /api/messages/:id
@@ -116,19 +128,16 @@ func (h *MessageHandler) BatchDelete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }
 
-// canAccess 校验 actor 是否能操作该会话的消息。
-// user:必须 conversations.user_id == actorID;
-// agent:必须 conversations.agent_id == actorID。
-// 会话不存在也返回 false(防越权)。
+// canAccess 校验 actor 是否为该会话 participant。
+// participants 模型:user/agent 都通过 participantRepo.Exists 校验,与具体 conv 类型无关。
+// 会话/参与者不存在都返 false(防越权)。
+// role 取值与 JWT 中间件写入的 "user"/"agent" 一致,直接对应 participant.member_type。
 func (h *MessageHandler) canAccess(convID, actorID, role string) bool {
-	conv, err := h.convRepo.GetByID(convID)
-	if err != nil || conv == nil {
+	ok, err := h.participantRepo.Exists(convID, actorID, role)
+	if err != nil {
 		return false
 	}
-	if role == "agent" {
-		return conv.AgentID == actorID
-	}
-	return conv.UserID == actorID
+	return ok
 }
 
 // recalcAndBroadcast 删除后重算会话 last_message_content 缓存,并广播 MESSAGE_DELETE。

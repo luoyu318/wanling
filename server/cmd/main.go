@@ -55,6 +55,7 @@ func main() {
 	// MessageProcessor 在事务内调它们的 *Tx 方法保证 4 个写操作原子性。
 	participantRepo := repository.NewParticipantRepo(db)
 	deliveryRepo := repository.NewDeliveryRepo(db)
+	friendshipRepo := repository.NewFriendshipRepo(db)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Host + ":" + strconv.Itoa(cfg.Redis.Port),
@@ -79,20 +80,25 @@ func main() {
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)
-	convHandler := handler.NewConversationHandler(convRepo, msgRepo, agentRepo, userRepo)
+	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, agentRepo, userRepo, h)
 	fileHandler := handler.NewFileHandler(fileRepo, store)
 	userHandler := handler.NewUserHandler(userRepo)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, processor.HandleIncoming)
 
-	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, h)
+	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, h)
 
 	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo)
 
 	approvalRepo := repository.NewApprovalRepo(db)
 	approvalSvc := approval.NewService(approvalRepo, h, approvalRepo)
 	approvalHandler := handler.NewApprovalHandler(
-		approvalRepo, msgRepo, convRepo, agentRepo, h, approvalSvc,
+		approvalRepo, msgRepo, convRepo, agentRepo, participantRepo, h, approvalSvc,
 	)
+
+	// participants 模型新增的三个 handler
+	groupHandler := handler.NewGroupHandler(db, convRepo, participantRepo, h)
+	friendshipHandler := handler.NewFriendshipHandler(friendshipRepo, userRepo, h)
+	userSearchHandler := handler.NewUserSearchHandler(userRepo)
 
 	// 扫码配对限流：
 	// - GET /tickets/:id 按 IP 60/min（hermes 端 2s 一次轮询 ×30 并发足够）
@@ -122,6 +128,24 @@ func main() {
 		},
 		Redis:  rdb,
 		Prefix: "rl:approval_create:",
+	})
+
+	// user 搜索限流：30/min/user（spec §4.2 防枚举 username）
+	userSearchLimiter := ratelimit.New(ratelimit.Options{
+		Window:  time.Minute,
+		Max:     30,
+		KeyFunc: func(c *gin.Context) string { return c.GetString("userID") },
+		Redis:   rdb,
+		Prefix:  "rl:user_search:",
+	})
+
+	// 加好友请求限流：10/min/user（spec §4.2 防滥用）
+	friendRequestLimiter := ratelimit.New(ratelimit.Options{
+		Window:  time.Minute,
+		Max:     10,
+		KeyFunc: func(c *gin.Context) string { return c.GetString("userID") },
+		Redis:   rdb,
+		Prefix:  "rl:friend_request:",
 	})
 
 	// 后台清理过期票据：每 10 分钟扫一次，删 1 小时前的记录。
@@ -181,8 +205,10 @@ func main() {
 		userAuth.POST("/api/agents", agentHandler.Create)
 		userAuth.PUT("/api/agents/:id", agentHandler.Update)
 		userAuth.DELETE("/api/agents/:id", agentHandler.Delete)
+		// 会话相关
 		userAuth.GET("/api/conversations", convHandler.List)
-		userAuth.POST("/api/conversations", convHandler.FindOrCreate)
+		userAuth.POST("/api/conversations", convHandler.Create)
+		userAuth.GET("/api/conversations/:id", convHandler.Get)
 		userAuth.GET("/api/conversations/:id/unread", convHandler.UnreadInfo)
 		userAuth.GET("/api/conversations/:id/messages", convHandler.Messages)
 		userAuth.POST("/api/conversations/:id/read", convHandler.MarkRead)
@@ -190,9 +216,25 @@ func main() {
 		userAuth.POST("/api/conversations/:id/pin", convHandler.Pin)
 		userAuth.DELETE("/api/conversations/:id/pin", convHandler.Unpin)
 		userAuth.DELETE("/api/conversations/:id", convHandler.Hide)
+		// 群管理(spec §4.1):邀请 / 踢人 / 退群 / 改群信息
+		userAuth.PATCH("/api/conversations/:id", groupHandler.Update)
+		userAuth.POST("/api/conversations/:id/participants", groupHandler.InviteMember)
+		userAuth.DELETE("/api/conversations/:id/participants/:member_id", groupHandler.KickMember)
+		userAuth.POST("/api/conversations/:id/leave", groupHandler.Leave)
+		// 用户资料
 		userAuth.GET("/api/users/me", userHandler.GetMe)
 		userAuth.PUT("/api/users/me", userHandler.UpdateMe)
 		userAuth.PUT("/api/users/me/password", userHandler.ChangePassword)
+		// 好友系统(spec §4.2):用户搜索 + 好友请求 + 好友列表
+		userAuth.GET("/api/users/search", userSearchLimiter, userSearchHandler.Search)
+		userAuth.POST("/api/users/me/friend-requests", friendRequestLimiter, friendshipHandler.CreateRequest)
+		userAuth.GET("/api/users/me/friend-requests/incoming", friendshipHandler.ListIncoming)
+		userAuth.GET("/api/users/me/friend-requests/outgoing", friendshipHandler.ListOutgoing)
+		userAuth.GET("/api/users/me/friends", friendshipHandler.ListFriends)
+		userAuth.DELETE("/api/users/me/friends/:id", friendshipHandler.RemoveFriend)
+		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
+		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
+		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
 	}
 
 	// 文件相关：user 和 agent 都可访问。
@@ -220,7 +262,7 @@ func main() {
 		agentAuth.POST("/api/conversations/:id/approvals", approvalCreateLimiter, approvalHandler.CreateApproval)
 		// agent 视角 findOrCreate：用于审批卡片等场景，agent 主动建立/获取会话
 		// （无 user 先发消息时也能拿到 conv_id）。跟 user 的 POST /api/conversations 对称。
-		agentAuth.POST("/api/agents/me/conversations", convHandler.FindOrCreateAsAgent)
+		agentAuth.POST("/api/agents/me/conversations", convHandler.CreateAsAgent)
 	}
 
 	// user 决策审批（同意/拒绝）

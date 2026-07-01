@@ -19,24 +19,32 @@ import (
 //   - CreateApproval（agent）
 //   - Decide（user）
 //   - Get（双角色）
+//
+// participants 模型重构后,会话不再绑定单一 user_id/agent_id:
+//   - convRepo.GetByID 仅返 conversations 表本身(无 user_id/agent_id 字段)
+//   - 权限校验 + 找对端 user 走 participantRepo
 type ApprovalHandler struct {
-	repo      *repository.ApprovalRepo
-	msgRepo   *repository.MessageRepo
-	convRepo  *repository.ConversationRepo
-	agentRepo *repository.AgentRepo
-	hub       *hub.Hub
-	service   *approval.Service
+	repo           *repository.ApprovalRepo
+	msgRepo        *repository.MessageRepo
+	convRepo       *repository.ConversationRepo
+	agentRepo      *repository.AgentRepo
+	participantRepo *repository.ParticipantRepo
+	hub            *hub.Hub
+	service        *approval.Service
 }
 
 // NewApprovalHandler 注入依赖。service 用于 Decide，CreateApproval 不调用。
+// participantRepo 用于 participants 模型下的权限校验和定位对端 user。
 func NewApprovalHandler(
 	repo *repository.ApprovalRepo, msgRepo *repository.MessageRepo,
 	convRepo *repository.ConversationRepo, agentRepo *repository.AgentRepo,
+	participantRepo *repository.ParticipantRepo,
 	h *hub.Hub, svc *approval.Service,
 ) *ApprovalHandler {
 	return &ApprovalHandler{
 		repo: repo, msgRepo: msgRepo, convRepo: convRepo,
-		agentRepo: agentRepo, hub: h, service: svc,
+		agentRepo: agentRepo, participantRepo: participantRepo,
+		hub: h, service: svc,
 	}
 }
 
@@ -63,7 +71,15 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
 		return
 	}
-	if conv.AgentID != agentID {
+	// participants 模型:agent 必须是该会话的 participant 才能发起审批(spec §6.1)。
+	// 老模型用 conv.AgentID 字段直接对比,新模型 conv 不再有 user_id/agent_id 字段,
+	// 改查 conversation_participants 表。
+	isMember, err := h.participantRepo.Exists(convID, agentID, "agent")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "校验会话成员失败"})
+		return
+	}
+	if !isMember {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不是该会话的 agent"})
 		return
 	}
@@ -174,13 +190,28 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		return
 	}
 
+	// participants 模型:从 conversation_participants 查 user participant 作为卡片接收方。
+	// 老 model.Conv.UserID 字段已废弃。dm_user_agent 场景下 conv 内必有 1 个 user participant
+	// (CreateApproval 前置 Exists 校验保证 agent 在该 conv,而 dm_user_agent 由 user/agent
+	// 任一方 findOrCreate 时必然写入 user+agent 两行 participants)。
+	// 群聊场景理论上不会触发审批卡片(agent 仅在 dm 里发),为防御取首个 user。
+	userID, err := h.findConvUserParticipant(convID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询审批接收方失败"})
+		return
+	}
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "会话中无 user 参与者,无法发起审批"})
+		return
+	}
+
 	// approval 在事务外创建（独立失败可接受降级 —— 消息已落库，user 端不会看到卡片但消息可见）
 	approvalRecord, err := h.repo.Create(model.Approval{
 		ID:             approvalID,
 		MessageID:      msg.ID,
 		ConversationID: convID,
 		AgentID:        agentID,
-		UserID:         conv.UserID,
+		UserID:         userID,
 		CardType:       cardType,
 		Actions:        actions,
 		ExpiresAt:      expiresAt,
@@ -256,6 +287,23 @@ func getStr(m map[string]interface{}, k string) string {
 		}
 	}
 	return ""
+}
+
+// findConvUserParticipant 返回该会话中首个 member_type='user' 的 participant ID。
+// 用于 CreateApproval 把审批卡片定位到具体 user(写入 approvals.user_id)。
+// 群聊场景返首个 user(理论上 agent 不在群里发审批,本方法仅做兜底)。
+// 无 user 参与者返空串,调用方据此转 400。
+func (h *ApprovalHandler) findConvUserParticipant(convID string) (string, error) {
+	parts, err := h.participantRepo.ListByConversation(convID)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range parts {
+		if p.MemberType == "user" {
+			return p.MemberID, nil
+		}
+	}
+	return "", nil
 }
 
 // getBool 安全从 map 取 bool，缺省返回 false。

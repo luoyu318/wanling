@@ -34,6 +34,7 @@ func setupMessageHandlerTest(t *testing.T) msgTestEnv {
 	agentRepo := repository.NewAgentRepo(db)
 	convRepo := repository.NewConversationRepo(db)
 	msgRepo := repository.NewMessageRepo(db)
+	participantRepo := repository.NewParticipantRepo(db)
 
 	user, err := userRepo.Create(shortName(t, "msguser"), "$2a$10$hash")
 	if err != nil {
@@ -43,9 +44,12 @@ func setupMessageHandlerTest(t *testing.T) msgTestEnv {
 	if err != nil {
 		t.Fatalf("Create agent 失败: %v", err)
 	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	conv, err := convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
 	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
 	}
 
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
@@ -56,9 +60,9 @@ func setupMessageHandlerTest(t *testing.T) msgTestEnv {
 
 	// 不启动 hub.Run(测试不需要真实广播),给个 NewHub 实例即可。
 	// presence 传 nil —— handler 测试不验证广播投递,只验证不 panic。
-	h := hub.NewHub(nil, agentRepo)
+	h := hub.NewHub(nil, agentRepo, participantRepo)
 
-	mh := NewMessageHandler(msgRepo, convRepo, h)
+	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, h)
 	r := gin.New()
 	// 用 c.Set 绕过 AuthMiddleware,直接注入鉴权上下文。
 	del := func(c *gin.Context) { c.Set("userID", user.ID); c.Set("role", "user"); mh.Delete(c) }
@@ -116,9 +120,12 @@ func TestMessageHandler_Delete_Forbidden(t *testing.T) {
 		t.Fatalf("Create user2 失败: %v", err)
 	}
 	// 用 env 的 agent 给 user2 建会话
-	conv2, err := env.convRepo.FindOrCreate(user2.ID, env.agentID)
+	conv2, err := env.convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user2.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: env.agentID, MemberType: "agent", Role: "member"},
+	})
 	if err != nil {
-		t.Fatalf("FindOrCreate conv2 失败: %v", err)
+		t.Fatalf("FindOrCreateDM conv2 失败: %v", err)
 	}
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"other"}}`)
 	m2, err := env.msgRepo.Create(conv2.ID, "user", user2.ID, content)

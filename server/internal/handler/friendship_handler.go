@@ -91,10 +91,17 @@ func (h *FriendshipHandler) CreateRequest(c *gin.Context) {
 		return
 	}
 
-	// 取发起方 user 摘要(通知接收方用)
+	// 取双方 user 摘要:from 摘要用于通知接收方(让其知道谁加的他),
+	// to 摘要用于响应给发起方(确认请求的对象)。
 	fromSummary, err := h.userRepo.GetSummaryByID(fromUserID)
 	if err != nil {
-		log.Printf("[friend-request] GetSummaryByID error: %v", err)
+		log.Printf("[friend-request] GetSummaryByID from error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	toSummary, err := h.userRepo.GetSummaryByID(toUserID)
+	if err != nil {
+		log.Printf("[friend-request] GetSummaryByID to error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
@@ -115,7 +122,7 @@ func (h *FriendshipHandler) CreateRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"request_id": friendship.ID,
 		"status":     friendship.Status,
-		"to_user":    fromSummary, // 用 to_username 反查的摘要(不含 id)
+		"to_user":    toSummary, // 接收方摘要(不含 id,防泄漏)
 	})
 }
 

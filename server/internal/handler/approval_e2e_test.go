@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wanling/server/internal/approval"
-	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
@@ -21,11 +20,12 @@ func TestApprovalE2ECommandHappyPath(t *testing.T) {
 	userID, agentID, convID := setupApprovalFixture(t, db)
 	repo := repository.NewApprovalRepo(db)
 	agentRepo := repository.NewAgentRepo(db)
-	h := hub.NewHub(nil, agentRepo)
+	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
 	hnd := NewApprovalHandler(
 		repo, repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), agentRepo,
+		repository.NewParticipantRepo(db),
 		h, svc,
 	)
 
@@ -105,11 +105,12 @@ func TestApprovalE2ECommandAllowAlways(t *testing.T) {
 	userID, agentID, convID := setupApprovalFixture(t, db)
 	repo := repository.NewApprovalRepo(db)
 	agentRepo := repository.NewAgentRepo(db)
-	h := hub.NewHub(nil, agentRepo)
+	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
 	hnd := NewApprovalHandler(
 		repo, repository.NewMessageRepo(db),
 		repository.NewConversationRepo(db), agentRepo,
+		repository.NewParticipantRepo(db),
 		h, svc,
 	)
 

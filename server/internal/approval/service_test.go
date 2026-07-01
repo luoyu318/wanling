@@ -54,7 +54,10 @@ func TestServiceDecideHappyPath(t *testing.T) {
 
 	user, _ := userRepo.Create(shortName(t, "u"), "$2a$10$hash")
 	agent, _ := agentRepo.Create(user.ID, shortName(t, "a"), "secret")
-	conv, _ := convRepo.FindOrCreate(user.ID, agent.ID)
+	conv, _ := convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
 
 	cardData := model.CardContent{
 		CardType: model.CardTypeCommand, Title: "命令审批", Preview: "rm -rf x",
@@ -129,7 +132,10 @@ func TestServiceDecideInvalidActionFails(t *testing.T) {
 
 	user, _ := userRepo.Create(shortName(t, "u"), "$2a$10$hash")
 	agent, _ := agentRepo.Create(user.ID, shortName(t, "a"), "secret")
-	conv, _ := convRepo.FindOrCreate(user.ID, agent.ID)
+	conv, _ := convRepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
 
 	cardData := model.CardContent{
 		CardType: model.CardTypeCommand, Title: "t",
