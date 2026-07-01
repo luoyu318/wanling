@@ -85,13 +85,14 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	// === 1. seed 老格式数据 ===
 
 	var (
-		userID           string
-		agentID          string
-		agentOwnerID     string // agent.owner_id 必须 = user.id(001 表结构约束)
-		convID           string
-		agentMsgUnreadID string // is_read=FALSE 的 agent 消息(应被记为 user 未读)
-		agentMsgReadID   string // is_read=TRUE 的 agent 消息
-		userMsgID        string // user 自发消息(is_read=TRUE,不参与未读)
+		userID            string
+		agentID           string
+		agentOwnerID      string // agent.owner_id 必须 = user.id(001 表结构约束)
+		convID            string
+		agentMsgUnreadID  string // is_read=FALSE 的 agent 消息(应被记为 user 未读)
+		agentMsgReadID    string // is_read=TRUE 的 agent 消息
+		userMsgID         string // user 自发消息(is_read=TRUE,不参与未读)
+		agentMsgDeletedID string // 软删的 agent 未读消息(deleted_at 不为 NULL,不应生成 delivery)
 	)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -122,10 +123,11 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 		t.Fatalf("seed conversation 失败: %v", err)
 	}
 
-	// 1.4 messages:3 条
+	// 1.4 messages:4 条
 	//  - agent 发,is_read=FALSE(应生成 delivery 给 user,read_at=NULL,参与未读计数)
 	//  - agent 发,is_read=TRUE (应生成 delivery 给 user,read_at=created_at,不参与未读计数)
 	//  - user 发,is_read=TRUE (按 014 语义 user 自发一律 TRUE;应生成 delivery 给 agent,read_at=created_at)
+	//  - agent 发,is_read=FALSE,deleted_at 不为 NULL(软删,不应生成 delivery,不污染未读)
 	content := `{"msg_type":"text","data":{"text":"hi"}}`
 	if err := db.QueryRow(`
 		INSERT INTO messages (conversation_id, sender_type, sender_id, content, is_read, created_at)
@@ -144,6 +146,14 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 		VALUES ($1, 'user', $2, $3::jsonb, TRUE, $4) RETURNING id
 	`, convID, userID, content, now).Scan(&userMsgID); err != nil {
 		t.Fatalf("seed user msg 失败: %v", err)
+	}
+	// 第四条:软删的 agent → user 未读消息(deleted_at 不为 NULL,is_read=FALSE)
+	deletedAt := now.Add(-30 * time.Minute)
+	if err := db.QueryRow(`
+		INSERT INTO messages (conversation_id, sender_type, sender_id, content, is_read, created_at, deleted_at)
+		VALUES ($1, 'agent', $2, $3::jsonb, FALSE, $4, $5) RETURNING id
+	`, convID, agentID, content, now, deletedAt).Scan(&agentMsgDeletedID); err != nil {
+		t.Fatalf("seed agent deleted msg 失败: %v", err)
 	}
 
 	// === 2. 手动执行 015 ===
@@ -207,15 +217,16 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	// === 4. 校验 participants 回填 ===
 	// 应有 2 行:user(owner)+ agent(member),且 hidden_at/pinned_at 下沉到 user 行
 	type participantRow struct {
-		Role      string
-		MemberID  string
-		MemberT   string
-		Unread    int
-		Hidden    sql.NullTime
-		Pinned    sql.NullTime
+		Role          string
+		MemberID      string
+		MemberT       string
+		Unread        int
+		Hidden        sql.NullTime
+		Pinned        sql.NullTime
+		LastReadMsgID sql.NullString
 	}
 	rows, err := db.Query(`
-		SELECT role, member_id, member_type, unread_count, hidden_at, pinned_at
+		SELECT role, member_id, member_type, unread_count, hidden_at, pinned_at, last_read_message_id
 		FROM conversation_participants WHERE conv_id = $1
 		ORDER BY member_type
 	`, convID)
@@ -226,7 +237,7 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	got := map[string]participantRow{}
 	for rows.Next() {
 		var r participantRow
-		if err := rows.Scan(&r.Role, &r.MemberID, &r.MemberT, &r.Unread, &r.Hidden, &r.Pinned); err != nil {
+		if err := rows.Scan(&r.Role, &r.MemberID, &r.MemberT, &r.Unread, &r.Hidden, &r.Pinned, &r.LastReadMsgID); err != nil {
 			t.Fatalf("scan participant 失败: %v", err)
 		}
 		got[r.MemberT] = r
@@ -259,6 +270,10 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	} else if !userP.Pinned.Time.Equal(pinnedAt) {
 		t.Errorf("user.pinned_at 错误: 期望 %v, 实际 %v", pinnedAt, userP.Pinned.Time)
 	}
+	// last_read_message_id 本期不回填,留 NULL(spec §1.1)
+	if userP.LastReadMsgID.Valid {
+		t.Errorf("user last_read_message_id 应为 NULL, 实际 %v", userP.LastReadMsgID.String)
+	}
 
 	// agent 应为 member,hidden_at/pinned_at 为 NULL(没下沉 agent)
 	agentP, ok := got["agent"]
@@ -275,12 +290,17 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 		t.Errorf("agent hidden_at/pinned_at 应为 NULL, 实际 hidden=%v pinned=%v",
 			agentP.Hidden, agentP.Pinned)
 	}
+	// last_read_message_id 本期不回填,留 NULL(spec §1.1)
+	if agentP.LastReadMsgID.Valid {
+		t.Errorf("agent last_read_message_id 应为 NULL, 实际 %v", agentP.LastReadMsgID.String)
+	}
 
 	// === 5. 校验 deliveries 回填 ===
-	// 应有 3 行(每条消息给 non-sender 一个 delivery):
+	// 应有 3 行(每条未软删消息给 non-sender 一个 delivery):
 	//  - agentMsgUnread → delivery 给 user, read_at=NULL
 	//  - agentMsgRead   → delivery 给 user, read_at=created_at
 	//  - userMsg        → delivery 给 agent, read_at=created_at
+	//  - agentMsgDeleted(软删) → 不应生成 delivery
 	type deliveryRow struct {
 		RecipientID string
 		RecipientT  string
@@ -350,6 +370,17 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 	}
 	if !d.ReadAt.Valid {
 		t.Errorf("userMsg delivery read_at 应为 created_at(已读), 但为 NULL")
+	}
+
+	// agentMsgDeleted(软删的 agent 未读消息) → 不应生成 delivery(避免污染 unread_count)
+	var deletedDeliveryCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM message_deliveries WHERE message_id = $1
+	`, agentMsgDeletedID).Scan(&deletedDeliveryCount); err != nil {
+		t.Fatalf("查 agentMsgDeleted 的 delivery 失败: %v", err)
+	}
+	if deletedDeliveryCount != 0 {
+		t.Errorf("软删消息不应生成 delivery, 实际 %d 行", deletedDeliveryCount)
 	}
 
 	// === 6. 校验 unread_count 回填 ===

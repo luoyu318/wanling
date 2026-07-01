@@ -66,12 +66,14 @@ SELECT id, agent_id, 'agent', 'member' FROM conversations WHERE agent_id IS NOT 
 --     旧 is_read=TRUE 的 → recipient 行 read_at=created_at(视为已读)
 --     旧 is_read=FALSE 的 → recipient 行 read_at=NULL(未读)
 --     recipient = 该会话所有 non-sender participants
+--     过滤软删消息(deleted_at IS NOT NULL),避免已删消息污染 unread_count
 INSERT INTO message_deliveries (message_id, recipient_id, recipient_type, read_at)
 SELECT m.id, p.member_id, p.member_type,
        CASE WHEN m.is_read = TRUE THEN m.created_at ELSE NULL END
 FROM messages m
 JOIN conversation_participants p ON p.conv_id = m.conversation_id
-WHERE NOT (p.member_id = m.sender_id AND p.member_type = m.sender_type);
+WHERE NOT (p.member_id = m.sender_id AND p.member_type = m.sender_type)
+  AND m.deleted_at IS NULL;
 
 -- 3.3 回填 unread_count per participant
 UPDATE conversation_participants p SET unread_count = COALESCE(sub.cnt, 0)
@@ -89,7 +91,7 @@ DROP INDEX IF EXISTS idx_messages_conv_unread;
 DROP INDEX IF EXISTS idx_conversations_user_id;
 DROP INDEX IF EXISTS idx_conversations_agent_id;
 
-ALTER TABLE conversations DROP CONSTRAINT conversations_user_id_agent_id_key;
+ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_user_id_agent_id_key;
 ALTER TABLE conversations DROP COLUMN user_id;
 ALTER TABLE conversations DROP COLUMN agent_id;
 ALTER TABLE conversations DROP COLUMN unread_count;
