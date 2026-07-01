@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
 import '../models/conversation.dart';
+import '../models/participant.dart';
 import '../models/ws_message.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
@@ -18,6 +19,7 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   final ApiService api;
   final WebSocketService ws;
   StreamSubscription<WSMessage>? _subscription;
+  StreamSubscription<WSMessage>? _conversationEventsSub;
   // 当前打开的 ChatPage convId。该会话收到的 agent 消息不计未读（用户正在看）。
   String? _activeConvId;
 
@@ -41,11 +43,26 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
       }
       _onMessageCreate(m);
     });
+    // 订阅 N 方 participants 模型的会话管理事件
+    _conversationEventsSub = ws.conversationUpdates.listen((m) {
+      switch (m.t) {
+        case 'CONVERSATION_PARTICIPANT_JOIN':
+          _onParticipantJoin(m);
+          break;
+        case 'CONVERSATION_PARTICIPANT_LEAVE':
+          _onParticipantLeave(m);
+          break;
+        case 'CONVERSATION_UPDATE':
+          _onConversationUpdate(m);
+          break;
+      }
+    });
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
+    _conversationEventsSub?.cancel();
     super.dispose();
   }
 
@@ -209,6 +226,132 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   Future<void> hide(String convId) async {
     await api.hideConversation(convId);
     state = state.where((c) => c.id != convId).toList();
+  }
+
+  // === N 方 participants 模型:群管理方法 ===
+
+  /// 创建群聊(type=group_user 默认;群成员从好友列表选)。
+  /// 成功后返回新会话 ID(供调用方 push 到 ChatPage)。
+  Future<String> createGroup({
+    required List<String> memberIds,
+    String? title,
+    String? avatarUrl,
+  }) async {
+    final raw = await api.createConversation(
+      type: 'group_user',
+      memberIds: memberIds,
+      memberTypes: memberIds.map((_) => 'user').toList(),
+      title: title,
+      avatarUrl: avatarUrl,
+    );
+    final conv = Conversation.fromJson(raw as Map<String, dynamic>);
+    // 乐观本地插入(创建者是 owner,自动加为 participant 由 server 处理)
+    state = [conv, ...state];
+    _resort();
+    return conv.id;
+  }
+
+  /// 邀请成员加入会话。
+  /// server 会广播 CONVERSATION_PARTICIPANT_JOIN,本地通过订阅自动更新。
+  Future<void> inviteMember(
+      String convId, String memberId, String memberType) async {
+    await api.inviteMember(convId, memberId, memberType);
+    // 不做本地乐观更新,等 server 广播 JOIN 事件触发 _onParticipantJoin
+  }
+
+  /// 退群 / 销群。
+  /// 普通成员退群:本地从 list 移除自己(自身 participant 行被删)。
+  /// owner 退群 → 销群:整个会话从 list 消失。
+  Future<void> leaveConversation(String convId) async {
+    await api.leaveConversation(convId);
+    state = state.where((c) => c.id != convId).toList();
+  }
+
+  /// 更新群名 / 群头像(仅 owner / admin 可调,server 校验)。
+  /// server 会广播 CONVERSATION_UPDATE,本地通过订阅自动更新。
+  Future<void> updateGroupProfile(String convId,
+      {String? title, String? avatarUrl}) async {
+    await api.updateConversation(convId, title: title, avatarUrl: avatarUrl);
+  }
+
+  // === WS 事件订阅:N 方 participants 模型 ===
+
+  /// 处理 CONVERSATION_PARTICIPANT_JOIN 事件。
+  /// 本地往该会话 participants 列表加新成员。
+  void _onParticipantJoin(WSMessage m) {
+    final data = m.d as Map<String, dynamic>?;
+    if (data == null) return;
+    final convId = data['conv_id'] as String?;
+    final newMember = data['member_id'] as String?;
+    final newMemberType = data['member_type'] as String?;
+    final role = data['role'] as String? ?? 'member';
+    if (convId == null || newMember == null) return;
+
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) {
+      // 不在列表(可能是新会话),reload 兜底
+      load();
+      return;
+    }
+    final item = state[idx];
+    // 若已存在不重复加
+    if (item.participants.any((p) =>
+        p.memberId == newMember && p.memberType == newMemberType)) return;
+    // 简化:新成员的 username/nickname/avatarUrl 未知(server JOIN payload 不带摘要),
+    // 用空摘要占位,下次 load 时刷新。
+    final newP = Participant(
+      memberId: newMember,
+      memberType: newMemberType ?? 'user',
+      role: role,
+      username: '',
+      nickname: '',
+      avatarUrl: '',
+    );
+    final updated = List<Conversation>.from(state);
+    updated[idx] = item.copyWith(participants: [...item.participants, newP]);
+    state = updated;
+  }
+
+  /// 处理 CONVERSATION_PARTICIPANT_LEAVE 事件。
+  /// 移除本地 participants 中的成员;若是当前 user 自己,从 list 移除整个会话。
+  void _onParticipantLeave(WSMessage m) {
+    final data = m.d as Map<String, dynamic>?;
+    if (data == null) return;
+    final convId = data['conv_id'] as String?;
+    final memberId = data['member_id'] as String?;
+    final memberType = data['member_type'] as String?;
+    if (convId == null || memberId == null) return;
+
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) return;
+    final item = state[idx];
+
+    // 简化:无法精确知道"当前 user id"(本 provider 不持有 userProvider ref),
+    // 由 chat_page / messages_page 等消费方在收到自己的 LEAVE 时主动调
+    // hide() 或 leaveConversation() 已经处理了 server 调用,这里只做 participant 列表更新。
+    final newParticipants = item.participants
+        .where((p) => !(p.memberId == memberId && p.memberType == memberType))
+        .toList();
+    final updated = List<Conversation>.from(state);
+    updated[idx] = item.copyWith(participants: newParticipants);
+    state = updated;
+  }
+
+  /// 处理 CONVERSATION_UPDATE 事件(群名 / 群头像变更)。
+  void _onConversationUpdate(WSMessage m) {
+    final data = m.d as Map<String, dynamic>?;
+    if (data == null) return;
+    final convId = data['conv_id'] as String?;
+    if (convId == null) return;
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) return;
+    final item = state[idx];
+    final updated = List<Conversation>.from(state);
+    updated[idx] = item.copyWith(
+      title: (data['title'] as String?) ?? item.title,
+      avatarUrl: (data['avatar_url'] as String?) ?? item.avatarUrl,
+    );
+    state = updated;
   }
 
   /// 本地排序:置顶组在前,组内按 lastMessageAt 倒序。
