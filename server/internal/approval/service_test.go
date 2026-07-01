@@ -16,7 +16,7 @@ type mockHub struct {
 	expired        []map[string]any
 }
 
-func (m *mockHub) BroadcastMessageUpdate(userID, agentID, messageID, conversationID string, content json.RawMessage) {
+func (m *mockHub) BroadcastMessageUpdate(convID, messageID string, content json.RawMessage) {
 	m.messageUpdates = append(m.messageUpdates, messageID)
 }
 func (m *mockHub) SendApprovalDecided(agentID string, payload map[string]any) {

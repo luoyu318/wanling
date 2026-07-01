@@ -211,7 +211,7 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		S:  h.hub.NextSeq(),
 		D:  msgPayload,
 	}
-	h.hub.SendToConv(conv.UserID, agentID, wsMsg)
+	h.hub.SendToConv(convID, wsMsg)
 
 	c.JSON(http.StatusOK, gin.H{
 		"approval_id": approvalRecord.ID,

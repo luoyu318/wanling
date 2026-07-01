@@ -149,11 +149,7 @@ func (h *MessageHandler) recalcAndBroadcast(convID string, ids []string) {
 		_ = h.convRepo.ClearLastMessage(convID)
 	}
 
-	// 广播 MESSAGE_DELETE 给会话双端
-	conv, err := h.convRepo.GetByID(convID)
-	if err != nil || conv == nil {
-		return
-	}
+	// 广播 MESSAGE_DELETE 给会话全员(participants 模型,SendToConv 内部按参与者遍历)
 	payload, _ := json.Marshal(map[string]interface{}{
 		"ids":             ids,
 		"conversation_id": convID,
@@ -163,5 +159,5 @@ func (h *MessageHandler) recalcAndBroadcast(convID string, ids []string) {
 		T:  model.EventMessageDelete,
 		D:  payload,
 	}
-	h.hub.SendToConv(conv.UserID, conv.AgentID, msg)
+	h.hub.SendToConv(convID, msg)
 }

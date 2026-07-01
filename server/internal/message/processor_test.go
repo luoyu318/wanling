@@ -100,7 +100,7 @@ func seedDM(t *testing.T) dmFixture {
 // 是测试 dispatch 副作用的最小侵入方式。
 func newProcessorWithNilHub(t *testing.T, fix dmFixture) *Processor {
 	t.Helper()
-	h := hub.NewHub(nil, fix.agentRepo)
+	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp)
 	return NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.fileRepo,
 		fix.participantRp, fix.deliveryRp)
 }

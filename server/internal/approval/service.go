@@ -21,7 +21,7 @@ type Repositorier interface {
 
 // Hubber service 依赖的 hub 接口（避免直接依赖 hub 包造成循环 import）。
 type Hubber interface {
-	BroadcastMessageUpdate(userID, agentID, messageID, conversationID string, content json.RawMessage)
+	BroadcastMessageUpdate(convID, messageID string, content json.RawMessage)
 	SendApprovalDecided(agentID string, payload map[string]any)
 	SendApprovalExpired(agentID string, payload map[string]any)
 }
@@ -109,7 +109,7 @@ func (s *Service) Decide(approvalID, actionID, userID, reason string) (json.RawM
 		return nil, err
 	}
 
-	s.hub.BroadcastMessageUpdate(ctx.UserID, ctx.AgentID, ctx.MessageID, ctx.ConversationID, newContent)
+	s.hub.BroadcastMessageUpdate(ctx.ConversationID, ctx.MessageID, newContent)
 	s.hub.SendApprovalDecided(ctx.AgentID, map[string]any{
 		"approval_id":     approvalID,
 		"message_id":      ctx.MessageID,

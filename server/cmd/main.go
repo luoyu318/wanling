@@ -72,7 +72,7 @@ func main() {
 		rdb = nil
 	}
 
-	h := hub.NewHub(p, agentRepo)
+	h := hub.NewHub(p, agentRepo, participantRepo)
 	go h.Run()
 
 	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, fileRepo, participantRepo, deliveryRepo)

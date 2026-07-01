@@ -53,14 +53,15 @@ func (b *dispatchBuffer) getAfter(afterSeq int64) [][]byte {
 }
 
 type Hub struct {
-	clients       sync.Map // key: "role:id" → []*Client
-	Register      chan *Client
-	Unregister    chan *Client
-	presence      *presence.Presence
-	agentRepo     *repository.AgentRepo
-	agentOwnerMap sync.Map
-	buffers       sync.Map
-	seq           int64 // Hub 直发 dispatch 的序号分配器
+	clients        sync.Map // key: "role:id" → []*Client
+	Register       chan *Client
+	Unregister     chan *Client
+	presence       *presence.Presence
+	agentRepo      *repository.AgentRepo
+	participantRepo *repository.ParticipantRepo // N 方参与者模型,SendToConv 按此遍历路由
+	agentOwnerMap  sync.Map
+	buffers        sync.Map
+	seq            int64 // Hub 直发 dispatch 的序号分配器
 }
 
 // NextSeq 暴露内部 seq 自增，供 dispatch.go 的新事件用。
@@ -70,12 +71,13 @@ func (h *Hub) NextSeq() int64 {
 	return atomic.AddInt64(&h.seq, 1)
 }
 
-func NewHub(p *presence.Presence, agentRepo *repository.AgentRepo) *Hub {
+func NewHub(p *presence.Presence, agentRepo *repository.AgentRepo, participantRepo *repository.ParticipantRepo) *Hub {
 	return &Hub{
-		Register:   make(chan *Client),
-		Unregister: make(chan *Client),
-		presence:   p,
-		agentRepo:  agentRepo,
+		Register:        make(chan *Client),
+		Unregister:      make(chan *Client),
+		presence:        p,
+		agentRepo:       agentRepo,
+		participantRepo: participantRepo,
 	}
 }
 
@@ -181,12 +183,26 @@ func (h *Hub) SendToAgent(agentID string, msg *model.WSMessage) error {
 	return nil
 }
 
-// SendToConv 把消息同时发给会话的 user 和 agent 双方。
-// Hub 以 role:id 为 key 管理连接,没有"会话"概念,所以由调用方提供 userID + agentID。
-// 任一端不在线无副作用(SendToUser/SendToAgent 在 key 不存在时返回 nil)。
-func (h *Hub) SendToConv(userID, agentID string, msg *model.WSMessage) {
-	h.SendToUser(userID, msg)
-	h.SendToAgent(agentID, msg)
+// SendToConv 把消息推给该会话所有 participants(按 member_type 路由 SendToUser/SendToAgent)。
+// 离线端无副作用(SendToUser/SendToAgent 在 key 不存在时返 nil)。
+// participants 查询失败时 fail-closed(不推),避免漏推半个会话成员造成状态不一致。
+func (h *Hub) SendToConv(convID string, msg *model.WSMessage) {
+	if h.participantRepo == nil {
+		log.Printf("SendToConv participantRepo 未注入,跳过 conv=%s", convID)
+		return
+	}
+	participants, err := h.participantRepo.ListByConversation(convID)
+	if err != nil {
+		log.Printf("SendToConv 查 participants 失败 conv=%s: %v", convID, err)
+		return
+	}
+	for _, p := range participants {
+		if p.MemberType == "user" {
+			h.SendToUser(p.MemberID, msg)
+		} else {
+			h.SendToAgent(p.MemberID, msg)
+		}
+	}
 }
 
 func (h *Hub) GetClient(role, id string) (*Client, bool) {

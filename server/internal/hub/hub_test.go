@@ -49,7 +49,7 @@ func startHub(h *Hub) func() {
 
 // TestMultiClientRegister 验证同一 user 多个连接并存。
 func TestMultiClientRegister(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")
@@ -74,7 +74,7 @@ func TestMultiClientRegister(t *testing.T) {
 
 // TestSendToUserBroadcastsToAll 验证 SendToUser 广播到所有同 user 连接。
 func TestSendToUserBroadcastsToAll(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")
@@ -100,7 +100,7 @@ func TestSendToUserBroadcastsToAll(t *testing.T) {
 
 // TestUnregisterRemovesOnlySelf 验证 client A + client B 同 key，A 退出后 B 仍能收到消息。
 func TestUnregisterRemovesOnlySelf(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")
@@ -138,7 +138,7 @@ func TestUnregisterRemovesOnlySelf(t *testing.T) {
 
 // TestUnregisterLastCleansUp 验证唯一 client 退出后 key 被删除。
 func TestUnregisterLastCleansUp(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")
@@ -156,7 +156,7 @@ func TestUnregisterLastCleansUp(t *testing.T) {
 
 // TestGcRemovesStaleClients 验证 LastHeartbeat 超时被 GC 清理。
 func TestGcRemovesStaleClients(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")
@@ -176,7 +176,7 @@ func TestGcRemovesStaleClients(t *testing.T) {
 
 // TestGcKeepsActiveClients 验证活跃 client 不被 GC 清理。
 func TestGcKeepsActiveClients(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	c1 := newTestClient("user-1", "user")     // LastHeartbeat = time.Now()
@@ -205,7 +205,7 @@ func TestGcKeepsActiveClients(t *testing.T) {
 
 // TestBufferedSendFullChannelDoesNotBlock 验证 Send 缓冲满时不阻塞或 panic。
 func TestBufferedSendFullChannelDoesNotBlock(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 
 	// 创建容量为 1 的 Send channel
 	c := &Client{
@@ -244,7 +244,7 @@ func TestBufferedSendFullChannelDoesNotBlock(t *testing.T) {
 
 // TestSendToUserMissingKeyReturnsNil 验证 key 不存在时 SendToUser 无副作用。
 func TestSendToUserMissingKeyReturnsNil(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	msg := &model.WSMessage{Op: model.OpDispatch, T: model.EventMessageCreate, S: 1}
@@ -257,7 +257,7 @@ func TestSendToUserMissingKeyReturnsNil(t *testing.T) {
 // 该判断决定 agent 发消息时要不要计未读（修复「看了却显示未读」）。
 // 覆盖：单端在看、多端任一看、没连接、看的是别的会话。
 func TestIsUserViewingConv(t *testing.T) {
-	h := NewHub(nil, nil)
+	h := NewHub(nil, nil, nil)
 	go h.Run()
 
 	// user-1 两个连接（多端登录），分别在 convA 和 convB
