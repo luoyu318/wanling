@@ -2,6 +2,9 @@
 *.log
 *.stackdump
 
+# === Claude Code 本地配置（含凭据，不入库）===
+.claude/settings.local.json
+
 # === AI 辅助开发中间产物（不入库）===
 .superpowers/
 

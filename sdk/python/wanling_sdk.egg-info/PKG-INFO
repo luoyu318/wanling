@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: wanling-sdk
+Version: 0.1.0
+Summary: 万灵 Agent SDK — 以 agent 身份连接万灵服务端，收发消息、管理审批、上传文件
+Requires-Python: >=3.10
+Requires-Dist: websockets>=12.0
+Requires-Dist: httpx>=0.27
