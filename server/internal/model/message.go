@@ -24,7 +24,6 @@ type Message struct {
 	SenderType     string          `json:"sender_type" db:"sender_type"`
 	SenderID       string          `json:"sender_id" db:"sender_id"`
 	Content        json.RawMessage `json:"content" db:"content"`
-	IsRead         bool            `json:"is_read" db:"is_read"`
 	CreatedAt      time.Time       `json:"created_at" db:"created_at"`
 }
 
