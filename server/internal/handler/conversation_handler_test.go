@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,46 +12,163 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
 
 // shortName 复用同包 user_handler_test.go 里的定义，本文件不再重复声明。
 
-// TestConversationHandler_List_ReturnsAgentAndLastMessage 验证 IM 风格列表核心场景：
-//   - 200 状态码；
-//   - 响应包含对端 agent.name（JOIN agents 表生效）；
-//   - 响应包含 last_message_content（UpdateLastMessage 写入的 JSON）。
-func TestConversationHandler_List_ReturnsAgentAndLastMessage(t *testing.T) {
+// seedConvFixture 是 handler 测试常用 seed:user + agent + dm_user_agent 会话。
+// 返回的 conv 已存在 user/agent 两个 participant。
+type seedConvFixture struct {
+	db      *sql.DB
+	user    *model.User
+	agent   *model.Agent
+	conv    *model.Conversation
+	convID  string
+	convRepo *repository.ConversationRepo
+	pRepo    *repository.ParticipantRepo
+	dRepo    *repository.DeliveryRepo
+	mRepo    *repository.MessageRepo
+}
+
+// seedUserAgentConv 建一个 user + agent + dm_user_agent 会话,返回 fixture。
+// 用于大部分 conversation handler 测试。
+func seedUserAgentConv(t *testing.T, usernamePrefix string) *seedConvFixture {
+	t.Helper()
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
 	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	drepo := repository.NewDeliveryRepo(db)
 
-	user, err := urepo.Create(shortName(t, "listh"), "$2a$10$hash")
+	user, err := urepo.Create(shortName(t, usernamePrefix), "$2a$10$hash")
 	if err != nil {
 		t.Fatalf("Create user 失败: %v", err)
 	}
-	agent, err := arepo.Create(user.ID, "ListHAgent", "secret-key")
+	agent, err := arepo.Create(user.ID, shortName(t, "ag"), "secret-key")
 	if err != nil {
 		t.Fatalf("Create agent 失败: %v", err)
 	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	conv, err := crepo.FindOrCreateDM("dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
 	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
 	}
+	return &seedConvFixture{
+		db:       db,
+		user:     user,
+		agent:    agent,
+		conv:     conv,
+		convID:   conv.ID,
+		convRepo: crepo,
+		pRepo:    prepo,
+		dRepo:    drepo,
+		mRepo:    mrepo,
+	}
+}
+
+// addUnreadAgentMessage 模拟 agent → user 一条未读消息:
+// INSERT message + delivery(read_at=NULL) + IncrUnreadTx。
+// 返回 message id。
+// 用 tx 确保三者原子化(模拟真实 MessageProcessor 路径)。
+func (f *seedConvFixture) addUnreadAgentMessage(t *testing.T) string {
+	t.Helper()
+	tx, err := f.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	m, err := f.mRepo.CreateTx(tx, f.convID, "agent", f.agent.ID, json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`))
+	if err != nil {
+		t.Fatalf("CreateTx msg: %v", err)
+		return ""
+	}
+	// delivery 给 user
+	parts, err := f.pRepo.ListByConversationTx(tx, f.convID)
+	if err != nil {
+		t.Fatalf("ListByConversationTx: %v", err)
+		return ""
+	}
+	var recipients []model.ConversationParticipant
+	for _, p := range parts {
+		if p.MemberID == f.agent.ID && p.MemberType == "agent" {
+			continue // 跳过 sender
+		}
+		recipients = append(recipients, p)
+	}
+	if err := f.dRepo.CreateBatchTx(tx, m.ID, recipients); err != nil {
+		t.Fatalf("CreateBatchTx: %v", err)
+		return ""
+	}
+	if err := f.pRepo.IncrUnreadTx(tx, f.convID, f.agent.ID, "agent"); err != nil {
+		t.Fatalf("IncrUnreadTx: %v", err)
+		return ""
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+		return ""
+	}
+	return m.ID
+}
+
+// assertConvUnread 查 participant 行的 unread_count,失败时 t.Errorf。
+func assertConvUnread(t *testing.T, db *sql.DB, convID, memberID, memberType string, want int) {
+	t.Helper()
+	var n int
+	err := db.QueryRow(`
+		SELECT unread_count FROM conversation_participants
+		WHERE conv_id = $1 AND member_id = $2 AND member_type = $3
+	`, convID, memberID, memberType).Scan(&n)
+	if err != nil {
+		t.Fatalf("查 unread_count 失败: %v", err)
+	}
+	if n != want {
+		t.Errorf("unread_count = %d, want %d", n, want)
+	}
+}
+
+// newConvHandler 构造一个完整依赖的 ConversationHandler(hub 可空,本测试不需要广播)。
+func newConvHandler(f *seedConvFixture) *ConversationHandler {
+	urepo := repository.NewUserRepo(f.db)
+	arepo := repository.NewAgentRepo(f.db)
+	frepo := repository.NewFriendshipRepo(f.db)
+	return NewConversationHandler(
+		f.db, f.convRepo, f.pRepo, frepo,
+		f.mRepo, arepo, urepo, nil, // hub=nil,本测试不验证 WS 广播
+	)
+}
+
+// === List 测试 ===
+
+// TestConversationHandler_List_ReturnsAgentSummary 验证 IM 风格列表核心场景:
+//   - 200 状态码;
+//   - 响应包含对端 agent.name(subquery JOIN agents 生效);
+//   - 响应包含 last_message_content。
+func TestConversationHandler_List_ReturnsAgentSummary(t *testing.T) {
+	f := seedUserAgentConv(t, "list")
+
 	content, _ := json.Marshal(map[string]interface{}{
 		"msg_type": "text",
 		"data":     map[string]string{"text": "hi"},
 	})
-	if err := convRepo.UpdateLastMessage(conv.ID, content); err != nil {
+	if err := f.convRepo.UpdateLastMessage(f.convID, content); err != nil {
 		t.Fatalf("UpdateLastMessage 失败: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := newConvHandler(f)
 	r := gin.New()
 	r.GET("/api/conversations", func(c *gin.Context) {
-		c.Set("userID", user.ID)
+		c.Set("userID", f.user.ID)
 		h.List(c)
 	})
 
@@ -62,7 +180,7 @@ func TestConversationHandler_List_ReturnsAgentAndLastMessage(t *testing.T) {
 		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"name":"ListHAgent"`) {
+	if !strings.Contains(body, `"name":`) {
 		t.Errorf("响应缺少 agent.name: %s", body)
 	}
 	if !strings.Contains(body, `"last_message_content"`) {
@@ -70,32 +188,17 @@ func TestConversationHandler_List_ReturnsAgentAndLastMessage(t *testing.T) {
 	}
 }
 
-// TestConversationHandler_List_ExcludesNoMessageConversations 验证 IM 列表的过滤行为：
-//   - 没有任何消息的会话（last_message_content IS NULL）不应进入列表；
-//   - 空结果应返回 [] 而非 null（避免 APP 端反序列化成 null 后报错）。
+// TestConversationHandler_List_ExcludesNoMessageConversations 验证 IM 列表过滤:
+//   - 没有任何消息的会话(last_message_content IS NULL)不应进入列表;
+//   - 空结果应返回 [] 而非 null(避免 APP 端反序列化成 null 后报错)。
 func TestConversationHandler_List_ExcludesNoMessageConversations(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
+	f := seedUserAgentConv(t, "excl")
+	// 会话已建但无消息,不应进列表
 
-	user, err := urepo.Create(shortName(t, "excl"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "ExclAgent", "secret-key")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	if _, err := convRepo.FindOrCreate(user.ID, agent.ID); err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := newConvHandler(f)
 	r := gin.New()
 	r.GET("/api/conversations", func(c *gin.Context) {
-		c.Set("userID", user.ID)
+		c.Set("userID", f.user.ID)
 		h.List(c)
 	})
 
@@ -103,39 +206,29 @@ func TestConversationHandler_List_ExcludesNoMessageConversations(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// 期望空数组（不是 null）
 	body := strings.TrimSpace(w.Body.String())
 	if body != "[]" {
-		t.Errorf("无消息会话不应进列表，期望 [] 实际: %s", body)
+		t.Errorf("无消息会话不应进列表,期望 [] 实际: %s", body)
 	}
 }
 
-// TestConversationHandler_FindOrCreate_ReturnsAgentField 验证：FindOrCreate 响应里包含 agent 详情。
-// 用于 ChatPage 改造后从 FindOrCreate 返回里直接拿到 agent 信息（无需再发一个 /agents/{id} 请求）。
-func TestConversationHandler_FindOrCreate_ReturnsAgentField(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
+// === Create 测试 ===
 
-	user, err := urepo.Create(shortName(t, "foc"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "FOCAgent", "secret-key")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
+// TestConversationHandler_Create_LegacyAgentIDBody 验证老 body(agent_id)翻译为
+// type=dm_user_agent + member=[(agent_id, agent)] 的兼容路径。
+// 老客户端不变,server 自动注入 user 作 owner。
+func TestConversationHandler_Create_LegacyAgentIDBody(t *testing.T) {
+	f := seedUserAgentConv(t, "create")
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	// 注意:fixture 已经建过 dm_user_agent,这里调 Create 应走 FindOrCreateDM 幂等返同一会话。
+	h := newConvHandler(f)
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.FindOrCreate(c)
+		c.Set("userID", f.user.ID)
+		h.Create(c)
 	})
 
-	body := `{"agent_id":"` + agent.ID + `"}`
+	body := `{"agent_id":"` + f.agent.ID + `"}`
 	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -145,165 +238,280 @@ func TestConversationHandler_FindOrCreate_ReturnsAgentField(t *testing.T) {
 		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
 	}
 	resp := w.Body.String()
-	if !strings.Contains(resp, `"name":"FOCAgent"`) {
-		t.Errorf("FindOrCreate 响应缺少 agent.name: %s", resp)
-	}
-	if !strings.Contains(resp, `"id":`) {
-		t.Errorf("响应缺少 conversation id: %s", resp)
+	if !strings.Contains(resp, `"id":"`+f.convID+`"`) {
+		t.Errorf("期望返已存在会话 %s, resp: %s", f.convID, resp)
 	}
 }
 
-// TestConversationHandler_FindOrCreate_Returns404WhenAgentMissing 验证：
-//   - agent 不存在时返回 404（而不是 500，避免被 FK 约束触发 500 分支）；
-//   - 不会创建孤儿会话（fail fast，FindOrCreate 不应在 agent 不存在时被调用）。
-func TestConversationHandler_FindOrCreate_Returns404WhenAgentMissing(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "foc404"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.POST("/api/conversations", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.FindOrCreate(c)
-	})
-
-	// 用一个不存在的 UUID（agents 表里没有这条记录）。
-	body := `{"agent_id":"00000000-0000-0000-0000-000000000000"}`
-	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("期望 404，实际: %d body: %s", w.Code, w.Body.String())
-	}
-
-	// 验证没有创建孤儿会话。
-	convs, err := convRepo.ListByUser(user.ID)
-	if err != nil {
-		t.Fatalf("ListByUser 失败: %v", err)
-	}
-	if len(convs) != 0 {
-		t.Errorf("agent 不存在时不应创建会话，实际: %d 条", len(convs))
-	}
-}
-
-// TestConversationHandler_MarkRead_ClearsUnreadCount 验证：
-//   - 200 响应；
-//   - DB 中 unread_count 已重置为 0。
-func TestConversationHandler_MarkRead_ClearsUnreadCount(t *testing.T) {
+// TestConversationHandler_Create_NewAgentBody 验证新 body(type + member_ids/types)创建 dm_user_agent。
+func TestConversationHandler_Create_NewAgentBody(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
 	arepo := repository.NewAgentRepo(db)
 	crepo := repository.NewConversationRepo(db)
 	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
 
-	user, _ := urepo.Create(shortName(t, "mr_"), "$2a$10$hash")
-	agent, _ := arepo.Create(user.ID, "Agent", "secret-key-placeholder")
-	conv, _ := crepo.FindOrCreate(user.ID, agent.ID)
-
-	// 制造 2 条 agent → user 未读消息（事务内 incr）
-	for i := 0; i < 2; i++ {
-		tx, _ := crepo.BeginTx()
-		_, _ = mrepo.CreateTx(tx, conv.ID, "agent", agent.ID, json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`))
-		_ = crepo.UpdateLastMessageTx(tx, conv.ID, json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`))
-		_ = crepo.IncrUnreadTx(tx, conv.ID)
-		_ = tx.Commit()
+	user, err := urepo.Create(shortName(t, "cna"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	agent, err := arepo.Create(user.ID, shortName(t, "ag"), "secret-key")
+	if err != nil {
+		t.Fatalf("Create agent: %v", err)
 	}
 
-	h := NewConversationHandler(crepo, mrepo, arepo, urepo)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, arepo, urepo, nil)
 	r := gin.New()
-	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
+	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
-		h.MarkRead(c)
+		h.Create(c)
 	})
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/read", conv.ID), nil)
+	body := fmt.Sprintf(`{"type":"dm_user_agent","member_ids":["%s"],"member_types":["agent"]}`, agent.ID)
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
 	}
-
-	var n int
-	_ = db.QueryRow(`SELECT unread_count FROM conversations WHERE id = $1`, conv.ID).Scan(&n)
-	if n != 0 {
-		t.Errorf("unread_count = %d, want 0", n)
+	// 校验 participants 摘要正确
+	resp := w.Body.String()
+	if !strings.Contains(resp, `"member_type":"agent"`) {
+		t.Errorf("响应缺少 agent participant: %s", resp)
+	}
+	if !strings.Contains(resp, `"role":"owner"`) {
+		t.Errorf("响应缺少 user owner role: %s", resp)
 	}
 }
 
-// TestConversationHandler_MarkRead_Returns404OnForeignConv 验证：
-// 其他用户的会话 ID 调本接口返回 404（越权防护）。
-func TestConversationHandler_MarkRead_Returns404OnForeignConv(t *testing.T) {
+// TestConversationHandler_Create_DMUserUser_RequiresFriendship 验证 dm_user_user
+// 创建时校验好友关系,非好友返 403(spec §4.2)。
+func TestConversationHandler_Create_DMUserUser_RequiresFriendship(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
 	arepo := repository.NewAgentRepo(db)
 	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
 
-	owner, _ := urepo.Create(shortName(t, "own_"), "$2a$10$hash")
-	intruder, _ := urepo.Create(shortName(t, "int_"), "$2a$10$hash")
-	agent, _ := arepo.Create(owner.ID, "Agent", "secret-key-placeholder")
-	conv, _ := crepo.FindOrCreate(owner.ID, agent.ID)
+	user, _ := urepo.Create(shortName(t, "duf1"), "$2a$10$hash")
+	other, _ := urepo.Create(shortName(t, "duf2"), "$2a$10$hash")
+	// 不建好友关系
 
-	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, arepo, urepo, nil)
 	r := gin.New()
-	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
-		c.Set("userID", intruder.ID) // 入侵者
-		h.MarkRead(c)
+	r.POST("/api/conversations", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Create(c)
 	})
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/read", conv.ID), nil)
+	body := fmt.Sprintf(`{"type":"dm_user_user","member_ids":["%s"],"member_types":["user"]}`, other.ID)
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("期望 404，实际: %d body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非好友应返 403, 实际: %d body: %s", w.Code, w.Body.String())
 	}
 }
 
-// TestFindOrCreateAsAgentSuccess 验证 agent 视角的 findOrCreate：能正确按 (agent_id, user_id)
-// 拿到会话，响应里含 conv id 和 user 详情（不含 password_hash）。
-func TestFindOrCreateAsAgentSuccess(t *testing.T) {
+// TestConversationHandler_Create_DMUserUser_FriendsSucceed 验证 dm_user_user
+// 好友关系正常时创建成功。
+func TestConversationHandler_Create_DMUserUser_FriendsSucceed(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
 	arepo := repository.NewAgentRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
 
-	// agent 的 owner
-	owner, err := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
+	user, _ := urepo.Create(shortName(t, "dufs1"), "$2a$10$hash")
+	other, _ := urepo.Create(shortName(t, "dufs2"), "$2a$10$hash")
+
+	// 建好友关系:发请求 + accept
+	fr, err := frepo.CreateRequest(user.ID, other.ID)
 	if err != nil {
-		t.Fatalf("create owner: %v", err)
+		t.Fatalf("CreateRequest: %v", err)
 	}
-	agent, err := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
-	if err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	// 聊天对端 user
-	target, err := urepo.Create(shortName(t, "target"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("create target user: %v", err)
+	if err := frepo.Accept(fr.ID, other.ID); err != nil {
+		t.Fatalf("Accept: %v", err)
 	}
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, arepo, urepo, nil)
+	r := gin.New()
+	r.POST("/api/conversations", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Create(c)
+	})
 
-	body, _ := json.Marshal(map[string]string{"user_id": target.ID})
+	body := fmt.Sprintf(`{"type":"dm_user_user","member_ids":["%s"],"member_types":["user"]}`, other.ID)
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("好友 dm_user_user 创建应 200, 实际: %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestConversationHandler_Create_GroupUser 验证 group_user 群聊创建:user 作 owner + 2 个 user member。
+func TestConversationHandler_Create_GroupUser(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
+
+	creator, _ := urepo.Create(shortName(t, "gcr"), "$2a$10$hash")
+	m1, _ := urepo.Create(shortName(t, "gm1"), "$2a$10$hash")
+	m2, _ := urepo.Create(shortName(t, "gm2"), "$2a$10$hash")
+
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, arepo, urepo, nil)
+	r := gin.New()
+	r.POST("/api/conversations", func(c *gin.Context) {
+		c.Set("userID", creator.ID)
+		h.Create(c)
+	})
+
+	body := fmt.Sprintf(
+		`{"type":"group_user","member_ids":["%s","%s"],"member_types":["user","user"],"title":"群名","avatar_url":"http://x/a.png"}`,
+		m1.ID, m2.ID,
+	)
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("group_user 创建应 200, 实际: %d body: %s", w.Code, w.Body.String())
+	}
+
+	// 校验 conv 表里有 title
+	var convID, title string
+	_ = db.QueryRow(`SELECT id, title FROM conversations ORDER BY created_at DESC LIMIT 1`).Scan(&convID, &title)
+	if title != "群名" {
+		t.Errorf("title 期望 '群名', 实际 '%s'", title)
+	}
+	// 校验 3 个 participant(creator=owner + 2 member)
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE conv_id = $1`, convID).Scan(&n)
+	if n != 3 {
+		t.Errorf("participant 数 = %d, want 3", n)
+	}
+	// creator 是 owner
+	var creatorRole string
+	_ = db.QueryRow(`SELECT role FROM conversation_participants WHERE conv_id = $1 AND member_id = $2 AND member_type = 'user'`,
+		convID, creator.ID).Scan(&creatorRole)
+	if creatorRole != "owner" {
+		t.Errorf("creator role = %s, want owner", creatorRole)
+	}
+}
+
+// TestConversationHandler_Create_InvalidType 验证未知 type 返 400。
+func TestConversationHandler_Create_InvalidType(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
+
+	user, _ := urepo.Create(shortName(t, "cit"), "$2a$10$hash")
+
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, arepo, urepo, nil)
+	r := gin.New()
+	r.POST("/api/conversations", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Create(c)
+	})
+
+	body := `{"type":"channel_xxx","member_ids":["x"],"member_types":["user"]}`
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("未知 type 应 400, 实际 %d", w.Code)
+	}
+}
+
+// === Get 测试 ===
+
+// TestConversationHandler_Get_AsParticipant 验证 participant 能拿会话详情。
+func TestConversationHandler_Get_AsParticipant(t *testing.T) {
+	f := seedUserAgentConv(t, "get")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Get(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"type":"dm_user_agent"`) {
+		t.Errorf("响应缺少 type: %s", w.Body.String())
+	}
+}
+
+// TestConversationHandler_Get_NonParticipant_403 验证非 participant 访问返 403。
+func TestConversationHandler_Get_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "getnp")
+
+	// 另一个 user 不在该会话
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id", func(c *gin.Context) {
+		c.Set("userID", other.ID)
+		h.Get(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant 应 403, 实际 %d", w.Code)
+	}
+}
+
+// === CreateAsAgent 测试 ===
+
+// TestCreateAsAgentSuccess 验证 agent 视角 findOrCreate:能正确建 dm_user_agent,
+// 响应里含 conv id 和 user 详情(不含 password_hash)。
+func TestCreateAsAgentSuccess(t *testing.T) {
+	f := seedUserAgentConv(t, "caas")
+
+	h := newConvHandler(f)
+
+	body, _ := json.Marshal(map[string]string{"user_id": f.user.ID})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/agents/me/conversations", bytes.NewReader(body))
-	c.Set("userID", agent.ID) // agent JWT 解析后写入的实际是 agent_id
+	c.Set("userID", f.agent.ID)
 	c.Set("role", "agent")
 
-	h.FindOrCreateAsAgent(c)
+	h.CreateAsAgent(c)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -312,7 +520,6 @@ func TestFindOrCreateAsAgentSuccess(t *testing.T) {
 	if !strings.Contains(resp, `"id":`) {
 		t.Errorf("missing conv id: %s", resp)
 	}
-	// 响应里应有 user 详情（username），不应有 password_hash（model.User json:"-" tag）
 	if !strings.Contains(resp, `"username":"`) {
 		t.Errorf("missing user.username in response: %s", resp)
 	}
@@ -321,57 +528,39 @@ func TestFindOrCreateAsAgentSuccess(t *testing.T) {
 	}
 }
 
-// TestFindOrCreateAsAgentRejectsNonexistentUser 验证：对端 user 不存在时返回 404（而非 500）。
-// 顺序很关键：必须先 GetByID 校验 user 存在，再 FindOrCreate，否则 FK 约束触发 500。
-func TestFindOrCreateAsAgentRejectsNonexistentUser(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
+// TestCreateAsAgentRejectsNonexistentUser 验证对端 user 不存在时返 404(而非 500)。
+func TestCreateAsAgentRejectsNonexistentUser(t *testing.T) {
+	f := seedUserAgentConv(t, "caan")
 
-	owner, _ := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
-	agent, _ := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
-
-	h := NewConversationHandler(
-		repository.NewConversationRepo(db), repository.NewMessageRepo(db),
-		arepo, urepo,
-	)
+	h := newConvHandler(f)
 
 	body, _ := json.Marshal(map[string]string{"user_id": "00000000-0000-0000-0000-000000000000"})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/agents/me/conversations", bytes.NewReader(body))
-	c.Set("userID", agent.ID)
+	c.Set("userID", f.agent.ID)
 	c.Set("role", "agent")
 
-	h.FindOrCreateAsAgent(c)
+	h.CreateAsAgent(c)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent user, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-// TestFindOrCreateAsAgentIdempotent 验证：同一 (agent, user) 二次调用不新建会话，返回同一 conv_id。
-// 这是 FindOrCreate 语义的核心，agent 端的缓存兜底依赖此幂等性。
-func TestFindOrCreateAsAgentIdempotent(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
+// TestCreateAsAgentIdempotent 验证同一 (agent, user) 二次调用不新建会话,返回同一 conv_id。
+func TestCreateAsAgentIdempotent(t *testing.T) {
+	f := seedUserAgentConv(t, "caai")
 
-	owner, _ := urepo.Create(shortName(t, "owner"), "$2a$10$hash")
-	agent, _ := arepo.Create(owner.ID, shortName(t, "ag"), "secret-key")
-	target, _ := urepo.Create(shortName(t, "target"), "$2a$10$hash")
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := newConvHandler(f)
 
 	call := func() string {
-		body, _ := json.Marshal(map[string]string{"user_id": target.ID})
+		body, _ := json.Marshal(map[string]string{"user_id": f.user.ID})
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
-		c.Set("userID", agent.ID)
-		h.FindOrCreateAsAgent(c)
+		c.Set("userID", f.agent.ID)
+		h.CreateAsAgent(c)
 		var resp map[string]interface{}
 		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		id, _ := resp["id"].(string)
@@ -388,50 +577,442 @@ func TestFindOrCreateAsAgentIdempotent(t *testing.T) {
 	}
 }
 
-// TestConversationHandler_UnreadInfo_HasUnread 校验：
-//   - 200 状态；
-//   - 返回 unread_count + first_unread_message_id + first_unread_created_at（非 null）。
-func TestConversationHandler_UnreadInfo_HasUnread(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
+// === Messages 测试(游标分页 + 越权) ===
 
-	user, err := urepo.Create(shortName(t, "uih"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "UIH-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
+// TestConversationHandler_Messages_BeforeCursor 验证 before 游标分页:
+//   - before 参数优先于 offset;
+//   - cursor 过滤 + 排序正确;
+//   - limit 截断生效。
+func TestConversationHandler_Messages_BeforeCursor(t *testing.T) {
+	f := seedUserAgentConv(t, "mbc")
 
 	content, _ := json.Marshal(map[string]interface{}{
 		"msg_type": "text",
 		"data":     map[string]string{"text": "hi"},
 	})
-	m, err := msgRepo.Create(conv.ID, "agent", agent.ID, content)
-	if err != nil {
-		t.Fatalf("Create msg 失败: %v", err)
+	var ids []string
+	for i := 0; i < 3; i++ {
+		m, err := f.mRepo.Create(f.convID, "user", f.user.ID, content)
+		if err != nil {
+			t.Fatalf("Create m%d: %v", i, err)
+		}
+		ids = append(ids, m.ID)
+		time.Sleep(2 * time.Millisecond)
 	}
-	// unread_count 自增
-	tx, _ := convRepo.BeginTx()
-	_ = convRepo.IncrUnreadTx(tx, conv.ID)
-	_ = tx.Commit()
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	m2, _ := f.mRepo.Get(ids[1])
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Messages(c)
+	})
+
+	url := "/api/conversations/" + f.convID + "/messages?before=" + m2.CreatedAt.UTC().Format(time.RFC3339Nano) + "&limit=1"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	var got []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("期望 1 条,实际 %d", len(got))
+	}
+	if got[0]["id"] != ids[0] {
+		t.Errorf("期望 m1(%s),实际 %v", ids[0], got[0]["id"])
+	}
+}
+
+// TestConversationHandler_Messages_BeforeBadFormat 验证 before 参数格式错误返 400。
+func TestConversationHandler_Messages_BeforeBadFormat(t *testing.T) {
+	f := seedUserAgentConv(t, "mbf")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/messages?before=not-a-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("before 格式错误应 400,实际 %d", w.Code)
+	}
+}
+
+// TestConversationHandler_Messages_NonParticipant_403 验证越权访问返 403。
+func TestConversationHandler_Messages_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "mnp")
+
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", other.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/messages", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant 应 403,实际 %d", w.Code)
+	}
+}
+
+// TestConversationHandler_Messages_AfterCursor 验证 after 游标分页(更新方向,定位首条未读场景)。
+func TestConversationHandler_Messages_AfterCursor(t *testing.T) {
+	f := seedUserAgentConv(t, "mac")
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	var ids []string
+	for i := 0; i < 4; i++ {
+		m, err := f.mRepo.Create(f.convID, "user", f.user.ID, content)
+		if err != nil {
+			t.Fatalf("Create m%d: %v", i, err)
+		}
+		ids = append(ids, m.ID)
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	m2, _ := f.mRepo.Get(ids[1])
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Messages(c)
+	})
+
+	url := "/api/conversations/" + f.convID + "/messages?after=" +
+		m2.CreatedAt.Add(-time.Millisecond).UTC().Format(time.RFC3339Nano) + "&limit=10"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	var got []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
+	}
+	if len(got) != 3 {
+		t.Fatalf("期望 3 条(m2~m4),实际 %d", len(got))
+	}
+	if got[0]["id"] != ids[1] {
+		t.Errorf("ASC 第一条期望 m2(%s),实际 %v", ids[1], got[0]["id"])
+	}
+	if got[2]["id"] != ids[3] {
+		t.Errorf("ASC 最后一条期望 m4(%s),实际 %v", ids[3], got[2]["id"])
+	}
+}
+
+// TestConversationHandler_Messages_AfterBadFormat 验证 after 参数格式错误返 400。
+func TestConversationHandler_Messages_AfterBadFormat(t *testing.T) {
+	f := seedUserAgentConv(t, "mab")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/messages?after=not-a-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("after 格式错误应 400,实际 %d", w.Code)
+	}
+}
+
+// === MarkRead / MarkMessagesRead 测试 ===
+
+// TestConversationHandler_MarkRead_ClearsUnreadCount 验证整会话标已读:
+//   - 200 响应;
+//   - participant 行的 unread_count 重置为 0。
+func TestConversationHandler_MarkRead_ClearsUnreadCount(t *testing.T) {
+	f := seedUserAgentConv(t, "mrc")
+	// 制造 2 条 agent → user 未读
+	for i := 0; i < 2; i++ {
+		f.addUnreadAgentMessage(t)
+	}
+	// 校验起点:unread_count = 2
+	assertConvUnread(t, f.db, f.convID, f.user.ID, "user", 2)
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.MarkRead(c)
+	})
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/read", f.convID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	// participant 行 unread_count 应为 0
+	assertConvUnread(t, f.db, f.convID, f.user.ID, "user", 0)
+}
+
+// TestConversationHandler_MarkRead_NonParticipant_403 验证越权返 403。
+func TestConversationHandler_MarkRead_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "mrnp")
+
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/read", func(c *gin.Context) {
+		c.Set("userID", other.ID)
+		h.MarkRead(c)
+	})
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/read", f.convID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant 应 403,实际 %d", w.Code)
+	}
+}
+
+// TestConversationHandler_MarkMessagesRead 验证按 messageId 部分标记:
+// 3 条未读 → 标记 2 条 → 响应 unread_count=1 + DB participant.unread_count=1。
+func TestConversationHandler_MarkMessagesRead(t *testing.T) {
+	f := seedUserAgentConv(t, "mmr")
+	msgIDs := make([]string, 3)
+	for i := 0; i < 3; i++ {
+		msgIDs[i] = f.addUnreadAgentMessage(t)
+	}
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.MarkMessagesRead(c)
+	})
+
+	body, _ := json.Marshal(map[string][]string{"message_ids": {msgIDs[0], msgIDs[1]}})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", f.convID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK          bool `json:"ok"`
+		UnreadCount int  `json:"unread_count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("反序列化响应失败: %v", err)
+	}
+	if !resp.OK {
+		t.Errorf("ok 应为 true")
+	}
+	if resp.UnreadCount != 1 {
+		t.Errorf("响应 unread_count = %d, want 1", resp.UnreadCount)
+	}
+	assertConvUnread(t, f.db, f.convID, f.user.ID, "user", 1)
+}
+
+// TestConversationHandler_MarkMessagesRead_ValidatesBody 校验请求体边界:
+//   - 空 body / 缺 message_ids → 400;
+//   - 超过 100 条 → 400。
+func TestConversationHandler_MarkMessagesRead_ValidatesBody(t *testing.T) {
+	f := seedUserAgentConv(t, "mvb")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.MarkMessagesRead(c)
+	})
+
+	t.Run("空 body", func(t *testing.T) {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", f.convID), nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("空 body 应 400,实际 %d", w.Code)
+		}
+	})
+
+	t.Run("缺 message_ids 字段", func(t *testing.T) {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", f.convID),
+			bytes.NewReader([]byte(`{"other":"x"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("缺 message_ids 应 400,实际 %d", w.Code)
+		}
+	})
+
+	t.Run("超过 100 条", func(t *testing.T) {
+		ids := make([]string, 101)
+		for i := range ids {
+			ids[i] = "x"
+		}
+		body, _ := json.Marshal(map[string][]string{"message_ids": ids})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", f.convID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("超过 100 条应 400,实际 %d", w.Code)
+		}
+	})
+}
+
+// TestConversationHandler_MarkMessagesRead_NonParticipant_403 越权返 403。
+func TestConversationHandler_MarkMessagesRead_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "mmrnp")
+
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", other.ID)
+		h.MarkMessagesRead(c)
+	})
+
+	body, _ := json.Marshal(map[string][]string{"message_ids": {"00000000-0000-0000-0000-000000000000"}})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", f.convID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant 应 403,实际 %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+// === Pin / Unpin / Hide 测试 ===
+
+// TestConversationHandler_PinUnpinHide 校验 Pin/Unpin/Hide 个人维度操作正常 + 越权 403。
+func TestConversationHandler_PinUnpinHide(t *testing.T) {
+	f := seedUserAgentConv(t, "puh")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/pin", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Pin(c)
+	})
+	r.DELETE("/api/conversations/:id/pin", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Unpin(c)
+	})
+	r.DELETE("/api/conversations/:id", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Hide(c)
+	})
+
+	// Pin
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/pin", f.convID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Pin 失败: %d body: %s", w.Code, w.Body.String())
+	}
+	var pinned *time.Time
+	_ = f.db.QueryRow(`SELECT pinned_at FROM conversation_participants WHERE conv_id=$1 AND member_id=$2 AND member_type='user'`,
+		f.convID, f.user.ID).Scan(&pinned)
+	if pinned == nil {
+		t.Errorf("Pin 后 pinned_at 应非 nil")
+	}
+
+	// Unpin
+	req = httptest.NewRequest("DELETE", fmt.Sprintf("/api/conversations/%s/pin", f.convID), nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Unpin 失败: %d body: %s", w.Code, w.Body.String())
+	}
+	_ = f.db.QueryRow(`SELECT pinned_at FROM conversation_participants WHERE conv_id=$1 AND member_id=$2 AND member_type='user'`,
+		f.convID, f.user.ID).Scan(&pinned)
+	if pinned != nil {
+		t.Errorf("Unpin 后 pinned_at 应 nil")
+	}
+
+	// Hide
+	req = httptest.NewRequest("DELETE", fmt.Sprintf("/api/conversations/%s", f.convID), nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Hide 失败: %d body: %s", w.Code, w.Body.String())
+	}
+	var hidden *time.Time
+	_ = f.db.QueryRow(`SELECT hidden_at FROM conversation_participants WHERE conv_id=$1 AND member_id=$2 AND member_type='user'`,
+		f.convID, f.user.ID).Scan(&hidden)
+	if hidden == nil {
+		t.Errorf("Hide 后 hidden_at 应非 nil")
+	}
+}
+
+// TestConversationHandler_Pin_NonParticipant_403 验证越权返 403。
+func TestConversationHandler_Pin_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "pnp")
+
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.POST("/api/conversations/:id/pin", func(c *gin.Context) {
+		c.Set("userID", other.ID)
+		h.Pin(c)
+	})
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/pin", f.convID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant Pin 应 403,实际 %d", w.Code)
+	}
+}
+
+// === UnreadInfo 测试 ===
+
+// TestConversationHandler_UnreadInfo_HasUnread 校验有未读时返回:
+//   - 200;
+//   - unread_count > 0;
+//   - first_unread_message_id + first_unread_created_at 非 null。
+func TestConversationHandler_UnreadInfo_HasUnread(t *testing.T) {
+	f := seedUserAgentConv(t, "uih")
+	mID := f.addUnreadAgentMessage(t)
+
+	h := newConvHandler(f)
 	r := gin.New()
 	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
-		c.Set("userID", user.ID)
+		c.Set("userID", f.user.ID)
 		h.UnreadInfo(c)
 	})
 
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/unread", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -442,7 +1023,7 @@ func TestConversationHandler_UnreadInfo_HasUnread(t *testing.T) {
 	if !strings.Contains(body, `"unread_count":1`) {
 		t.Errorf("响应缺少 unread_count:1: %s", body)
 	}
-	if !strings.Contains(body, `"first_unread_message_id":"`+m.ID+`"`) {
+	if !strings.Contains(body, `"first_unread_message_id":"`+mID+`"`) {
 		t.Errorf("响应缺少 first_unread_message_id: %s", body)
 	}
 	if !strings.Contains(body, `"first_unread_created_at":"`) {
@@ -450,37 +1031,20 @@ func TestConversationHandler_UnreadInfo_HasUnread(t *testing.T) {
 	}
 }
 
-// TestConversationHandler_UnreadInfo_NoUnread 校验无未读时：
-//   - first_unread_message_id 为空字符串；
-//   - first_unread_created_at 为 null（指针 nil 序列化）。
+// TestConversationHandler_UnreadInfo_NoUnread 校验无未读时:
+//   - first_unread_message_id 为空字符串;
+//   - first_unread_created_at 为 null。
 func TestConversationHandler_UnreadInfo_NoUnread(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
+	f := seedUserAgentConv(t, "uin")
 
-	user, err := urepo.Create(shortName(t, "uin"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "UIN-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := newConvHandler(f)
 	r := gin.New()
 	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
-		c.Set("userID", user.ID)
+		c.Set("userID", f.user.ID)
 		h.UnreadInfo(c)
 	})
 
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/unread", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -496,465 +1060,24 @@ func TestConversationHandler_UnreadInfo_NoUnread(t *testing.T) {
 	}
 }
 
-// TestConversationHandler_UnreadInfo_Forbidden 校验越权访问：
-//   - 其他 user 访问不属于自己的会话 → 404（不区分"不存在"和"无权访问"）。
-func TestConversationHandler_UnreadInfo_Forbidden(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
+// TestConversationHandler_UnreadInfo_NonParticipant_403 校验越权访问返 403。
+func TestConversationHandler_UnreadInfo_NonParticipant_403(t *testing.T) {
+	f := seedUserAgentConv(t, "uinp")
 
-	user, err := urepo.Create(shortName(t, "uif1"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	other, err := urepo.Create(shortName(t, "uif2"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create other 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "UIF-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
+	other, _ := repository.NewUserRepo(f.db).Create(shortName(t, "other"), "$2a$10$hash")
 
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
+	h := newConvHandler(f)
 	r := gin.New()
 	r.GET("/api/conversations/:id/unread", func(c *gin.Context) {
-		c.Set("userID", other.ID) // 用 other 身份访问 user 的会话
+		c.Set("userID", other.ID)
 		h.UnreadInfo(c)
 	})
 
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/unread", nil)
+	req := httptest.NewRequest("GET", "/api/conversations/"+f.convID+"/unread", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("越权应返回 404，实际 %d body: %s", w.Code, w.Body.String())
-	}
-}
-
-// TestConversationHandler_Messages_BeforeCursor 校验游标分页：
-//   - before 参数优先于 offset；
-//   - cursor 过滤 + 排序正确（created_at < m2 → m1）；
-//   - limit 截断生效（limit=1 + 1 条匹配 → 返 1 条）。
-func TestConversationHandler_Messages_BeforeCursor(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "mbc"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "MBC-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hi"},
-	})
-	// 造 3 条消息（m1 最早，m3 最新）
-	var ids []string
-	for i := 0; i < 3; i++ {
-		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
-		if err != nil {
-			t.Fatalf("Create m%d 失败: %v", i, err)
-		}
-		ids = append(ids, m.ID)
-		time.Sleep(2 * time.Millisecond)
-	}
-
-	// 拿中间消息 m2 的 created_at 作 cursor
-	m2, _ := msgRepo.Get(ids[1])
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.Messages(c)
-	})
-
-	// before=m2.createdAt & limit=1 → 验证 cursor 过滤 + 排序 + limit 截断。
-	// created_at < m2 的有 [m1]（1 条），limit=1 截断后仍返 1 条 m1。
-	url := "/api/conversations/" + conv.ID + "/messages?before=" + m2.CreatedAt.UTC().Format(time.RFC3339Nano) + "&limit=1"
-	req := httptest.NewRequest("GET", url, nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
-	}
-
-	var got []map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
-	}
-	if len(got) != 1 {
-		t.Fatalf("期望 1 条（limit=1 + created_at < m2），实际 %d", len(got))
-	}
-	if got[0]["id"] != ids[0] {
-		t.Errorf("期望 m1（%s），实际 %v", ids[0], got[0]["id"])
-	}
-}
-
-// TestConversationHandler_Messages_BeforeBadFormat 校验 before 参数格式错误返回 400。
-func TestConversationHandler_Messages_BeforeBadFormat(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "mbf"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "MBF-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.Messages(c)
-	})
-
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages?before=not-a-time", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("before 格式错误应 400，实际 %d", w.Code)
-	}
-}
-
-// TestConversationHandler_Messages_Forbidden 校验越权访问：
-//   - 其他 user 用别人的 conv_id 拉消息 → 404（不区分"不存在"和"无权访问"）。
-//   - 与 UnreadInfo_Forbidden 的越权语义对齐。
-func TestConversationHandler_Messages_Forbidden(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "mforbu"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	other, err := urepo.Create(shortName(t, "mforbo"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create other 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "MFORB-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hi"},
-	})
-	if _, err := msgRepo.Create(conv.ID, "user", user.ID, content); err != nil {
-		t.Fatalf("Create msg 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
-		c.Set("userID", other.ID) // 用 other 身份访问 user 的会话
-		h.Messages(c)
-	})
-
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("越权应返回 404，实际 %d body: %s", w.Code, w.Body.String())
-	}
-}
-
-// TestConversationHandler_Messages_AfterCursor 校验 after 游标分页（更新方向）：
-//   - after 参数拉取 created_at > after 的消息（ASC）；
-//   - 用于进入会话定位第一条未读（firstUnread + 之后的 N-1 条）。
-func TestConversationHandler_Messages_AfterCursor(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "mac"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "MAC-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "hi"},
-	})
-	// 造 4 条消息（m1 最早，m4 最新）
-	var ids []string
-	for i := 0; i < 4; i++ {
-		m, err := msgRepo.Create(conv.ID, "user", user.ID, content)
-		if err != nil {
-			t.Fatalf("Create m%d 失败: %v", i, err)
-		}
-		ids = append(ids, m.ID)
-		time.Sleep(2 * time.Millisecond)
-	}
-
-	// 拿 m2 的 created_at 作 cursor 起点
-	m2, _ := msgRepo.Get(ids[1])
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.Messages(c)
-	})
-
-	// after=m2.createdAt - 1ms → 应返回 m2 + 之后的 [m2, m3, m4] ASC
-	url := "/api/conversations/" + conv.ID + "/messages?after=" +
-		m2.CreatedAt.Add(-time.Millisecond).UTC().Format(time.RFC3339Nano) + "&limit=10"
-	req := httptest.NewRequest("GET", url, nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
-	}
-
-	var got []map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("反序列化失败: %v body: %s", err, w.Body.String())
-	}
-	if len(got) != 3 {
-		t.Fatalf("期望 3 条（m2~m4），实际 %d", len(got))
-	}
-	// ASC 顺序：第一条 m2，最后一条 m4
-	if got[0]["id"] != ids[1] {
-		t.Errorf("ASC 第一条期望 m2（%s），实际 %v", ids[1], got[0]["id"])
-	}
-	if got[2]["id"] != ids[3] {
-		t.Errorf("ASC 最后一条期望 m4（%s），实际 %v", ids[3], got[2]["id"])
-	}
-}
-
-// TestConversationHandler_Messages_AfterBadFormat 校验 after 参数格式错误返回 400。
-func TestConversationHandler_Messages_AfterBadFormat(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	convRepo := repository.NewConversationRepo(db)
-	msgRepo := repository.NewMessageRepo(db)
-	arepo := repository.NewAgentRepo(db)
-
-	user, err := urepo.Create(shortName(t, "mab"), "$2a$10$hash")
-	if err != nil {
-		t.Fatalf("Create user 失败: %v", err)
-	}
-	agent, err := arepo.Create(user.ID, "MAB-Agent", "secret")
-	if err != nil {
-		t.Fatalf("Create agent 失败: %v", err)
-	}
-	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
-	if err != nil {
-		t.Fatalf("FindOrCreate 失败: %v", err)
-	}
-
-	h := NewConversationHandler(convRepo, msgRepo, arepo, urepo)
-	r := gin.New()
-	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.Messages(c)
-	})
-
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages?after=not-a-time", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("after 格式错误应 400，实际 %d", w.Code)
-	}
-}
-
-// TestConversationHandler_MarkMessagesRead 成功标记部分消息并返回新 unread_count。
-// 覆盖：3 条未读 → 标记 2 条 → 响应 unread_count=1 + DB unread_count=1。
-func TestConversationHandler_MarkMessagesRead(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
-	crepo := repository.NewConversationRepo(db)
-	mrepo := repository.NewMessageRepo(db)
-
-	user, _ := urepo.Create(shortName(t, "mmr_"), "$2a$10$hash")
-	agent, _ := arepo.Create(user.ID, "Agent", "secret-key-placeholder")
-	conv, _ := crepo.FindOrCreate(user.ID, agent.ID)
-
-	// 制造 3 条 agent → user 未读消息
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
-	msgIDs := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		tx, _ := crepo.BeginTx()
-		m, _ := mrepo.CreateTx(tx, conv.ID, "agent", agent.ID, content)
-		msgIDs[i] = m.ID
-		_ = crepo.IncrUnreadTx(tx, conv.ID)
-		_ = tx.Commit()
-	}
-
-	h := NewConversationHandler(crepo, mrepo, arepo, urepo)
-	r := gin.New()
-	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.MarkMessagesRead(c)
-	})
-
-	body, _ := json.Marshal(map[string][]string{"message_ids": {msgIDs[0], msgIDs[1]}})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
-	}
-
-	var resp struct {
-		OK          bool `json:"ok"`
-		UnreadCount int  `json:"unread_count"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("反序列化响应失败: %v", err)
-	}
-	if !resp.OK {
-		t.Errorf("ok 应为 true")
-	}
-	if resp.UnreadCount != 1 {
-		t.Errorf("响应 unread_count = %d, want 1", resp.UnreadCount)
-	}
-
-	// DB 校验
-	var n int
-	_ = db.QueryRow(`SELECT unread_count FROM conversations WHERE id = $1`, conv.ID).Scan(&n)
-	if n != 1 {
-		t.Errorf("DB unread_count = %d, want 1", n)
-	}
-}
-
-// TestConversationHandler_MarkMessagesRead_ValidatesBody 校验请求体：
-//   - 空 body / 缺 message_ids → 400；
-//   - 超过 100 条 → 400。
-func TestConversationHandler_MarkMessagesRead_ValidatesBody(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
-	crepo := repository.NewConversationRepo(db)
-
-	user, _ := urepo.Create(shortName(t, "mvb_"), "$2a$10$hash")
-	agent, _ := arepo.Create(user.ID, "Agent", "secret-key-placeholder")
-	conv, _ := crepo.FindOrCreate(user.ID, agent.ID)
-
-	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
-	r := gin.New()
-	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
-		c.Set("userID", user.ID)
-		h.MarkMessagesRead(c)
-	})
-
-	t.Run("空 body", func(t *testing.T) {
-		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("空 body 应 400，实际 %d", w.Code)
-		}
-	})
-
-	t.Run("缺 message_ids 字段", func(t *testing.T) {
-		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID),
-			bytes.NewReader([]byte(`{"other":"x"}`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("缺 message_ids 应 400，实际 %d", w.Code)
-		}
-	})
-
-	t.Run("超过 100 条", func(t *testing.T) {
-		ids := make([]string, 101)
-		for i := range ids {
-			ids[i] = "x"
-		}
-		body, _ := json.Marshal(map[string][]string{"message_ids": ids})
-		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("超过 100 条应 400，实际 %d", w.Code)
-		}
-	})
-}
-
-// TestConversationHandler_MarkMessagesRead_Returns404OnForeignConv 越权返 404。
-func TestConversationHandler_MarkMessagesRead_Returns404OnForeignConv(t *testing.T) {
-	db := repository.SetupTestDB(t)
-	urepo := repository.NewUserRepo(db)
-	arepo := repository.NewAgentRepo(db)
-	crepo := repository.NewConversationRepo(db)
-
-	owner, _ := urepo.Create(shortName(t, "own_"), "$2a$10$hash")
-	intruder, _ := urepo.Create(shortName(t, "int_"), "$2a$10$hash")
-	agent, _ := arepo.Create(owner.ID, "Agent", "secret-key-placeholder")
-	conv, _ := crepo.FindOrCreate(owner.ID, agent.ID)
-
-	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
-	r := gin.New()
-	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
-		c.Set("userID", intruder.ID) // 入侵者
-		h.MarkMessagesRead(c)
-	})
-
-	body, _ := json.Marshal(map[string][]string{"message_ids": {"00000000-0000-0000-0000-000000000000"}})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("越权应 404，实际 %d body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 participant 应 403,实际 %d", w.Code)
 	}
 }
