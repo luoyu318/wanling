@@ -255,6 +255,42 @@ func (h *ConversationHandler) MarkRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// MarkMessagesRead 批量按 messageId 标记已读 + 重算 unread_count。
+// 用于"用户上滑阅读未读消息时按 messageId 同步进度"。
+// 越权防护：会话不属于该 user 时返回 404（不区分"不存在"和"无权访问"，避免泄露存在性）。
+//
+// Request body: {"message_ids": ["id1", "id2", ...]}
+// Response: {"ok": true, "unread_count": N}
+func (h *ConversationHandler) MarkMessagesRead(c *gin.Context) {
+	convID := c.Param("id")
+	userID := c.GetString("userID")
+
+	var req struct {
+		MessageIDs []string `json:"message_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message_ids 字段必填"})
+		return
+	}
+
+	// 防御性上限：单次最多 100 条（与 batch-delete 一致）
+	if len(req.MessageIDs) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "单次最多 100 条 message_ids"})
+		return
+	}
+
+	newUnread, err := h.convRepo.MarkMessagesRead(convID, userID, req.MessageIDs)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在或无权访问"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "unread_count": newUnread})
+}
+
 // Pin 置顶会话。越权防护:user_id 必须匹配,否则 404。
 func (h *ConversationHandler) Pin(c *gin.Context) {
 	convID := c.Param("id")

@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 
+	"github.com/lib/pq"
 	"github.com/wanling/server/internal/model"
 )
 
@@ -223,6 +225,97 @@ func (r *ConversationRepo) MarkRead(convID, userID string) error {
 		convID,
 	)
 	return nil
+}
+
+// MarkMessagesRead 批量按 messageId 标记已读，并重算会话 unread_count。
+// 用于"用户上滑阅读未读消息时按 messageId 同步进度"。
+//
+// 事务保证：
+//  1. UPDATE messages SET is_read=TRUE WHERE id IN(...) AND conversation_id AND sender_type='agent'
+//  2. 重算 unread_count = 该会话 remaining 未读 agent 消息数（含 deleted_at IS NULL 过滤）
+//  3. UPDATE conversations SET unread_count=$new WHERE id AND user_id（越权 0 行 → ErrNoRows）
+//
+// 越权防护：conversation_id 必须属于该 user（UPDATE conversations 的 user_id 校验 + 空 ID 分支的 SELECT 校验）。
+// messageIDs 中不属于该会话的 id 自动被 WHERE 过滤（不报错，幂等）。
+// 空 messageIDs 直接 SELECT 当前 unread_count，不执行 UPDATE（防御性，避免 IN () 语法错）。
+//
+// 返回新的 unread_count 供调用方同步本地。会话不存在或越权时返回 sql.ErrNoRows。
+func (r *ConversationRepo) MarkMessagesRead(convID, userID string, messageIDs []string) (int, error) {
+	tx, err := r.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() // commit 后 noop
+
+	// 空 messageIDs：直接返回当前 unread_count（防御性，避免 ANY($1::text[]) 空 array 语义歧义）
+	// SELECT 带 user_id 校验，越权同样返 sql.ErrNoRows
+	if len(messageIDs) == 0 {
+		var current int
+		err = tx.QueryRow(
+			`SELECT unread_count FROM conversations WHERE id = $1 AND user_id = $2`,
+			convID, userID,
+		).Scan(&current)
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return current, nil
+	}
+
+	// 1. 批量标记消息已读（只标记该会话的 agent 消息，防越权 + 防误标 user 消息）
+	// messages.id 是 UUID 类型，必须 cast 成 uuid[]（text[] 会触发 "operator does not exist: uuid = text"）
+	// 用 ANY($1::uuid[]) 比 IN (...) 更适合动态数组（lib/pq Array 编码）
+	_, err = tx.Exec(
+		`UPDATE messages SET is_read = TRUE
+		 WHERE id = ANY($1::uuid[])
+		   AND conversation_id = $2
+		   AND sender_type = 'agent'
+		   AND is_read = FALSE`,
+		pq.Array(messageIDs), convID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	// 2. 重算 unread_count：该会话 remaining 未读 agent 消息数
+	// deleted_at IS NULL 过滤软删的（migration 006）
+	var newUnread int
+	err = tx.QueryRow(
+		`SELECT COUNT(*) FROM messages
+		 WHERE conversation_id = $1
+		   AND sender_type = 'agent'
+		   AND is_read = FALSE
+		   AND deleted_at IS NULL`,
+		convID,
+	).Scan(&newUnread)
+	if err != nil {
+		return 0, err
+	}
+
+	// 3. 更新 conversations.unread_count（带 user_id 校验防越权）
+	// 0 行 = 会话不存在或不属于该 user → ErrNoRows（让 handler 返 404）
+	convRes, err := tx.Exec(
+		`UPDATE conversations SET unread_count = $3
+		 WHERE id = $1 AND user_id = $2`,
+		convID, userID, newUnread,
+	)
+	if err != nil {
+		return 0, err
+	}
+	convRows, err := convRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if convRows == 0 {
+		return 0, sql.ErrNoRows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newUnread, nil
 }
 
 // GetUnreadCount 返回会话的未读数。带 user_id 校验，越权返回 sql.ErrNoRows。

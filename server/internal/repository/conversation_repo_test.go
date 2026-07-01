@@ -564,3 +564,113 @@ func TestConversationRepo_GetUnreadCount(t *testing.T) {
 		t.Errorf("越权应返回 sql.ErrNoRows，实际 %v", err)
 	}
 }
+
+// TestConversationRepo_MarkMessagesRead 批量按 messageId 标记已读 + 重算 unread_count。
+// 覆盖：单条/多条/不属于该会话的 id 自动过滤/越权返 sql.ErrNoRows/空数组返当前值。
+func TestConversationRepo_MarkMessagesRead(t *testing.T) {
+	db := SetupTestDB(t)
+	convRepo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+
+	user, err := NewUserRepo(db).Create(uniqueShortName(t, "mr_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := NewAgentRepo(db).Create(user.ID, "MarkMsgReadAgent", "secret-key-placeholder")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreate(user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreate 失败: %v", err)
+	}
+
+	// 制造 5 条 agent 消息（每条都 IncrUnreadTx，让 unread_count=5）
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"m"}}`)
+	msgIDs := make([]string, 5)
+	for i := 0; i < 5; i++ {
+		tx, err := convRepo.BeginTx()
+		if err != nil {
+			t.Fatalf("BeginTx %d 失败: %v", i, err)
+		}
+		m, err := msgRepo.CreateTx(tx, conv.ID, "agent", agent.ID, content)
+		if err != nil {
+			t.Fatalf("CreateTx %d 失败: %v", i, err)
+		}
+		msgIDs[i] = m.ID
+		if err := convRepo.IncrUnreadTx(tx, conv.ID); err != nil {
+			t.Fatalf("IncrUnreadTx %d 失败: %v", i, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit %d 失败: %v", i, err)
+		}
+	}
+
+	// 验证初始 unread_count=5
+	initial, err := convRepo.GetUnreadCount(conv.ID, user.ID)
+	if err != nil {
+		t.Fatalf("GetUnreadCount 失败: %v", err)
+	}
+	if initial != 5 {
+		t.Fatalf("初始 unread_count = %d, want 5", initial)
+	}
+
+	t.Run("单条标记", func(t *testing.T) {
+		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{msgIDs[0]})
+		if err != nil {
+			t.Fatalf("MarkMessagesRead 失败: %v", err)
+		}
+		if newCount != 4 {
+			t.Errorf("单条标记后 unread_count = %d, want 4", newCount)
+		}
+	})
+
+	t.Run("多条标记", func(t *testing.T) {
+		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{msgIDs[1], msgIDs[2], msgIDs[3]})
+		if err != nil {
+			t.Fatalf("MarkMessagesRead 失败: %v", err)
+		}
+		if newCount != 1 {
+			t.Errorf("多条标记后 unread_count = %d, want 1", newCount)
+		}
+	})
+
+	t.Run("不属于该会话的 id 自动过滤", func(t *testing.T) {
+		// 一个合法格式但实际不存在的 UUID，应被 WHERE 过滤；msgIDs[4] 是真实的，应被标记
+		nonExistentUUID := "00000000-0000-0000-0000-000000000000"
+		newCount, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{nonExistentUUID, msgIDs[4]})
+		if err != nil {
+			t.Fatalf("MarkMessagesRead 失败: %v", err)
+		}
+		if newCount != 0 {
+			t.Errorf("过滤后 unread_count = %d, want 0", newCount)
+		}
+	})
+
+	// fakeOwnerID：合法 UUID 格式但 DB 中不存在的 user_id（触发越权 ErrNoRows）
+	const fakeOwnerID = "11111111-1111-1111-1111-111111111111"
+
+	t.Run("越权返 sql.ErrNoRows", func(t *testing.T) {
+		_, err := convRepo.MarkMessagesRead(conv.ID, fakeOwnerID, []string{msgIDs[0]})
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("越权应返 sql.ErrNoRows, got %v", err)
+		}
+	})
+
+	t.Run("空数组返当前 unread_count", func(t *testing.T) {
+		count, err := convRepo.MarkMessagesRead(conv.ID, user.ID, []string{})
+		if err != nil {
+			t.Fatalf("MarkMessagesRead 失败: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("空数组后 unread_count = %d, want 0", count)
+		}
+	})
+
+	t.Run("空数组+越权返 sql.ErrNoRows", func(t *testing.T) {
+		_, err := convRepo.MarkMessagesRead(conv.ID, fakeOwnerID, []string{})
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("空数组越权应返 sql.ErrNoRows, got %v", err)
+		}
+	})
+}

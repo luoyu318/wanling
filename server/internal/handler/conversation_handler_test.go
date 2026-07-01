@@ -809,3 +809,152 @@ func TestConversationHandler_Messages_AfterBadFormat(t *testing.T) {
 		t.Errorf("after 格式错误应 400，实际 %d", w.Code)
 	}
 }
+
+// TestConversationHandler_MarkMessagesRead 成功标记部分消息并返回新 unread_count。
+// 覆盖：3 条未读 → 标记 2 条 → 响应 unread_count=1 + DB unread_count=1。
+func TestConversationHandler_MarkMessagesRead(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+
+	user, _ := urepo.Create(shortName(t, "mmr_"), "$2a$10$hash")
+	agent, _ := arepo.Create(user.ID, "Agent", "secret-key-placeholder")
+	conv, _ := crepo.FindOrCreate(user.ID, agent.ID)
+
+	// 制造 3 条 agent → user 未读消息
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+	msgIDs := make([]string, 3)
+	for i := 0; i < 3; i++ {
+		tx, _ := crepo.BeginTx()
+		m, _ := mrepo.CreateTx(tx, conv.ID, "agent", agent.ID, content)
+		msgIDs[i] = m.ID
+		_ = crepo.IncrUnreadTx(tx, conv.ID)
+		_ = tx.Commit()
+	}
+
+	h := NewConversationHandler(crepo, mrepo, arepo, urepo)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.MarkMessagesRead(c)
+	})
+
+	body, _ := json.Marshal(map[string][]string{"message_ids": {msgIDs[0], msgIDs[1]}})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		OK          bool `json:"ok"`
+		UnreadCount int  `json:"unread_count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("反序列化响应失败: %v", err)
+	}
+	if !resp.OK {
+		t.Errorf("ok 应为 true")
+	}
+	if resp.UnreadCount != 1 {
+		t.Errorf("响应 unread_count = %d, want 1", resp.UnreadCount)
+	}
+
+	// DB 校验
+	var n int
+	_ = db.QueryRow(`SELECT unread_count FROM conversations WHERE id = $1`, conv.ID).Scan(&n)
+	if n != 1 {
+		t.Errorf("DB unread_count = %d, want 1", n)
+	}
+}
+
+// TestConversationHandler_MarkMessagesRead_ValidatesBody 校验请求体：
+//   - 空 body / 缺 message_ids → 400；
+//   - 超过 100 条 → 400。
+func TestConversationHandler_MarkMessagesRead_ValidatesBody(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+
+	user, _ := urepo.Create(shortName(t, "mvb_"), "$2a$10$hash")
+	agent, _ := arepo.Create(user.ID, "Agent", "secret-key-placeholder")
+	conv, _ := crepo.FindOrCreate(user.ID, agent.ID)
+
+	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.MarkMessagesRead(c)
+	})
+
+	t.Run("空 body", func(t *testing.T) {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("空 body 应 400，实际 %d", w.Code)
+		}
+	})
+
+	t.Run("缺 message_ids 字段", func(t *testing.T) {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID),
+			bytes.NewReader([]byte(`{"other":"x"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("缺 message_ids 应 400，实际 %d", w.Code)
+		}
+	})
+
+	t.Run("超过 100 条", func(t *testing.T) {
+		ids := make([]string, 101)
+		for i := range ids {
+			ids[i] = "x"
+		}
+		body, _ := json.Marshal(map[string][]string{"message_ids": ids})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("超过 100 条应 400，实际 %d", w.Code)
+		}
+	})
+}
+
+// TestConversationHandler_MarkMessagesRead_Returns404OnForeignConv 越权返 404。
+func TestConversationHandler_MarkMessagesRead_Returns404OnForeignConv(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+
+	owner, _ := urepo.Create(shortName(t, "own_"), "$2a$10$hash")
+	intruder, _ := urepo.Create(shortName(t, "int_"), "$2a$10$hash")
+	agent, _ := arepo.Create(owner.ID, "Agent", "secret-key-placeholder")
+	conv, _ := crepo.FindOrCreate(owner.ID, agent.ID)
+
+	h := NewConversationHandler(crepo, repository.NewMessageRepo(db), arepo, urepo)
+	r := gin.New()
+	r.POST("/api/conversations/:id/messages/read", func(c *gin.Context) {
+		c.Set("userID", intruder.ID) // 入侵者
+		h.MarkMessagesRead(c)
+	})
+
+	body, _ := json.Marshal(map[string][]string{"message_ids": {"00000000-0000-0000-0000-000000000000"}})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/conversations/%s/messages/read", conv.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("越权应 404，实际 %d body: %s", w.Code, w.Body.String())
+	}
+}
