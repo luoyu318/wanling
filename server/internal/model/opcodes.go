@@ -28,4 +28,14 @@ const (
 	EventMessageUpdate   = "MESSAGE_UPDATE"
 	EventApprovalDecided = "APPROVAL_DECIDED"
 	EventApprovalExpired = "APPROVAL_EXPIRED"
+
+	// 会话管理(N 方 participants 模型,Task 2.2 引入)
+	EventConversationParticipantJoin  = "CONVERSATION_PARTICIPANT_JOIN"
+	EventConversationParticipantLeave = "CONVERSATION_PARTICIPANT_LEAVE"
+	EventConversationUpdate           = "CONVERSATION_UPDATE"
+
+	// 好友系统(Task 2.2 引入,handler 在 Task 2.5)
+	EventFriendRequestReceived = "FRIEND_REQUEST_RECEIVED"
+	EventFriendRequestDecided  = "FRIEND_REQUEST_DECIDED"
+	EventFriendRemoved         = "FRIEND_REMOVED"
 )
