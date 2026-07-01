@@ -180,6 +180,7 @@ func main() {
 		userAuth.GET("/api/conversations/:id/unread", convHandler.UnreadInfo)
 		userAuth.GET("/api/conversations/:id/messages", convHandler.Messages)
 		userAuth.POST("/api/conversations/:id/read", convHandler.MarkRead)
+		userAuth.POST("/api/conversations/:id/messages/read", convHandler.MarkMessagesRead)
 		userAuth.POST("/api/conversations/:id/pin", convHandler.Pin)
 		userAuth.DELETE("/api/conversations/:id/pin", convHandler.Unpin)
 		userAuth.DELETE("/api/conversations/:id", convHandler.Hide)

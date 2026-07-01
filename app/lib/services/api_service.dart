@@ -129,6 +129,18 @@ class ApiService {
     return res.data;
   }
 
+  /// 批量按 messageId 标记已读 + server 重算 unread_count。
+  /// 用于「用户上滑阅读未读消息时按 messageId 同步进度」。
+  /// 返回 `{ok: true, unread_count: N}`，N 是 server 重算后的剩余未读数。
+  Future<Map<String, dynamic>> markMessagesRead(
+      String convId, List<String> messageIds) async {
+    final res = await _dio.post(
+      '/api/conversations/$convId/messages/read',
+      data: {'message_ids': messageIds},
+    );
+    return res.data;
+  }
+
   /// 获取会话未读信息（未读数 + 第一条未读消息 id + createdAt）。
   /// 进入 ChatPage 时调用，用于定位未读消息。
   /// 返回原始 JSON，由调用方用 UnreadInfo.fromJson 解析。

@@ -30,7 +30,7 @@ import '../widgets/feedback/app_dialog.dart';
 import '../widgets/load_more_indicator.dart';
 import '../widgets/typing_bubble.dart';
 import '../widgets/unread_nav_badge.dart';
-import '../widgets/new_message_badge.dart';
+import '../widgets/jump_to_bottom_button.dart';
 import '../widgets/unread_separator.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 import 'package:wechat_camera_picker/wechat_camera_picker.dart';
@@ -70,6 +70,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   late final ListObserverController _observerController;
   late final ChatScrollObserver _chatObserver;
 
+  /// 已「进入过视口」的未读消息 id（防重复减）。
+  /// 由 _checkUnreadSeen 维护：每次滚动检测新增的「刚进入视口」的未读，
+  /// 加入此集合并 decrementUnread(N)。
+  final Set<String> _seenUnreadMsgIds = {};
+
   /// 防止未读定位重复触发：_initialize 成功置位 firstUnreadMessageId 后只定位一次。
   bool _didLocateUnread = false;
 
@@ -81,14 +86,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 把 firstUnread 推到列表中段（messages 累积成几十条），完全脱离定位意图。
   bool _isLocating = false;
 
-  /// 防止 markRead 重复调用 + 推迟到 _initialize 完成后调用。
-  ///
-  /// 关键：markRead 不能在 initState 立即调，否则会与 _initialize 的 getUnreadInfo
-  /// 并发——markRead 把 unread_count 清零 + messages.is_read 全置 TRUE 后，
-  /// getUnreadInfo 拿到 unread_count=0 + FirstUnread 返回 nil，导致 APP 走无未读
-  /// 分支不定位。改为等 _initialize 完成（messages 第一次有内容）后再 markRead。
-  bool _didMarkRead = false;
-
   /// 滚动位置跟踪：是否在底部（pixels <= 50）
   bool _isAtBottom = true;
 
@@ -96,6 +93,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// isLoadingMore=true 期间 + 完成后延迟 300ms 内为 true，让用户一定看到反馈。
   /// 直接用 chatState.isLoadingMore 会因 loadMore 太快（100 条 < 200ms）用户看不到。
   Timer? _loadingHideTimer;
+
+  /// markMessagesRead 同步 debounce。
+  /// 用户上滑阅读未读时本地 unreadCount 即时减少，但 server 同步 debounce 500ms,
+  /// 避免 fling 期间频繁打 server。dispose 时若 timer pending 立即 flush 兜底。
+  Timer? _markReadDebounce;
+
+  /// 待同步给 server 的已读 message id 集合（debounce 期间累积）。
+  /// timer fire 时一次性 flush，清空集合。
+  final Set<String> _pendingReadMsgIds = {};
 
   /// 多选模式状态。
   bool _selectionMode = false;
@@ -151,8 +157,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _scrollCtrl.addListener(_onScroll);
     _convNotifier = ref.read(conversationProvider.notifier);
     _typingNotifier = ref.read(typingProvider.notifier);
-    // 不在这里 markRead：会与 _initialize 的 getUnreadInfo 并发导致拿不到未读信息。
-    // markRead 改到 ref.listen 内、_initialize 完成（messages 第一次有内容）后触发。
     _convNotifier.setActiveConv(widget.convId);
     _ws = ref.read(wsProvider);
     // 上报当前会话给服务端（op=3）：agent 发消息时该会话不计未读。
@@ -174,6 +178,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   void dispose() {
+    // 兜底：pending 的 markMessagesRead 立即同步（不等 await，HTTP 在后台完成）。
+    // 用户上滑减了未读但还没等 500ms 同步就退出会话，靠这里保证 server 最终一致。
+    if (_markReadDebounce?.isActive ?? false) {
+      _markReadDebounce!.cancel();
+      _flushPendingReadMsgIds();
+    }
     _loadingHideTimer?.cancel();
     _hideMessageMenu(); // 防止页面退出时 Overlay 残留
     _msgSub?.cancel();
@@ -205,7 +215,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         'isLocating=$_isLocating');
     final wasAtBottom = _isAtBottom;
     _isAtBottom = px <= 50;
-    // 用户主动滑到底部时标记已读：清蓝色未读浮标 + 绿色新消息浮标 + 分割线。
+    // _isAtBottom 变化时触发 rebuild：跳转底部浮标 / 未读浮标的显示条件都依赖
+    // !_isAtBottom，不 rebuild 它们不会消失/出现。
+    if (wasAtBottom != _isAtBottom) {
+      setState(() {});
+    }
+    // 用户主动滑到底部时标记已读：清未读浮标 + 分割线。
     // 仅检测 false→true 转变，避免每次 px 微变都触发 state 更新。
     if (!wasAtBottom && _isAtBottom) {
       final chatKey = (convId: widget.convId, agentId: widget.agentId);
@@ -213,6 +228,120 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     // 菜单打开时随滚动动态调整定位或取消。
     _updateMenuOnScroll();
+    // 用 PostFrameCallback 等 ListView rebuild 完成（新进入视口的消息已 build，
+    // GlobalKey.currentContext 有效）。否则 _isMessageInViewport 会因 currentContext
+    // 为 null 返 false，浮标数永远不减。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkUnreadSeen();
+    });
+  }
+
+  /// 检测视口内的未读消息，把新进入视口的未读批量加入 _seenUnreadMsgIds
+  /// 并调 decrementUnread(N)。
+  ///
+  /// 触发点：
+  /// - _onScroll 每次滚动
+  /// - _isLocating 释放的 PostFrameCallback（处理定位完成时已在视口内的未读）
+  ///
+  /// 算法：messages 是 newest first，messages[0] = 最新未读，
+  /// messages[firstUnreadIdx] = 第一条未读（最老）。
+  /// 未读段 = messages[0..firstUnreadIdx]，遍历找「在视口内 + 未在 seen 集合」的。
+  void _checkUnreadSeen() {
+    if (!mounted || _isLocating) {
+      // 不打印（每帧调用，会刷屏）。仅在入口失败时静默。
+      return;
+    }
+    final chatKey = (convId: widget.convId, agentId: widget.agentId);
+    final chatState = ref.read(chatProvider(chatKey));
+    if (chatState.unreadCount == 0 || chatState.firstUnreadMessageId == null) {
+      return; // 无未读或未定位，静默
+    }
+
+    // 每次 indexWhere 而非缓存：messages 长度可能因新消息 prepend / 删除变化，
+    // 缓存 idx 会在数组结构变化时偏移导致误算。messages 通常 ≤ 几百条，
+    // O(n) 字符串比较每帧一次成本可接受（实际瓶颈是 _isMessageInViewport
+    // 的 localToGlobal，且只对未 seen 的消息调用）。
+    final firstUnreadIdx = chatState.messages.indexWhere(
+      (m) => m.id == chatState.firstUnreadMessageId,
+    );
+    if (firstUnreadIdx < 0) return;
+
+    // 用 firstUnread.createdAt 过滤会话内新消息的逻辑已移除：
+    // 合并后所有未读（历史未读 + 会话内新消息）都计入 unreadCount，
+    // 进入视口即减。
+
+    final newlySeen = <String>[];
+    int skippedSeen = 0;
+    for (var i = 0; i <= firstUnreadIdx; i++) {
+      final msg = chatState.messages[i];
+      if (_seenUnreadMsgIds.contains(msg.id)) {
+        skippedSeen++;
+        continue;
+      }
+      if (_isMessageInViewport(msg.id)) {
+        newlySeen.add(msg.id);
+      }
+    }
+
+    // 仅 newlySeen 非空时打印，避免每帧刷屏（_onScroll 每帧触发）
+    if (newlySeen.isEmpty) return;
+    debugPrint('[unreadCheck] firstUnreadIdx=$firstUnreadIdx, '
+        'unreadCount=${chatState.unreadCount}, '
+        'seenSetSize=${_seenUnreadMsgIds.length}, '
+        'skippedSeen=$skippedSeen, newlySeen=${newlySeen.length}');
+
+    if (newlySeen.isEmpty) return;
+    _seenUnreadMsgIds.addAll(newlySeen);
+    debugPrint('[unreadCheck] TRIGGER decrement: ids=$newlySeen');
+    ref.read(chatProvider(chatKey).notifier).decrementUnread(newlySeen.length);
+    _scheduleMarkReadSync(newlySeen);
+  }
+
+  /// 判断消息当前是否在 ListView 视口内（任何部分可见）。
+  /// 复用 _bubbleKeys + localToGlobal 算屏幕坐标，与菜单定位同源。
+  bool _isMessageInViewport(String msgId) {
+    final ctx = _bubbleKeys[msgId]?.currentContext;
+    if (ctx == null) return false;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return false;
+    final rect = Rect.fromPoints(
+      box.localToGlobal(Offset.zero),
+      box.localToGlobal(Offset(box.size.width, box.size.height)),
+    );
+    final viewport = _listViewRect();
+    return rect.bottom > viewport.top && rect.top < viewport.bottom;
+  }
+
+  /// 启动 markMessagesRead 同步 debounce：累积 msgIds 到 _pendingReadMsgIds,
+  /// 500ms 内若再次调用则重置 timer（取最后一次），fling 期间不打 server。
+  void _scheduleMarkReadSync(List<String> msgIds) {
+    if (msgIds.isEmpty) return;
+    _pendingReadMsgIds.addAll(msgIds);
+    _markReadDebounce?.cancel();
+    _markReadDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      _flushPendingReadMsgIds();
+    });
+  }
+
+  /// 把 _pendingReadMsgIds 一次性同步给 server，清空集合。
+  /// 调 markMessagesRead API，server 返回新 unread_count 后同步到 conversationProvider
+  /// 让会话列表徽章立即对齐。
+  Future<void> _flushPendingReadMsgIds() async {
+    if (_pendingReadMsgIds.isEmpty) return;
+    final ids = _pendingReadMsgIds.toList();
+    _pendingReadMsgIds.clear();
+    debugPrint('[markSync] FLUSH: syncing ${ids.length} ids to server');
+    try {
+      final res = await ref.read(apiProvider).markMessagesRead(widget.convId, ids);
+      final newUnread = (res['unread_count'] as num?)?.toInt() ?? 0;
+      // 同步 conversationProvider 的本地未读数（让会话列表徽章立即更新）
+      ref.read(conversationProvider.notifier).setUnreadCountLocally(widget.convId, newUnread);
+      debugPrint('[markSync] flushed, server unread_count=$newUnread');
+    } catch (e) {
+      debugPrint('[markSync] flush failed: $e');
+      // 失败不重试，下次进入会话 server 仍是旧值，可接受（用户重进会重新触发同步）
+    }
   }
 
   /// 用户主导的滚动事件处理：触发 50% 阈值预加载。
@@ -400,6 +529,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         // 链式生效避免触顶。
         final chatKey = (convId: widget.convId, agentId: widget.agentId);
         ref.read(chatProvider(chatKey).notifier).loadMoreHistory();
+        // 定位完成时 firstUnread 已在视口内（可能短消息密集首屏还有更多未读），
+        // 主动检查一次，让浮标数立即反映「已看到 N 条」。
+        _checkUnreadSeen();
       });
     });
     final pxRightAfterJump = _scrollCtrl.hasClients ? _scrollCtrl.position.pixels : null;
@@ -735,8 +867,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         'showUnreadSeparator=${chatState.showUnreadSeparator}, '
         'unreadCount=${chatState.unreadCount}, '
         '_pendingScroll=$_pendingScroll, _didLocateUnread=$_didLocateUnread');
-    // 监听状态变化，处理四类副作用：
-    // (0) markRead：_initialize 完成（messages 第一次有内容）后触发，避免与 getUnreadInfo 并发。
+    // 监听状态变化，处理三类副作用：
     // (1) 未读定位：firstUnreadMessageId 从 null→非null（_initialize 完成）时触发定位。
     //     用 _didLocateUnread 标记防重复（_initialize 只会成功一次）。
     // (2) 新消息计数：messages 长度增长时，按 _isAtBottom 决定增哪个计数器。
@@ -764,16 +895,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         setState(() {});
       }
 
-      // (0) _initialize 完成后 markRead（确保 getUnreadInfo 已拿到正确数据）。
-      // 推迟到 messages 第一次有内容时，避免与 _initialize 的 getUnreadInfo 并发
-      // 导致 server 端 unread_count 被提前清零、FirstUnread 返回 nil。
-      if (!_didMarkRead && next.messages.isNotEmpty) {
-        _didMarkRead = true;
-        debugPrint('[listen] (0) markRead scheduled');
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _markRead();
-        });
-      }
+      // (0) 进入会话不再立即 markRead：上滑阅读进度只本地递减，server 保留初始未读。
+      // 仅在用户真正到达底部（_isAtBottom）或点浮标跳底部时才同步 server。
+      // 修复「退出重进丢失剩余未读」bug：原逻辑进入即清 server，重进看不到剩余 N 条。
 
       // (1) 未读定位
       final prevFirstUnread = prev?.firstUnreadMessageId;
@@ -818,15 +942,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _markRead();
           } else {
             // 不在底部 + 对方新消息：调 ChatScrollObserver.standby 保持视口锚点 +
-            // 增加新消息计数（绿色浮标提示）。
-            //
-            // 按官方 wiki 标准用法：physics 必须 ChatObserverClampingScrollPhysics，
-            // fixedPositionOffset 设 5，standby 在数据变更前调用。standby 让 px 同步
-            // 增加 newItemHeight 抵消新消息对内容的下推，视口锚点真正保持。
-            // 之前误用 BouncingScrollPhysics + 未设 fixedPositionOffset，导致 standby
-            // delta 算反或 overscroll 反弹冲突，px 暴减。
+            // 增加未读计数（统一未读浮标提示）。
             _chatObserver.standby(changeCount: changeCount);
-            _notifier.incrementNewMessage();
+            _notifier.incrementUnread();
+            // 同步会话列表徽章：conversationProvider 内置 _onMessageCreate 在
+            // isActive=true 时不 +1（与 server 对齐），但浮标 +1 了，这里手动同步
+            // 让两端一致，否则返回列表时徽章比浮标少。
+            ref
+                .read(conversationProvider.notifier)
+                .incrementUnreadLocally(widget.convId);
           }
         } else {
           debugPrint('[listen] (2) loadMore append $oldLen→$newLen, '
@@ -957,11 +1081,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         key: _listViewKey,
                         reverse: true,
                         controller: _scrollCtrl,
-                        // 实验：用 BouncingScrollPhysics + fixedPositionOffset=5 看是否
-                        // 与 standby 还冲突。之前 fixedPositionOffset=0 时 px 暴减（4176→260），
-                        // 现在按 wiki 设 5 重新测试。Bouncing 能解决 loadMore 拉不动（overscroll
-                        // 弹性反弹让用户继续拽出空间，loadMore 完成后自然落到新内容）。
-                        physics: ChatObserverBouncingScrollPhysics(
+                        // ChatObserverClampingScrollPhysics 是 ChatScrollObserver.standby
+                        // 的官方要求（wiki 标准）。Bouncing 的弹性 overscroll 会干扰 standby
+                        // 的 px 同步，导致 agent 新消息 prepend 时视口被「上顶」。
+                        // loadMore 不依赖触顶 overscroll（_onScrollNotification 的 50% 阈值
+                        // 预加载会提前触发），Clamping 不破坏 loadMore 体验。
+                        physics: ChatObserverClampingScrollPhysics(
                           observer: _chatObserver,
                         ),
                         shrinkWrap: _chatObserver.isShrinkWrap,
@@ -1115,34 +1240,32 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         ),
                       ),
 
-                    // 蓝色未读浮标：未读数 > 阈值且不在底部时显示
-                    if (chatState.shouldShowUnreadBadge && !_isAtBottom)
+                    // 统一未读浮标：有未读（历史未读 + 会话内新消息合并）且不在底部时显示
+                    if (chatState.unreadCount > 0 && !_isAtBottom)
                       Positioned(
                         bottom: 16,
                         right: 16,
                         child: UnreadNavBadge(
                           count: chatState.unreadCount,
                           onTap: () async {
+                            debugPrint('[unreadBadge] TAP: scroll to bottom + jumpToBottom');
                             _doScrollToBottom();
                             await _notifier.jumpToBottom();
                           },
                         ),
                       ),
 
-                    // 绿色新消息浮标：会话内收到新消息时显示
-                    // 与蓝色未读浮标允许共存（少见场景：进入时历史未读>阈值 + 会话内又来新消息）
-                    if (chatState.shouldShowNewMessageBadge &&
-                        !_isAtBottom)
+                    // 跳转底部浮标：无未读 + 不在底部时显示
+                    // 与未读浮标互斥（条件不会同时成立）
+                    // 场景：进入无未读会话 → 上滑读历史 → 提供快捷回最新的入口
+                    if (chatState.unreadCount == 0 && !_isAtBottom)
                       Positioned(
                         bottom: 16,
                         right: 16,
-                        child: NewMessageBadge(
-                          count: chatState.newMessageCount,
+                        child: JumpToBottomButton(
                           onTap: () {
+                            debugPrint('[jumpBtn] TAP: scroll to bottom');
                             _doScrollToBottom();
-                            // 跳底部 = 看完所有消息，统一走 markReadAtBottom
-                            // （清蓝/绿浮标 + 分割线 + markConversationRead）
-                            _notifier.markReadAtBottom();
                           },
                         ),
                       ),

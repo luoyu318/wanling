@@ -164,14 +164,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// - markReadAtBottom：用户滑到底部用，保留当前 state 只清状态
   Future<void> markReadAtBottom() async {
     if (state.unreadCount == 0 &&
-        state.newMessageCount == 0 &&
         !state.showUnreadSeparator &&
         state.firstUnreadMessageId == null) {
       return; // 已是清白状态，无需重复操作
     }
     state = state.copyWith(
       unreadCount: 0,
-      newMessageCount: 0,
       showUnreadSeparator: false,
       clearFirstUnread: true,
     );
@@ -227,14 +225,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = _mergeHistory(loaded).copyWith(
         hasMore: loaded.length == _pageSize,
         unreadCount: 0,
-        newMessageCount: 0,
         showUnreadSeparator: false,
         clearFirstUnread: true,
       );
     } else {
       state = state.copyWith(
         unreadCount: 0,
-        newMessageCount: 0,
         showUnreadSeparator: false,
         clearFirstUnread: true,
       );
@@ -246,23 +242,45 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } catch (_) {}
   }
 
-  /// 会话内收到新消息、且用户不在底部时累加未读计数（蓝色浮标）。
-  /// 由 ChatPage.ref.listen 在 _isAtBottom == false && unreadCount > 0 时调用。
+  /// 会话内收到 agent 消息且用户不在底部时累加未读计数（未读浮标）。
+  /// 由 ChatPage.ref.listen 在 _isAtBottom == false 时调用。
   void incrementUnread() {
     state = state.copyWith(unreadCount: state.unreadCount + 1);
   }
 
-  /// 会话内收到新消息、且用户不在底部、无历史未读时累加新消息计数（绿色浮标）。
-  /// 由 ChatPage.ref.listen 在 _isAtBottom == false && unreadCount == 0 时调用。
-  void incrementNewMessage() {
-    state = state.copyWith(newMessageCount: state.newMessageCount + 1);
+  /// 用户上滑阅读未读消息时，按「已进入视口的未读条数」批量减少未读计数。
+  /// 由 ChatPage._checkUnreadSeen 检测视口内未读消息后调用。
+  ///
+  /// 当 unreadCount 减到 0 时同时清 firstUnreadMessageId + showUnreadSeparator，
+  /// 与 markReadAtBottom / jumpToBottom 对未读字段的清白口径一致。
+  void decrementUnread(int n) {
+    if (n <= 0) {
+      debugPrint('[decrement] SKIP: n=$n (no-op)');
+      return;
+    }
+    final oldCount = state.unreadCount;
+    final newCount = oldCount - n;
+    debugPrint('[decrement] CALLED: n=$n, oldCount=$oldCount, newCount=$newCount');
+    if (newCount <= 0) {
+      debugPrint('[decrement] clamp to 0 + clear firstUnread + hide separator');
+      state = state.copyWith(
+        unreadCount: 0,
+        clearFirstUnread: true,
+        showUnreadSeparator: false,
+      );
+    } else {
+      state = state.copyWith(unreadCount: newCount);
+    }
+    debugPrint('[decrement] DONE: unreadCount=${state.unreadCount}, '
+        'firstUnread=${state.firstUnreadMessageId}, '
+        'showSeparator=${state.showUnreadSeparator}');
   }
 
   /// 收到新 WS 消息：仅头部插入 + 去重。
   ///
   /// **不改计数**：是否在底部（_isAtBottom）是 UI 层状态，Notifier 无法得知。
   /// 计数由 ChatPage.ref.listen 监测到 messages 增长后，根据 _isAtBottom 调
-  /// incrementUnread / incrementNewMessage 完成（见 ChatPage build）。
+  /// incrementUnread 完成（见 ChatPage build）。
   void _onMessageCreate(Map<String, dynamic> msgData) {
     if (msgData['conversation_id'] != conversationId) return;
     final msg = ChatMessage.fromJson(msgData);
