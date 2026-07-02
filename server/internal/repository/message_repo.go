@@ -56,12 +56,17 @@ func (r *MessageRepo) createMessage(
 	return m, err
 }
 
-func (r *MessageRepo) ListByConversation(convID string, limit, offset int) ([]model.Message, error) {
+func (r *MessageRepo) ListByConversation(convID, memberID, memberType string, limit, offset int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
-		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
-		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		convID, limit, offset,
+		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+		 FROM messages m
+		 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM message_hidden h
+		     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
+		   )
+		 ORDER BY m.created_at DESC LIMIT $4 OFFSET $5`,
+		convID, memberID, memberType, limit, offset,
 	)
 	if err != nil {
 		return nil, err
@@ -76,7 +81,6 @@ func (r *MessageRepo) ListByConversation(convID string, limit, offset int) ([]mo
 		}
 		msgs = append(msgs, m)
 	}
-	// rows.Err 捕获迭代过程中的错误(DB 连接断开等),避免静默返回部分结果。
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -128,6 +132,8 @@ func (r *MessageRepo) GetByIDs(ids []string) ([]model.Message, error) {
 }
 
 // SoftDelete 软删单条:deleted_at = NOW()。
+// 语义见 016 migration 注释:deleted_at 表示"撤回(全局软删)",双向不可见。
+// 单向"对自己隐藏"用 HideForUser。
 func (r *MessageRepo) SoftDelete(id string) error {
 	_, err := r.db.Exec(
 		`UPDATE messages SET deleted_at = NOW() WHERE id = $1`,
@@ -142,6 +148,34 @@ func (r *MessageRepo) SoftDeleteByIDs(ids []string) (int64, error) {
 		`UPDATE messages SET deleted_at = NOW() WHERE id = ANY($1) AND deleted_at IS NULL`,
 		pq.Array(ids),
 	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// HideForUser 把单条消息对某 participant 隐藏(per-participant 维度)。
+// 重复 hide 幂等(ON CONFLICT DO NOTHING)。语义见 016 migration 注释。
+func (r *MessageRepo) HideForUser(messageID, memberID, memberType string) error {
+	_, err := r.db.Exec(`
+		INSERT INTO message_hidden (message_id, member_id, member_type)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (message_id, member_id, member_type) DO NOTHING
+	`, messageID, memberID, memberType)
+	return err
+}
+
+// HideForUsers 批量隐藏,返回受影响行数(新增插入数,已隐藏的不计)。
+// 用于 batch-delete 的 scope=hide 路径。
+func (r *MessageRepo) HideForUsers(messageIDs []string, memberID, memberType string) (int64, error) {
+	if len(messageIDs) == 0 {
+		return 0, nil
+	}
+	res, err := r.db.Exec(`
+		INSERT INTO message_hidden (message_id, member_id, member_type)
+		SELECT unnest($1::uuid[]), $2, $3
+		ON CONFLICT (message_id, member_id, member_type) DO NOTHING
+	`, pq.Array(messageIDs), memberID, memberType)
 	if err != nil {
 		return 0, err
 	}
@@ -170,28 +204,38 @@ func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 // ListBefore 返回 created_at < before 的消息(游标分页),newest first。
 // before 为零值时返回最新 limit 条(等价 ListByConversation 第一页)。
 // 用于消息导航的游标分页加载历史("更老方向",上滑加载)。
-// 排除软删消息。
+// 过滤软删 + 该 member 隐藏过的消息。
 //
 // 为什么用 created_at 作 cursor:messages.id 是 UUID v4(随机无序),不能作 cursor
 // (id < $2 比较无意义),created_at 是本项目唯一可用的时间序字段。同 created_at
 // 边界的消息(生产环境同毫秒概率极低)用 `<` 严格小于规避。
-func (r *MessageRepo) ListBefore(convID string, before time.Time, limit int) ([]model.Message, error) {
+func (r *MessageRepo) ListBefore(convID, memberID, memberType string, before time.Time, limit int) ([]model.Message, error) {
 	var rows *sql.Rows
 	var err error
 	if before.IsZero() {
 		rows, err = r.db.Query(
-			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
-			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
-			 ORDER BY created_at DESC LIMIT $2`,
-			convID, limit,
+			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+			 FROM messages m
+			 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+			   AND NOT EXISTS (
+			     SELECT 1 FROM message_hidden h
+			     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
+			   )
+			 ORDER BY m.created_at DESC LIMIT $4`,
+			convID, memberID, memberType, limit,
 		)
 	} else {
 		rows, err = r.db.Query(
-			`SELECT id, conversation_id, sender_type, sender_id, content, created_at
-			 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
-			 AND created_at < $2
-			 ORDER BY created_at DESC LIMIT $3`,
-			convID, before, limit,
+			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+			 FROM messages m
+			 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+			   AND NOT EXISTS (
+			     SELECT 1 FROM message_hidden h
+			     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
+			   )
+			   AND m.created_at < $4
+			 ORDER BY m.created_at DESC LIMIT $5`,
+			convID, memberID, memberType, before, limit,
 		)
 	}
 	if err != nil {
@@ -213,17 +257,19 @@ func (r *MessageRepo) ListBefore(convID string, before time.Time, limit int) ([]
 	return msgs, nil
 }
 
-// CountBefore 返回 created_at < before 的未删消息数。
+// CountBefore 返回 created_at < before 的未删 + 未隐藏消息数。
 // 用于 APP 进入有未读会话时判断 firstUnread 之前是否还有已读历史,
 // 决定 hasMore(是否允许上滑加载历史)。
-// ListAfter 只取未读方向,loaded.length 满不满 _pageSize 都不能反映
-// firstUnread 之前的已读历史数量,故需独立 count。
-func (r *MessageRepo) CountBefore(convID string, before time.Time) (int, error) {
+func (r *MessageRepo) CountBefore(convID, memberID, memberType string, before time.Time) (int, error) {
 	var count int
 	err := r.db.QueryRow(
-		`SELECT COUNT(*) FROM messages
-		 WHERE conversation_id = $1 AND deleted_at IS NULL AND created_at < $2`,
-		convID, before,
+		`SELECT COUNT(*) FROM messages m
+		 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL AND m.created_at < $2
+		   AND NOT EXISTS (
+		     SELECT 1 FROM message_hidden h
+		     WHERE h.message_id = m.id AND h.member_id = $3 AND h.member_type = $4
+		   )`,
+		convID, before, memberID, memberType,
 	).Scan(&count)
 	if err != nil {
 		return 0, err
@@ -236,14 +282,19 @@ func (r *MessageRepo) CountBefore(convID string, before time.Time) (int, error) 
 // firstUnread + 之后的 N-1 条,让 firstUnread 落在 loaded 开头;APP 端 reverse 后
 // 变成 newest first(firstUnread 在末尾=视觉顶部,跳到它,下方是更新的未读)。
 //
-// 排除软删消息。ASC 排序:与 ListBefore 的 DESC 反向,调用方按需 reverse。
-func (r *MessageRepo) ListAfter(convID string, after time.Time, limit int) ([]model.Message, error) {
+// 过滤软删 + 该 member 隐藏过的消息。ASC 排序:与 ListBefore 的 DESC 反向,调用方按需 reverse。
+func (r *MessageRepo) ListAfter(convID, memberID, memberType string, after time.Time, limit int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
-		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
-		 AND created_at > $2
-		 ORDER BY created_at ASC LIMIT $3`,
-		convID, after, limit,
+		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+		 FROM messages m
+		 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM message_hidden h
+		     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
+		   )
+		   AND m.created_at > $4
+		 ORDER BY m.created_at ASC LIMIT $5`,
+		convID, memberID, memberType, after, limit,
 	)
 	if err != nil {
 		return nil, err

@@ -588,18 +588,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildMenu(ChatMessage msg, _MenuPlacement p) {
+    final canRecall = _canRecall(msg);
     return MessageContextMenu(
       left: p.left,
       top: p.top,
       tailOffsetX: p.tailOffsetX,
       pointDown: p.pointDown,
+      isRecallMode: canRecall,
       onCopy: () {
         _copySelectedOrFull(msg);
         _hideMessageMenu();
       },
       onDelete: () {
         _hideMessageMenu();
-        _confirmDelete([msg.id]);
+        if (canRecall) {
+          _confirmDelete([msg.id], recall: true);
+        } else {
+          _confirmDelete([msg.id]);
+        }
       },
       onSelect: () {
         _hideMessageMenu();
@@ -612,6 +618,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       },
       onDismiss: _hideMessageMenu,
     );
+  }
+
+  /// 撤回可行性:自己发的 + 5 分钟内。
+  /// server 端会再校验一次(sender + 时限),client 这层只控制 UI 是否显示「撤回」。
+  static const Duration _recallWindow = Duration(minutes: 5);
+
+  bool _canRecall(ChatMessage msg) {
+    final me = ref.read(authProvider).user?.id ?? '';
+    if (me.isEmpty || msg.senderId != me) return false;
+    return DateTime.now().difference(msg.createdAt) <= _recallWindow;
   }
 
   void _hideMessageMenu() {
@@ -830,20 +846,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 删除确认(单条/批量共用)。弹 showAppDialog 二次确认 → 调 provider 乐观删除。
-  Future<void> _confirmDelete(List<String> ids) async {
+  /// 删除/撤回确认(单条/批量共用)。弹 showAppDialog 二次确认 → 调 provider。
+  /// recall=true 走撤回(scope=recall,双向删除);默认 hide(对自己隐藏)。
+  Future<void> _confirmDelete(List<String> ids, {bool recall = false}) async {
     if (ids.isEmpty) return;
     showAppDialog(
       context: context,
-      title: '删除消息',
+      title: recall ? '撤回消息' : '删除消息',
       content: Text(
-        ids.length == 1 ? '确定删除这条消息吗?' : '确定删除 ${ids.length} 条消息吗?',
+        recall
+            ? '确定撤回这条消息吗?'
+            : (ids.length == 1
+                ? '确定删除这条消息吗?'
+                : '确定删除 ${ids.length} 条消息吗?'),
       ),
-      confirmText: '删除',
+      confirmText: recall ? '撤回' : '删除',
       onConfirm: () async {
         final wasSelectionMode = _selectionMode;
         try {
-          await _notifier.deleteMessages(ids);
+          await _notifier.deleteMessages(ids,
+              scope: recall ? 'recall' : 'hide');
           // 清理已删消息的 GlobalKey(防长期会话 Map 无限增长)
           _bubbleKeys.removeWhere((k, _) => ids.contains(k));
           if (!mounted) return;
@@ -857,7 +879,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         } catch (_) {
           // provider 失败已回滚,UI 层提示。多选模式不退出(让用户重试)。
           if (mounted) {
-            showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
+            showAppSnackBar(
+                context,
+                recall ? '撤回失败,请重试' : '删除失败,请重试',
+                type: SnackBarType.error);
           }
         }
       },
@@ -1169,24 +1194,34 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             msg.id,
                             () => GlobalKey(),
                           );
-                          final bubble = MessageBubble(
-                            key: bubbleKey,
-                            message: msg,
-                            isMe: msg.senderId == currentUserId,
-                            baseUrl: ref.read(settingsProvider),
-                            token: ref.read(authProvider).token ?? '',
-                            conversationMessages: chatState.messages,
-                            openGallery: (fileId) =>
-                                _openGallery(fileId, chatState.messages),
-                            selectionMode: _selectionMode,
-                            selected: _selectedIds.contains(msg.id),
-                            onLongPressStart: _selectionMode
-                                ? null
-                                : (details) => _showMessageMenu(msg),
-                            onTapSelect: _selectionMode
-                                ? () => _toggleSelect(msg.id)
-                                : null,
-                          );
+                          // 撤回占位:替换 MessageBubble,显示「你/对方撤回了一条消息」。
+                          // dm 场景按 senderId == currentUserId 判断「你/对方」,
+                          // recalledByName 群聊场景用(本场景不显示)。
+                          final isMeRecall =
+                              msg.senderId == currentUserId && msg.isRecalled;
+                          final bubble = msg.isRecalled
+                              ? _RecalledBubble(
+                                  isMe: isMeRecall,
+                                  senderName: msg.recalledByName ?? '',
+                                )
+                              : MessageBubble(
+                                  key: bubbleKey,
+                                  message: msg,
+                                  isMe: msg.senderId == currentUserId,
+                                  baseUrl: ref.read(settingsProvider),
+                                  token: ref.read(authProvider).token ?? '',
+                                  conversationMessages: chatState.messages,
+                                  openGallery: (fileId) =>
+                                      _openGallery(fileId, chatState.messages),
+                                  selectionMode: _selectionMode,
+                                  selected: _selectedIds.contains(msg.id),
+                                  onLongPressStart: _selectionMode
+                                      ? null
+                                      : (details) => _showMessageMenu(msg),
+                                  onTapSelect: _selectionMode
+                                      ? () => _toggleSelect(msg.id)
+                                      : null,
+                                );
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1446,4 +1481,34 @@ class _MenuPlacement {
 
   @override
   int get hashCode => Object.hash(left, top, tailOffsetX, pointDown);
+}
+
+/// 撤回消息占位。dm_user_user 场景按 isMe 切「你/对方」,群聊未来用 senderName。
+/// 居中灰色文字,无气泡外壳,与正常气泡视觉区分(已非实际消息内容)。
+class _RecalledBubble extends StatelessWidget {
+  final bool isMe;
+  final String senderName;
+
+  const _RecalledBubble({required this.isMe, required this.senderName});
+
+  @override
+  Widget build(BuildContext context) {
+    // 群聊场景(未来):senderName 非空时优先用「${name} 撤回了一条消息」。
+    // 当前 dm_user_user 场景:isMe 切「你/对方」,senderName 留空。
+    final text = senderName.isNotEmpty
+        ? '$senderName 撤回了一条消息'
+        : (isMe ? '你撤回了一条消息' : '对方撤回了一条消息');
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFF999999),
+          ),
+        ),
+      ),
+    );
+  }
 }

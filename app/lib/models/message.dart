@@ -6,6 +6,11 @@
 ///   - 默认 false(agent 发的消息初始视为未读)
 ///   - chat_page 滚动看到时本地置 true(配合后台 markMessagesRead API)
 ///   - user 自己发的消息初始 true(自己发的不算未读)
+///
+/// isRecalled:撤回状态。收到 scope=recall 的 MESSAGE_DELETE 时,client 把消息
+/// 切到 recalled 态而非移除,UI 显示「你/对方撤回了一条消息」占位。
+/// recalledByName 用于群聊场景显示「${name} 撤回了一条消息」,dm 场景 client
+/// 用 senderId == currentUserId 判断显示「你」还是「对方」。
 class ChatMessage {
   final String id;
   final String conversationId;
@@ -20,6 +25,14 @@ class ChatMessage {
   /// client 本地状态(不从 server JSON 解析)。见类注释。
   final bool isRead;
 
+  /// 撤回状态(server MESSAGE_DELETE scope=recall 触发,client 本地切换)。
+  /// true 时 UI 渲染占位而非消息气泡。
+  final bool isRecalled;
+
+  /// 撤回发起人昵称(群聊场景显示用)。dm 场景 client 用 senderId 判断「你/对方」即可。
+  /// 仅 isRecalled=true 时有意义。
+  final String? recalledByName;
+
   final DateTime createdAt;
 
   ChatMessage({
@@ -30,6 +43,8 @@ class ChatMessage {
     required this.content,
     this.senderRole,
     this.isRead = false,
+    this.isRecalled = false,
+    this.recalledByName,
     required this.createdAt,
   });
 
@@ -43,6 +58,7 @@ class ChatMessage {
         // server 不再发 is_read 字段;client 默认 false。
         // user 自己发的消息由调用方显式设置 isRead=true。
         isRead: false,
+        isRecalled: false,
         createdAt: DateTime.parse(json['created_at']),
       );
 
@@ -54,6 +70,8 @@ class ChatMessage {
     Map<String, dynamic>? content,
     String? senderRole,
     bool? isRead,
+    bool? isRecalled,
+    String? recalledByName,
     DateTime? createdAt,
   }) {
     return ChatMessage(
@@ -64,6 +82,8 @@ class ChatMessage {
       content: content ?? this.content,
       senderRole: senderRole ?? this.senderRole,
       isRead: isRead ?? this.isRead,
+      isRecalled: isRecalled ?? this.isRecalled,
+      recalledByName: recalledByName ?? this.recalledByName,
       createdAt: createdAt ?? this.createdAt,
     );
   }

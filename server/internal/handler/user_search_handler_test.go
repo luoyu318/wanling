@@ -51,7 +51,7 @@ func newUserSearchHandler(f *seedUserSearchFixture) *UserSearchHandler {
 	return NewUserSearchHandler(f.userRepo)
 }
 
-// TestUserSearchHandler_Search_PrefixMatch 验证前缀匹配返回候选。
+// TestUserSearchHandler_Search_PrefixMatch 验证前缀匹配返回候选,且排除自己(D 轮: excludeID)。
 func TestUserSearchHandler_Search_PrefixMatch(t *testing.T) {
 	f := seedUserSearch(t)
 	h := newUserSearchHandler(f)
@@ -62,7 +62,8 @@ func TestUserSearchHandler_Search_PrefixMatch(t *testing.T) {
 		h.Search(c)
 	})
 
-	req := httptest.NewRequest("GET", "/api/users/search?username=al", nil)
+	// alice 搜 "bo",期望返 bob(自己被排除)
+	req := httptest.NewRequest("GET", "/api/users/search?username=bo", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -76,8 +77,8 @@ func TestUserSearchHandler_Search_PrefixMatch(t *testing.T) {
 	if len(resp.Users) != 1 {
 		t.Fatalf("搜索结果数 = %d, want 1", len(resp.Users))
 	}
-	if resp.Users[0]["username"] != f.alice.Username {
-		t.Errorf("username = %v, want %s", resp.Users[0]["username"], f.alice.Username)
+	if resp.Users[0]["username"] != f.bob.Username {
+		t.Errorf("username = %v, want %s", resp.Users[0]["username"], f.bob.Username)
 	}
 }
 
@@ -92,7 +93,8 @@ func TestUserSearchHandler_Search_ResponseHasNoUserID(t *testing.T) {
 		h.Search(c)
 	})
 
-	req := httptest.NewRequest("GET", "/api/users/search?username=a", nil)
+	// alice 搜 "ca"(避免搜自己 al*),期望返 carol
+	req := httptest.NewRequest("GET", "/api/users/search?username=ca", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

@@ -62,7 +62,7 @@ func setupMessageHandlerTest(t *testing.T) msgTestEnv {
 	// presence 传 nil —— handler 测试不验证广播投递,只验证不 panic。
 	h := hub.NewHub(nil, agentRepo, participantRepo)
 
-	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, h)
+	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
 	r := gin.New()
 	// 用 c.Set 绕过 AuthMiddleware,直接注入鉴权上下文。
 	del := func(c *gin.Context) { c.Set("userID", user.ID); c.Set("role", "user"); mh.Delete(c) }
@@ -79,7 +79,7 @@ func setupMessageHandlerTest(t *testing.T) msgTestEnv {
 // TestMessageHandler_Delete_HappyPath 单删成功,返回 204,消息从列表消失。
 func TestMessageHandler_Delete_HappyPath(t *testing.T) {
 	env := setupMessageHandlerTest(t)
-	list, _ := env.msgRepo.ListByConversation(env.convID, 50, 0)
+	list, _ := env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
 	if len(list) != 1 {
 		t.Fatalf("前置:应有 1 条消息,实际 %d", len(list))
 	}
@@ -92,7 +92,7 @@ func TestMessageHandler_Delete_HappyPath(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("应返回 204,实际 %d body=%s", w.Code, w.Body.String())
 	}
-	list, _ = env.msgRepo.ListByConversation(env.convID, 50, 0)
+	list, _ = env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
 	if len(list) != 0 {
 		t.Errorf("删除后应无消息,实际 %d", len(list))
 	}
@@ -145,7 +145,7 @@ func TestMessageHandler_Delete_Forbidden(t *testing.T) {
 // TestMessageHandler_BatchDelete_HappyPath 批量删 2 条,返回 deleted=2。
 func TestMessageHandler_BatchDelete_HappyPath(t *testing.T) {
 	env := setupMessageHandlerTest(t)
-	list, _ := env.msgRepo.ListByConversation(env.convID, 50, 0)
+	list, _ := env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
 	if len(list) != 1 {
 		t.Fatalf("前置:应有 1 条消息,实际 %d", len(list))
 	}
@@ -172,7 +172,7 @@ func TestMessageHandler_BatchDelete_HappyPath(t *testing.T) {
 	if resp["deleted"] != 2 {
 		t.Errorf("deleted 应为 2,实际 %d", resp["deleted"])
 	}
-	list, _ = env.msgRepo.ListByConversation(env.convID, 50, 0)
+	list, _ = env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
 	if len(list) != 0 {
 		t.Errorf("批量删后应无消息,实际 %d", len(list))
 	}
@@ -191,37 +191,34 @@ func TestMessageHandler_BatchDelete_EmptyIDs(t *testing.T) {
 	}
 }
 
-// TestMessageHandler_Delete_RecalcLastMessage 删最后一条后 last_message_content 被清空。
-func TestMessageHandler_Delete_RecalcLastMessage(t *testing.T) {
+// TestMessageHandler_Recall_RecalcLastMessage 撤回最后一条后 last_message_content 被清空。
+// 双轨制(016)后:scope=hide 不重算缓存(个人视图),scope=recall 才重算。
+func TestMessageHandler_Recall_RecalcLastMessage(t *testing.T) {
 	env := setupMessageHandlerTest(t)
-	// 先确认缓存有值
-	conv, _ := env.convRepo.GetByID(env.convID)
-	if conv == nil {
-		t.Fatal("会话不存在")
-	}
-	// 模拟已有缓存(实际 handler 删除流程会重算)。先手动写一个缓存。
+	// 模拟已有缓存。
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"cached"}}`)
 	_ = env.convRepo.UpdateLastMessage(env.convID, content)
 
-	list, _ := env.msgRepo.ListByConversation(env.convID, 50, 0)
+	list, _ := env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
 	if len(list) != 1 {
 		t.Fatalf("前置:应有 1 条消息,实际 %d", len(list))
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/messages/"+list[0].ID, nil)
+	// scope=recall 触发重算
+	req := httptest.NewRequest(http.MethodDelete, "/api/messages/"+list[0].ID+"?scope=recall", nil)
 	w := httptest.NewRecorder()
 	env.engine.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("应返回 204,实际 %d", w.Code)
 	}
 
-	// 删的是唯一一条 → 全删完 → ClearLastMessage 置 NULL
-	conv, _ = env.convRepo.GetByID(env.convID)
+	// 撤回的是唯一一条 → 全删完 → ClearLastMessage 置 NULL
+	conv, _ := env.convRepo.GetByID(env.convID)
 	if conv == nil {
 		t.Fatal("会话应仍存在")
 	}
 	if conv.LastMessageContent.Valid {
-		t.Errorf("全删完 last_message_content 应为 NULL(Valid=false),实际 Valid=true Raw=%s",
+		t.Errorf("撤完全删后 last_message_content 应为 NULL(Valid=false),实际 Valid=true Raw=%s",
 			conv.LastMessageContent.RawMessage)
 	}
 }

@@ -177,12 +177,17 @@ func (r *ParticipantRepo) MarkMessagesReadTx(tx *sql.Tx, convID, memberID, membe
 	}
 
 	// 2. 重算 unread_count(只算该 conv 内的未读,不是全局)
+	//    过滤软删 + 该 member 隐藏过的消息(hidden 消息不计未读,徽章数字才准)
 	var newUnread int
 	err := tx.QueryRow(`
 		SELECT COUNT(*) FROM message_deliveries d
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NULL
 		  AND m.conversation_id = $3 AND m.deleted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM message_hidden h
+		    WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = $2
+		  )
 	`, memberID, memberType, convID).Scan(&newUnread)
 	if err != nil {
 		return 0, err
@@ -192,6 +197,7 @@ func (r *ParticipantRepo) MarkMessagesReadTx(tx *sql.Tx, convID, memberID, membe
 	//    WHERE 必须加 conv_id 限定,避免 member 参与多个 conv 时一次性改所有行的 unread_count。
 	//    last_read_message_id 取该 conv 内已读 deliveries 中最新消息(m.created_at DESC LIMIT 1)
 	//    子查询若返 NULL(无已读 delivery)不影响 unread_count 更新。
+	//    hidden 消息不参与 last_read(已隐藏的不应作"已读进度"锚点)。
 	//    RowsAffected=0 表示该 member 不在此 conv(越权 / 未邀请),返 sentinel 让 handler 转 404。
 	res, err := tx.Exec(`
 		UPDATE conversation_participants p
@@ -200,7 +206,11 @@ func (r *ParticipantRepo) MarkMessagesReadTx(tx *sql.Tx, convID, memberID, membe
 		      SELECT d.message_id FROM message_deliveries d
 		      JOIN messages m ON m.id = d.message_id
 		      WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NOT NULL
-		        AND m.conversation_id = $4
+		        AND m.conversation_id = $4 AND m.deleted_at IS NULL
+		        AND NOT EXISTS (
+		          SELECT 1 FROM message_hidden h
+		          WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = $2
+		        )
 		      ORDER BY m.created_at DESC LIMIT 1
 		    )
 		WHERE p.conv_id = $4 AND p.member_id = $1 AND p.member_type = $2

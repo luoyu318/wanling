@@ -294,8 +294,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
         .listen((m) {
       if (m.t == 'MESSAGE_DELETE') {
         final msgData = m.d as Map<String, dynamic>;
-        if (msgData['conversation_id'] == conversationId) {
-          final ids = (msgData['ids'] as List).cast<String>().toSet();
+        if (msgData['conversation_id'] != conversationId) return;
+        final ids = (msgData['ids'] as List).cast<String>().toSet();
+        final scope = (msgData['scope'] as String?) ?? 'hide';
+        if (scope == 'recall') {
+          // 撤回:保留消息 id 切 recalled 态(占位提示),不发自己撤回的(已乐观切过)。
+          // payload 含 sender_name,供群聊场景显示「${name} 撤回了一条消息」。
+          // dm 场景 client 用 m.senderId == currentUserId 判断「你/对方」。
+          final senderName = msgData['sender_name'] as String? ?? '';
+          state = state.copyWith(
+            messages: state.messages
+                .map((m) => ids.contains(m.id) && !m.isRecalled
+                    ? m.copyWith(isRecalled: true, recalledByName: senderName)
+                    : m)
+                .toList(),
+          );
+        } else {
+          // hide:直接移除(只对我消失)
           state = state.copyWith(
             messages: state.messages.where((msg) => !ids.contains(msg.id)).toList(),
           );
@@ -374,15 +389,31 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(messages: [tempMsg, ...state.messages]);
   }
 
-  Future<void> deleteMessages(List<String> ids) async {
+  /// 删除/撤回消息。
+  /// scope='hide' (默认):对自己隐藏,乐观本地移除。
+  /// scope='recall':撤回,乐观本地切 recalled 态(占位提示),server 确认后广播切全员。
+  Future<void> deleteMessages(List<String> ids, {String scope = 'hide'}) async {
     if (ids.isEmpty) return;
     final idSet = ids.toSet();
-    state = state.copyWith(
-      messages: state.messages.where((m) => !idSet.contains(m.id)).toList(),
-    );
+    if (scope == 'recall') {
+      // 撤回:乐观本地切 recalled 态(保留消息 id,UI 显示占位)。
+      // 单条操作(ids.length == 1),取首条作为 recalled 占位。
+      state = state.copyWith(
+        messages: state.messages
+            .map((m) => idSet.contains(m.id)
+                ? m.copyWith(isRecalled: true, recalledByName: '')
+                : m)
+            .toList(),
+      );
+    } else {
+      // hide:乐观本地移除
+      state = state.copyWith(
+        messages: state.messages.where((m) => !idSet.contains(m.id)).toList(),
+      );
+    }
     try {
       if (ids.length == 1) {
-        await api.deleteMessage(ids.first);
+        await api.deleteMessage(ids.first, scope: scope);
       } else {
         await api.batchDeleteMessages(ids);
       }

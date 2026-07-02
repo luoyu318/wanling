@@ -85,7 +85,7 @@ func main() {
 	userHandler := handler.NewUserHandler(userRepo)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, processor.HandleIncoming)
 
-	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, h)
+	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
 
 	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo)
 

@@ -84,7 +84,7 @@ type rowQueryer interface {
 
 // FirstUnread 返回某 recipient 在某 conv 的首条未读 message(无未读返 nil)。
 // 走 partial index idx_deliveries_unread(过滤 read_at IS NULL)+ JOIN messages 排序。
-// JOIN 加 m.deleted_at IS NULL 过滤软删消息(避免已删消息被当成首条未读返回)。
+// JOIN 加 m.deleted_at IS NULL 过滤软删消息 + LEFT JOIN message_hidden 过滤该 recipient 隐藏过的消息。
 //
 // 失败语义:无未读返 (nil, nil),DB 错误返 (nil, err),让调用方用 nil 判断分支。
 func (r *DeliveryRepo) FirstUnread(convID, recipientID, recipientType string) (*model.Message, error) {
@@ -105,6 +105,10 @@ func firstUnreadQuery(q rowQueryer, convID, recipientID, recipientType string) (
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NULL
 		  AND m.conversation_id = $3 AND m.deleted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM message_hidden h
+		    WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = $2
+		  )
 		ORDER BY m.created_at ASC
 		LIMIT 1
 	`, recipientID, recipientType, convID).Scan(
@@ -120,7 +124,8 @@ func firstUnreadQuery(q rowQueryer, convID, recipientID, recipientType string) (
 }
 
 // GetUnreadCount 非事务版本(GET /api/conversations/:id/unread 用,handler 直接调)。
-// JOIN messages 过滤软删消息,避免已删消息的 delivery 残留污染未读计数。
+// JOIN messages 过滤软删消息 + LEFT JOIN message_hidden 过滤该 recipient 隐藏过的消息,
+// 避免已删/已隐藏消息的 delivery 残留污染未读计数。
 func (r *DeliveryRepo) GetUnreadCount(convID, recipientID, recipientType string) (int, error) {
 	return getUnreadCountQuery(r.db, convID, recipientID, recipientType)
 }
@@ -139,6 +144,10 @@ func getUnreadCountQuery(q rowQueryer, convID, recipientID, recipientType string
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NULL
 		  AND m.conversation_id = $3 AND m.deleted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM message_hidden h
+		    WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = $2
+		  )
 	`, recipientID, recipientType, convID).Scan(&count)
 	return count, err
 }

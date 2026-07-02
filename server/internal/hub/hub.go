@@ -183,6 +183,16 @@ func (h *Hub) SendToAgent(agentID string, msg *model.WSMessage) error {
 	return nil
 }
 
+// SendToMember 按 memberType 路由到 SendToUser/SendToAgent。
+// 用于 hide scope 的 per-participant 单播(只发给当前请求者,与 SendToConv 全员广播对立)。
+func (h *Hub) SendToMember(memberID, memberType string, msg *model.WSMessage) {
+	if memberType == "agent" {
+		h.SendToAgent(memberID, msg)
+	} else {
+		h.SendToUser(memberID, msg)
+	}
+}
+
 // SendToConv 把消息推给该会话所有 participants(按 member_type 路由 SendToUser/SendToAgent)。
 // 离线端无副作用(SendToUser/SendToAgent 在 key 不存在时返 nil)。
 // participants 查询失败时 fail-closed(不推),避免漏推半个会话成员造成状态不一致。

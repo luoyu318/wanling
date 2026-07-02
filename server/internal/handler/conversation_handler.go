@@ -386,11 +386,17 @@ func (h *ConversationHandler) CreateAsAgent(c *gin.Context) {
 //   - after 游标分页:?limit=20&after=<RFC3339> — 定位第一条未读(更新方向)
 //
 // 越权防护:participantRepo.Exists 校验,非 participant 返 403(spec §6.1)。
+// 过滤:软删(deleted_at) + 该 member 隐藏过的消息(message_hidden)。
 func (h *ConversationHandler) Messages(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetString("userID")
+	// role 取值与 participant.member_type 对齐;旧测试 / 中间件未设 role 时按 "user" 兜底。
+	memberType := c.GetString("role")
+	if memberType == "" {
+		memberType = "user"
+	}
 
-	ok, err := h.participantRepo.Exists(id, userID, "user")
+	ok, err := h.participantRepo.Exists(id, userID, memberType)
 	if err != nil {
 		log.Printf("[messages] Exists error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -415,7 +421,7 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "after 参数格式错误"})
 			return
 		}
-		msgs, err := h.messageRepo.ListAfter(id, after, limit)
+		msgs, err := h.messageRepo.ListAfter(id, userID, memberType, after, limit)
 		if err != nil {
 			log.Printf("[messages] ListAfter error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
@@ -435,7 +441,7 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "before 参数格式错误"})
 			return
 		}
-		msgs, err := h.messageRepo.ListBefore(id, before, limit)
+		msgs, err := h.messageRepo.ListBefore(id, userID, memberType, before, limit)
 		if err != nil {
 			log.Printf("[messages] ListBefore error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
@@ -449,7 +455,7 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 	}
 
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	msgs, err := h.messageRepo.ListByConversation(id, limit, offset)
+	msgs, err := h.messageRepo.ListByConversation(id, userID, memberType, limit, offset)
 	if err != nil {
 		log.Printf("[messages] ListByConversation error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
@@ -688,11 +694,16 @@ func (h *ConversationHandler) UnreadInfo(c *gin.Context) {
 	hasMoreBeforeFirstUnread := false
 	if unreadCount > 0 {
 		// 取该 user 在该 conv 的首条未读 message(LIST 1 条)
+		// 过滤软删 + 该 user 隐藏过的消息(message_hidden)
 		rows, err := h.db.Query(`
 			SELECT m.id, m.created_at FROM message_deliveries d
 			JOIN messages m ON m.id = d.message_id
 			WHERE d.recipient_id = $1 AND d.recipient_type = 'user' AND d.read_at IS NULL
 			  AND m.conversation_id = $2 AND m.deleted_at IS NULL
+			  AND NOT EXISTS (
+			    SELECT 1 FROM message_hidden h
+			    WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+			  )
 			ORDER BY m.created_at ASC LIMIT 1
 		`, userID, convID)
 		if err != nil {
@@ -713,7 +724,7 @@ func (h *ConversationHandler) UnreadInfo(c *gin.Context) {
 			firstUnreadCreatedAt = &t
 
 			// 仅在有未读时查 firstUnread 之前的消息数(无未读时此字段无意义)
-			countBefore, err := h.messageRepo.CountBefore(convID, t)
+			countBefore, err := h.messageRepo.CountBefore(convID, userID, "user", t)
 			if err != nil {
 				rows.Close()
 				log.Printf("[unread] CountBefore error: %v", err)

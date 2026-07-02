@@ -336,13 +336,19 @@ class ApiService {
     return res.data;
   }
 
-  /// 软删单条消息。DELETE /api/messages/:id
-  Future<void> deleteMessage(String id) async {
-    await _dio.delete('/api/messages/$id');
+  /// 删除/撤回单条消息。DELETE /api/messages/:id?scope=hide|recall
+  /// scope=hide (默认):对自己隐藏(per-participant 维度)。
+  /// scope=recall:撤回(deleted_at 全局软删,仅自己发的 + 5min 内)。
+  Future<void> deleteMessage(String id, {String scope = 'hide'}) async {
+    await _dio.delete(
+      '/api/messages/$id',
+      queryParameters: {'scope': scope},
+    );
   }
 
-  /// 批量软删消息。POST /api/messages/batch-delete  body: {"ids":[...]}
-  /// 返回服务端实际删除的条数。
+  /// 批量隐藏消息。POST /api/messages/batch-delete  body: {"ids":[...]}
+  /// 仅支持 hide scope(批量撤回歧义太大,本期不开)。
+  /// 返回服务端实际隐藏的条数。
   Future<int> batchDeleteMessages(List<String> ids) async {
     final res = await _dio.post(
       '/api/messages/batch-delete',

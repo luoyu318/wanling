@@ -123,7 +123,7 @@ func TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation(t *testing.T) 
 	}
 
 	// 两条都能查到
-	list, err := repo.ListByConversation(seed.convID, 50, 0)
+	list, err := repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation(t *testing.T) 
 	if err := repo.SoftDelete(m1.ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
-	list, _ = repo.ListByConversation(seed.convID, 50, 0)
+	list, _ = repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
 	if len(list) != 1 {
 		t.Fatalf("软删后应剩 1 条, 实际 %d", len(list))
 	}
@@ -203,7 +203,7 @@ func TestMessageRepo_SoftDeleteByIDs_GetByIDs(t *testing.T) {
 	}
 
 	// ListByConversation 只剩 m3
-	list, _ := repo.ListByConversation(seed.convID, 50, 0)
+	list, _ := repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
 	if len(list) != 1 || list[0].ID != m3.ID {
 		t.Errorf("批量软删后应剩 m3, 实际 %v", list)
 	}
@@ -232,7 +232,7 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 	}
 
 	// before 为空 → 返回最新 limit=3 条, 应为 [m5, m4, m3]
-	got, err := repo.ListBefore(seed.convID, time.Time{}, 3)
+	got, err := repo.ListBefore(seed.convID, seed.userID, "user", time.Now(), 3)
 	if err != nil {
 		t.Fatalf("ListBefore 空 cursor 失败: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 	}
 
 	// before = m3.created_at → 返回 created_at < m3 的消息, 应为 [m2, m1]
-	got, err = repo.ListBefore(seed.convID, msgs[2].CreatedAt, 10)
+	got, err = repo.ListBefore(seed.convID, seed.userID, "user", msgs[2].CreatedAt, 50)
 	if err != nil {
 		t.Fatalf("ListBefore m3 失败: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 	if err := repo.SoftDelete(msgs[0].ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
-	got, err = repo.ListBefore(seed.convID, msgs[2].CreatedAt, 10)
+	got, err = repo.ListBefore(seed.convID, seed.userID, "user", msgs[2].CreatedAt, 50)
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListBefore 失败: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestMessageRepo_CountBefore(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	// m3 之前的消息数应为 2(m1 + m2)
-	n, err := repo.CountBefore(seed.convID, msgs[2].CreatedAt)
+	n, err := repo.CountBefore(seed.convID, seed.userID, "user", msgs[2].CreatedAt)
 	if err != nil {
 		t.Fatalf("CountBefore 失败: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestMessageRepo_CountBefore(t *testing.T) {
 	if err := repo.SoftDelete(msgs[0].ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
-	n, _ = repo.CountBefore(seed.convID, msgs[2].CreatedAt)
+	n, _ = repo.CountBefore(seed.convID, seed.userID, "user", msgs[2].CreatedAt)
 	if n != 1 {
 		t.Errorf("软删 m1 后 CountBefore(m3) 期望 1, 实际 %d", n)
 	}
@@ -317,7 +317,7 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 
 	// after = m2.createdAt - 1ms → 包含 m2 + 之后的([m2, m3, m4, m5] ASC)
 	after := msgs[1].CreatedAt.Add(-time.Millisecond)
-	got, err := repo.ListAfter(seed.convID, after, 10)
+	got, err := repo.ListAfter(seed.convID, seed.userID, "user", after, 10)
 	if err != nil {
 		t.Fatalf("ListAfter 失败: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 	}
 
 	// limit 截断:limit=2 → 返回 [m2, m3]
-	got, err = repo.ListAfter(seed.convID, after, 2)
+	got, err = repo.ListAfter(seed.convID, seed.userID, "user", after, 2)
 	if err != nil {
 		t.Fatalf("ListAfter limit=2 失败: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 	if err := repo.SoftDelete(msgs[2].ID); err != nil {
 		t.Fatalf("SoftDelete m3 失败: %v", err)
 	}
-	got, err = repo.ListAfter(seed.convID, after, 10)
+	got, err = repo.ListAfter(seed.convID, seed.userID, "user", after, 10)
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListAfter 失败: %v", err)
 	}

@@ -154,7 +154,7 @@ func TestProcessor_HandleIncoming_DMUserAgent(t *testing.T) {
 	})
 
 	// 1. messages 表 1 行
-	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend(t *testing.T) {
 	})
 
 	// 校验:消息正常写入
-	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestProcessor_HandleIncoming_AbortsOnInvalidSenderType(t *testing.T) {
 	})
 
 	// 验证 messages 表无残留
-	msgs, err := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	msgs, err := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if err != nil {
 		t.Fatalf("ListByConversation 失败: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
 	}
 
 	// 验证 messages 表
-	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if len(msgs) != 1 || msgs[0].ID != msg.ID {
 		t.Errorf("消息未持久化: %+v", msgs)
 	}
@@ -492,7 +492,7 @@ func TestProcessor_Tx_RollsBackOnCreateTxFKFailure(t *testing.T) {
 	}
 
 	// defer Rollback 兜底,无需显式调;验证真实 convID 下无消息残留
-	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, 100, 0)
+	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if len(msgs) != 0 {
 		t.Errorf("FK 失败回滚后 messages 不应有数据, 实际: %d 条", len(msgs))
 	}
