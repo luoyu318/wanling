@@ -1,48 +1,55 @@
 import 'package:flutter/material.dart';
 import '../theme/app_menu_style.dart';
 
-/// 菜单固定宽度（用于定位计算）。
-/// 三项（复制/删除/多选）每项约 40px + 容器 padding 8*2 ≈ 136，取 150 留余量。
-const double kMenuWidth = 150;
-/// 菜单本体高度（含 padding），用于判断上下空间 + clamp。
+/// 单个菜单项预估宽度(含左右 padding 14×2 + icon 22)。
+const double kMenuItemWidth = 50;
+/// 菜单容器左右 padding(各 4)。
+const double kMenuHPadding = 8;
+/// 菜单本体高度(含上下 padding 8×2 + 内容 54)。
 const double kMenuHeight = 70;
 /// 菜单垂直预算 = 菜单高 + 三角 6 + 间距 8。用于 above/below 判断。
 const double kMenuVerticalBudget = 84;
-/// 菜单三角尺寸（半宽 5）。
+/// 菜单三角尺寸(半宽 5)。
 const double kMenuTailHalfWidth = 5;
 
-/// 长按消息弹出的浮动菜单（**绝对定位**，锚钉效果）。
+/// 按 item 数算菜单总宽(用于绝对定位 clamp)。
+/// 复制/删除/多选 = 3 项; canRecall=true 时加「撤回」= 4 项。
+double menuWidthFor(int itemCount) => kMenuItemWidth * itemCount + kMenuHPadding * 2;
+
+/// 长按消息弹出的浮动菜单(绝对定位,锚钉效果)。
 ///
 /// 设计:
 /// - 半透明深色背景(AppMenuStyle.darkBg) + 圆角(AppMenuStyle.radiusAnchor)
 ///   + 阴影(AppMenuStyle.shadow) + 指向消息的小三角
-/// - 三项横向排列:复制 / 删除|撤回 / 多选,每项 icon 在上、文字在下(垂直 Column)
-/// - "删除/撤回"用 AppMenuStyle.darkDanger,其余 AppMenuStyle.darkFg
-/// - [isRecallMode]=true 时,中间按钮文案/icon 切换为「撤回」(撤回=双向删除,
-///   走 deleted_at;hide=对自己隐藏,走 message_hidden)
-/// - **绝对定位**（Positioned left/top）而非 CompositedTransformFollower：
-///   follower 钉在消息上，消息溢出可见区时菜单跟着溢出。绝对定位让菜单
-///   "跟随消息但钉在可见区边缘"——消息在中央时贴消息上方/下方，消息接近
-///   AppBar/输入栏时菜单钉在边缘不溢出（IM 式锚钉）。ChatPage 在滚动时
+/// - 默认 3 项: 复制 / 删除 / 多选
+/// - canRecall=true 时 4 项: 复制 / 删除 / 撤回 / 多选
+///   「删除」常驻(hide,对自己隐藏,per-participant 单向);
+///   「撤回」仅在「自己发的 + 5min 内」出现(recall,deleted_at 双向软删)。
+/// - 绝对定位(Positioned left/top)而非 CompositedTransformFollower:
+///   follower 钉在消息上,消息溢出可见区时菜单跟着溢出。绝对定位让菜单
+///   "跟随消息但钉在可见区边缘"——消息在中央时贴消息上方/下方,消息接近
+///   AppBar/输入栏时菜单钉在边缘不溢出(IM 式锚钉)。ChatPage 在滚动时
 ///   重算 left/top 并重建 OverlayEntry。
-/// - [tailOffsetX] 三角在菜单内的水平位置（指向消息中心）
-/// - [pointDown] 三角朝向：true=朝下（菜单在消息上方），false=朝上（菜单在下方）
+/// - [tailOffsetX] 三角在菜单内的水平位置(指向消息中心)
+/// - [pointDown] 三角朝向:true=朝下(菜单在消息上方),false=朝上
 /// - 外部空白用 [Listener](pointer 层)做 tap 判定关闭,不消费拖拽 →
 ///   弹菜单时仍可上下滑动消息列表
 class MessageContextMenu extends StatefulWidget {
-  /// 菜单左缘在屏幕的绝对 x（由 ChatPage 算好 clamp 不超屏）。
+  /// 菜单左缘在屏幕的绝对 x(由 ChatPage 算好 clamp 不超屏)。
   final double left;
-  /// 菜单顶缘在屏幕的绝对 y（由 ChatPage 算好 clamp 在可见区内）。
+  /// 菜单顶缘在屏幕的绝对 y(由 ChatPage 算好 clamp 在可见区内)。
   final double top;
-  /// 三角在菜单内的水平偏移（指向消息中心）。
+  /// 三角在菜单内的水平偏移(指向消息中心)。
   final double tailOffsetX;
-  /// 三角朝向：true=朝下（菜单在消息上方），false=朝上。
+  /// 三角朝向:true=朝下(菜单在消息上方),false=朝上。
   final bool pointDown;
-  /// 中间按钮模式:false=「删除」(对自己隐藏);true=「撤回」(双向删除)。
-  /// 由 ChatPage 计算(自己发的 + 5min 内 → true)。
-  final bool isRecallMode;
+  /// 是否显示「撤回」按钮(自己发的 + 5min 内 → true)。
+  /// false 时只显示「删除」(对自己隐藏,per-participant)。
+  final bool canRecall;
   final VoidCallback onCopy;
   final VoidCallback onDelete;
+  /// 撤回回调。canRecall=false 时不显示该按钮,但回调本身仍要求传入(代码一致性)。
+  final VoidCallback onRecall;
   final VoidCallback onSelect;
   final VoidCallback onDismiss;
 
@@ -52,9 +59,10 @@ class MessageContextMenu extends StatefulWidget {
     required this.top,
     this.tailOffsetX = 75,
     this.pointDown = true,
-    this.isRecallMode = false,
+    this.canRecall = false,
     required this.onCopy,
     required this.onDelete,
+    required this.onRecall,
     required this.onSelect,
     required this.onDismiss,
   });
@@ -112,9 +120,10 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           child: _MenuBody(
             pointDown: widget.pointDown,
             tailOffsetX: widget.tailOffsetX,
-            isRecallMode: widget.isRecallMode,
+            canRecall: widget.canRecall,
             onCopy: widget.onCopy,
             onDelete: widget.onDelete,
+            onRecall: widget.onRecall,
             onSelect: widget.onSelect,
           ),
         ),
@@ -125,22 +134,24 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
 /// 菜单容器本体(深色背景 + 圆角 + 阴影 + 指向消息的三角)。
 class _MenuBody extends StatelessWidget {
-  /// 三角朝向：true=朝下（菜单在消息上方），false=朝上。
+  /// 三角朝向:true=朝下(菜单在消息上方),false=朝上。
   final bool pointDown;
-  /// 三角在菜单内的水平位置（指向消息中心）。
+  /// 三角在菜单内的水平位置(指向消息中心)。
   final double tailOffsetX;
-  /// 中间按钮模式:false=「删除」(hide);true=「撤回」(recall)。
-  final bool isRecallMode;
+  /// 是否显示「撤回」按钮。
+  final bool canRecall;
   final VoidCallback onCopy;
   final VoidCallback onDelete;
+  final VoidCallback onRecall;
   final VoidCallback onSelect;
 
   const _MenuBody({
     required this.pointDown,
     required this.tailOffsetX,
-    required this.isRecallMode,
+    required this.canRecall,
     required this.onCopy,
     required this.onDelete,
+    required this.onRecall,
     required this.onSelect,
   });
 
@@ -182,12 +193,19 @@ class _MenuBody extends StatelessWidget {
                     color: AppMenuStyle.darkFg,
                     onTap: onCopy),
                 _MenuItem(
-                    icon: isRecallMode
-                        ? Icons.undo
-                        : Icons.delete_outline,
-                    label: isRecallMode ? '撤回' : '删除',
+                    icon: Icons.delete_outline,
+                    label: '删除',
                     color: AppMenuStyle.darkDanger,
                     onTap: onDelete),
+                // 撤回按钮仅 canRecall=true 时显示(自己发的 + 5min 内)。
+                // 与「删除」并列:删除=对自己隐藏(per-participant),
+                // 撤回=双向软删(deleted_at),语义独立。
+                if (canRecall)
+                  _MenuItem(
+                      icon: Icons.undo,
+                      label: '撤回',
+                      color: AppMenuStyle.darkDanger,
+                      onTap: onRecall),
                 _MenuItem(
                     icon: Icons.check_circle_outline,
                     label: '多选',

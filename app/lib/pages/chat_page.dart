@@ -579,7 +579,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 选择由常驻 SelectableRegion 内置长按选词完成（落点选词+拉杆），本方法只弹菜单。
   void _showMessageMenu(ChatMessage msg) {
     _hideMessageMenu();
-    final placement = _computeMenuPlacement(msg.id);
+    // 菜单宽度按 item 数动态算(撤回按钮存在时多 1 项)。
+    final menuWidth = menuWidthFor(_canRecall(msg) ? 4 : 3);
+    final placement = _computeMenuPlacement(msg.id, menuWidth: menuWidth);
     if (placement == null) return; // 消息不在可见区,不弹菜单
     _activeSelectMsgId = msg.id;
     _menuPlacement = placement;
@@ -633,18 +635,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       top: p.top,
       tailOffsetX: p.tailOffsetX,
       pointDown: p.pointDown,
-      isRecallMode: canRecall,
+      canRecall: canRecall,
       onCopy: () {
         _copySelectedOrFull(msg);
         _hideMessageMenu();
       },
+      // 「删除」永远走 hide 语义(per-participant 单向隐藏);
+      // 「撤回」走 recall 语义(deleted_at 双向软删),仅在 canRecall 时出现。
       onDelete: () {
         _hideMessageMenu();
-        if (canRecall) {
-          _confirmDelete([msg.id], recall: true);
-        } else {
-          _confirmDelete([msg.id]);
-        }
+        _confirmDelete([msg.id]);
+      },
+      onRecall: () {
+        _hideMessageMenu();
+        _confirmDelete([msg.id], recall: true);
       },
       onSelect: () {
         _hideMessageMenu();
@@ -692,7 +696,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// - left: 菜单左缘屏幕 x，居中于消息中心并 clamp 不超屏
   /// - tailOffsetX: 三角在菜单内的位置，指向消息中心
   /// - pointDown: 菜单在消息上方→三角朝下
-  _MenuPlacement? _computeMenuPlacement(String msgId) {
+  ///
+  /// [menuWidth] 由调用方按「canRecall ? 4 : 3」item 数算(menuWidthFor),
+  /// 决定 clamp 边界,影响三角的水平定位。
+  _MenuPlacement? _computeMenuPlacement(String msgId, {required double menuWidth}) {
     final rect = _bubbleGlobalRect(msgId);
     if (rect == null) return null;
 
@@ -736,14 +743,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final top = desiredTop.clamp(viewport.top, viewport.bottom - kMenuHeight);
 
     // 水平:菜单居中于消息中心,clamp 不超可见区左右。
-    final left = (rect.center.dx - kMenuWidth / 2).clamp(
+    final left = (rect.center.dx - menuWidth / 2).clamp(
       viewport.left + 8,
-      viewport.right - kMenuWidth - 8,
+      viewport.right - menuWidth - 8,
     );
     // 三角指向消息中心:菜单内 x = 消息中心 - 菜单左缘
     final tailOffsetX = (rect.center.dx - left).clamp(
       kMenuTailHalfWidth,
-      kMenuWidth - kMenuTailHalfWidth,
+      menuWidth - kMenuTailHalfWidth,
     );
 
     return _MenuPlacement(
@@ -803,7 +810,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void _updateMenuOnScroll() {
     final msgId = _activeSelectMsgId;
     if (msgId == null || _menuEntry == null) return;
-    final newPlacement = _computeMenuPlacement(msgId);
+    final msg = _currentMessages.firstWhere(
+      (m) => m.id == msgId,
+      orElse: () => _currentMessages.first,
+    );
+    // 菜单宽度按 item 数动态算(撤回按钮存在时多 1 项),跟 _showMessageMenu 同口径。
+    final menuWidth = menuWidthFor(_canRecall(msg) ? 4 : 3);
+    final newPlacement = _computeMenuPlacement(msgId, menuWidth: menuWidth);
     if (newPlacement == null) {
       _hideMessageMenu();
       return;
@@ -812,10 +825,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_menuPlacement == newPlacement) return;
     _menuPlacement = newPlacement;
     // 重建 OverlayEntry 让菜单重新定位（绝对定位随滚动重算 top/left）
-    final msg = _currentMessages.firstWhere(
-      (m) => m.id == msgId,
-      orElse: () => _currentMessages.first,
-    );
     _menuEntry!.remove();
     _menuEntry = OverlayEntry(builder: (_) => _buildMenu(msg, newPlacement));
     Overlay.of(context).insert(_menuEntry!);
@@ -1068,12 +1077,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // 必须用 senderId 区分自己 vs 对方）。
     final currentUserId =
         ref.watch(authProvider.select((s) => s.user?.id)) ?? '';
-    final isTyping = widget.agentId == null || widget.agentId!.isEmpty
-        ? false
-        : ref.watch(typingProvider.select((m) => m[widget.agentId!] ?? false));
-    final agentStatus = widget.agentId == null || widget.agentId!.isEmpty
-        ? null
-        : ref.watch(agentByIdProvider(widget.agentId!))?.status;
+    // 在线状态/打字指示器仅 dm_user_agent 场景显示(agent 才有在线状态概念)。
+    // dm_user_user / 群聊等场景不渲染副标题,避免「离线」误显。
+    // 兼容未来扩展:agentId 非空即视为有 agent,展示其在线/打字状态。
+    final showStatus = widget.agentId != null && widget.agentId!.isNotEmpty;
+    final isTyping = showStatus
+        ? ref.watch(typingProvider.select((m) => m[widget.agentId!] ?? false))
+        : false;
+    final agentStatus = showStatus
+        ? ref.watch(agentByIdProvider(widget.agentId!))?.status
+        : null;
 
     if (_pendingScroll && (chatState.messages.isNotEmpty || isTyping)) {
       debugPrint('[build] _pendingScroll=true → scheduling _doScrollToBottom');
@@ -1081,9 +1094,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _doScrollToBottom());
     }
 
-    final subtitle = isTyping
-        ? '对方正在输入...'
-        : (agentStatus == AgentStatus.online ? '在线' : '离线');
+    // subtitle 仅 dm_user_agent 场景赋值,其他场景 null → Column 不渲染副标题 Text。
+    final String? subtitle = !showStatus
+        ? null
+        : (isTyping
+            ? '对方正在输入...'
+            : (agentStatus == AgentStatus.online ? '在线' : '离线'));
 
     // 多选模式用深色 AppBar,普通态用原 AppBar。
     final appBar = _selectionMode
@@ -1115,15 +1131,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     fontWeight: FontWeight.normal,
                   ),
                 ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    // 在线/打字中=绿,离线=灰。在线状态用颜色直观区分。
-                    color: (isTyping || agentStatus == AgentStatus.online)
-                        ? const Color(0xFF07C160)
-                        : const Color(0xFF999999),
-                  ),
+                // 副标题仅 dm_user_agent 场景渲染(在线/离线/正在输入)。
+                // dm_user_user / 群聊等场景 subtitle=null,不渲染该 Text。
+                if (subtitle != null)
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      // 在线/打字中=绿,离线=灰。在线状态用颜色直观区分。
+                      color: (isTyping || agentStatus == AgentStatus.online)
+                          ? const Color(0xFF07C160)
+                          : const Color(0xFF999999),
+                    ),
                 ),
               ],
             ),
