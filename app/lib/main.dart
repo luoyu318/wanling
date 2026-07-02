@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -109,6 +111,9 @@ Future<void> main() async {
 }
 
 void _setupBackgroundService() {
+  // flutter_background_service 仅支持 Android/iOS(Android 前台服务保活机制)。
+  // desktop 端无需保活且插件会抛 UnsupportedError,跳过。
+  if (!Platform.isAndroid && !Platform.isIOS) return;
   final service = FlutterBackgroundService();
   service.configure(
     androidConfiguration: AndroidConfiguration(

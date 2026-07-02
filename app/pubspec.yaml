@@ -53,7 +53,7 @@ dependencies:
   cached_network_image: ^3.4.1
   wechat_assets_picker: ^10.1.0
   crop_your_image: ^2.0.0
-  flutter_local_notifications: ^18.0.1
+  flutter_local_notifications: ^21.0.0
   flutter_background_service: ^5.1.0
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1

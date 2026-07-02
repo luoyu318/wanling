@@ -41,13 +41,20 @@ class NotificationService {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
+    // Linux desktop 必填(v18+ 抛 ArgumentError 阻断启动)。
+    // defaultActionName 是点击通知触发的 DBus action 标识,
+    // 点击路由仍走 onDidReceiveNotificationResponse 统一处理。
+    const linuxInit = LinuxInitializationSettings(
+      defaultActionName: 'Open notification',
+    );
     const initSettings = InitializationSettings(
       android: androidInit,
       iOS: iosInit,
+      linux: linuxInit,
     );
 
     await _plugin.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onTap,
     );
 
@@ -56,12 +63,15 @@ class NotificationService {
       await _createAndroidChannels();
     }
 
-    // 检查冷启动 payload
-    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
-    if (launchDetails?.didNotificationLaunchApp == true) {
-      _launchPayload = NotificationPayload.fromJsonString(
-        launchDetails!.notificationResponse?.payload,
-      );
+    // 检查冷启动 payload(仅移动端;Linux 平台未实现该 API,调用会抛 UnimplementedError,
+    // 且 desktop 无「从系统通知冷启动 APP」的产品语义)
+    if (Platform.isAndroid || Platform.isIOS) {
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        _launchPayload = NotificationPayload.fromJsonString(
+          launchDetails!.notificationResponse?.payload,
+        );
+      }
     }
   }
 
@@ -142,10 +152,10 @@ class NotificationService {
     // notification id 用 convId.hashCode 保证同一会话覆盖更新(不堆叠)
     final id = payload.convId.hashCode;
     await _plugin.show(
-      id,
-      agentName,
-      displayBody,
-      details,
+      id: id,
+      title: agentName,
+      body: displayBody,
+      notificationDetails: details,
       payload: payload.toJsonString(),
     );
   }
@@ -153,7 +163,7 @@ class NotificationService {
   /// 取消指定通知(进入会话读了消息后,清掉该会话的横幅)。
   /// id 与 show 时一致 = convId.hashCode。
   void cancel(int id) {
-    _plugin.cancel(id);
+    _plugin.cancel(id: id);
   }
 
   /// 构造通知 body(微信格式):N>1 时 `[N条]agent名: 消息`,否则 `消息`。
