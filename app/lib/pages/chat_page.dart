@@ -1471,7 +1471,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       final api = ref.read(apiProvider);
       final file = result.files.first;
-      final fileId = await api.uploadFile(file.path!);
+      final fileId = await api.uploadFile(file.path!, convId: widget.convId);
 
       final ext = file.path!.toLowerCase().substring(
         file.path!.lastIndexOf('.'),
@@ -1519,7 +1519,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     try {
       final api = ref.read(apiProvider);
-      final fileId = await api.uploadFile(file.path);
+      final fileId = await api.uploadFile(file.path, convId: widget.convId);
       _notifier.sendFile(fileId, msgType);
     } catch (e) {
       if (mounted) {

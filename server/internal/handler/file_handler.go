@@ -127,6 +127,17 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// 上传时附带 conversation_id (可选,消息附件场景用):
+	// 有值 → 写 file_conv_links,该会话所有 participant 都能下载此文件。
+	// 头像上传不传(走 CheckAccess 的头像白名单)。转发功能未来也走此接口加 link。
+	// 加 link 失败不阻断上传(文件已落库),仅记日志让 client 端走 owner 兜底也能下载。
+	if convID := c.Query("conversation_id"); convID != "" {
+		if err := h.fileRepo.AddConvLink(f.ID, convID); err != nil {
+			log.Printf("[upload] 加 file_conv_link 失败(conv=%s file=%s): %v | remote=%s",
+				convID, f.ID, err, c.ClientIP())
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"id": f.ID, "filename": f.Filename})
 }
 
@@ -180,17 +191,32 @@ func (h *FileHandler) Download(c *gin.Context) {
 		return
 	}
 
-	// 归属校验（防 IDOR）：只允许文件 owner 下载。
-	// - user 角色：owner 就是自己，校验 f.OwnerID == userID
-	// - agent 角色：agent 没有自己的文件（owner 落的是它服务的 user），校验 f.OwnerID == ownerID
-	// 不校验则任何登录用户可遍历 UUID 下载他人文件。
+	// 权限校验(三档放行,对齐 migration 018 + 主流 IM 授权模型):
+	//   1. 头像白名单: file_id 出现在 users.avatar_url / agents.avatar_url 中 → 公开
+	//      (社交属性,会话列表加载对方头像、点开资料页都能看)
+	//   2. 会话 participant: claimer 是该 file 被引用(经 file_conv_links)的任一 conv 的 participant
+	//      (私聊/群聊消息附件场景,转发不重传仅加 link,自动获得权限)
+	//   3. owner 兜底: claimer 是该 file 的 owner(向后兼容老逻辑)
+	// 三者都不满足才 403,防 UUID 枚举越权下载他人私有文件。
+	//
+	// claimer 计算: agent 用其 ownerID(agent.owner_id 是真实 user_id),
+	// 这跟 owner 兜底校验时一致(agent 没有自己的文件,owner 落的是它服务的 user)。
 	claimer := c.GetString("userID")
-	if c.GetString("role") == "agent" {
-		claimer = c.GetString("ownerID")
+	memberType := c.GetString("role")
+	if memberType == "agent" {
+		if ownerID := c.GetString("ownerID"); ownerID != "" {
+			claimer = ownerID
+		}
 	}
-	if claimer != f.OwnerID {
-		log.Printf("[download] 归属校验失败 | file_id=%s owner=%s claimer=%s role=%s remote=%s",
-			id, f.OwnerID, claimer, c.GetString("role"), c.ClientIP())
+	access, err := h.fileRepo.CheckAccess(id, claimer, memberType)
+	if err != nil {
+		log.Printf("[download] 权限校验查询失败: %v | file_id=%s remote=%s", err, id, c.ClientIP())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "权限校验失败"})
+		return
+	}
+	if !access.Allowed() {
+		log.Printf("[download] 权限校验失败 | file_id=%s owner=%s claimer=%s role=%s remote=%s",
+			id, f.OwnerID, claimer, memberType, c.ClientIP())
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问"})
 		return
 	}

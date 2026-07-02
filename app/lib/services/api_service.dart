@@ -377,11 +377,17 @@ class ApiService {
     return res.data['deleted'] as int;
   }
 
-  Future<String> uploadFile(String filePath) async {
+  /// 上传文件。
+  ///
+  /// [convId] 可选:消息附件场景传当前会话 ID,server 写 file_conv_links
+  /// 让该会话所有 participant 都能下载(防 IDOR 阻断接收方加载)。
+  /// 头像上传不传(走 server 头像白名单)。详见 server file_handler + migration 018。
+  Future<String> uploadFile(String filePath, {String? convId}) async {
     final formData = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
     });
-    final res = await _dio.post('/api/upload', data: formData);
+    final url = convId == null ? '/api/upload' : '/api/upload?conversation_id=$convId';
+    final res = await _dio.post(url, data: formData);
     return res.data['id'];
   }
 
