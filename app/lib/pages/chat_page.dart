@@ -1256,15 +1256,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             () => GlobalKey(),
                           );
                           // 撤回占位:替换 MessageBubble,显示「你/对方撤回了一条消息」。
-                          // dm 场景按 senderId == currentUserId 判断「你/对方」,
-                          // recalledByName 群聊场景用(本场景不显示)。
+                          // dm 场景按 senderId == currentUserId 判断「你/对方」。
+                          // 不使用 senderName:实时撤回 payload 带 sender_name 但重进拉
+                          // 历史 server 不返该字段,会导致「实时带名 / 重进匿名」不一致。
+                          // 群聊场景未来如需「xxx 撤回了一条消息」可重新启用 senderName。
                           final isMeRecall =
                               msg.senderId == currentUserId && msg.isRecalled;
                           final bubble = msg.isRecalled
-                              ? _RecalledBubble(
-                                  isMe: isMeRecall,
-                                  senderName: msg.recalledByName ?? '',
-                                )
+                              ? _RecalledBubble(isMe: isMeRecall)
                               : MessageBubble(
                                   key: bubbleKey,
                                   message: msg,
@@ -1583,21 +1582,20 @@ class _MenuPlacement {
   int get hashCode => Object.hash(left, top, tailOffsetX, pointDown);
 }
 
-/// 撤回消息占位。dm_user_user 场景按 isMe 切「你/对方」,群聊未来用 senderName。
+/// 撤回消息占位。dm 场景按 isMe 切「你/对方撤回了一条消息」。
 /// 居中灰色文字,无气泡外壳,与正常气泡视觉区分(已非实际消息内容)。
+///
+/// 不使用 senderName:实时撤回 payload 带 sender_name 但 server SanitizeForClient
+/// 改写 content 后重进拉历史不返 sender_name,会导致「实时带名 / 重进匿名」不一致。
+/// 群聊场景未来需要区分多 sender 时,可重新加 senderName 参数。
 class _RecalledBubble extends StatelessWidget {
   final bool isMe;
-  final String senderName;
 
-  const _RecalledBubble({required this.isMe, required this.senderName});
+  const _RecalledBubble({required this.isMe});
 
   @override
   Widget build(BuildContext context) {
-    // 群聊场景(未来):senderName 非空时优先用「${name} 撤回了一条消息」。
-    // 当前 dm_user_user 场景:isMe 切「你/对方」,senderName 留空。
-    final text = senderName.isNotEmpty
-        ? '$senderName 撤回了一条消息'
-        : (isMe ? '你撤回了一条消息' : '对方撤回了一条消息');
+    final text = isMe ? '你撤回了一条消息' : '对方撤回了一条消息';
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),

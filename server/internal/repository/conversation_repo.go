@@ -61,8 +61,11 @@ func (r *ConversationRepo) GetByID(id string) (*model.Conversation, error) {
 //
 // last_message_content / last_message_at 不再读 conversations 表(017 已删列),
 // 改用相关子查询从 messages 表按用户视角实时算「最新可见消息」:
-//   - deleted_at IS NULL(排除撤回消息)
 //   - NOT EXISTS message_hidden(排除该用户隐藏过的消息)
+//
+// 撤回消息(deleted_at 非空)仍然算 last_message: server 端 SanitizeForClient 把撤回消息
+// content 改写为 {msg_type:recalled},client 据此渲染「撤回了一条消息」占位卡片,
+// 列表摘要也走 lastMessagePreview 的 recalled 分支。
 //
 // 三处子查询(SELECT content / SELECT created_at / ORDER BY created_at / WHERE EXISTS)
 // 共用同一过滤条件,走 idx_messages_conv_created (migration 012) +
@@ -80,8 +83,13 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		SELECT c.id, c.type, c.title, c.avatar_url, c.created_at,
 		       p.unread_count, p.pinned_at, p.hidden_at,
 		       (
-		         SELECT m.content FROM messages m
-		         WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		         -- 撤回消息(deleted_at 非空)的 content 改写为 recalled 占位,
+		         -- 对齐 Messages handler 的 SanitizeForClient 行为,避免泄漏原文。
+		         SELECT CASE WHEN m.deleted_at IS NOT NULL
+		               THEN '{"msg_type":"recalled","data":{}}'::jsonb
+		               ELSE m.content END
+		         FROM messages m
+		         WHERE m.conversation_id = c.id
 		           AND NOT EXISTS (
 		             SELECT 1 FROM message_hidden h
 		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
@@ -90,13 +98,32 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		       ) AS last_message_content,
 		       (
 		         SELECT m.created_at FROM messages m
-		         WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		         WHERE m.conversation_id = c.id
 		           AND NOT EXISTS (
 		             SELECT 1 FROM message_hidden h
 		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
 		           )
 		         ORDER BY m.created_at DESC LIMIT 1
 		       ) AS last_message_at,
+		       -- 撤回消息也要返原 sender_id/sender_type,client 据此切「你/对方撤回」文案。
+		       (
+		         SELECT m.sender_id FROM messages m
+		         WHERE m.conversation_id = c.id
+		           AND NOT EXISTS (
+		             SELECT 1 FROM message_hidden h
+		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		           )
+		         ORDER BY m.created_at DESC LIMIT 1
+		       ) AS last_message_sender_id,
+		       (
+		         SELECT m.sender_type FROM messages m
+		         WHERE m.conversation_id = c.id
+		           AND NOT EXISTS (
+		             SELECT 1 FROM message_hidden h
+		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		           )
+		         ORDER BY m.created_at DESC LIMIT 1
+		       ) AS last_message_sender_type,
 		       (SELECT ag.id FROM agents ag
 		          JOIN conversation_participants pa
 		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
@@ -130,7 +157,7 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		WHERE p.hidden_at IS NULL
 		  AND EXISTS (
 		    SELECT 1 FROM messages m
-		    WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		    WHERE m.conversation_id = c.id
 		      AND NOT EXISTS (
 		        SELECT 1 FROM message_hidden h
 		        WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
@@ -139,7 +166,7 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		ORDER BY p.pinned_at DESC NULLS LAST,
 		         (
 		           SELECT m.created_at FROM messages m
-		           WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		           WHERE m.conversation_id = c.id
 		             AND NOT EXISTS (
 		               SELECT 1 FROM message_hidden h
 		               WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
@@ -156,20 +183,23 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 	var items []model.ConversationListItem
 	for rows.Next() {
 		var (
-			item           model.ConversationListItem
-			titleNS        sql.NullString
-			avatarURLNS    sql.NullString
-			agentID        sql.NullString
-			agentName      sql.NullString
-			agentAvatar    sql.NullString
-			otherUsername  sql.NullString
-			otherNickname  sql.NullString
-			otherAvatarURL sql.NullString
+			item            model.ConversationListItem
+			titleNS         sql.NullString
+			avatarURLNS     sql.NullString
+			senderIDNS      sql.NullString
+			senderTypeNS    sql.NullString
+			agentID         sql.NullString
+			agentName       sql.NullString
+			agentAvatar     sql.NullString
+			otherUsername   sql.NullString
+			otherNickname   sql.NullString
+			otherAvatarURL  sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID, &item.Type, &titleNS, &avatarURLNS, &item.CreatedAt,
 			&item.UnreadCount, &item.PinnedAt, &item.HiddenAt,
 			&item.LastMessageContent, &item.LastMessageAt,
+			&senderIDNS, &senderTypeNS,
 			&agentID, &agentName, &agentAvatar,
 			&otherUsername, &otherNickname, &otherAvatarURL,
 		); err != nil {
@@ -177,6 +207,8 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		}
 		item.Title = titleNS.String
 		item.AvatarURL = avatarURLNS.String
+		item.LastMessageSenderID = senderIDNS.String
+		item.LastMessageSenderType = senderTypeNS.String
 		// dm_user_agent 才填 Agent 摘要;其他 type 留 nil(UI 走 Title/AvatarURL)
 		if agentID.Valid {
 			item.Agent = &model.AgentSummary{
@@ -255,35 +287,46 @@ func (r *ConversationRepo) BeginTx() (*sql.Tx, error) {
 
 // GetLastVisibleMessage 取某 user 在某 conv 的「最新可见消息」(017 删缓存字段后新增,
 // 跟 ListForUser 内 subquery 同口径):
-//   - 过滤 deleted_at IS NULL(排除撤回)
 //   - NOT EXISTS message_hidden(排除该 user 隐藏过的消息)
+//   - 撤回消息(deleted_at 非空)仍计入,走 SanitizeForClient 改写后呈现给 client
 //   - ORDER BY created_at DESC LIMIT 1
 //
-// 无可见消息时 content.Valid=false 且 ok=false(调用方按需展示空状态)。
+// 返回值含 sender_id/sender_type,供 client 切「你/对方撤回」文案。
+// 无可见消息时 content.Valid=false 且 senderID/senderType 为空串。
 // 走 idx_messages_conv_created (migration 012) + idx_message_hidden_member (migration 016),
 // LIMIT 1 = O(log N)。
-func (r *ConversationRepo) GetLastVisibleMessage(convID, memberID, memberType string) (content model.NullJSON, at time.Time, err error) {
+func (r *ConversationRepo) GetLastVisibleMessage(convID, memberID, memberType string) (content model.NullJSON, at time.Time, senderID, senderType string, err error) {
 	var atNS sql.NullTime
+	var senderIDNS, senderTypeNS sql.NullString
 	err = r.db.QueryRow(`
-		SELECT content, created_at FROM messages m
-		WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		-- 撤回消息(deleted_at 非空)的 content 改写为 recalled 占位,
+		-- 对齐 Messages handler 的 SanitizeForClient + ListForUser 行为。
+		-- sender_id/type 仍取原值,client 据此切「你/对方撤回」文案。
+		SELECT CASE WHEN m.deleted_at IS NOT NULL
+		       THEN '{"msg_type":"recalled","data":{}}'::jsonb
+		       ELSE m.content END AS content, m.created_at,
+		       m.sender_id, m.sender_type
+		FROM messages m
+		WHERE m.conversation_id = $1
 		  AND NOT EXISTS (
 		    SELECT 1 FROM message_hidden h
 		    WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
 		  )
 		ORDER BY m.created_at DESC LIMIT 1`,
 		convID, memberID, memberType,
-	).Scan(&content, &atNS)
+	).Scan(&content, &atNS, &senderIDNS, &senderTypeNS)
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.NullJSON{}, time.Time{}, nil
+		return model.NullJSON{}, time.Time{}, "", "", nil
 	}
 	if err != nil {
-		return model.NullJSON{}, time.Time{}, err
+		return model.NullJSON{}, time.Time{}, "", "", err
 	}
 	if atNS.Valid {
 		at = atNS.Time
 	}
-	return content, at, nil
+	senderID = senderIDNS.String
+	senderType = senderTypeNS.String
+	return content, at, senderID, senderType, nil
 }
 
 // CreateTx 在外部事务中创建一个会话(只 INSERT conversations 表,不加 participants)。

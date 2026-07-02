@@ -301,20 +301,22 @@ func (h *ConversationHandler) buildDetail(convID, userID string) (*model.Convers
 
 	// 个人维度最新可见消息(017 后改子查询,跟 ListForUser 同口径):
 	// 排除 deleted_at 软删 + 排除该 user 隐藏过的消息(message_hidden)。
-	lastContent, lastAt, err := h.convRepo.GetLastVisibleMessage(convID, userID, "user")
+	lastContent, lastAt, lastSenderID, lastSenderType, err := h.convRepo.GetLastVisibleMessage(convID, userID, "user")
 	if err != nil {
 		return nil, err
 	}
 
 	item := &model.ConversationListItem{
-		ID:                 conv.ID,
-		Type:               conv.Type,
-		Title:              conv.Title,
-		AvatarURL:          conv.AvatarURL,
-		LastMessageContent: lastContent,
-		LastMessageAt:      lastAt,
-		CreatedAt:          conv.CreatedAt,
-		Participants:       parts,
+		ID:                   conv.ID,
+		Type:                 conv.Type,
+		Title:                conv.Title,
+		AvatarURL:            conv.AvatarURL,
+		LastMessageContent:   lastContent,
+		LastMessageAt:        lastAt,
+		LastMessageSenderID:  lastSenderID,
+		LastMessageSenderType: lastSenderType,
+		CreatedAt:            conv.CreatedAt,
+		Participants:         parts,
 	}
 
 	// dm_user_agent 兼容老 APP:附 agent 摘要

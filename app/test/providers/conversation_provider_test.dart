@@ -56,7 +56,7 @@ void main() {
     final list = container.read(conversationProvider);
     expect(list.length, 1);
     expect(list.first.agent!.name, 'Bot');
-    expect(list.first.lastMessagePreview, 'old');
+    expect(list.first.lastMessagePreview(currentUserId: 'u'), 'old');
   });
 
   test('onMessageCreate 本地更新预览并置顶', () async {
@@ -64,7 +64,7 @@ void main() {
 
     final notifier = container.read(conversationProvider.notifier);
     await notifier.load();
-    expect(container.read(conversationProvider).first.lastMessagePreview, 'old');
+    expect(container.read(conversationProvider).first.lastMessagePreview(currentUserId: 'u'), 'old');
 
     // 模拟 WebSocket 推送 MESSAGE_CREATE（c1 的新消息 'new'）
     final wsMsg = WSMessage(
@@ -86,7 +86,7 @@ void main() {
     await Future.delayed(Duration.zero);
 
     final list = container.read(conversationProvider);
-    expect(list.first.lastMessagePreview, 'new');
+    expect(list.first.lastMessagePreview(currentUserId: 'u'), 'new');
     // lastMessageAt 应取自 payload 的 created_at，而非本地时钟
     expect(list.first.lastMessageAt, DateTime.parse('2026-06-13T15:00:00Z'));
     // c1 本来就是唯一一条，置顶后仍是 c1
@@ -130,7 +130,7 @@ void main() {
 
     // 列表不变（c1 仍是 'old'）
     expect(
-        container.read(conversationProvider).first.lastMessagePreview, 'old');
+        container.read(conversationProvider).first.lastMessagePreview(currentUserId: 'u'), 'old');
   });
 
   test('removeByAgentId 混合列表只删目标 agent', () async {
@@ -320,7 +320,7 @@ void main() {
 
       expect(notifier3.state.first.isPinned, isTrue,
           reason: '置顶会话发新消息后 isPinned 必须保留，否则背景色会消失');
-      expect(notifier3.state.first.lastMessagePreview, 'new');
+      expect(notifier3.state.first.lastMessagePreview(currentUserId: 'u'), 'new');
     });
 
     test('markReadLocally 不能丢 isPinned（regression）', () async {

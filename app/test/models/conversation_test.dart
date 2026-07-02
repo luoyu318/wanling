@@ -19,7 +19,7 @@ void main() {
       expect(c.id, 'c1');
       expect(c.agent!.name, 'Bot');
       expect(c.agent!.status, AgentStatus.online);
-      expect(c.lastMessagePreview, 'hi');
+      expect(c.lastMessagePreview(currentUserId: 'u1'), 'hi');
       expect(c.lastMessageAt.year, 2026);
     });
 
@@ -31,7 +31,7 @@ void main() {
         'last_message_at': '2026-06-13T14:32:00Z',
         'created_at': '2026-06-13T10:00:00Z',
       });
-      expect(c.lastMessagePreview, '');
+      expect(c.lastMessagePreview(currentUserId: 'u'), '');
     });
 
     test('lastMessagePreview 处理 image 类型', () {
@@ -42,7 +42,7 @@ void main() {
         'last_message_at': '2026-06-13T14:32:00Z',
         'created_at': '2026-06-13T10:00:00Z',
       });
-      expect(c.lastMessagePreview, '[图片]');
+      expect(c.lastMessagePreview(currentUserId: 'u'), '[图片]');
     });
 
     test('lastMessagePreview 处理 file 类型', () {
@@ -53,7 +53,7 @@ void main() {
         'last_message_at': '2026-06-13T14:32:00Z',
         'created_at': '2026-06-13T10:00:00Z',
       });
-      expect(c.lastMessagePreview, '[文件]');
+      expect(c.lastMessagePreview(currentUserId: 'u'), '[文件]');
     });
 
     test('lastMessagePreview 在字段缺失时返回空串', () {
@@ -68,7 +68,7 @@ void main() {
         'last_message_at': '2026-06-13T14:32:00Z',
         'created_at': '2026-06-13T10:00:00Z',
       });
-      expect(c.lastMessagePreview, '');
+      expect(c.lastMessagePreview(currentUserId: 'u'), '');
       expect(c.lastMessageContent, isNull);
     });
 
@@ -87,6 +87,57 @@ void main() {
         }),
         throwsA(isA<FormatException>()),
       );
+    });
+
+    test('lastMessagePreview recalled 切「你撤回」(sender=自己)', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u1',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '你撤回了一条消息');
+    });
+
+    test('lastMessagePreview recalled 切「对方撤回」(sender=对方)', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u-other',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '对方撤回了一条消息');
+    });
+
+    test('lastMessagePreview recalled 群聊场景带 senderDisplayName', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'type': 'group_user',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u-other',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(
+        c.lastMessagePreview(
+            currentUserId: 'u1', isGroup: true, senderDisplayName: '小明'),
+        '小明 撤回了一条消息',
+      );
+    });
+
+    test('lastMessagePreview recalled 老 server 不返 sender_id 时 fallback 无称谓', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '撤回了一条消息');
     });
   });
 }

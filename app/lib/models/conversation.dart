@@ -35,6 +35,12 @@ class Conversation {
   final DateTime createdAt;
   final int unreadCount;
 
+  /// 最后一条消息的 sender(server ListForUser / GetLastVisibleMessage 返,
+  /// 撤回消息也保留原 sender,client 据此切「你/对方撤回」文案)。
+  /// null 表示无消息或老 server 不返该字段(fallback 无称谓「撤回了一条消息」)。
+  final String? lastMessageSenderId;
+  final String? lastMessageSenderType;
+
   /// 个人维度置顶 / 隐藏时间戳(来自 conversation_participants 表)。
   /// null 表示未置顶 / 未隐藏。
   final DateTime? pinnedAt;
@@ -52,6 +58,8 @@ class Conversation {
     required this.lastMessageAt,
     required this.createdAt,
     this.unreadCount = 0,
+    this.lastMessageSenderId,
+    this.lastMessageSenderType,
     this.pinnedAt,
     this.hiddenAt,
   });
@@ -91,6 +99,8 @@ class Conversation {
       lastMessageAt: DateTime.parse(json['last_message_at'] as String),
       createdAt: DateTime.parse(json['created_at'] as String),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      lastMessageSenderId: json['last_message_sender_id'] as String?,
+      lastMessageSenderType: json['last_message_sender_type'] as String?,
       pinnedAt: json['pinned_at'] != null
           ? DateTime.parse(json['pinned_at'] as String)
           : null,
@@ -139,9 +149,33 @@ class Conversation {
       agent?.avatarUrl ?? otherUser?.avatarUrl ?? '';
 
   /// 最后一行消息预览(仅文本)。其他类型给出标签占位。
-  String get lastMessagePreview {
+  ///
+  /// [currentUserId] 用于 recalled 分支切「你/对方撤回了一条消息」。
+  /// server ListForUser / GetLastVisibleMessage 返 last_message_sender_id,
+  /// 跟当前 user 对比即可判断是 sender 自己撤回还是对方撤回。
+  ///
+  /// [isGroup] / [senderDisplayName] 群聊场景预留扩展:群聊显示「xxx 撤回了一条消息」,
+  /// 当前 dm 场景不需要传,默认走「你/对方」二选一。
+  /// 老兼容:server 不返 sender_id 时 fallback 到无称谓「撤回了一条消息」。
+  String lastMessagePreview({
+    required String currentUserId,
+    bool isGroup = false,
+    String? senderDisplayName,
+  }) {
     final content = lastMessageContent;
     if (content == null) return '';
+    // 撤回消息走固定文案(server SanitizeForClient 把 content 改写成 {msg_type:recalled})。
+    // 不依赖 msgType 枚举(recalled 不在 MsgType 枚举内,是独立判断)。
+    if (content['msg_type'] == 'recalled') {
+      if (isGroup &&
+          senderDisplayName != null &&
+          senderDisplayName.isNotEmpty) {
+        return '$senderDisplayName 撤回了一条消息';
+      }
+      final senderId = lastMessageSenderId;
+      if (senderId == null) return '撤回了一条消息';
+      return senderId == currentUserId ? '你撤回了一条消息' : '对方撤回了一条消息';
+    }
     final data = content['data'];
     if (data is Map && data['text'] is String) return data['text'] as String;
     final msgType = MsgTypeX.fromString(content['msg_type'] as String?);
@@ -172,6 +206,8 @@ class Conversation {
     List<Participant>? participants,
     Map<String, dynamic>? lastMessageContent,
     DateTime? lastMessageAt,
+    String? lastMessageSenderId,
+    String? lastMessageSenderType,
     DateTime? createdAt,
     int? unreadCount,
     DateTime? pinnedAt,
@@ -192,6 +228,8 @@ class Conversation {
       participants: participants ?? this.participants,
       lastMessageContent: lastMessageContent ?? this.lastMessageContent,
       lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+      lastMessageSenderId: lastMessageSenderId ?? this.lastMessageSenderId,
+      lastMessageSenderType: lastMessageSenderType ?? this.lastMessageSenderType,
       createdAt: createdAt ?? this.createdAt,
       unreadCount: unreadCount ?? this.unreadCount,
       pinnedAt: newPinnedAt,

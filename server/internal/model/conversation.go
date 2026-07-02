@@ -20,17 +20,19 @@ type Conversation struct {
 //   - dm_user_user 时 OtherUser 字段填(对方 user),Agent 为 nil
 //   - 群聊两者均 nil(UI 走 Title/AvatarURL 或 Participants)
 type ConversationListItem struct {
-	ID                 string              `json:"id" db:"id"`
-	Type               string              `json:"type" db:"type"`
-	Title              string              `json:"title,omitempty" db:"title"`
-	AvatarURL          string              `json:"avatar_url,omitempty" db:"avatar_url"`
-	LastMessageContent NullJSON            `json:"last_message_content" db:"last_message_content"`
-	LastMessageAt      time.Time           `json:"last_message_at" db:"last_message_at"`
-	CreatedAt          time.Time           `json:"created_at" db:"created_at"`
-	UnreadCount        int                 `json:"unread_count" db:"unread_count"`
-	PinnedAt           *time.Time          `json:"pinned_at,omitempty" db:"pinned_at"`
-	HiddenAt           *time.Time          `json:"hidden_at,omitempty" db:"hidden_at"`
-	Agent              *AgentSummary       `json:"agent,omitempty" db:"-"`     // dm_user_agent 才填
-	OtherUser          *UserSummary        `json:"other_user,omitempty" db:"-"` // dm_user_user 才填
-	Participants       []ParticipantSummary `json:"participants" db:"-"`        // 应用层组装
+	ID                  string               `json:"id" db:"id"`
+	Type                string               `json:"type" db:"type"`
+	Title               string               `json:"title,omitempty" db:"title"`
+	AvatarURL           string               `json:"avatar_url,omitempty" db:"avatar_url"`
+	LastMessageContent  NullJSON             `json:"last_message_content" db:"last_message_content"`
+	LastMessageAt       time.Time            `json:"last_message_at" db:"last_message_at"`
+	LastMessageSenderID string               `json:"last_message_sender_id,omitempty" db:"last_message_sender_id"`
+	LastMessageSenderType string             `json:"last_message_sender_type,omitempty" db:"last_message_sender_type"`
+	CreatedAt           time.Time            `json:"created_at" db:"created_at"`
+	UnreadCount         int                  `json:"unread_count" db:"unread_count"`
+	PinnedAt            *time.Time           `json:"pinned_at,omitempty" db:"pinned_at"`
+	HiddenAt            *time.Time           `json:"hidden_at,omitempty" db:"hidden_at"`
+	Agent               *AgentSummary        `json:"agent,omitempty" db:"-"`     // dm_user_agent 才填
+	OtherUser           *UserSummary         `json:"other_user,omitempty" db:"-"` // dm_user_user 才填
+	Participants        []ParticipantSummary `json:"participants" db:"-"`        // 应用层组装
 }

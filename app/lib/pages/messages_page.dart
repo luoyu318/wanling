@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/conversation.dart';
+import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../router_helpers.dart';
 import '../utils/emoji_span.dart';
@@ -43,6 +44,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin 必须调
     final list = ref.watch(conversationProvider);
+    final currentUserId = ref.watch(authProvider).user?.id ?? '';
 
     // AppBar 移到 HomePage 共享管理，这里直接返回 body 内容。
     // 背景白底让分割线清晰可见。
@@ -68,6 +70,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                     conv: c,
                     key: ValueKey('conv_${c.id}'),
                     nextIsPinned: nextIsPinned,
+                    currentUserId: currentUserId,
                     onTap: () => context.push(chatRoute(c.id, c.agent?.id)),
                     onLongPressStart: (details) =>
                         _showConvMenu(context, details.globalPosition, c),
@@ -247,12 +250,14 @@ class _EmptyState extends StatelessWidget {
 class _ConvTile extends StatefulWidget {
   final Conversation conv;
   final bool nextIsPinned; // 下一条 tile 是否置顶（决定分割线颜色档位）
+  final String currentUserId; // 用于 lastMessagePreview 切「你/对方撤回」
   final VoidCallback onTap;
   final Future<void> Function(LongPressStartDetails details) onLongPressStart;
   const _ConvTile({
     super.key,
     required this.conv,
     required this.nextIsPinned,
+    required this.currentUserId,
     required this.onTap,
     required this.onLongPressStart,
   });
@@ -391,7 +396,8 @@ class _ConvTileState extends State<_ConvTile> {
                           ),
                           const SizedBox(height: 2),
                           buildEmojiColoredText(
-                            conv.lastMessagePreview,
+                            conv.lastMessagePreview(
+                                currentUserId: widget.currentUserId),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(

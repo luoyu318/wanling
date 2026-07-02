@@ -57,21 +57,29 @@ class ChatMessage {
     this.status = MessageStatus.sent,
   });
 
-  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-        id: json['id'],
-        conversationId: json['conversation_id'],
-        senderType: json['sender_type'],
-        senderId: json['sender_id'],
-        content: json['content'] as Map<String, dynamic>,
-        senderRole: json['sender_role'] as String?,
-        // server 不再发 is_read 字段;client 默认 false。
-        // user 自己发的消息由调用方显式设置 isRead=true。
-        isRead: false,
-        isRecalled: false,
-        createdAt: DateTime.parse(json['created_at']),
-        // server 不发 status 字段;历史/远端消息一律视为 sent。
-        status: MessageStatus.sent,
-      );
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final content = json['content'] as Map<String, dynamic>;
+    // 撤回状态从 content.msg_type 推断(server 不发独立 is_recalled 字段):
+    // server 端 SanitizeForClient 把撤回消息 content 改写成 {msg_type:recalled},
+    // client 重新拉历史时按此识别 → isRecalled=true,保持单一真相源,
+    // 所有渲染路径(chat_page._RecalledBubble)统一生效。
+    final isRecalled = content['msg_type'] == 'recalled';
+    return ChatMessage(
+      id: json['id'],
+      conversationId: json['conversation_id'],
+      senderType: json['sender_type'],
+      senderId: json['sender_id'],
+      content: content,
+      senderRole: json['sender_role'] as String?,
+      // server 不再发 is_read 字段;client 默认 false。
+      // user 自己发的消息由调用方显式设置 isRead=true。
+      isRead: false,
+      isRecalled: isRecalled,
+      createdAt: DateTime.parse(json['created_at']),
+      // server 不发 status 字段;历史/远端消息一律视为 sent。
+      status: MessageStatus.sent,
+    );
+  }
 
   ChatMessage copyWith({
     String? id,
