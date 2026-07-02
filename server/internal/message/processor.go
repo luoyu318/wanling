@@ -87,6 +87,28 @@ func (p *Processor) senderDisplayName(senderID, senderType string) string {
 	return u.Username
 }
 
+// senderAvatarURL 查 sender 头像 URL,填到 dispatch payload.sender_avatar_url。
+//
+// bg-service 收到 MESSAGE_CREATE 时直接读此字段加载通知大头像,
+// 不再依赖 UI 经 IPC syncAgentAvatar 同步(后者首次接收消息 / conv 列表未 load 时拿不到,
+// 导致 user-user 场景通知头像是色块)。
+//
+// 查询失败返空串,client 端走首字母色块兜底。
+func (p *Processor) senderAvatarURL(senderID, senderType string) string {
+	if senderType == "agent" {
+		a, err := p.agentRepo.GetByID(senderID)
+		if err != nil || a == nil {
+			return ""
+		}
+		return a.AvatarURL
+	}
+	u, err := p.userRepo.GetByID(senderID)
+	if err != nil || u == nil {
+		return ""
+	}
+	return u.AvatarURL
+}
+
 // HandleIncoming 处理收到的 WebSocket 消息。
 //
 // 协议:wsMsg.D 含 {agent_id?, user_id?, content}。user 发给 agent 带 agent_id;
@@ -269,6 +291,14 @@ func (p *Processor) PersistAndDispatch(convID, senderType, senderID string, cont
 		return nil, fmt.Errorf("未读计数失败: %w", err)
 	}
 
+	// 4.6 新消息自动取消全员隐藏(对齐 migration 004「新消息自动恢复显示」语义)
+	//     N 方模型下精确为「会话有新消息,所有 participants 各自的 hidden_at 都清空」
+	//     — 任意一方发消息,会话内所有 participant 的列表视图都恢复显示。
+	//     修复「对方删过会话,我发消息后对方列表不显示」bug。
+	if err := p.participantRepo.UnhideTx(tx, convID); err != nil {
+		return nil, fmt.Errorf("取消隐藏失败: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("提交事务失败: %w", err)
 	}
@@ -287,16 +317,19 @@ func (p *Processor) PersistAndDispatch(convID, senderType, senderID string, cont
 		S:  newSeq,
 	}
 	// sender_name 用于 client 端通知显示(user-user 场景 bg-service 取此字段)。
-	// 查询失败返空串,client fallback 处理。
+	// sender_avatar_url 用于 bg-service 通知大头像(替代原依赖 UI IPC 同步的链路,
+	// 让首次接收消息时通知也能拿到正确头像)。查询失败返空串,client fallback 色块。
 	senderName := p.senderDisplayName(senderID, senderType)
+	senderAvatarURL := p.senderAvatarURL(senderID, senderType)
 	dispatchData, _ := json.Marshal(map[string]interface{}{
-		"id":              msg.ID,
-		"conversation_id": convID,
-		"sender_type":     senderType,
-		"sender_id":       senderID,
-		"sender_role":     senderRole,
-		"sender_name":     senderName,
-		"content":         msg.Content,
+		"id":               msg.ID,
+		"conversation_id":  convID,
+		"sender_type":      senderType,
+		"sender_id":        senderID,
+		"sender_role":      senderRole,
+		"sender_name":      senderName,
+		"sender_avatar_url": senderAvatarURL,
+		"content":          msg.Content,
 		"created_at":      msg.CreatedAt,
 	})
 	dispatch.D = dispatchData

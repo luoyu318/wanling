@@ -290,6 +290,24 @@ func (r *ParticipantRepo) SetHidden(convID, memberID, memberType string, hidden 
 	return err
 }
 
+// UnhideTx 事务版:清空整个会话所有 participants 的 hidden_at。
+//
+// 用于 MessageProcessor.PersistAndDispatch — 任何新消息触发时,清掉会话内
+// 所有 participant 各自的 hidden_at(含 sender + 全部 recipients)。
+//
+// 对齐 migration 004 承诺的「新消息来时置空(自动恢复显示)」语义。N 方模型下
+// 精确为「会话有新消息,每个 participant 的隐藏状态都自动恢复」—— 主流 IM 行为
+// 是删除会话后对方再发消息会话会重新出现,而非仅 sender 自己恢复。
+//
+// 调用方必须在外层事务里调,与 message 创建 + unread 计数原子提交。
+func (r *ParticipantRepo) UnhideTx(tx *sql.Tx, convID string) error {
+	_, err := tx.Exec(`
+		UPDATE conversation_participants SET hidden_at = NULL
+		WHERE conv_id = $1
+	`, convID)
+	return err
+}
+
 // RemoveParticipantTx 删除单个 participant(踢人 / 普通成员退群)。
 // 不级联删会话(只删 member 行)。owner 退群用 DestroyConversationTx。
 // 调用方必须在外层事务里调,确保与权限校验原子性。

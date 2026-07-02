@@ -342,11 +342,11 @@ func filterSender(parts []model.ConversationParticipant, senderID, senderType st
 }
 
 // TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend 边界:
-// conv 的某 participant.hidden_at IS NOT NULL(user 隐藏了会话),
+// conv 的某 participant.hidden_at IS NOT NULL(某人隐藏了会话),
 // 但发消息应该 still work(hidden_at 只影响 IM 列表显示,不影响消息流)。
 //
-// 校验:user 隐藏会话 → agent 发消息 → 仍能写入 + unread 仍 +1 + delivery 仍插。
-// 隐藏语义的恢复(发消息自动取消隐藏)由 handler 层负责,processor 不管。
+// 场景:user 隐藏 → agent 发消息。
+// 校验:消息正常写入 + delivery 正常插 + unread 仍 +1 + hidden_at 在事务内被清空。
 func TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend(t *testing.T) {
 	fix := seedDM(t)
 	p := newProcessorWithNilHub(t, fix)
@@ -377,9 +377,46 @@ func TestProcessor_HandleIncoming_HiddenAtDoesNotAffectSend(t *testing.T) {
 	if userP.UnreadCount != 1 {
 		t.Errorf("hidden 状态下 unread 仍应 +1: 期望 1, 实际 %d", userP.UnreadCount)
 	}
-	// hidden_at 仍非空(processor 不主动取消隐藏)
-	if userP.HiddenAt == nil {
-		t.Errorf("hidden_at 应保持非空(processor 不动 hidden 字段)")
+	// 校验:user 作为 recipient,hidden_at 也应被新消息自动清空
+	// (migration 004「新消息来时置空」语义:会话有新消息全员恢复显示)
+	if userP.HiddenAt != nil {
+		t.Errorf("新消息后 recipient(user)的 hidden_at 应被清空,仍非空: %v", userP.HiddenAt)
+	}
+}
+
+// TestProcessor_HandleIncoming_NewMessageClearsAllHiddenAt 验证「新消息自动恢复全员显示」语义
+// (migration 004 承诺,participants 模型重构后下沉为「会话内全员 hidden_at 都清空」)。
+//
+// 场景:user 和 agent 都隐藏了会话 → agent 发消息 → 两者 hidden_at 都被清空。
+// 这是修复「对方删过会话,我发消息后对方列表不显示」bug 的核心断言。
+func TestProcessor_HandleIncoming_NewMessageClearsAllHiddenAt(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	// 双方都隐藏会话(模拟两端各自删除过)
+	if err := fix.participantRp.SetHidden(fix.convID, fix.userID, "user", true); err != nil {
+		t.Fatalf("SetHidden user 失败: %v", err)
+	}
+	if err := fix.participantRp.SetHidden(fix.convID, fix.agentID, "agent", true); err != nil {
+		t.Fatalf("SetHidden agent 失败: %v", err)
+	}
+
+	// agent 发消息
+	p.HandleIncoming("agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventMessageCreate,
+		D:  agentToUserPayload(fix.userID, msgContent("reactivate")),
+	})
+
+	// 校验:agent(sender)的 hidden_at 被清空
+	agentP, _ := fix.participantRp.Get(fix.convID, fix.agentID, "agent")
+	if agentP.HiddenAt != nil {
+		t.Errorf("sender(agent)的 hidden_at 应被清空,仍非空: %v", agentP.HiddenAt)
+	}
+	// 校验:user(recipient)的 hidden_at 也被清空(关键:对齐老 migration 语义)
+	userP, _ := fix.participantRp.Get(fix.convID, fix.userID, "user")
+	if userP.HiddenAt != nil {
+		t.Errorf("recipient(user)的 hidden_at 应被新消息自动清空,仍非空: %v", userP.HiddenAt)
 	}
 }
 

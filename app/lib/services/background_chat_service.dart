@@ -291,9 +291,12 @@ class BackgroundChatService {
 
     try {
       // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载 → 兜底色块)
-      // user-user 场景 sender 是 user 没有 avatar 缓存,loadAvatarBitmap 会兜底色块。
+      // avatarUrl 优先取 dispatch payload 的 sender_avatar_url(server S? 已带),
+      // 让首次接收消息时也能拿到正确头像(不依赖 UI IPC syncAgentAvatar 同步时机);
+      // 老 server 不带该字段时 fallback 到 _avatarUrls(UI 同步过来的缓存)。
       Uint8List? avatarBytes;
-      final avatarUrl = _avatarUrls[senderId];
+      final avatarUrl =
+          (data['sender_avatar_url'] as String?) ?? _avatarUrls[senderId];
       if (_baseUrl != null && _token != null) {
         // loadAvatarBitmap 必返回非空(下载失败兜底色块),故用空合并直接赋值
         avatarBytes = _avatarBitmapCache[senderId] ??
