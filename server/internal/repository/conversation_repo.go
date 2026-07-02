@@ -13,8 +13,8 @@ package repository
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/wanling/server/internal/model"
@@ -38,10 +38,10 @@ func (r *ConversationRepo) GetByID(id string) (*model.Conversation, error) {
 	c := &model.Conversation{}
 	var title, avatarURL sql.NullString
 	err := r.db.QueryRow(
-		`SELECT id, type, title, avatar_url, last_message_content, last_message_at, created_at
+		`SELECT id, type, title, avatar_url, created_at
 		 FROM conversations WHERE id = $1`,
 		id,
-	).Scan(&c.ID, &c.Type, &title, &avatarURL, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
+	).Scan(&c.ID, &c.Type, &title, &avatarURL, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -59,8 +59,17 @@ func (r *ConversationRepo) GetByID(id string) (*model.Conversation, error) {
 // 用 subquery 取 dm_user_agent 场景的对端 agent 摘要(group_* 场景由应用层组装
 // Participants 字段,Agent 留 nil)。
 //
-// 过滤:p.hidden_at IS NULL(用户维度软删除) + c.last_message_content IS NOT NULL(无消息不进列表)。
-// 排序:置顶在前(pinned_at DESC NULLS LAST),组内按 last_message_at DESC。
+// last_message_content / last_message_at 不再读 conversations 表(017 已删列),
+// 改用相关子查询从 messages 表按用户视角实时算「最新可见消息」:
+//   - deleted_at IS NULL(排除撤回消息)
+//   - NOT EXISTS message_hidden(排除该用户隐藏过的消息)
+//
+// 三处子查询(SELECT content / SELECT created_at / ORDER BY created_at / WHERE EXISTS)
+// 共用同一过滤条件,走 idx_messages_conv_created (migration 012) +
+// idx_message_hidden_member (migration 016),每会话 LIMIT 1 = O(log N)。
+//
+// 过滤:p.hidden_at IS NULL(用户维度软删除) + EXISTS(可见消息)(无可见消息不进列表)。
+// 排序:置顶在前(pinned_at DESC NULLS LAST),组内按最新可见消息 created_at DESC NULLS LAST。
 //
 // 应用层组装:调用方拿到 items 后,用 BatchLoadParticipantSummaries 一次性批量查
 // participants 摘要,group by conv_id 拼装到 ConversationListItem.Participants。
@@ -68,9 +77,26 @@ func (r *ConversationRepo) GetByID(id string) (*model.Conversation, error) {
 // SQL 见 spec §3.5。subquery 取「任一 agent」(LIMIT 1),dm_user_agent 通常只有 1 个。
 func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListItem, error) {
 	rows, err := r.db.Query(`
-		SELECT c.id, c.type, c.title, c.avatar_url,
-		       c.last_message_content, c.last_message_at, c.created_at,
+		SELECT c.id, c.type, c.title, c.avatar_url, c.created_at,
 		       p.unread_count, p.pinned_at, p.hidden_at,
+		       (
+		         SELECT m.content FROM messages m
+		         WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		           AND NOT EXISTS (
+		             SELECT 1 FROM message_hidden h
+		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		           )
+		         ORDER BY m.created_at DESC LIMIT 1
+		       ) AS last_message_content,
+		       (
+		         SELECT m.created_at FROM messages m
+		         WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		           AND NOT EXISTS (
+		             SELECT 1 FROM message_hidden h
+		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		           )
+		         ORDER BY m.created_at DESC LIMIT 1
+		       ) AS last_message_at,
 		       (SELECT ag.id FROM agents ag
 		          JOIN conversation_participants pa
 		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
@@ -101,8 +127,25 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		FROM conversations c
 		JOIN conversation_participants p
 		  ON p.conv_id = c.id AND p.member_id = $1 AND p.member_type = 'user'
-		WHERE p.hidden_at IS NULL AND c.last_message_content IS NOT NULL
-		ORDER BY p.pinned_at DESC NULLS LAST, c.last_message_at DESC`,
+		WHERE p.hidden_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM messages m
+		    WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		      AND NOT EXISTS (
+		        SELECT 1 FROM message_hidden h
+		        WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		      )
+		  )
+		ORDER BY p.pinned_at DESC NULLS LAST,
+		         (
+		           SELECT m.created_at FROM messages m
+		           WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+		             AND NOT EXISTS (
+		               SELECT 1 FROM message_hidden h
+		               WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
+		             )
+		           ORDER BY m.created_at DESC LIMIT 1
+		         ) DESC NULLS LAST`,
 		userID,
 	)
 	if err != nil {
@@ -113,20 +156,20 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 	var items []model.ConversationListItem
 	for rows.Next() {
 		var (
-			item             model.ConversationListItem
-			titleNS          sql.NullString
-			avatarURLNS      sql.NullString
-			agentID          sql.NullString
-			agentName        sql.NullString
-			agentAvatar      sql.NullString
-			otherUsername    sql.NullString
-			otherNickname    sql.NullString
-			otherAvatarURL   sql.NullString
+			item           model.ConversationListItem
+			titleNS        sql.NullString
+			avatarURLNS    sql.NullString
+			agentID        sql.NullString
+			agentName      sql.NullString
+			agentAvatar    sql.NullString
+			otherUsername  sql.NullString
+			otherNickname  sql.NullString
+			otherAvatarURL sql.NullString
 		)
 		if err := rows.Scan(
-			&item.ID, &item.Type, &titleNS, &avatarURLNS,
-			&item.LastMessageContent, &item.LastMessageAt, &item.CreatedAt,
+			&item.ID, &item.Type, &titleNS, &avatarURLNS, &item.CreatedAt,
 			&item.UnreadCount, &item.PinnedAt, &item.HiddenAt,
+			&item.LastMessageContent, &item.LastMessageAt,
 			&agentID, &agentName, &agentAvatar,
 			&otherUsername, &otherNickname, &otherAvatarURL,
 		); err != nil {
@@ -205,41 +248,42 @@ func (r *ConversationRepo) BatchLoadParticipantSummaries(convIDs []string) (map[
 	return result, rows.Err()
 }
 
-// UpdateLastMessage 在消息持久化后调用,更新会话的 last_message_content 与 last_message_at。
-// 写入时间用 NOW()(数据库时间),避免应用服务器时钟不一致。
-// content 是消息的完整 JSON(含 msg_type/data 字段)。
-func (r *ConversationRepo) UpdateLastMessage(convID string, content json.RawMessage) error {
-	_, err := r.db.Exec(
-		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`,
-		[]byte(content), convID,
-	)
-	return err
-}
-
-// ClearLastMessage 把会话的 last_message_content 置 NULL。
-// 用于消息全删完后清空缓存(避免 IM 列表显示已不存在的最后一条消息)。
-// 不更新 last_message_at(保留原时间戳,语义上该会话仍存在,只是无消息)。
-func (r *ConversationRepo) ClearLastMessage(convID string) error {
-	_, err := r.db.Exec(
-		`UPDATE conversations SET last_message_content = NULL WHERE id = $1`,
-		convID,
-	)
-	return err
-}
-
 // BeginTx 启动一个事务,供 MessageProcessor 在事务内同时写消息 + 更新缓存 + 写 deliveries + 更新 participants。
 func (r *ConversationRepo) BeginTx() (*sql.Tx, error) {
 	return r.db.Begin()
 }
 
-// UpdateLastMessageTx 与 UpdateLastMessage 行为一致,但在外部事务中执行。
-// 调用方负责 Commit/Rollback。用于保证"写消息 + 写 deliveries + 更新 participants + 更新缓存"的原子性。
-func (r *ConversationRepo) UpdateLastMessageTx(tx *sql.Tx, convID string, content json.RawMessage) error {
-	_, err := tx.Exec(
-		`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`,
-		[]byte(content), convID,
-	)
-	return err
+// GetLastVisibleMessage 取某 user 在某 conv 的「最新可见消息」(017 删缓存字段后新增,
+// 跟 ListForUser 内 subquery 同口径):
+//   - 过滤 deleted_at IS NULL(排除撤回)
+//   - NOT EXISTS message_hidden(排除该 user 隐藏过的消息)
+//   - ORDER BY created_at DESC LIMIT 1
+//
+// 无可见消息时 content.Valid=false 且 ok=false(调用方按需展示空状态)。
+// 走 idx_messages_conv_created (migration 012) + idx_message_hidden_member (migration 016),
+// LIMIT 1 = O(log N)。
+func (r *ConversationRepo) GetLastVisibleMessage(convID, memberID, memberType string) (content model.NullJSON, at time.Time, err error) {
+	var atNS sql.NullTime
+	err = r.db.QueryRow(`
+		SELECT content, created_at FROM messages m
+		WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM message_hidden h
+		    WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
+		  )
+		ORDER BY m.created_at DESC LIMIT 1`,
+		convID, memberID, memberType,
+	).Scan(&content, &atNS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.NullJSON{}, time.Time{}, nil
+	}
+	if err != nil {
+		return model.NullJSON{}, time.Time{}, err
+	}
+	if atNS.Valid {
+		at = atNS.Time
+	}
+	return content, at, nil
 }
 
 // CreateTx 在外部事务中创建一个会话(只 INSERT conversations 表,不加 participants)。
@@ -255,9 +299,9 @@ func (r *ConversationRepo) CreateTx(tx *sql.Tx, typeStr, title, avatarURL string
 	err := tx.QueryRow(
 		`INSERT INTO conversations (type, title, avatar_url)
 		 VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
-		 RETURNING id, type, title, avatar_url, last_message_content, last_message_at, created_at`,
+		 RETURNING id, type, title, avatar_url, created_at`,
 		typeStr, title, avatarURL,
-	).Scan(&c.ID, &c.Type, &titleNS, &avatarURLNS, &c.LastMessageContent, &c.LastMessageAt, &c.CreatedAt)
+	).Scan(&c.ID, &c.Type, &titleNS, &avatarURLNS, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

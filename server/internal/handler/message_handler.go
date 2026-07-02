@@ -58,13 +58,13 @@ func NewMessageHandler(
 //
 // scope=hide (默认):对自己隐藏。
 //   - 权限:必须是 participant
-//   - 副作用:不重算 last_message_content(个人视图,IM 列表预览不变)
+//   - 副作用:无(会话列表子查询按个人维度实时算)
 //   - 广播:单播 MESSAGE_DELETE 给当前请求者(只对我消失)
 //
 // scope=recall:撤回(对自己 + 对方都不可见)。
 //   - 权限:必须是 sender 本身
 //   - 时限:created_at + recallWindow > now
-//   - 副作用:重算 last_message_content(影响全员 IM 列表预览)
+//   - 副作用:无(会话列表子查询自动反映)
 //   - 广播:广播 MESSAGE_DELETE 给会话全员,payload 含 scope=recall + sender 信息
 func (h *MessageHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
@@ -103,14 +103,17 @@ func (h *MessageHandler) Delete(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "撤回失败"})
 			return
 		}
-		h.recalcAndBroadcastRecall(msg)
+		// 撤回零成本:不再维护全局 last_message_content 缓存(spec §3),
+		// 会话列表查询时子查询实时反映 hide / recall 的最新可见消息。
+		hubMsg := h.buildDeleteMsg(msg.ConversationID, []string{msg.ID}, "recall", msg.SenderID, msg.SenderType)
+		h.hub.SendToConv(msg.ConversationID, hubMsg)
 
 	case "hide", "":
 		if err := h.msgRepo.HideForUser(id, actorID, role); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 			return
 		}
-		// hide 不重算 last_message_content(IM 列表预览不变,只是个人视图)
+		// hide 不需要重算(会话列表子查询按个人维度实时算)
 		h.unicastHide(actorID, role, msg.ConversationID, []string{id})
 
 	default:
@@ -130,7 +133,7 @@ type BatchDeleteRequest struct {
 // 仅支持 scope=hide(批量撤回歧义太大,本期不开)。
 // 限制:单次最多 maxBatchDelete 条;所有消息必须属于同一会话(防跨会话越权)。
 //
-// 副作用:不重算 last_message_content(个人视图)。单播 MESSAGE_DELETE 给当前请求者。
+// 副作用:无(会话列表子查询按个人维度实时算)。单播 MESSAGE_DELETE 给当前请求者。
 func (h *MessageHandler) BatchDelete(c *gin.Context) {
 	var req BatchDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -211,24 +214,6 @@ func (h *MessageHandler) senderDisplay(senderID, senderType string) string {
 		return *u.Nickname
 	}
 	return u.Username
-}
-
-// recalcAndBroadcastRecall 撤回后重算 last_message_content 缓存,广播 MESSAGE_DELETE 给全员。
-// payload 含 scope='recall' + sender 信息,client 据此显示撤回占位。
-func (h *MessageHandler) recalcAndBroadcastRecall(msg *model.Message) {
-	// 重算缓存:查最新未删消息
-	last, err := h.msgRepo.LastNonDeleted(msg.ConversationID)
-	if err != nil {
-		return
-	}
-	if last != nil {
-		_ = h.convRepo.UpdateLastMessage(msg.ConversationID, last.Content)
-	} else {
-		_ = h.convRepo.ClearLastMessage(msg.ConversationID)
-	}
-
-	hubMsg := h.buildDeleteMsg(msg.ConversationID, []string{msg.ID}, "recall", msg.SenderID, msg.SenderType)
-	h.hub.SendToConv(msg.ConversationID, hubMsg)
 }
 
 // unicastHide 把 hide scope 的 MESSAGE_DELETE 单播给当前请求者(只对我消失)。

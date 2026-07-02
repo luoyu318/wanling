@@ -86,7 +86,8 @@ func TestMigration015_ParticipantsBackfill(t *testing.T) {
 		t.Fatalf("seed agent 失败: %v", err)
 	}
 
-	// 1.3 conversation(老格式:user_id + agent_id + unread_count + hidden_at + pinned_at)
+	// 1.3 conversation(老格式:user_id + agent_id + last_message_at + unread_count + hidden_at + pinned_at)
+	// setup 跳过 015 + 017,所以 last_message_at 列仍存在(002 加,017 删)。
 	hiddenAt := now.Add(-2 * time.Hour)
 	pinnedAt := now.Add(-1 * time.Hour)
 	if err := db.QueryRow(`

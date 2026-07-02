@@ -39,12 +39,12 @@ func seedConvFixture(t *testing.T, db *sql.DB) convTestSeed {
 
 // insertConvDirect 用裸 SQL 插一条 conversation(默认 type=dm_user_agent),
 // 供测试构造 seed 数据用(绕过 repo 方法,避免循环依赖)。
-func insertConvDirect(t *testing.T, db *sql.DB, lastMsgAt time.Time) string {
+func insertConvDirect(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var id string
 	if err := db.QueryRow(`
-		INSERT INTO conversations (last_message_at, created_at) VALUES ($1, $1) RETURNING id
-	`, lastMsgAt).Scan(&id); err != nil {
+		INSERT INTO conversations (created_at) VALUES ($1) RETURNING id
+	`, time.Now().UTC()).Scan(&id); err != nil {
 		t.Fatalf("insert conversation 失败: %v", err)
 	}
 	return id
@@ -52,18 +52,15 @@ func insertConvDirect(t *testing.T, db *sql.DB, lastMsgAt time.Time) string {
 
 // === GetByID 测试 ===
 
-// TestConversationRepo_GetByID_NullLastMessageContent 验证新建会话时
-// last_message_content 应为 NULL(NullJSON.Valid=false)。
-// 这是 scan NULL JSONB 的关键回归保护:不能 panic、不能报错。
-// 直接用 json.RawMessage 会触发 "unsupported Scan, storing driver.Value type <nil>"。
-func TestConversationRepo_GetByID_NullLastMessageContent(t *testing.T) {
+// TestConversationRepo_GetByID_NewConv 验证新建会话 GetByID 返回基本字段正确。
+// 017 删 last_message_content/last_message_at 缓存字段后,Conversation 模型
+// 不再有这俩字段,本测试简化为只校验 type 默认值。
+func TestConversationRepo_GetByID_NewConv(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
 	seed := seedConvFixture(t, db)
 
-	convID := insertConvDirect(t, db, time.Now().UTC())
-	// 用裸 SQL 把 last_message_at 设过去时间,避免 NOW() 与 last_message_content 不同步
-	// (这只是 seed,不写 last_message_content 即 NULL)
+	convID := insertConvDirect(t, db)
 
 	got, err := repo.GetByID(convID)
 	if err != nil {
@@ -72,14 +69,10 @@ func TestConversationRepo_GetByID_NullLastMessageContent(t *testing.T) {
 	if got == nil {
 		t.Fatalf("GetByID 返回 nil")
 	}
-	if got.LastMessageContent.Valid {
-		t.Errorf("新会话 last_message_content 应为 NULL(Valid=false), 实际 Valid=true, Raw=%s",
-			got.LastMessageContent.RawMessage)
-	}
 	if got.Type != "dm_user_agent" {
 		t.Errorf("默认 type 错误: 期望 dm_user_agent, 实际 %s", got.Type)
 	}
-	_ = seed // 此用例不需要 user/agent,但保留 fixture 让 schema 初始化一致
+	_ = seed
 }
 
 // TestNullJSON_JSONSerialization 校验 NullJSON 的 JSON 序列化行为符合预期:
@@ -110,87 +103,6 @@ func TestNullJSON_JSONSerialization(t *testing.T) {
 	}
 	if string(out) != `{"x":{"a":1}}` {
 		t.Errorf("非 NULL 序列化异常: %s", string(out))
-	}
-}
-
-// === UpdateLastMessage / ClearLastMessage / UpdateLastMessageTx 测试 ===
-
-// TestConversationRepo_UpdateLastMessage_WritesCache 验证 UpdateLastMessage:
-// 写入后 GetByID 应能读出 LastMessageContent.Valid=true 且内容正确。
-func TestConversationRepo_UpdateLastMessage_WritesCache(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	seedConvFixture(t, db)
-	convID := insertConvDirect(t, db, time.Now().UTC())
-
-	content, _ := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"data":     map[string]string{"text": "cached"},
-	})
-	if err := repo.UpdateLastMessage(convID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
-	}
-
-	got, err := repo.GetByID(convID)
-	if err != nil || got == nil {
-		t.Fatalf("GetByID: %v %v", got, err)
-	}
-	if !got.LastMessageContent.Valid {
-		t.Fatalf("UpdateLastMessage 后 LastMessageContent 应为 Valid")
-	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(got.LastMessageContent.RawMessage, &m); err != nil {
-		t.Fatalf("反序列化失败: %v", err)
-	}
-	data, _ := m["data"].(map[string]interface{})
-	if data["text"] != "cached" {
-		t.Errorf("内容不匹配: %v", m)
-	}
-}
-
-// TestConversationRepo_ClearLastMessage 验证 ClearLastMessage 把 last_message_content 置 NULL。
-func TestConversationRepo_ClearLastMessage(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	seedConvFixture(t, db)
-	convID := insertConvDirect(t, db, time.Now().UTC())
-
-	content, _ := json.Marshal(map[string]string{"k": "v"})
-	if err := repo.UpdateLastMessage(convID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
-	}
-	if err := repo.ClearLastMessage(convID); err != nil {
-		t.Fatalf("ClearLastMessage 失败: %v", err)
-	}
-	got, _ := repo.GetByID(convID)
-	if got.LastMessageContent.Valid {
-		t.Errorf("ClearLastMessage 后 LastMessageContent 应为 NULL, 实际 Valid=true Raw=%s",
-			got.LastMessageContent.RawMessage)
-	}
-}
-
-// TestConversationRepo_UpdateLastMessageTx 验证 UpdateLastMessageTx 在外部事务中工作。
-func TestConversationRepo_UpdateLastMessageTx(t *testing.T) {
-	db := SetupTestDB(t)
-	repo := NewConversationRepo(db)
-	seedConvFixture(t, db)
-	convID := insertConvDirect(t, db, time.Now().UTC())
-
-	content, _ := json.Marshal(map[string]string{"k": "tx"})
-	tx, err := repo.BeginTx()
-	if err != nil {
-		t.Fatalf("BeginTx 失败: %v", err)
-	}
-	if err := repo.UpdateLastMessageTx(tx, convID, content); err != nil {
-		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("Commit 失败: %v", err)
-	}
-
-	got, _ := repo.GetByID(convID)
-	if !got.LastMessageContent.Valid {
-		t.Fatalf("UpdateLastMessageTx 后 LastMessageContent 应为 Valid")
 	}
 }
 
@@ -359,13 +271,14 @@ func TestConversationRepo_UpdateProfile(t *testing.T) {
 // === ListForUser 测试 ===
 
 // TestConversationRepo_ListForUser_Basic 验证 ListForUser 的基础场景:
-//   - user 有 1 个 dm_user_agent 会话(带 last_message_content)
+//   - user 有 1 个 dm_user_agent 会话(有消息)
 //   - ListForUser 返回该会话,带 unread_count + Agent 摘要 + 对端 Participants
 //   - hidden_at IS NULL 的会话才返回
-//   - last_message_content IS NULL 的会话不返回(IM 列表只展示有消息的)
+//   - 无可见消息的会话不返回(IM 列表只展示有消息的,EXISTS subquery 过滤)
 func TestConversationRepo_ListForUser_Basic(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
 	seed := seedConvFixture(t, db)
 
 	conv, err := repo.FindOrCreateDM("dm_user_agent", DMMembers{
@@ -375,10 +288,13 @@ func TestConversationRepo_ListForUser_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindOrCreateDM 失败: %v", err)
 	}
-	// 写 last_message_content(没消息的会话不进列表)
-	content, _ := json.Marshal(map[string]string{"k": "v"})
-	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
+	// 写一条消息(没消息的会话不进列表)
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	if _, err := msgRepo.Create(conv.ID, "user", seed.userID, content); err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
 	}
 
 	items, err := repo.ListForUser(seed.userID)
@@ -438,6 +354,7 @@ func TestConversationRepo_ListForUser_ExcludesNoMessage(t *testing.T) {
 func TestConversationRepo_ListForUser_ExcludesHidden(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
 	pRepo := NewParticipantRepo(db)
 	seed := seedConvFixture(t, db)
 
@@ -445,9 +362,12 @@ func TestConversationRepo_ListForUser_ExcludesHidden(t *testing.T) {
 		Initiator: ParticipantInput{MemberID: seed.userID, MemberType: "user"},
 		Other:     ParticipantInput{MemberID: seed.agentID, MemberType: "agent"},
 	})
-	content, _ := json.Marshal(map[string]string{"k": "v"})
-	if err := repo.UpdateLastMessage(conv.ID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hi"},
+	})
+	if _, err := msgRepo.Create(conv.ID, "user", seed.userID, content); err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
 	}
 
 	// 用户隐藏该会话
@@ -462,17 +382,18 @@ func TestConversationRepo_ListForUser_ExcludesHidden(t *testing.T) {
 
 // TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt 验证排序:
 //   - 置顶组在前(pinned_at DESC NULLS LAST)
-//   - 组内按 last_message_at DESC
+//   - 组内按最新消息 created_at DESC(017 后改子查询 messages 表)
 //
-// 场景:user 有 3 个 dm:
-//   - convA 早 1 小时,置顶
-//   - convB 当前,未置顶
-//   - convC 早 2 小时,未置顶
+// 场景:user 有 3 个 dm,各发 1 条消息:
+//   - convC 最早发,未置顶
+//   - convA 第二发(早于 B 一会儿),置顶
+//   - convB 最后发,未置顶
 //
-// 期望顺序:[A(置顶), B(当前), C(早 2 小时)]
+// 期望顺序:[A(置顶), B(最新), C(最早)]
 func TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
 	pRepo := NewParticipantRepo(db)
 	seed := seedConvFixture(t, db)
 
@@ -506,21 +427,26 @@ func TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt(t *testing
 		Other:     ParticipantInput{MemberID: agentC, MemberType: "agent"},
 	})
 
-	content, _ := json.Marshal(map[string]string{"k": "v"})
-	// A: 早 1 小时 + 置顶
-	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '1 hour' WHERE id = $2`, content, convA.ID); err != nil {
-		t.Fatalf("UPDATE A 失败: %v", err)
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "x"},
+	})
+	// C: 最早发
+	if _, err := msgRepo.Create(convC.ID, "user", seed.userID, content); err != nil {
+		t.Fatalf("Create C msg 失败: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	// A: 第二发 + 置顶
+	if _, err := msgRepo.Create(convA.ID, "user", seed.userID, content); err != nil {
+		t.Fatalf("Create A msg 失败: %v", err)
 	}
 	if err := pRepo.SetPinned(convA.ID, seed.userID, "user", true); err != nil {
 		t.Fatalf("SetPinned A 失败: %v", err)
 	}
-	// B: 当前
-	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() WHERE id = $2`, content, convB.ID); err != nil {
-		t.Fatalf("UPDATE B 失败: %v", err)
-	}
-	// C: 早 2 小时
-	if _, err := db.Exec(`UPDATE conversations SET last_message_content = $1, last_message_at = NOW() - INTERVAL '2 hours' WHERE id = $2`, content, convC.ID); err != nil {
-		t.Fatalf("UPDATE C 失败: %v", err)
+	time.Sleep(5 * time.Millisecond)
+	// B: 最后发
+	if _, err := msgRepo.Create(convB.ID, "user", seed.userID, content); err != nil {
+		t.Fatalf("Create B msg 失败: %v", err)
 	}
 
 	items, err := repo.ListForUser(seed.userID)
@@ -530,7 +456,7 @@ func TestConversationRepo_ListForUser_OrdersByPinnedThenLastMessageAt(t *testing
 	if len(items) != 3 {
 		t.Fatalf("期望 3 条, 实际 %d", len(items))
 	}
-	// 期望顺序:A(置顶), B(当前), C(早 2 小时)
+	// 期望顺序:A(置顶), B(最新), C(最早)
 	if items[0].ID != convA.ID {
 		t.Errorf("首条期望 convA(置顶), 实际 %s", items[0].ID)
 	}

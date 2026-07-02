@@ -242,7 +242,7 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 	}
 
 	// 复用 Get 详情拼装响应(含 participants 摘要)
-	item, err := h.buildDetail(conv.ID)
+	item, err := h.buildDetail(conv.ID, userID)
 	if err != nil {
 		log.Printf("[conv-create] buildDetail error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询会话详情失败"})
@@ -268,7 +268,7 @@ func (h *ConversationHandler) Get(c *gin.Context) {
 		return
 	}
 
-	item, err := h.buildDetail(convID)
+	item, err := h.buildDetail(convID, userID)
 	if err != nil {
 		log.Printf("[conv-get] buildDetail error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -277,9 +277,10 @@ func (h *ConversationHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
-// buildDetail 拼装单个会话详情:conversations 表本身 + participants 摘要列表。
+// buildDetail 拼装单个会话详情:conversations 表本身 + participants 摘要列表 +
+// 个人维度最新可见消息(017 删缓存字段后改子查询实时算,跟 ListForUser 同语义)。
 // 1-1 dm_user_agent 时附 agent 摘要(老 APP 仍依赖 agent 字段)。
-func (h *ConversationHandler) buildDetail(convID string) (*model.ConversationListItem, error) {
+func (h *ConversationHandler) buildDetail(convID, userID string) (*model.ConversationListItem, error) {
 	conv, err := h.convRepo.GetByID(convID)
 	if err != nil {
 		return nil, err
@@ -298,13 +299,20 @@ func (h *ConversationHandler) buildDetail(convID string) (*model.ConversationLis
 		parts = []model.ParticipantSummary{}
 	}
 
+	// 个人维度最新可见消息(017 后改子查询,跟 ListForUser 同口径):
+	// 排除 deleted_at 软删 + 排除该 user 隐藏过的消息(message_hidden)。
+	lastContent, lastAt, err := h.convRepo.GetLastVisibleMessage(convID, userID, "user")
+	if err != nil {
+		return nil, err
+	}
+
 	item := &model.ConversationListItem{
 		ID:                 conv.ID,
 		Type:               conv.Type,
 		Title:              conv.Title,
 		AvatarURL:          conv.AvatarURL,
-		LastMessageContent: conv.LastMessageContent,
-		LastMessageAt:      conv.LastMessageAt,
+		LastMessageContent: lastContent,
+		LastMessageAt:      lastAt,
 		CreatedAt:          conv.CreatedAt,
 		Participants:       parts,
 	}

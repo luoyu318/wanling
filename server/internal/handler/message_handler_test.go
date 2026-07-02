@@ -190,35 +190,3 @@ func TestMessageHandler_BatchDelete_EmptyIDs(t *testing.T) {
 		t.Fatalf("空 ids 应返回 400,实际 %d", w.Code)
 	}
 }
-
-// TestMessageHandler_Recall_RecalcLastMessage 撤回最后一条后 last_message_content 被清空。
-// 双轨制(016)后:scope=hide 不重算缓存(个人视图),scope=recall 才重算。
-func TestMessageHandler_Recall_RecalcLastMessage(t *testing.T) {
-	env := setupMessageHandlerTest(t)
-	// 模拟已有缓存。
-	content := json.RawMessage(`{"msg_type":"text","data":{"text":"cached"}}`)
-	_ = env.convRepo.UpdateLastMessage(env.convID, content)
-
-	list, _ := env.msgRepo.ListByConversation(env.convID, env.userID, "user", 50, 0)
-	if len(list) != 1 {
-		t.Fatalf("前置:应有 1 条消息,实际 %d", len(list))
-	}
-
-	// scope=recall 触发重算
-	req := httptest.NewRequest(http.MethodDelete, "/api/messages/"+list[0].ID+"?scope=recall", nil)
-	w := httptest.NewRecorder()
-	env.engine.ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("应返回 204,实际 %d", w.Code)
-	}
-
-	// 撤回的是唯一一条 → 全删完 → ClearLastMessage 置 NULL
-	conv, _ := env.convRepo.GetByID(env.convID)
-	if conv == nil {
-		t.Fatal("会话应仍存在")
-	}
-	if conv.LastMessageContent.Valid {
-		t.Errorf("撤完全删后 last_message_content 应为 NULL(Valid=false),实际 Valid=true Raw=%s",
-			conv.LastMessageContent.RawMessage)
-	}
-}

@@ -135,14 +135,16 @@ func agentToUserPayload(userID string, content json.RawMessage) json.RawMessage 
 // === 集成测试 ===
 
 // TestProcessor_HandleIncoming_DMUserAgent 验证 dm_user_agent 场景:
-// agent → user 发消息,4 写操作原子提交,deliveries / unread_count / dispatch 全对齐。
+// agent → user 发消息,3 写操作原子提交,deliveries / unread_count / dispatch 全对齐。
 //
 // 校验点:
 //  1. messages 表新增 1 行
 //  2. message_deliveries 新增 1 行(recipient=user, read_at=NULL)
 //  3. user.unread_count = 1, agent.unread_count 不变(0)
-//  4. conversations.last_message_content 已更新
-//  5. agent 自己也有 participant 行(role=member,unread=0)
+//  4. agent 自己也有 participant 行(role=member,unread=0)
+//
+// 注:017 删 conversations.last_message_content 缓存字段后,本测试不再校验缓存写入
+// (ListForUser 改子查询实时算,见 repository/conversation_repo_test.go)。
 func TestProcessor_HandleIncoming_DMUserAgent(t *testing.T) {
 	fix := seedDM(t)
 	p := newProcessorWithNilHub(t, fix)
@@ -208,15 +210,6 @@ func TestProcessor_HandleIncoming_DMUserAgent(t *testing.T) {
 	if agentP.Role != "member" {
 		t.Errorf("agent role 期望 member, 实际 %s", agentP.Role)
 	}
-
-	// 4. conversations.last_message_content 已更新
-	conv, err := fix.convRepo.GetByID(fix.convID)
-	if err != nil {
-		t.Fatalf("GetByID 失败: %v", err)
-	}
-	if !conv.LastMessageContent.Valid {
-		t.Errorf("last_message_content 应为 Valid(事务内已更新)")
-	}
 }
 
 // TestProcessor_HandleIncoming_GroupUserTxFlow 验证 group_user 场景下,
@@ -267,7 +260,9 @@ func TestProcessor_HandleIncoming_GroupUserTxFlow(t *testing.T) {
 
 	// 复刻 HandleIncoming 内部事务路径(spec §3.3):
 	// BeginTx → CreateTx → ListByConversationTx → filter sender →
-	// CreateBatchTx → IncrUnreadTx → UpdateLastMessageTx → Commit
+	// CreateBatchTx → IncrUnreadTx → Commit
+	// (017 删 last_message_content 缓存后,事务不再调 UpdateLastMessageTx;
+	//  会话列表改子查询实时算。)
 	tx, err = convRepo.BeginTx()
 	if err != nil {
 		t.Fatalf("BeginTx 失败: %v", err)
@@ -292,9 +287,6 @@ func TestProcessor_HandleIncoming_GroupUserTxFlow(t *testing.T) {
 	}
 	if err := participantRp.IncrUnreadTx(tx, conv.ID, userA, "user"); err != nil {
 		t.Fatalf("IncrUnreadTx 失败: %v", err)
-	}
-	if err := convRepo.UpdateLastMessageTx(tx, conv.ID, content); err != nil {
-		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit 失败: %v", err)
@@ -427,11 +419,12 @@ func TestProcessor_HandleIncoming_AbortsOnInvalidSenderType(t *testing.T) {
 	}
 }
 
-// TestProcessor_Tx_BeginCreateUpdateCommit 验证事务 API happy path:
-// convRepo.BeginTx → msgRepo.CreateTx → convRepo.UpdateLastMessageTx → tx.Commit
-// 之后 messages 表有新行、conversations.last_message_content 已更新。
+// TestProcessor_Tx_BeginCreateCommit 验证事务 API happy path:
+// convRepo.BeginTx → msgRepo.CreateTx → tx.Commit 之后 messages 表有新行。
 // 这是 HandleIncoming 事务路径的"组件级"覆盖,避免依赖 hub。
-func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
+// (017 删 last_message_content 缓存后,事务不再调 UpdateLastMessageTx;
+//  会话列表改子查询实时算,见 repository/conversation_repo_test.go。)
+func TestProcessor_Tx_BeginCreateCommit(t *testing.T) {
 	fix := seedDM(t)
 
 	content := msgContent("tx component")
@@ -446,9 +439,6 @@ func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTx 失败: %v", err)
 	}
-	if err := fix.convRepo.UpdateLastMessageTx(tx, fix.convID, content); err != nil {
-		t.Fatalf("UpdateLastMessageTx 失败: %v", err)
-	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit 失败: %v", err)
 	}
@@ -457,12 +447,6 @@ func TestProcessor_Tx_BeginCreateUpdateCommit(t *testing.T) {
 	msgs, _ := fix.msgRepo.ListByConversation(fix.convID, fix.userID, "user", 100, 0)
 	if len(msgs) != 1 || msgs[0].ID != msg.ID {
 		t.Errorf("消息未持久化: %+v", msgs)
-	}
-
-	// 验证 conversations 缓存
-	conv, _ := fix.convRepo.GetByID(fix.convID)
-	if !conv.LastMessageContent.Valid {
-		t.Errorf("缓存未更新")
 	}
 }
 

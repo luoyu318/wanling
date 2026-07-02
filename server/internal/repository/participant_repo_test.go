@@ -58,12 +58,12 @@ func seedParticipantsTestDB(t *testing.T) (*sql.DB, *ParticipantRepo, participan
 	}
 	// 两个 conversation(默认 type=dm_user_agent)
 	if err := db.QueryRow(`
-		INSERT INTO conversations (last_message_at, created_at) VALUES ($1, $1) RETURNING id
+		INSERT INTO conversations (created_at) VALUES ($1) RETURNING id
 	`, now).Scan(&seed.convID); err != nil {
 		t.Fatalf("seed conv1 失败: %v", err)
 	}
 	if err := db.QueryRow(`
-		INSERT INTO conversations (last_message_at, created_at) VALUES ($1, $1) RETURNING id
+		INSERT INTO conversations (created_at) VALUES ($1) RETURNING id
 	`, now).Scan(&seed.conv2ID); err != nil {
 		t.Fatalf("seed conv2 失败: %v", err)
 	}

@@ -181,10 +181,6 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建消息失败"})
 		return
 	}
-	if err := h.convRepo.UpdateLastMessageTx(tx, convID, contentBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新会话缓存失败"})
-		return
-	}
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交事务失败"})
 		return

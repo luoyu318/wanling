@@ -12,13 +12,15 @@ import (
 
 // Processor 处理 WebSocket 消息的持久化和转发。
 //
-// participants 模型重构后,事务内 4 个写操作:
+// participants 模型重构后,事务内 3 个写操作:
 //  1. msgRepo.CreateTx    — INSERT messages
 //  2. deliveryRepo.CreateBatchTx — 给非 sender 全员插 message_deliveries(read_at=NULL)
 //  3. participantRepo.IncrUnreadTx — 给非 sender 全员 unread_count+1
-//  4. convRepo.UpdateLastMessageTx — 更新 conversations.last_message_content 缓存
 //
-// 原子提交保证「消息可见 ⟺ 未读计数对齐 ⟺ 投递状态对齐 ⟺ IM 列表缓存对齐」。
+// IM 列表的 last_message_content / last_message_at 不再缓存(conversations 表字段已删,
+// 见 migration 017),由 ConversationRepo.ListForUser 子查询实时算。
+//
+// 原子提交保证「消息可见 ⟺ 未读计数对齐 ⟺ 投递状态对齐」。
 // 设计见 docs/superpowers/specs/2026-07-02-participants-model-refactor-design.md §3.3。
 type Processor struct {
 	hub             *hub.Hub
@@ -160,8 +162,8 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 	// seq 是 dispatch 序号，与持久化无关，放在事务外即可（避免事务内提序列号在回滚时漏号）。
 	newSeq := atomic.AddInt64(&p.seq, 1)
 
-	// 事务边界：4 个写操作(message + deliveries + participants + conversation)原子提交。
-	// 否则 crash / 并发会出现"消息可见但未读计数错"或"IM 列表缓存陈旧"等不一致。
+	// 事务边界：3 个写操作(message + deliveries + participants)原子提交。
+	// 否则 crash / 并发会出现"消息可见但未读计数错"或"投递状态错"等不一致。
 	tx, err := p.convRepo.BeginTx()
 	if err != nil {
 		log.Println("开启事务失败:", err)
@@ -214,18 +216,12 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		return
 	}
 
-	// 6. 更新 last_message 缓存(IM 列表用,避免 JOIN messages 表)
-	if err := p.convRepo.UpdateLastMessageTx(tx, convID, enhancedContent); err != nil {
-		log.Printf("更新会话缓存失败 conv=%s: %v", convID, err)
-		return
-	}
-
 	if err := tx.Commit(); err != nil {
 		log.Printf("提交事务失败 conv=%s: %v", convID, err)
 		return
 	}
 
-	// 7. dispatch(commit 之后):遍历 recipients 按 member_type 路由
+	// 6. dispatch(commit 之后):遍历 recipients 按 member_type 路由
 	//    必须在 commit 之后才 dispatch,否则 dispatch 了的消息可能因 rollback 没真存。
 	//    payload 加 sender_role 字段(spec §5.2):client 不破坏(忽略未知字段),新版 APP
 	//    可用于权限按钮显隐(owner/admin/member 显示不同的会话操作)。
@@ -257,8 +253,8 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 // enhanceImageContent 对 image 类型消息的 content 补 width/height。
 //
 // 主路径（新消息零跳动）：前端发图时只带 file_id，server 在持久化前从 files 表
-// 查到原图宽高，补进 content.data。补完后存库 + last_message_content 缓存 + dispatch
-// 三处都带上宽高，前端加载前即知比例，按真实尺寸渲染无跳动。
+// 查到原图宽高，补进 content.data。补完后存库 + dispatch 两处都带上宽高，
+// 前端加载前即知比例，按真实尺寸渲染无跳动。
 //
 // 幂等：data 已有 width/height（非 0）则直接返回原 content，避免每条消息多一次 DB 查询。
 // fail-soft：非 image 消息 / file_id 缺失 / files 表查不到 / 宽高为 NULL / json 解析失败，

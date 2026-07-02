@@ -12,8 +12,6 @@ type Conversation struct {
 	Type               string    `json:"type" db:"type"`
 	Title              string    `json:"title,omitempty" db:"title"`
 	AvatarURL          string    `json:"avatar_url,omitempty" db:"avatar_url"`
-	LastMessageContent NullJSON  `json:"last_message_content" db:"last_message_content"`
-	LastMessageAt      time.Time `json:"last_message_at" db:"last_message_at"`
 	CreatedAt          time.Time `json:"created_at" db:"created_at"`
 }
 

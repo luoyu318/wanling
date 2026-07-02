@@ -68,7 +68,7 @@ func seedHubParticipantDB(t *testing.T) (*Hub, string, string, string) {
 		t.Fatalf("seed agent 失败: %v", err)
 	}
 	if err := db.QueryRow(`
-		INSERT INTO conversations (last_message_at, created_at) VALUES ($1, $1) RETURNING id
+		INSERT INTO conversations (created_at) VALUES ($1) RETURNING id
 	`, now).Scan(&convID); err != nil {
 		t.Fatalf("seed conversation 失败: %v", err)
 	}

@@ -157,12 +157,14 @@ func newConvHandler(f *seedConvFixture) *ConversationHandler {
 func TestConversationHandler_List_ReturnsAgentSummary(t *testing.T) {
 	f := seedUserAgentConv(t, "list")
 
+	// 017 删 last_message_content 缓存字段后,IM 列表改子查询实时算最新消息。
+	// 这里插一条真消息让会话进列表 + subquery 返回非 NULL。
 	content, _ := json.Marshal(map[string]interface{}{
 		"msg_type": "text",
 		"data":     map[string]string{"text": "hi"},
 	})
-	if err := f.convRepo.UpdateLastMessage(f.convID, content); err != nil {
-		t.Fatalf("UpdateLastMessage 失败: %v", err)
+	if _, err := f.mRepo.Create(f.convID, "user", f.user.ID, content); err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
 	}
 
 	h := newConvHandler(f)

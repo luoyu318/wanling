@@ -37,12 +37,16 @@ func SetupTestDB(t *testing.T) *sql.DB {
 	return setupTestDBWithSkip(t, nil)
 }
 
-// SetupTestDBSkipping015 起 DB 并跑 001-014,跳过 015。
+// SetupTestDBSkipping015 起 DB 并跑 001-014 + 016,跳过 015 + 017。
 // 仅 migration_015_test 用(在老 schema 上 seed 数据,再手动 ExecMigration015 验证回填)。
-// 业务测试应直接调 SetupTestDB(已自动应用 015)。
+//
+// 跳过 017 的原因:015 line 105 会建 idx_conversations_last_msg_at 索引(基于
+// conversations.last_message_at 列),017 DROP 该列会让 ExecMigration015 失败。
+// 跳过 017 让该列保留,015 测试在自己的沙盒里跑完整升级流程。
+// 业务测试应直接调 SetupTestDB(已自动应用 015/016/017 完整链)。
 func SetupTestDBSkipping015(t *testing.T) *sql.DB {
 	t.Helper()
-	return setupTestDBWithSkip(t, []string{"015_"})
+	return setupTestDBWithSkip(t, []string{"015_", "017_"})
 }
 
 // setupTestDBWithSkip 是 SetupTestDB / SetupTestDBSkipping015 的共享实现。
