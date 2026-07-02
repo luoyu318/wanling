@@ -1083,3 +1083,50 @@ func TestConversationHandler_UnreadInfo_NonParticipant_403(t *testing.T) {
 		t.Errorf("非 participant 应 403,实际 %d", w.Code)
 	}
 }
+
+// TestConversationHandler_Messages_RecalledSanitized 验证撤回消息在 API 出口处被 sanitize:
+//   - 撤回的消息仍出现在 Messages 响应中(spec §1);
+//   - content 改写为 {"msg_type":"recalled","data":{}};
+//   - 原文 "hello" 不应泄漏。
+func TestConversationHandler_Messages_RecalledSanitized(t *testing.T) {
+	f := seedUserAgentConv(t, "mrs")
+
+	// 造一条 user 消息(content 含敏感原文 "hello")
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "hello"},
+	})
+	m, err := f.mRepo.Create(f.convID, "user", f.user.ID, content)
+	if err != nil {
+		t.Fatalf("Create msg: %v", err)
+	}
+
+	// 撤回该消息
+	if err := f.mRepo.SoftDelete(m.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	h := newConvHandler(f)
+	r := gin.New()
+	r.GET("/api/conversations/:id/messages", func(c *gin.Context) {
+		c.Set("userID", f.user.ID)
+		h.Messages(c)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/conversations/%s/messages?limit=50", f.convID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码: %d body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// 撤回占位 content 应出现
+	if !strings.Contains(body, `"msg_type":"recalled"`) {
+		t.Errorf("撤回消息 content 应为 recalled 占位, body: %s", body)
+	}
+	// 原文 "hello" 不应泄漏
+	if strings.Contains(body, "hello") {
+		t.Errorf("撤回消息原文不应泄漏, body: %s", body)
+	}
+}

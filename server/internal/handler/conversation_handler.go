@@ -438,6 +438,9 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 		if msgs == nil {
 			msgs = []model.Message{}
 		}
+		for i := range msgs {
+			msgs[i].SanitizeForClient()
+		}
 		c.JSON(http.StatusOK, msgs)
 		return
 	}
@@ -458,6 +461,9 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 		if msgs == nil {
 			msgs = []model.Message{}
 		}
+		for i := range msgs {
+			msgs[i].SanitizeForClient()
+		}
 		c.JSON(http.StatusOK, msgs)
 		return
 	}
@@ -471,6 +477,9 @@ func (h *ConversationHandler) Messages(c *gin.Context) {
 	}
 	if msgs == nil {
 		msgs = []model.Message{}
+	}
+	for i := range msgs {
+		msgs[i].SanitizeForClient()
 	}
 	c.JSON(http.StatusOK, msgs)
 }

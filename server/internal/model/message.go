@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -25,6 +26,24 @@ type Message struct {
 	SenderID       string          `json:"sender_id" db:"sender_id"`
 	Content        json.RawMessage `json:"content" db:"content"`
 	CreatedAt      time.Time       `json:"created_at" db:"created_at"`
+	// DeletedAt 标记撤回时间(全局软删),DB 完整保留原 Content 用于审计。
+	// 通过 SanitizeForClient 在 API 出口处把 Content 改写为占位 {"msg_type":"recalled"},
+	// 避免原文泄漏。json:"-" 不直接序列化字段本身。
+	DeletedAt sql.NullTime `json:"-"`
+}
+
+// SanitizeForClient 把撤回消息(DeletedAt.Valid)的 Content 改写为占位
+// {"msg_type":"recalled","data":{}}。
+//
+// DB 保留原 Content 用于审计,只在 API 出口处覆写,避免泄漏原文。
+// 内部逻辑(权限校验、撤回时限判断等)应直接读原始 Message,不调本方法。
+//
+// 调用点:ConversationHandler.Messages (c.JSON 前对每条消息调)。
+func (m *Message) SanitizeForClient() {
+	if !m.DeletedAt.Valid {
+		return
+	}
+	m.Content = json.RawMessage(`{"msg_type":"recalled","data":{}}`)
 }
 
 type MessageContent struct {

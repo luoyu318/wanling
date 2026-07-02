@@ -106,8 +106,8 @@ func TestMessageRepo_CreateTx(t *testing.T) {
 //  1. Create 两条消息
 //  2. ListByConversation 能看到两条
 //  3. SoftDelete 第一条
-//  4. ListByConversation 只剩一条
-//  5. LastNonDeleted 返回未删的那条
+//  4. ListByConversation 仍返 2 条(撤回消息保留,spec §1,DB 完整保留)
+//  5. LastNonDeleted 返回未删的那条(过滤 deleted_at)
 //  6. SoftDelete 剩余那条后 LastNonDeleted 返回 nil
 func TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation(t *testing.T) {
 	repo, seed := seedMsgFixture(t)
@@ -136,11 +136,22 @@ func TestMessageRepo_SoftDelete_LastNonDeleted_ListByConversation(t *testing.T) 
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
 	list, _ = repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
-	if len(list) != 1 {
-		t.Fatalf("软删后应剩 1 条, 实际 %d", len(list))
+	if len(list) != 2 {
+		t.Fatalf("软删后仍应列出 2 条(含撤回占位), 实际 %d", len(list))
 	}
-	if list[0].ID != m2.ID {
-		t.Errorf("剩余应为 m2, 实际 %s", list[0].ID)
+	// 找到 m1(被撤回的),校验 DeletedAt.Valid=true
+	var recalled *model.Message
+	for i := range list {
+		if list[i].ID == m1.ID {
+			recalled = &list[i]
+			break
+		}
+	}
+	if recalled == nil {
+		t.Fatal("撤回的 m1 应仍在列表中")
+	}
+	if !recalled.DeletedAt.Valid {
+		t.Error("撤回的 m1 DeletedAt.Valid 应为 true")
 	}
 
 	// LastNonDeleted 返回 m2(最新未删)
@@ -202,10 +213,23 @@ func TestMessageRepo_SoftDeleteByIDs_GetByIDs(t *testing.T) {
 		t.Errorf("受影响行数应为 2, 实际 %d", n)
 	}
 
-	// ListByConversation 只剩 m3
+	// ListByConversation 仍返 3 条(spec §1:撤回消息不过滤)
 	list, _ := repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
-	if len(list) != 1 || list[0].ID != m3.ID {
-		t.Errorf("批量软删后应剩 m3, 实际 %v", list)
+	if len(list) != 3 {
+		t.Errorf("批量软删后仍应列出 3 条(含撤回占位), 实际 %d", len(list))
+	}
+	// m1/m2 应有 DeletedAt.Valid=true,m3 仍 false
+	deleted := map[string]bool{m1.ID: true, m2.ID: true}
+	for i := range list {
+		if deleted[list[i].ID] {
+			if !list[i].DeletedAt.Valid {
+				t.Errorf("撤回的 %s DeletedAt.Valid 应为 true", list[i].ID)
+			}
+		} else {
+			if list[i].DeletedAt.Valid {
+				t.Errorf("未撤回的 %s DeletedAt.Valid 应为 false", list[i].ID)
+			}
+		}
 	}
 }
 
@@ -214,7 +238,7 @@ func TestMessageRepo_SoftDeleteByIDs_GetByIDs(t *testing.T) {
 // TestMessageRepo_ListBefore 校验游标分页:
 //   - before 为空 → 返回最新 limit 条(newest first);
 //   - before 有值 → 返回 created_at < before 的消息(newest first);
-//   - 排除软删消息。
+//   - 包含软删消息(spec §1:撤回消息不过滤,DB 完整保留)。
 func TestMessageRepo_ListBefore(t *testing.T) {
 	repo, seed := seedMsgFixture(t)
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
@@ -255,7 +279,7 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 		t.Errorf("cursor=m3 期望 [m2,m1], 实际 %s,%s", got[0].ID, got[1].ID)
 	}
 
-	// 软删 m1 → ListBefore 应排除
+	// 软删 m1 → ListBefore 仍返 m1(spec §1:撤回消息保留,DB 完整保留)
 	if err := repo.SoftDelete(msgs[0].ID); err != nil {
 		t.Fatalf("SoftDelete m1 失败: %v", err)
 	}
@@ -263,8 +287,15 @@ func TestMessageRepo_ListBefore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListBefore 失败: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != msgs[1].ID {
-		t.Errorf("软删 m1 后期望 [m2], 实际 %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("软删 m1 后仍应列出 2 条(含撤回 m1), 实际 %d", len(got))
+	}
+	if got[0].ID != msgs[1].ID || got[1].ID != msgs[0].ID {
+		t.Errorf("期望 [m2, m1(撤回)], 实际 %s,%s", got[0].ID, got[1].ID)
+	}
+	// 校验 m1(撤回)的 DeletedAt.Valid=true
+	if !got[1].DeletedAt.Valid {
+		t.Error("撤回的 m1 DeletedAt.Valid 应为 true")
 	}
 }
 
@@ -300,7 +331,7 @@ func TestMessageRepo_CountBefore(t *testing.T) {
 
 // TestMessageRepo_ListAfter 校验"未读方向"游标分页:
 //   - after 有值 → 返回 created_at > after 的消息(ASC, 最老在前);
-//   - 排除软删消息。
+//   - 包含软删消息(spec §1:撤回消息不过滤,DB 完整保留)。
 func TestMessageRepo_ListAfter(t *testing.T) {
 	repo, seed := seedMsgFixture(t)
 	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
@@ -343,7 +374,7 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 		t.Errorf("limit=2 期望 [m2,m3], 实际 %s,%s", got[0].ID, got[1].ID)
 	}
 
-	// 软删 m3 → ListAfter 排除
+	// 软删 m3 → ListAfter 仍返 m3(spec §1:撤回消息保留,DB 完整保留)
 	if err := repo.SoftDelete(msgs[2].ID); err != nil {
 		t.Fatalf("SoftDelete m3 失败: %v", err)
 	}
@@ -351,11 +382,16 @@ func TestMessageRepo_ListAfter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SoftDelete 后 ListAfter 失败: %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("软删 m3 后期望 3 条, 实际 %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("软删 m3 后仍应列出 4 条(含撤回 m3), 实际 %d", len(got))
 	}
-	if got[0].ID != msgs[1].ID || got[1].ID != msgs[3].ID || got[2].ID != msgs[4].ID {
-		t.Errorf("软删后期望 [m2,m4,m5], 实际 %s,%s,%s", got[0].ID, got[1].ID, got[2].ID)
+	if got[0].ID != msgs[1].ID || got[1].ID != msgs[2].ID || got[2].ID != msgs[3].ID || got[3].ID != msgs[4].ID {
+		t.Errorf("期望 [m2, m3(撤回), m4, m5], 实际 %s,%s,%s,%s",
+			got[0].ID, got[1].ID, got[2].ID, got[3].ID)
+	}
+	// 校验 m3(撤回)的 DeletedAt.Valid=true
+	if !got[1].DeletedAt.Valid {
+		t.Error("撤回的 m3 DeletedAt.Valid 应为 true")
 	}
 }
 
@@ -380,5 +416,52 @@ func TestMessageRepo_LastNonDeleted_NoMessages(t *testing.T) {
 	}
 	if last != nil {
 		t.Errorf("空会话 LastNonDeleted 应返 nil, 实际 %+v", last)
+	}
+}
+
+// === Recall(撤回)行为测试 ===
+
+// TestMessageRepo_Recall_StillListed 验证撤回的消息仍出现在 ListByConversation 中(spec §1)。
+// 撤回的判定靠 SanitizeForClient 改写 Content(S1.4 handler 出口处),不靠查询过滤。
+func TestMessageRepo_Recall_StillListed(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hello"}}`)
+	m, err := repo.Create(seed.convID, "user", seed.userID, content)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.SoftDelete(m.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	list, err := repo.ListByConversation(seed.convID, seed.userID, "user", 50, 0)
+	if err != nil {
+		t.Fatalf("ListByConversation: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != m.ID {
+		t.Errorf("撤回的消息应仍被列出, 实际 list=%+v", list)
+	}
+	if !list[0].DeletedAt.Valid {
+		t.Errorf("撤回的消息 DeletedAt.Valid 应为 true")
+	}
+}
+
+// TestMessageRepo_Recall_LastNonDeletedExcluded 验证撤回消息不算 last message。
+// LastNonDeleted 保持 deleted_at IS NULL 过滤(spec §1 查询过滤策略表)。
+func TestMessageRepo_Recall_LastNonDeletedExcluded(t *testing.T) {
+	repo, seed := seedMsgFixture(t)
+	content := json.RawMessage(`{"msg_type":"text","data":{"text":"hi"}}`)
+	m1, _ := repo.Create(seed.convID, "user", seed.userID, content)
+	m2, _ := repo.Create(seed.convID, "user", seed.userID, content)
+
+	// 撤回最新的 m2
+	if err := repo.SoftDelete(m2.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	last, err := repo.LastNonDeleted(seed.convID)
+	if err != nil {
+		t.Fatalf("LastNonDeleted: %v", err)
+	}
+	if last == nil || last.ID != m1.ID {
+		t.Errorf("LastNonDeleted 应返 m1(次新), 实际 %+v", last)
 	}
 }

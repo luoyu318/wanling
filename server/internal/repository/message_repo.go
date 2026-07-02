@@ -50,17 +50,21 @@ func (r *MessageRepo) createMessage(
 	err := queryRow(
 		`INSERT INTO messages (conversation_id, sender_type, sender_id, content)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, conversation_id, sender_type, sender_id, content, created_at`,
+		 RETURNING id, conversation_id, sender_type, sender_id, content, created_at, deleted_at`,
 		convID, senderType, senderID, content,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt)
 	return m, err
 }
 
+// ListByConversation 返回会话消息分页列表(newest first)。
+// 撤回的消息(deleted_at IS NOT NULL)也返,靠 SanitizeForClient 在 handler 出口
+// 把 content 改写为占位,客户端据此渲染"该消息已被撤回"占位卡片。
+// 仅过滤该 member 主动隐藏过的消息(per-participant 隐藏,与全局撤回语义区分)。
 func (r *MessageRepo) ListByConversation(convID, memberID, memberType string, limit, offset int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at, m.deleted_at
 		 FROM messages m
-		 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		 WHERE m.conversation_id = $1
 		   AND NOT EXISTS (
 		     SELECT 1 FROM message_hidden h
 		     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
@@ -76,7 +80,7 @@ func (r *MessageRepo) ListByConversation(convID, memberID, memberType string, li
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -92,10 +96,10 @@ func (r *MessageRepo) ListByConversation(convID, memberID, memberType string, li
 func (r *MessageRepo) Get(id string) (*model.Message, error) {
 	m := &model.Message{}
 	err := r.db.QueryRow(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, created_at, deleted_at
 		 FROM messages WHERE id = $1`,
 		id,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -108,7 +112,7 @@ func (r *MessageRepo) Get(id string) (*model.Message, error) {
 // GetByIDs 批量查询消息(不过滤 deleted_at)。供 BatchDelete 权限校验用。
 func (r *MessageRepo) GetByIDs(ids []string) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, created_at, deleted_at
 		 FROM messages WHERE id = ANY($1)`,
 		pq.Array(ids),
 	)
@@ -120,7 +124,7 @@ func (r *MessageRepo) GetByIDs(ids []string) ([]model.Message, error) {
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -187,11 +191,11 @@ func (r *MessageRepo) HideForUsers(messageIDs []string, memberID, memberType str
 func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 	m := &model.Message{}
 	err := r.db.QueryRow(
-		`SELECT id, conversation_id, sender_type, sender_id, content, created_at
+		`SELECT id, conversation_id, sender_type, sender_id, content, created_at, deleted_at
 		 FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL
 		 ORDER BY created_at DESC LIMIT 1`,
 		convID,
-	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -204,7 +208,8 @@ func (r *MessageRepo) LastNonDeleted(convID string) (*model.Message, error) {
 // ListBefore 返回 created_at < before 的消息(游标分页),newest first。
 // before 为零值时返回最新 limit 条(等价 ListByConversation 第一页)。
 // 用于消息导航的游标分页加载历史("更老方向",上滑加载)。
-// 过滤软删 + 该 member 隐藏过的消息。
+// 撤回的消息(deleted_at IS NOT NULL)也返,client 端 SanitizeForClient 渲染占位。
+// 仅过滤该 member 主动隐藏过的消息。
 //
 // 为什么用 created_at 作 cursor:messages.id 是 UUID v4(随机无序),不能作 cursor
 // (id < $2 比较无意义),created_at 是本项目唯一可用的时间序字段。同 created_at
@@ -214,9 +219,9 @@ func (r *MessageRepo) ListBefore(convID, memberID, memberType string, before tim
 	var err error
 	if before.IsZero() {
 		rows, err = r.db.Query(
-			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at, m.deleted_at
 			 FROM messages m
-			 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+			 WHERE m.conversation_id = $1
 			   AND NOT EXISTS (
 			     SELECT 1 FROM message_hidden h
 			     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
@@ -226,9 +231,9 @@ func (r *MessageRepo) ListBefore(convID, memberID, memberType string, before tim
 		)
 	} else {
 		rows, err = r.db.Query(
-			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+			`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at, m.deleted_at
 			 FROM messages m
-			 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+			 WHERE m.conversation_id = $1
 			   AND NOT EXISTS (
 			     SELECT 1 FROM message_hidden h
 			     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
@@ -246,7 +251,7 @@ func (r *MessageRepo) ListBefore(convID, memberID, memberType string, before tim
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -282,12 +287,13 @@ func (r *MessageRepo) CountBefore(convID, memberID, memberType string, before ti
 // firstUnread + 之后的 N-1 条,让 firstUnread 落在 loaded 开头;APP 端 reverse 后
 // 变成 newest first(firstUnread 在末尾=视觉顶部,跳到它,下方是更新的未读)。
 //
-// 过滤软删 + 该 member 隐藏过的消息。ASC 排序:与 ListBefore 的 DESC 反向,调用方按需 reverse。
+// 撤回的消息(deleted_at IS NOT NULL)也返,client 端 SanitizeForClient 渲染占位。
+// 仅过滤该 member 主动隐藏过的消息。ASC 排序:与 ListBefore 的 DESC 反向,调用方按需 reverse。
 func (r *MessageRepo) ListAfter(convID, memberID, memberType string, after time.Time, limit int) ([]model.Message, error) {
 	rows, err := r.db.Query(
-		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at
+		`SELECT m.id, m.conversation_id, m.sender_type, m.sender_id, m.content, m.created_at, m.deleted_at
 		 FROM messages m
-		 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+		 WHERE m.conversation_id = $1
 		   AND NOT EXISTS (
 		     SELECT 1 FROM message_hidden h
 		     WHERE h.message_id = m.id AND h.member_id = $2 AND h.member_type = $3
@@ -304,7 +310,7 @@ func (r *MessageRepo) ListAfter(convID, memberID, memberType string, after time.
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderType, &m.SenderID, &m.Content, &m.CreatedAt, &m.DeletedAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
