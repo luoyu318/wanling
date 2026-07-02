@@ -206,7 +206,7 @@ void main() {
       ws2 = FakeWS();
       // autoload=false:本组测 pin/unpin/hide/resort 纯逻辑,构造时不触发 load,
       // 避免对未 stub 的 getConversations 抛 MissingStubError。
-      notifier2 = ConversationListNotifier(api2, ws2, autoload: false);
+      notifier2 = ConversationListNotifier(api2, ws2, 'user-b', autoload: false);
     });
 
     test('_resort: 置顶组在前 + 组内按时间倒序', () {
@@ -285,7 +285,7 @@ void main() {
     setUp(() {
       ws3 = FakeWS();
       // autoload=false:本组测 isPinned 保留逻辑,构造时不触发 load。
-      notifier3 = ConversationListNotifier(MockApi(), ws3, autoload: false);
+      notifier3 = ConversationListNotifier(MockApi(), ws3, 'user-c', autoload: false);
     });
 
     test('_onMessageCreate 不能丢 isPinned（regression）', () async {

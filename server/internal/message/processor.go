@@ -33,6 +33,7 @@ type Processor struct {
 	convRepo        *repository.ConversationRepo
 	msgRepo         *repository.MessageRepo
 	agentRepo       *repository.AgentRepo
+	userRepo        *repository.UserRepo
 	fileRepo        *repository.FileRepo
 	participantRepo *repository.ParticipantRepo
 	deliveryRepo    *repository.DeliveryRepo
@@ -46,6 +47,7 @@ func NewProcessor(
 	convRepo *repository.ConversationRepo,
 	msgRepo *repository.MessageRepo,
 	agentRepo *repository.AgentRepo,
+	userRepo *repository.UserRepo,
 	fileRepo *repository.FileRepo,
 	participantRepo *repository.ParticipantRepo,
 	deliveryRepo *repository.DeliveryRepo,
@@ -55,10 +57,34 @@ func NewProcessor(
 		convRepo:        convRepo,
 		msgRepo:         msgRepo,
 		agentRepo:       agentRepo,
+		userRepo:        userRepo,
 		fileRepo:        fileRepo,
 		participantRepo: participantRepo,
 		deliveryRepo:    deliveryRepo,
 	}
+}
+
+// senderDisplayName 查 sender 昵称:
+//   - agent → agentRepo.GetByID(...).Name
+//   - user   → userRepo.GetByID(...).Nickname || Username
+//
+// 查询失败返空串(client 端用 fallback 占位),不阻塞 dispatch。
+func (p *Processor) senderDisplayName(senderID, senderType string) string {
+	if senderType == "agent" {
+		a, err := p.agentRepo.GetByID(senderID)
+		if err != nil || a == nil {
+			return ""
+		}
+		return a.Name
+	}
+	u, err := p.userRepo.GetByID(senderID)
+	if err != nil || u == nil {
+		return ""
+	}
+	if u.Nickname != nil && *u.Nickname != "" {
+		return *u.Nickname
+	}
+	return u.Username
 }
 
 // HandleIncoming 处理收到的 WebSocket 消息。
@@ -260,12 +286,16 @@ func (p *Processor) PersistAndDispatch(convID, senderType, senderID string, cont
 		T:  model.EventMessageCreate,
 		S:  newSeq,
 	}
+	// sender_name 用于 client 端通知显示(user-user 场景 bg-service 取此字段)。
+	// 查询失败返空串,client fallback 处理。
+	senderName := p.senderDisplayName(senderID, senderType)
 	dispatchData, _ := json.Marshal(map[string]interface{}{
 		"id":              msg.ID,
 		"conversation_id": convID,
 		"sender_type":     senderType,
 		"sender_id":       senderID,
 		"sender_role":     senderRole,
+		"sender_name":     senderName,
 		"content":         msg.Content,
 		"created_at":      msg.CreatedAt,
 	})

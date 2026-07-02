@@ -253,7 +253,15 @@ class BackgroundChatService {
     final data = msg.d as Map<String, dynamic>?;
     if (data == null) return;
 
-    if (data['sender_type'] != 'agent') return;
+    final senderType = data['sender_type'] as String?;
+    final senderId = data['sender_id'] as String?;
+
+    // participants 模型下 sender 可能是 user 也可能是 agent,
+    // 只要不是自己发的就弹通知(覆盖 user-user / agent→user / 群聊场景)。
+    // 自己发的 MESSAGE_CREATE echo(S2.1 后 server 不过滤 sender)直接跳过。
+    final prefs = await SharedPreferences.getInstance();
+    final myUserId = prefs.getString('user_id');
+    if (senderId == null || senderId == myUserId) return;
 
     // convId 先取出来，下面的「正在看该会话」判断要用。
     final convId = data['conversation_id'] as String?;
@@ -264,9 +272,8 @@ class BackgroundChatService {
     final isViewing = _appInForeground && convId == _activeConvId;
     if (isViewing) return;
 
-    final agentId = data['sender_id'] as String?;
     final content = data['content'] as Map<String, dynamic>?;
-    if (convId == null || agentId == null || content == null) return;
+    if (convId == null || content == null) return;
 
     // 计数(在通知前累加,N 反映含本条)
     _unread.increment(convId);
@@ -275,36 +282,42 @@ class BackgroundChatService {
     final msgData = content['data'] as Map<String, dynamic>?;
     final body = messagePreview(msgType: msgType, data: msgData);
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final agentName = prefs.getString('agent_name_$agentId') ?? 'Agent';
+    // 显示名:agent 走 prefs 缓存(agent_name_$agentId),user 走 dispatch payload
+    // 的 sender_name(S4.3 加),都拿不到时 fallback「新消息」。
+    final senderName = (data['sender_name'] as String?) ??
+        (senderType == 'agent'
+            ? (prefs.getString('agent_name_$senderId') ?? 'Agent')
+            : '新消息');
 
+    try {
       // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载 → 兜底色块)
+      // user-user 场景 sender 是 user 没有 avatar 缓存,loadAvatarBitmap 会兜底色块。
       Uint8List? avatarBytes;
-      final avatarUrl = _avatarUrls[agentId];
+      final avatarUrl = _avatarUrls[senderId];
       if (_baseUrl != null && _token != null) {
         // loadAvatarBitmap 必返回非空(下载失败兜底色块),故用空合并直接赋值
-        avatarBytes = _avatarBitmapCache[agentId] ??
+        avatarBytes = _avatarBitmapCache[senderId] ??
             await loadAvatarBitmap(
-              agentId: agentId,
-              name: agentName,
+              agentId: senderId,
+              name: senderName,
               avatarUrl: avatarUrl,
               baseUrl: _baseUrl!,
               httpHeaders: {'Authorization': 'Bearer $_token'},
             );
-        _avatarBitmapCache[agentId] = avatarBytes;
+        _avatarBitmapCache[senderId] = avatarBytes;
       }
 
       await NotificationService.instance.showMessageNotification(
         payload: NotificationPayload(
           convId: convId,
-          agentId: agentId,
-          agentName: agentName,
+          // user-user 消息 sender 是 user,agentId 字段作占位(点击路由用 convId)。
+          agentId: senderId,
+          agentName: senderName,
         ),
         body: body,
         unreadCount: _unread.get(convId),
         avatarBytes: avatarBytes,
-        agentName: agentName,
+        agentName: senderName,
       );
     } catch (e) {
       debugPrint('[bg-service] 通知发送失败: $e');

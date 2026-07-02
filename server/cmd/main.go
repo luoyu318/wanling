@@ -76,7 +76,7 @@ func main() {
 	h := hub.NewHub(p, agentRepo, participantRepo)
 	go h.Run()
 
-	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, fileRepo, participantRepo, deliveryRepo)
+	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo)
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret)
 	agentHandler := handler.NewAgentHandler(agentRepo, p)

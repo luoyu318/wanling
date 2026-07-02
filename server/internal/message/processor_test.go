@@ -59,6 +59,7 @@ type dmFixture struct {
 	convRepo      *repository.ConversationRepo
 	msgRepo       *repository.MessageRepo
 	agentRepo     *repository.AgentRepo
+	userRepo      *repository.UserRepo
 	fileRepo      *repository.FileRepo
 	participantRp *repository.ParticipantRepo
 	deliveryRp    *repository.DeliveryRepo
@@ -77,6 +78,7 @@ func seedDM(t *testing.T) dmFixture {
 		convRepo:      repository.NewConversationRepo(db),
 		msgRepo:       repository.NewMessageRepo(db),
 		agentRepo:     repository.NewAgentRepo(db),
+		userRepo:      repository.NewUserRepo(db),
 		fileRepo:      repository.NewFileRepo(db),
 		participantRp: repository.NewParticipantRepo(db),
 		deliveryRp:    repository.NewDeliveryRepo(db),
@@ -101,7 +103,7 @@ func seedDM(t *testing.T) dmFixture {
 func newProcessorWithNilHub(t *testing.T, fix dmFixture) *Processor {
 	t.Helper()
 	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp)
-	return NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.fileRepo,
+	return NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo, fix.fileRepo,
 		fix.participantRp, fix.deliveryRp)
 }
 

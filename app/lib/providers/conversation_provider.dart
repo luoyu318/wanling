@@ -10,7 +10,7 @@ import '../models/ws_message.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
 // 复用现有 provider，避免重复定义导致状态分裂。
-import 'auth_provider.dart' show apiProvider;
+import 'auth_provider.dart' show apiProvider, authProvider;
 import 'chat_provider.dart' show wsProvider;
 
 /// 会话列表状态管理：负责拉取会话列表，并订阅 WebSocket MESSAGE_CREATE 事件，
@@ -18,13 +18,20 @@ import 'chat_provider.dart' show wsProvider;
 class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   final ApiService api;
   final WebSocketService ws;
+  /// 当前 user.id。用于 _onMessageCreate 判断「自己发的消息不计未读」。
+  /// participants 模型下 sender 可能是 user 也可能是 agent,只要不是自己发的就算未读。
+  final String currentUserId;
   StreamSubscription<WSMessage>? _subscription;
   StreamSubscription<WSMessage>? _conversationEventsSub;
   // 当前打开的 ChatPage convId。该会话收到的 agent 消息不计未读（用户正在看）。
   String? _activeConvId;
 
-  ConversationListNotifier(this.api, this.ws, {bool autoload = true})
-      : super([]) {
+  ConversationListNotifier(
+    this.api,
+    this.ws,
+    this.currentUserId, {
+    bool autoload = true,
+  }) : super([]) {
     // 构造即拉取:切换账号时 apiProvider/wsProvider 重建会连带重建本 notifier,
     // 新 server 的历史会话需要重新拉。messages_page 用 AutomaticKeepAlive 保活,
     // 切换时不会重建触发 initState 的 load,故此处主动 load 兜底。
@@ -102,8 +109,10 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
     final convId = data['conversation_id'] as String?;
     if (convId == null) return;
 
-    final senderType = data['sender_type'] as String?;
-    final isAgent = senderType == 'agent';
+    final senderId = data['sender_id'] as String?;
+    // participants 模型下 sender 可能是 user 也可能是 agent,
+    // 只要不是自己发的就算未读(覆盖 user-user / agent→user / 群聊场景)。
+    final isOwn = senderId == currentUserId;
 
     final idx = state.indexWhere((c) => c.id == convId);
     if (idx == -1) {
@@ -121,13 +130,13 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
         ? DateTime.parse(createdAtStr)
         : item.lastMessageAt;
 
-    // agent → user 方向时本地 unreadCount++。
+    // 非自己发的消息且不在该会话页时本地 unreadCount++。
     // 但若用户当前正在该会话（_activeConvId），本地不计未读 —— 避免用户在看的
     // 会话还闪烁徽章。server 端已不再据此跳过 IncrUnread（一律计未读,client 端
     // _markRead 归零）,此处的本地判断纯属徽章 UX 优化。
     final isActive = convId == _activeConvId;
     final newUnread =
-        (isAgent && !isActive) ? item.unreadCount + 1 : item.unreadCount;
+        (!isOwn && !isActive) ? item.unreadCount + 1 : item.unreadCount;
 
     // copyWith 保留 isPinned 等其它字段；直接 Conversation(...) 会丢 isPinned
     // 导致置顶背景色被刷掉。
@@ -374,6 +383,7 @@ final conversationProvider = StateNotifierProvider<ConversationListNotifier,
   return ConversationListNotifier(
     ref.watch(apiProvider),
     ref.watch(wsProvider),
+    ref.watch(authProvider.select((s) => s.user?.id ?? '')),
   );
 });
 

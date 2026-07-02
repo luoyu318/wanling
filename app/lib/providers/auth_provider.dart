@@ -101,8 +101,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('token', data['token']);
       await prefs.setString('base_url', api.baseUrl);
+      // bg-service isolate 用 user_id 判断「自己发的消息不弹通知」(user-user 场景)。
+      final user = User.fromJson(data['user']);
+      await prefs.setString('user_id', user.id);
       state = AuthState(
-        user: User.fromJson(data['user']),
+        user: user,
         token: data['token'],
       );
       // 通知 service isolate 启动 WS
@@ -123,8 +126,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       _lastKnownToken = data['token'];
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('token', data['token']);
+      final user = User.fromJson(data['user']);
+      await prefs.setString('user_id', user.id);
       state = AuthState(
-        user: User.fromJson(data['user']),
+        user: user,
         token: data['token'],
       );
     } finally {
@@ -171,8 +176,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final userData = await api.getMe();
       await prefs.setString('base_url', api.baseUrl);
+      final user = User.fromJson(userData);
+      await prefs.setString('user_id', user.id);
       state = AuthState(
-        user: User.fromJson(userData),
+        user: user,
         token: token,
         // 显式 false 防御 copyWith 残留
         isRestoring: false,
