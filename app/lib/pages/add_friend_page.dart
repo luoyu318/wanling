@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../models/user_summary.dart';
 import '../providers/friend_provider.dart';
@@ -46,43 +47,27 @@ class _AddFriendPageState extends ConsumerState<AddFriendPage> {
     try {
       await ref.read(friendListProvider.notifier).sendRequest(user.username);
       if (!mounted) return;
-      showAppSnackBar(context, '已向 ${user.displayName} 发送请求',
+      // 成功后不弹 dialog，让按钮态切换为「已申请」+ 简洁 SnackBar 即可，
+      // 避免多次点添加产生 dialog 噪音（API 已在 friendProvider 内做了乐观更新）。
+      showAppSnackBar(context, '好友请求已发送',
           type: SnackBarType.success);
     } on DioException catch (e) {
       if (!mounted) return;
       final code = e.response?.statusCode;
       if (code == 409) {
-        // 409 Conflict:已是好友 / 已有 pending 请求
-        showAppDialog(
-          context: context,
-          title: '无法发送',
-          content: const Text('你们已经是好友,或已发送过请求尚未处理。'),
-          confirmText: '知道了',
-        );
+        // 409：已是好友 / 已 pending。友好提示（不弹 dialog 避免噪音）。
+        showAppSnackBar(context, '已经是好友,或已发送过请求尚未处理',
+            type: SnackBarType.info);
       } else if (code == 404) {
-        // 理论上搜索结果应可加,404 多为对方账号已被注销
-        showAppDialog(
-          context: context,
-          title: '用户不存在',
-          content: const Text('该账号可能已被注销。'),
-          confirmText: '知道了',
-        );
+        showAppSnackBar(context, '该账号可能已被注销',
+            type: SnackBarType.error);
       } else {
-        showAppDialog(
-          context: context,
-          title: '发送失败',
-          content: Text('${e.response?.statusMessage ?? e.message}'),
-          confirmText: '知道了',
-        );
+        showAppSnackBar(context, '发送失败：${e.response?.statusMessage ?? e.message}',
+            type: SnackBarType.error);
       }
     } catch (e) {
       if (!mounted) return;
-      showAppDialog(
-        context: context,
-        title: '发送失败',
-        content: Text('$e'),
-        confirmText: '知道了',
-      );
+      showAppSnackBar(context, '发送失败：$e', type: SnackBarType.error);
     }
   }
 
@@ -166,35 +151,72 @@ class _AddFriendPageState extends ConsumerState<AddFriendPage> {
       itemCount: state.results.length,
       itemBuilder: (_, i) {
         final u = state.results[i];
-        // 排除自己:UserSummary 不含 user_id,但 server 搜索默认应排除自己,
-        // 此处不强过滤(若 server 返回自己,加自己按钮按下也会 409)。
+        // 排除自己:server SearchByUsername 已加 WHERE id != $me 过滤,
+        // 兜底:client 也对自己 username 做过滤（双保险）。
+        // 排除自己后整行点击跳 UserDetailPage。
         return _SearchResultRow(
           key: ValueKey('search_${u.username}'),
           user: u,
-          onAdd: () => _sendRequest(u),
         );
       },
     );
   }
 }
 
-/// 搜索结果行:头像 + 昵称 + @username + 「加好友」按钮。
-class _SearchResultRow extends StatelessWidget {
+/// 搜索结果行：头像 + 昵称 + @username + 状态徽章（已添加 / 已申请）。
+///
+/// 整行点击跳转到 [UserDetailPage]（用户详情页里有加好友按钮），
+/// 不在搜索列表里直接发请求，避免误点 + 提供更完整的用户信息预览。
+class _SearchResultRow extends ConsumerWidget {
   final UserSummary user;
-  final VoidCallback onAdd;
 
-  const _SearchResultRow({
-    super.key,
-    required this.user,
-    required this.onAdd,
-  });
+  const _SearchResultRow({super.key, required this.user});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final friendState = ref.watch(friendListProvider);
+    final isFriend = friendState.isFriend(user.username);
+    final hasOutgoing = friendState.hasOutgoing(user.username);
+
+    // 状态徽章（已添加 → 灰文本；已申请 → 灰按钮；可添加 → chevron）
+    final Widget trailing;
+    if (isFriend) {
+      trailing = const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10),
+        child: Text(
+          '已添加',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF999999),
+            fontWeight: FontWeight.w300,
+          ),
+        ),
+      );
+    } else if (hasOutgoing) {
+      trailing = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F0F0),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          '已申请',
+          style: TextStyle(
+            fontSize: 12,
+            color: Color(0xFF999999),
+            fontWeight: FontWeight.w300,
+          ),
+        ),
+      );
+    } else {
+      trailing = const Icon(Icons.chevron_right,
+          color: Color(0xFFBDBDBD), size: 20);
+    }
+
     return Material(
       color: Colors.white,
       child: InkWell(
-        onTap: onAdd,
+        onTap: () => context.push('/user/${user.username}'),
         child: Column(
           children: [
             Padding(
@@ -232,19 +254,7 @@ class _SearchResultRow extends StatelessWidget {
                       ],
                     ),
                   ),
-                  FilledButton(
-                    onPressed: onAdd,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF07C160),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size(64, 32),
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                    child: const Text('加好友', style: TextStyle(fontSize: 13)),
-                  ),
+                  trailing,
                 ],
               ),
             ),

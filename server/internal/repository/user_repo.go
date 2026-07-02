@@ -166,18 +166,18 @@ func (r *UserRepo) GetIDByUsername(username string) (string, error) {
 // 用 ILIKE 前缀匹配(`query%`),走 idx_users_username(UNIQUE 索引支持前缀范围扫描)。
 // 大小写不敏感对齐主流 IM 习惯。limit 上限由调用方控制(spec 建议 ≤ 20)。
 //
-// 返回结果不含调用方自己(由 handler 层用 WHERE id != $me 过滤,本方法不知调用者身份)。
+// excludeID 用于排除调用方自己(避免搜到自己),空字符串时不过滤。
 // 不存在的 username 返回空切片 + nil err,不报错。
-func (r *UserRepo) SearchByUsername(query string, limit int) ([]model.UserSummary, error) {
+func (r *UserRepo) SearchByUsername(query, excludeID string, limit int) ([]model.UserSummary, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	rows, err := r.db.Query(
 		`SELECT username, nickname, avatar_url
-		 FROM users WHERE username ILIKE $1 || '%'
+		 FROM users WHERE username ILIKE $1 || '%' AND id != $2
 		 ORDER BY username
-		 LIMIT $2`,
-		query, limit,
+		 LIMIT $3`,
+		query, excludeID, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -203,6 +203,24 @@ func (r *UserRepo) GetSummaryByID(id string) (*model.UserSummary, error) {
 	err := r.db.QueryRow(
 		`SELECT username, nickname, avatar_url FROM users WHERE id = $1`,
 		id,
+	).Scan(&s.Username, &s.Nickname, &s.AvatarURL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// GetSummaryByUsername 按 username 查 UserSummary（不含 user_id，spec §4.2 防枚举）。
+// 用于 client 端「用户详情页」按 username 拉对方资料。
+// 用户不存在返 (nil, nil) 让调用方用 nil 判断分支。
+func (r *UserRepo) GetSummaryByUsername(username string) (*model.UserSummary, error) {
+	s := &model.UserSummary{}
+	err := r.db.QueryRow(
+		`SELECT username, nickname, avatar_url FROM users WHERE username = $1`,
+		username,
 	).Scan(&s.Username, &s.Nickname, &s.AvatarURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

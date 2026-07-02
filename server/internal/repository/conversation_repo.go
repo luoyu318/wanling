@@ -82,7 +82,22 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 		       (SELECT ag.avatar_url FROM agents ag
 		          JOIN conversation_participants pa
 		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
-		          LIMIT 1) AS agent_avatar
+		          LIMIT 1) AS agent_avatar,
+		       (SELECT u.username FROM users u
+		          JOIN conversation_participants pa
+		            ON pa.member_id = u.id AND pa.member_type = 'user' AND pa.conv_id = c.id
+		          WHERE u.id != $1
+		          LIMIT 1) AS other_username,
+		       (SELECT u.nickname FROM users u
+		          JOIN conversation_participants pa
+		            ON pa.member_id = u.id AND pa.member_type = 'user' AND pa.conv_id = c.id
+		          WHERE u.id != $1
+		          LIMIT 1) AS other_nickname,
+		       (SELECT u.avatar_url FROM users u
+		          JOIN conversation_participants pa
+		            ON pa.member_id = u.id AND pa.member_type = 'user' AND pa.conv_id = c.id
+		          WHERE u.id != $1
+		          LIMIT 1) AS other_avatar
 		FROM conversations c
 		JOIN conversation_participants p
 		  ON p.conv_id = c.id AND p.member_id = $1 AND p.member_type = 'user'
@@ -98,18 +113,22 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 	var items []model.ConversationListItem
 	for rows.Next() {
 		var (
-			item         model.ConversationListItem
-			titleNS      sql.NullString
-			avatarURLNS  sql.NullString
-			agentID      sql.NullString
-			agentName    sql.NullString
-			agentAvatar  sql.NullString
+			item             model.ConversationListItem
+			titleNS          sql.NullString
+			avatarURLNS      sql.NullString
+			agentID          sql.NullString
+			agentName        sql.NullString
+			agentAvatar      sql.NullString
+			otherUsername    sql.NullString
+			otherNickname    sql.NullString
+			otherAvatarURL   sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID, &item.Type, &titleNS, &avatarURLNS,
 			&item.LastMessageContent, &item.LastMessageAt, &item.CreatedAt,
 			&item.UnreadCount, &item.PinnedAt, &item.HiddenAt,
 			&agentID, &agentName, &agentAvatar,
+			&otherUsername, &otherNickname, &otherAvatarURL,
 		); err != nil {
 			return nil, err
 		}
@@ -121,6 +140,20 @@ func (r *ConversationRepo) ListForUser(userID string) ([]model.ConversationListI
 				ID:        agentID.String,
 				Name:      agentName.String,
 				AvatarURL: agentAvatar.String,
+			}
+		}
+		// dm_user_user 才填 OtherUser 摘要(对方 user);其他 type 留 nil。
+		// 排除自己(WHERE u.id != $1)确保拿到的是对方 user。
+		if otherUsername.Valid {
+			var nickname *string
+			if otherNickname.Valid && otherNickname.String != "" {
+				s := otherNickname.String
+				nickname = &s
+			}
+			item.OtherUser = &model.UserSummary{
+				Username:  otherUsername.String,
+				Nickname:  nickname,
+				AvatarURL: otherAvatarURL.String,
 			}
 		}
 		items = append(items, item)

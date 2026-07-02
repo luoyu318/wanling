@@ -86,12 +86,13 @@ func (h *ConversationHandler) List(c *gin.Context) {
 //
 // type 取值见 spec:dm_user_user / dm_user_agent / group_user / group_mixed。
 type CreateConversationReq struct {
-	Type        string   `json:"type"`
-	MemberIDs   []string `json:"member_ids"`
-	MemberTypes []string `json:"member_types"`
-	Title       string   `json:"title"`
-	AvatarURL   string   `json:"avatar_url"`
-	AgentID     string   `json:"agent_id"` // 老兼容字段
+	Type            string   `json:"type"`
+	MemberIDs       []string `json:"member_ids"`
+	MemberTypes     []string `json:"member_types"`
+	MemberUsernames []string `json:"member_usernames"` // dm_user_user 专用：client 不持 user_id（spec §4.2 防枚举），按 username 反查
+	Title           string   `json:"title"`
+	AvatarURL       string   `json:"avatar_url"`
+	AgentID         string   `json:"agent_id"` // 老兼容字段
 }
 
 // Create 创建会话(user 视角)。
@@ -133,6 +134,27 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 
 	// dm_user_user 好友前置校验(spec §4.2)
 	if req.Type == "dm_user_user" {
+		// client 不持有 user_id（spec §4.2），优先按 member_usernames 反查。
+		// 反查后填回 MemberIDs / MemberTypes，统一后续路径。
+		if len(req.MemberUsernames) > 0 {
+			if len(req.MemberUsernames) != 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "dm_user_user requires exactly 1 member"})
+				return
+			}
+			otherID, err := h.userRepo.GetIDByUsername(req.MemberUsernames[0])
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+					return
+				}
+				log.Printf("[conv-create] GetIDByUsername error: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+				return
+			}
+			req.MemberIDs = []string{otherID}
+			req.MemberTypes = []string{"user"}
+		}
+
 		if len(req.MemberIDs) != 1 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "dm_user_user requires exactly 1 member"})
 			return

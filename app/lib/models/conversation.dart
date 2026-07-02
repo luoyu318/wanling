@@ -1,6 +1,7 @@
 import 'agent.dart';
 import 'msg_type.dart';
 import 'participant.dart';
+import 'user_summary.dart';
 
 /// 会话模型(N 方 participants 通用)。
 ///
@@ -19,8 +20,12 @@ class Conversation {
   final String? avatarUrl;
 
   /// dm_user_agent 场景填(向后兼容老 APP),其他 type 为 null。
-  /// UI 渲染优先级:title > agent > participants 拼接。
+  /// UI 渲染优先级:title > agent > otherUser > participants 拼接。
   final AgentSummary? agent;
+
+  /// dm_user_user 场景填(对方 user 摘要,server ListForUser 返),
+  /// 其他 type 为 null。UserSummary 不含 user_id(spec §4.2 防枚举)。
+  final UserSummary? otherUser;
 
   /// 会话全部参与者摘要(server BatchLoadParticipantSummaries 返回)。
   final List<Participant> participants;
@@ -41,6 +46,7 @@ class Conversation {
     this.title,
     this.avatarUrl,
     this.agent,
+    this.otherUser,
     required this.participants,
     required this.lastMessageContent,
     required this.lastMessageAt,
@@ -64,6 +70,7 @@ class Conversation {
     }
 
     final agentJson = json['agent'];
+    final otherUserJson = json['other_user'];
     final participantsJson = json['participants'] as List? ?? [];
 
     return Conversation(
@@ -73,6 +80,9 @@ class Conversation {
       avatarUrl: json['avatar_url'] as String?,
       agent: agentJson != null
           ? AgentSummary.fromJson(agentJson as Map<String, dynamic>)
+          : null,
+      otherUser: otherUserJson != null
+          ? UserSummary.fromJson(otherUserJson as Map<String, dynamic>)
           : null,
       participants: participantsJson
           .map((e) => Participant.fromJson(e as Map<String, dynamic>))
@@ -103,6 +113,30 @@ class Conversation {
 
   /// 是否 1-1 单聊。
   bool get isDM => type == 'dm_user_user' || type == 'dm_user_agent';
+
+  /// UI 通用显示名（按 type 智能分流，避免 NPE）。
+  ///
+  /// 渲染顺序：
+  /// 1. 群聊：title（必填）
+  /// 2. dm_user_agent：agent.name（agent 非空）
+  /// 3. dm_user_user：从 participants 找对方 user 用 nickname/username
+  /// 4. fallback：'私聊'
+  ///
+  /// 注意：server List 接口不返 participants（仅 conversation_detail 才返），
+  /// 故 list 场景下 dm_user_user 会 fallback 到 '私聊'。进入详情页 reload 后
+  /// list 通过 WS 事件刷新会拿到 participants。
+  String get displayName {
+    if (title?.isNotEmpty == true) return title!;
+    if (agent != null) return agent!.name;
+    if (otherUser != null) return otherUser!.displayName;
+    final others = participants.where((p) => p.memberType == 'user');
+    if (others.isNotEmpty) return others.first.displayName;
+    return '私聊';
+  }
+
+  /// UI 通用头像 URL（agent 优先，dm_user_user 用 otherUser，其他空串走首字母色块）。
+  String get displayAvatarUrl =>
+      agent?.avatarUrl ?? otherUser?.avatarUrl ?? '';
 
   /// 最后一行消息预览(仅文本)。其他类型给出标签占位。
   String get lastMessagePreview {

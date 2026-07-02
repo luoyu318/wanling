@@ -86,9 +86,12 @@ List<String> computeNewlySeenUnread({
 /// - 长按消息弹 MessageContextMenu(OverlayEntry + LayerLink 紧贴气泡)
 class ChatPage extends ConsumerStatefulWidget {
   final String convId;
-  final String agentId;
+  /// agentId 仅用于显示 agent 信息（typing / AppBar / 在线状态）。
+  /// 可空：user-user DM 会话无 agent，传 null。
+  /// 实际消息发送走 conversationId 路由（N 方 participants 模型）。
+  final String? agentId;
 
-  const ChatPage({super.key, required this.convId, required this.agentId});
+  const ChatPage({super.key, required this.convId, this.agentId});
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -202,7 +205,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (d == null) return;
       if (d['conversation_id'] == widget.convId &&
           d['sender_type'] == 'agent') {
-        _typingNotifier.clearTyping(widget.agentId);
+        if (widget.agentId != null) {
+          _typingNotifier.clearTyping(widget.agentId!);
+        }
       }
     });
     // 不需要 Bug C initState 兜底：chatProvider 是 autoDispose，重入会话时
@@ -556,8 +561,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   );
 
   String get _agentName {
-    final agent = ref.watch(agentByIdProvider(widget.agentId));
-    return agent?.name ?? '聊天';
+    // 优先用 conversationProvider 的 Conversation（含 type / otherUser 等完整信息）。
+    // dm_user_user 会话 agent=null 但 otherUser 有昵称 → 用 displayName 智能分流。
+    final conv = ref.watch(conversationProvider
+        .select((list) => list.where((c) => c.id == widget.convId).firstOrNull));
+    if (conv != null) return conv.displayName;
+    // fallback：conversationProvider 还没拉到该会话（如刚跳转 initState 阶段），
+    // 用旧逻辑查 agent。
+    if (widget.agentId == null || widget.agentId!.isEmpty) return '私聊';
+    final agent = ref.watch(agentByIdProvider(widget.agentId!));
+    return agent?.name ?? '私聊';
   }
 
   // ============ 长按菜单 ============
@@ -984,10 +997,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     final agentName = _agentName;
-    final isTyping = ref.watch(
-      typingProvider.select((m) => m[widget.agentId] ?? false),
-    );
-    final agentStatus = ref.watch(agentByIdProvider(widget.agentId))?.status;
+    // 当前 user id,用于判断消息方向（user-user 会话双方 senderType 都是 'user'，
+    // 必须用 senderId 区分自己 vs 对方）。
+    final currentUserId =
+        ref.watch(authProvider.select((s) => s.user?.id)) ?? '';
+    final isTyping = widget.agentId == null || widget.agentId!.isEmpty
+        ? false
+        : ref.watch(typingProvider.select((m) => m[widget.agentId!] ?? false));
+    final agentStatus = widget.agentId == null || widget.agentId!.isEmpty
+        ? null
+        : ref.watch(agentByIdProvider(widget.agentId!))?.status;
 
     if (_pendingScroll && (chatState.messages.isNotEmpty || isTyping)) {
       debugPrint('[build] _pendingScroll=true → scheduling _doScrollToBottom');
@@ -1153,7 +1172,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           final bubble = MessageBubble(
                             key: bubbleKey,
                             message: msg,
-                            isMe: msg.senderType == 'user',
+                            isMe: msg.senderId == currentUserId,
                             baseUrl: ref.read(settingsProvider),
                             token: ref.read(authProvider).token ?? '',
                             conversationMessages: chatState.messages,

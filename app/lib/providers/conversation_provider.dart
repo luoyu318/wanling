@@ -188,7 +188,8 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   }
 
   void removeByAgentId(String agentId) {
-    state = state.where((c) => c.agent!.id != agentId).toList();
+    // dm_user_user / 群聊的 agent=null（agentId != null 必然 != null → true，保留）。
+    state = state.where((c) => c.agent?.id != agentId).toList();
   }
 
   void upsert(Conversation conv) {
@@ -392,8 +393,9 @@ void syncAgentAvatarsToBgService(List<Conversation> conversations) {
   try {
     final service = FlutterBackgroundService();
     for (final c in conversations) {
-      final agentId = c.agent!.id;
-      if (agentId.isEmpty) continue;
+      // dm_user_user / 群聊 agent=null，跳过（无 agent 头像可同步）。
+      final agentId = c.agent?.id;
+      if (agentId == null || agentId.isEmpty) continue;
       service.invoke('syncAgentAvatar', {
         'agentId': agentId,
         'avatarUrl': c.agent!.avatarUrl,

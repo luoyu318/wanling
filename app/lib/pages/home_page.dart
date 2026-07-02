@@ -244,13 +244,7 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
           icon: const Icon(Icons.add, color: Color(0xFF07C160)),
           onSelected: (v) {
             if (v == 'add_friend') {
-              // /friends/add 路由是 Task 4.2 范围,本期占位:用户点了提示待开放。
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('好友系统即将开放'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
+              context.push('/friends/add');
             } else if (v == 'create_group') {
               context.push('/conversations/new/group');
             }

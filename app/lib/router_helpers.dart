@@ -6,9 +6,13 @@ import 'models/agent.dart';
 import 'providers/auth_provider.dart' show apiProvider;
 import 'utils/snackbar.dart';
 
-/// 拼接 chat 路由路径：convId 走 path 参数，agentId 走 query。
-String chatRoute(String convId, String agentId) =>
-    '/chat/$convId?agentId=$agentId';
+/// 拼接 chat 路由路径：convId 走 path 参数，agentId 走 query（可空）。
+///
+/// user-user DM 会话不传 agentId（路由层会解析成 null）。
+String chatRoute(String convId, [String? agentId]) {
+  if (agentId == null || agentId.isEmpty) return '/chat/$convId';
+  return '/chat/$convId?agentId=$agentId';
+}
 
 /// findOrCreate 会话后跳转 chat 页（统一错误处理）。
 /// 调用方需在调用前已确保 conversation 存在的场景（如 IM 列表已有 conv），

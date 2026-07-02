@@ -128,12 +128,14 @@ class ApiService {
   /// 创建会话(支持 4 种 type + group_mixed 群聊)。
   ///
   /// member_ids / member_types 一一对应(同长度数组)。
-  /// type=dm_user_user 时 server 会前置校验好友关系,非好友返 403。
+  /// type=dm_user_user 时优先用 memberUsernames（client 不持 user_id 防枚举，
+  /// server 内部反查），server 会前置校验好友关系,非好友返 403。
   /// type=group_user/group_mixed 时 title/avatarUrl 可填(群聊用)。
   Future<Map<String, dynamic>> createConversation({
     required String type,
-    required List<String> memberIds,
-    required List<String> memberTypes,
+    List<String> memberIds = const [],
+    List<String> memberTypes = const [],
+    List<String> memberUsernames = const [],
     String? title,
     String? avatarUrl,
   }) async {
@@ -141,6 +143,7 @@ class ApiService {
       'type': type,
       'member_ids': memberIds,
       'member_types': memberTypes,
+      if (memberUsernames.isNotEmpty) 'member_usernames': memberUsernames,
       if (title != null) 'title': title,
       if (avatarUrl != null) 'avatar_url': avatarUrl,
     });
@@ -190,6 +193,13 @@ class ApiService {
       queryParameters: {'username': username},
     );
     return (res.data as Map)['users'] as List;
+  }
+
+  /// 按 username 查用户详情（返 UserSummary JSON，不含 user_id）。
+  /// 用于「用户详情页」按 username 拉对方资料。404 时抛 DioException。
+  Future<Map<String, dynamic>> getUserByUsername(String username) async {
+    final res = await _dio.get('/api/users/by-username/$username');
+    return res.data;
   }
 
   /// 发起好友请求(body 用 username,不暴露 user_id)。

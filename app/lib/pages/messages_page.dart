@@ -68,7 +68,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                     conv: c,
                     key: ValueKey('conv_${c.id}'),
                     nextIsPinned: nextIsPinned,
-                    onTap: () => context.push(chatRoute(c.id, c.agent!.id)),
+                    onTap: () => context.push(chatRoute(c.id, c.agent?.id)),
                     onLongPressStart: (details) =>
                         _showConvMenu(context, details.globalPosition, c),
                   );
@@ -368,8 +368,8 @@ class _ConvTileState extends State<_ConvTile> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Avatar(
-                    name: conv.agent!.name,
-                    url: conv.agent!.avatarUrl,
+                    name: conv.displayName,
+                    url: conv.displayAvatarUrl,
                     size: 48,
                     unreadCount: conv.unreadCount,
                   ),
@@ -382,7 +382,7 @@ class _ConvTileState extends State<_ConvTile> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            conv.agent!.name,
+                            conv.displayName,
                             style: const TextStyle(
                               fontSize: 17,
                               color: Color(0xFF111111),

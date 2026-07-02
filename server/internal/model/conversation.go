@@ -18,7 +18,9 @@ type Conversation struct {
 }
 
 // ConversationListItem 是 IM 风格列表的一行:会话 + 个人维度 unread/pin/hide + 对端摘要。
-// 1-1 dm_user_agent 时 Agent 字段填,其他 type 为 nil(UI 走 Title/AvatarURL)。
+//   - dm_user_agent 时 Agent 字段填,OtherUser 为 nil
+//   - dm_user_user 时 OtherUser 字段填(对方 user),Agent 为 nil
+//   - 群聊两者均 nil(UI 走 Title/AvatarURL 或 Participants)
 type ConversationListItem struct {
 	ID                 string              `json:"id" db:"id"`
 	Type               string              `json:"type" db:"type"`
@@ -30,6 +32,7 @@ type ConversationListItem struct {
 	UnreadCount        int                 `json:"unread_count" db:"unread_count"`
 	PinnedAt           *time.Time          `json:"pinned_at,omitempty" db:"pinned_at"`
 	HiddenAt           *time.Time          `json:"hidden_at,omitempty" db:"hidden_at"`
-	Agent              *AgentSummary       `json:"agent,omitempty" db:"-"` // dm_user_agent 才填
-	Participants       []ParticipantSummary `json:"participants" db:"-"`    // 应用层组装
+	Agent              *AgentSummary       `json:"agent,omitempty" db:"-"`     // dm_user_agent 才填
+	OtherUser          *UserSummary        `json:"other_user,omitempty" db:"-"` // dm_user_user 才填
+	Participants       []ParticipantSummary `json:"participants" db:"-"`        // 应用层组装
 }

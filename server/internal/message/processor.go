@@ -83,59 +83,79 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		return
 	}
 
-	// payload 同时包含两端 ID + content。
+	// payload 同时包含两端 ID + content + 可选 conversation_id。
+	// conversation_id 路由（新协议）：APP 端用，先建会话再发消息，server 直发不建。
+	// agent_id / user_id 路由（旧协议）：hermes adapter 用，按对端 ID FindOrCreateDM。
 	var payload struct {
-		AgentID string          `json:"agent_id"`
-		UserID  string          `json:"user_id"`
-		Content json.RawMessage `json:"content"`
+		AgentID        string          `json:"agent_id"`
+		UserID         string          `json:"user_id"`
+		ConversationID string          `json:"conversation_id"`
+		Content        json.RawMessage `json:"content"`
 	}
 	if err := json.Unmarshal(wsMsg.D, &payload); err != nil {
 		log.Println("解析消息失败:", err)
 		return
 	}
 
-	// 根据 sender 推导对端与会话双方 ID + 类型。
-	// user 发送：sender=(userID, user)，对端 agent；agent 发送：sender=(agentID, agent)，对端 user。
-	var otherID, otherType string
-	if senderType == "user" {
-		otherID = payload.AgentID
-		otherType = "agent"
+	var convID string
+	if payload.ConversationID != "" {
+		// 新路径：直发到指定会话。校验 sender 是 participant（fail fast 防伪造 conv_id）。
+		convID = payload.ConversationID
+		ok, err := p.participantRepo.Exists(convID, senderID, senderType)
+		if err != nil {
+			log.Printf("校验 sender participant 失败 conv=%s: %v", convID, err)
+			return
+		}
+		if !ok {
+			log.Printf("sender 不在会话 participants 中 conv=%s sender=%s/%s",
+				convID, senderType, senderID)
+			return
+		}
 	} else {
-		otherID = payload.UserID
-		otherType = "user"
-	}
-	if otherID == "" {
-		log.Printf("消息缺对端 ID: sender=%s/%s", senderType, senderID)
-		return
-	}
+		// 旧路径：按对端 ID 路由 + FindOrCreateDM。
+		// 根据 sender 推导对端与会话双方 ID + 类型。
+		// user 发送：sender=(userID, user)，对端 agent；agent 发送：sender=(agentID, agent)，对端 user。
+		var otherID, otherType string
+		if senderType == "user" {
+			otherID = payload.AgentID
+			otherType = "agent"
+		} else {
+			otherID = payload.UserID
+			otherType = "user"
+		}
+		if otherID == "" {
+			log.Printf("消息缺对端 ID: sender=%s/%s", senderType, senderID)
+			return
+		}
 
-	// dm type 按对端 member_type 自动选:
-	//   user ↔ agent → dm_user_agent
-	//   user ↔ user  → dm_user_user
-	//   agent ↔ agent → 不支持(本期 hermes 不发 agent↔agent 消息,且 agents.owner_id 外键
-	//                   到 users,业务上 agent 不应作为 dm_user_user 的发起方)
-	dmType := "dm_user_agent"
-	if senderType == "user" && otherType == "user" {
-		dmType = "dm_user_user"
-	}
+		// dm type 按对端 member_type 自动选:
+		//   user ↔ agent → dm_user_agent
+		//   user ↔ user  → dm_user_user
+		//   agent ↔ agent → 不支持(本期 hermes 不发 agent↔agent 消息,且 agents.owner_id 外键
+		//                   到 users,业务上 agent 不应作为 dm_user_user 的发起方)
+		dmType := "dm_user_agent"
+		if senderType == "user" && otherType == "user" {
+			dmType = "dm_user_user"
+		}
 
-	conv, err := p.convRepo.FindOrCreateDM(dmType, repository.DMMembers{
-		Initiator: repository.ParticipantInput{
-			MemberID:   senderID,
-			MemberType: senderType,
-			Role:       "owner",
-		},
-		Other: repository.ParticipantInput{
-			MemberID:   otherID,
-			MemberType: otherType,
-			Role:       "member",
-		},
-	})
-	if err != nil {
-		log.Printf("创建会话失败 (%s): %v", dmType, err)
-		return
+		conv, err := p.convRepo.FindOrCreateDM(dmType, repository.DMMembers{
+			Initiator: repository.ParticipantInput{
+				MemberID:   senderID,
+				MemberType: senderType,
+				Role:       "owner",
+			},
+			Other: repository.ParticipantInput{
+				MemberID:   otherID,
+				MemberType: otherType,
+				Role:       "member",
+			},
+		})
+		if err != nil {
+			log.Printf("创建会话失败 (%s): %v", dmType, err)
+			return
+		}
+		convID = conv.ID
 	}
-	convID := conv.ID
 
 	// seq 是 dispatch 序号，与持久化无关，放在事务外即可（避免事务内提序列号在回滚时漏号）。
 	newSeq := atomic.AddInt64(&p.seq, 1)

@@ -17,6 +17,7 @@ import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
 import 'pages/select_account_page.dart';
 import 'pages/splash_page.dart';
+import 'pages/user_detail_page.dart';
 import 'providers/auth_provider.dart';
 import 'services/notification_service.dart';
 
@@ -150,15 +151,27 @@ final routerProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
         ),
       ),
-      // Chat 路由：convId 走 path 参数，agentId 走 query。
+      // Chat 路由：convId 走 path 参数，agentId 走 query（可空：
+      // user-user DM 会话无 agent，传空或不传）。
       // 调用方在 push 前必须已 findOrCreateConversation 拿到 convId。
       GoRoute(
         path: '/chat/:convId',
         pageBuilder: (context, state) {
           final convId = state.pathParameters['convId']!;
-          final agentId = state.uri.queryParameters['agentId']!;
+          final agentId = state.uri.queryParameters['agentId'];
           return _cupertinoPage(
             child: ChatPage(convId: convId, agentId: agentId),
+            key: state.pageKey,
+          );
+        },
+      ),
+      // 用户详情页（按 username 查，path 参数；不暴露 user_id）。
+      GoRoute(
+        path: '/user/:username',
+        pageBuilder: (context, state) {
+          final username = state.pathParameters['username']!;
+          return _cupertinoPage(
+            child: UserDetailPage(username: username),
             key: state.pageKey,
           );
         },

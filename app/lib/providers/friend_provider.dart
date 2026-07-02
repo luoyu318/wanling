@@ -38,6 +38,14 @@ class FriendListState {
   /// 总未读 = 收到的请求数（简化：每个 incoming 都是"未处理"）。
   int get totalUnread => incomingCount;
 
+  /// 该 username 是否已是好友。
+  bool isFriend(String username) =>
+      friends.any((f) => f.username == username);
+
+  /// 是否已向该 username 发出 pending 请求。
+  bool hasOutgoing(String username) =>
+      outgoing.any((r) => r.user.username == username);
+
   FriendListState copyWith({
     List<UserSummary>? friends,
     List<FriendRequest>? incoming,

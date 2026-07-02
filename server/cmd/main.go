@@ -227,6 +227,8 @@ func main() {
 		userAuth.PUT("/api/users/me/password", userHandler.ChangePassword)
 		// 好友系统(spec §4.2):用户搜索 + 好友请求 + 好友列表
 		userAuth.GET("/api/users/search", userSearchLimiter, userSearchHandler.Search)
+		// 用户详情页（按 username 查 UserSummary，不暴露 user_id）
+		userAuth.GET("/api/users/by-username/:username", userSearchHandler.GetByUsername)
 		userAuth.POST("/api/users/me/friend-requests", friendRequestLimiter, friendshipHandler.CreateRequest)
 		userAuth.GET("/api/users/me/friend-requests/incoming", friendshipHandler.ListIncoming)
 		userAuth.GET("/api/users/me/friend-requests/outgoing", friendshipHandler.ListOutgoing)

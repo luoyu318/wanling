@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../models/friendship.dart';
 import '../models/user_summary.dart';
+import '../providers/auth_provider.dart' show apiProvider;
 import '../providers/friend_provider.dart';
+import '../router_helpers.dart' show chatRoute;
 import '../utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
@@ -150,7 +152,7 @@ class _FriendsTab extends ConsumerWidget {
                 title: const Text('发消息'),
                 onTap: () {
                   Navigator.pop(sheetCtx);
-                  _startDm(context, u);
+                  _startDm(context, ref, u);
                 },
               ),
               ListTile(
@@ -171,19 +173,24 @@ class _FriendsTab extends ConsumerWidget {
     );
   }
 
-  /// 发消息(创建 dm_user_user 会话并跳转 ChatPage)。
+  /// 发消息（创建 dm_user_user 会话并跳转 ChatPage）。
   ///
-  /// 已知限制:ChatPage 当前必传 agentId(为 1-1 agent 模型设计),
-  /// user-user DM 的 ChatPage 接入由 Task 4.x(端到端验证)处理。
-  /// 本 task 范围内:用 snackbar 提示「功能即将开放」保视觉一致,
-  /// 避免跳到 ChatPage 因 agentId 缺失 crash。
-  void _startDm(BuildContext context, UserSummary u) {
-    showAppSnackBar(context, '1-1 会话功能即将开放',
-        type: SnackBarType.info);
-    // TODO(Task 4.x): 接通 user-user DM 路由。
-    // 链路:api.createConversation(type='dm_user_user',
-    //   memberIds=[me.username, u.username], memberTypes=['user','user'])
-    //   → 拿 convId → context.pushReplacement('/chat/$convId?agentId=')
+  /// 链路：api.createConversation(type='dm_user_user', memberUsernames=[u.username])
+  /// → server 内部 username → user_id 反查 + 好友关系校验 → 返 conv
+  /// → pushReplacement chatRoute(convId)（user-user 无 agent，不传 agentId）。
+  Future<void> _startDm(BuildContext context, WidgetRef ref, UserSummary u) async {
+    try {
+      final data = await ref.read(apiProvider).createConversation(
+            type: 'dm_user_user',
+            memberUsernames: [u.username],
+          );
+      if (!context.mounted) return;
+      final convId = data['id'] as String;
+      context.pushReplacement(chatRoute(convId));
+    } catch (e) {
+      if (!context.mounted) return;
+      showAppSnackBar(context, '创建会话失败: $e', type: SnackBarType.error);
+    }
   }
 
   void _confirmRemove(

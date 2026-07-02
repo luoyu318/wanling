@@ -87,10 +87,12 @@ class _AgentListView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final convs = ref.watch(conversationProvider);
-    // 一次性算出 agentId → 未读累加 map（O(convs)）
+    // 一次性算出 agentId → 未读累加 map（O(convs)）。
+    // 跳过 agent==null 的会话（dm_user_user / 群聊），它们不计入 agent 未读。
     final unreadByAgent = <String, int>{};
     for (final c in convs) {
-      final aid = c.agent!.id;
+      final aid = c.agent?.id;
+      if (aid == null) continue;
       unreadByAgent[aid] = (unreadByAgent[aid] ?? 0) + c.unreadCount;
     }
 

@@ -199,11 +199,16 @@ class WebSocketService {
     _channel?.sink.add(jsonEncode(msg.toJson()));
   }
 
-  void sendMessage(String agentId, Map<String, dynamic> content) {
+  /// 发消息到指定会话（按 conversation_id 路由，N 方 participants 模型）。
+  ///
+  /// 协议 payload：`{conversation_id, content}`。server processor 优先解析
+  /// conversation_id 直发到会话（校验 sender 是 participant）。
+  /// 旧 agent_id 路由仍兼容（hermes adapter 用），APP 端统一走 conv_id。
+  void sendMessage(String conversationId, Map<String, dynamic> content) {
     send(WSMessage(
       op: OpCodes.dispatch,
       t: 'MESSAGE_CREATE',
-      d: {'agent_id': agentId, 'content': content},
+      d: {'conversation_id': conversationId, 'content': content},
     ));
   }
 

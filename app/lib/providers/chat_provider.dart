@@ -17,13 +17,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
   final ApiService api;
   final WebSocketService ws;
   final String conversationId;
-  final String agentId;
+  final String? agentId;
+  /// 当前 user.id，用于乐观更新消息的 senderId（user-user 会话按 senderId 区分自己/对方，
+  /// 空字符串占位会导致消息显示在对方侧，见 chat_page.dart isMe 判断）。
+  final String currentUserId;
   StreamSubscription<WSMessage>? _subscription;
   StreamSubscription<WSMessage>? _updateSubscription;
 
   static const int _pageSize = 100;
 
-  ChatNotifier(this.api, this.ws, this.conversationId, this.agentId)
+  ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId)
       : super(const ChatState()) {
     CardContentRenderer.onDecide = (approvalId, actionId, reason) {
       return api.decideApproval(approvalId, actionId, reason: reason);
@@ -326,17 +329,49 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void sendText(String text) {
-    ws.sendMessage(agentId, {
+    _appendOptimisticMessage(content: {
+      'msg_type': MsgType.text.value,
+      'data': {'text': text},
+    });
+    ws.sendMessage(conversationId, {
       'msg_type': MsgType.text.value,
       'data': {'text': text},
     });
   }
 
   void sendFile(String fileId, MsgType msgType) {
-    ws.sendMessage(agentId, {
+    _appendOptimisticMessage(content: {
       'msg_type': msgType.value,
       'data': {'file_id': fileId},
     });
+    ws.sendMessage(conversationId, {
+      'msg_type': msgType.value,
+      'data': {'file_id': fileId},
+    });
+  }
+
+  /// 发送方乐观更新：本地立即插入一条临时消息让 UI 即时显示。
+  ///
+  /// **为什么需要**：server `processor.go` 的 dispatch 只发给 recipients，
+  /// 过滤了 sender 自己（line 171-180 + 228-234）。sender 收不到自己的
+  /// MESSAGE_CREATE 事件，纯依赖 WS 推回会导致消息发出后聊天窗不显示，
+  /// 要退出重进才能看到。主流 IM 的做法是 client 端乐观 append。
+  ///
+  /// **id 用 local_ 前缀**：避免跟 server 生成的 UUID 冲突。退出重进时
+  /// 从 DB 拉到的是 server id，本地 temp id 不再出现，无重复风险。
+  /// **sender_id 用真实 currentUserId**：isMe 判断走 senderId == currentUserId，
+  /// 必须用真实 id 才能让乐观消息显示在右侧（自己侧）。
+  void _appendOptimisticMessage({required Map<String, dynamic> content}) {
+    final tempMsg = ChatMessage(
+      id: 'local_${DateTime.now().microsecondsSinceEpoch}',
+      conversationId: conversationId,
+      senderType: 'user',
+      senderId: currentUserId,
+      content: content,
+      isRead: true,
+      createdAt: DateTime.now(),
+    );
+    state = state.copyWith(messages: [tempMsg, ...state.messages]);
   }
 
   Future<void> deleteMessages(List<String> ids) async {
@@ -389,8 +424,9 @@ final connStateProvider = StreamProvider<ConnState>((ref) {
   });
 });
 
-/// family key 用 record：convId 决定历史拉取与 WS 过滤，
-/// agentId 决定发送目标。两者共同唯一确定一个聊天上下文。
+/// family key 用 record：convId 决定历史拉取 + WS 发送目标（按 conv_id 路由），
+/// agentId 仅用于 ChatPage 显示 agent 信息（typing / AppBar / 在线状态），
+/// 可空（user-user DM 会话无 agent）。两者共同唯一确定一个聊天上下文。
 ///
 /// **autoDispose**：ChatPage 退出即 dispose，重入重新 _initialize。
 /// 修复 messages 累积 bug：原 family（非 autoDispose）缓存 state，重入不
@@ -399,11 +435,12 @@ final connStateProvider = StreamProvider<ConnState>((ref) {
 /// autoDispose 保证每次进入会话 state 都是全新的，firstUnread 始终是
 /// messages.last（视觉顶部），jumpTo 容易精确跳转。
 final chatProvider = StateNotifierProvider.autoDispose.family<ChatNotifier, ChatState,
-    ({String convId, String agentId})>((ref, key) {
+    ({String convId, String? agentId})>((ref, key) {
   return ChatNotifier(
     ref.watch(apiProvider),
     ref.watch(wsProvider),
     key.convId,
     key.agentId,
+    ref.watch(authProvider.select((s) => s.user?.id ?? '')),
   );
 });
