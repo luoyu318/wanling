@@ -346,6 +346,26 @@ class ApiService {
     );
   }
 
+  /// 发送消息(HTTP 同步接口)。
+  ///
+  /// 与老 WS 路径(ws.sendMessage)的差异:HTTP 同步返 server message_id + created_at,
+  /// client 端可立即用 server id 替换乐观消息的 local id,撤回/编辑无 ID 不同步问题。
+  ///
+  /// 失败抛 DioException,调用方(ChatNotifier.sendText/sendFile)负责切 status=failed。
+  Future<({String messageId, DateTime createdAt})> sendMessage(
+    String conversationId,
+    Map<String, dynamic> content,
+  ) async {
+    final resp = await _dio.post('/api/messages', data: {
+      'conversation_id': conversationId,
+      'content': content,
+    });
+    return (
+      messageId: resp.data['message_id'] as String,
+      createdAt: DateTime.parse(resp.data['created_at'] as String),
+    );
+  }
+
   /// 批量隐藏消息。POST /api/messages/batch-delete  body: {"ids":[...]}
   /// 仅支持 hide scope(批量撤回歧义太大,本期不开)。
   /// 返回服务端实际隐藏的条数。

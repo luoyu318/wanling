@@ -11,6 +11,11 @@
 /// 切到 recalled 态而非移除,UI 显示「你/对方撤回了一条消息」占位。
 /// recalledByName 用于群聊场景显示「${name} 撤回了一条消息」,dm 场景 client
 /// 用 senderId == currentUserId 判断显示「你」还是「对方」。
+///
+/// status:发送状态(client-only,server 不持久化)。HTTP /api/messages 路径用:
+///   - sending:已插本地乐观消息,等待 server 返 message_id
+///   - sent:server 已确认,message_id 已替换为 server 真值
+///   - failed:发送失败,气泡外侧重试按钮,用户可手动重发
 class ChatMessage {
   final String id;
   final String conversationId;
@@ -35,6 +40,9 @@ class ChatMessage {
 
   final DateTime createdAt;
 
+  /// 发送状态(client-only,server 不持久化)。见类注释。
+  final MessageStatus status;
+
   ChatMessage({
     required this.id,
     required this.conversationId,
@@ -46,6 +54,7 @@ class ChatMessage {
     this.isRecalled = false,
     this.recalledByName,
     required this.createdAt,
+    this.status = MessageStatus.sent,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -60,6 +69,8 @@ class ChatMessage {
         isRead: false,
         isRecalled: false,
         createdAt: DateTime.parse(json['created_at']),
+        // server 不发 status 字段;历史/远端消息一律视为 sent。
+        status: MessageStatus.sent,
       );
 
   ChatMessage copyWith({
@@ -73,6 +84,7 @@ class ChatMessage {
     bool? isRecalled,
     String? recalledByName,
     DateTime? createdAt,
+    MessageStatus? status,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -85,6 +97,11 @@ class ChatMessage {
       isRecalled: isRecalled ?? this.isRecalled,
       recalledByName: recalledByName ?? this.recalledByName,
       createdAt: createdAt ?? this.createdAt,
+      status: status ?? this.status,
     );
   }
 }
+
+/// 消息发送状态(client-only,server 不持久化)。
+/// 见 ChatMessage.status 字段注释。
+enum MessageStatus { sending, sent, failed }

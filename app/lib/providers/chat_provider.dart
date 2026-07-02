@@ -343,50 +343,133 @@ class ChatNotifier extends StateNotifier<ChatState> {
     });
   }
 
-  void sendText(String text) {
-    _appendOptimisticMessage(content: {
+  Future<void> sendText(String text) async {
+    final content = {
       'msg_type': MsgType.text.value,
       'data': {'text': text},
-    });
-    ws.sendMessage(conversationId, {
-      'msg_type': MsgType.text.value,
-      'data': {'text': text},
-    });
+    };
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    _appendOptimisticMessage(content: content, localId: localId);
+    try {
+      final result = await api.sendMessage(conversationId, content);
+      _replaceLocalWithServerId(
+        localId,
+        serverId: result.messageId,
+        serverCreatedAt: result.createdAt,
+      );
+    } catch (e) {
+      _markFailed(localId);
+    }
   }
 
-  void sendFile(String fileId, MsgType msgType) {
-    _appendOptimisticMessage(content: {
+  Future<void> sendFile(String fileId, MsgType msgType) async {
+    final content = {
       'msg_type': msgType.value,
       'data': {'file_id': fileId},
-    });
-    ws.sendMessage(conversationId, {
-      'msg_type': msgType.value,
-      'data': {'file_id': fileId},
-    });
+    };
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    _appendOptimisticMessage(content: content, localId: localId);
+    try {
+      final result = await api.sendMessage(conversationId, content);
+      _replaceLocalWithServerId(
+        localId,
+        serverId: result.messageId,
+        serverCreatedAt: result.createdAt,
+      );
+    } catch (e) {
+      _markFailed(localId);
+    }
+  }
+
+  /// 重试失败的发送消息。点击失败气泡的重试按钮时调。
+  ///
+  /// 流程:找失败消息 → 切回 sending → 调 api.sendMessage →
+  /// 成功替换 id + 切 sent;失败再切 failed。
+  Future<void> retrySend(String failedLocalId) async {
+    final idx = state.messages.indexWhere((m) => m.id == failedLocalId);
+    if (idx < 0) return;
+    final msg = state.messages[idx];
+    if (msg.status != MessageStatus.failed) return;
+
+    // 切回 sending
+    state = state.copyWith(
+      messages: state.messages
+          .map((m) =>
+              m.id == failedLocalId ? m.copyWith(status: MessageStatus.sending) : m)
+          .toList(),
+    );
+
+    try {
+      final result = await api.sendMessage(conversationId, msg.content);
+      _replaceLocalWithServerId(
+        failedLocalId,
+        serverId: result.messageId,
+        serverCreatedAt: result.createdAt,
+      );
+    } catch (e) {
+      _markFailed(failedLocalId);
+    }
+  }
+
+  /// 删除本地失败消息(不调 server)。失败重试菜单的「删除」用。
+  void removeLocalMessage(String localId) {
+    state = state.copyWith(
+      messages: state.messages.where((m) => m.id != localId).toList(),
+    );
   }
 
   /// 发送方乐观更新：本地立即插入一条临时消息让 UI 即时显示。
   ///
-  /// **为什么需要**：server `processor.go` 的 dispatch 只发给 recipients，
-  /// 过滤了 sender 自己（line 171-180 + 228-234）。sender 收不到自己的
-  /// MESSAGE_CREATE 事件，纯依赖 WS 推回会导致消息发出后聊天窗不显示，
-  /// 要退出重进才能看到。主流 IM 的做法是 client 端乐观 append。
-  ///
-  /// **id 用 local_ 前缀**：避免跟 server 生成的 UUID 冲突。退出重进时
-  /// 从 DB 拉到的是 server id，本地 temp id 不再出现，无重复风险。
-  /// **sender_id 用真实 currentUserId**：isMe 判断走 senderId == currentUserId，
-  /// 必须用真实 id 才能让乐观消息显示在右侧（自己侧）。
-  void _appendOptimisticMessage({required Map<String, dynamic> content}) {
+  /// **id 用 local_ 前缀**：避免跟 server 生成的 UUID 冲突。HTTP 成功后调
+  /// _replaceLocalWithServerId 替换为 server 真值。
+  /// **sender_id 用真实 currentUserId**：isMe 判断走 senderId == currentUserId,
+  /// 必须用真实 id 才能让乐观消息显示在右侧(自己侧)。
+  /// **status=sending**:气泡外侧显示 loading,server 返回后切 sent 或 failed。
+  void _appendOptimisticMessage({
+    required Map<String, dynamic> content,
+    required String localId,
+  }) {
     final tempMsg = ChatMessage(
-      id: 'local_${DateTime.now().microsecondsSinceEpoch}',
+      id: localId,
       conversationId: conversationId,
       senderType: 'user',
       senderId: currentUserId,
       content: content,
       isRead: true,
       createdAt: DateTime.now(),
+      status: MessageStatus.sending,
     );
     state = state.copyWith(messages: [tempMsg, ...state.messages]);
+  }
+
+  /// HTTP 发送成功后,把本地 local_xxx id 替换为 server 真值。
+  /// 同步切 status=sent,server echo 后续到达时按 server id 去重(命中现有 _onMessageCreate)。
+  void _replaceLocalWithServerId(
+    String localId, {
+    required String serverId,
+    required DateTime serverCreatedAt,
+  }) {
+    state = state.copyWith(
+      messages: state.messages
+          .map((m) => m.id == localId
+              ? m.copyWith(
+                  id: serverId,
+                  createdAt: serverCreatedAt,
+                  status: MessageStatus.sent,
+                )
+              : m)
+          .toList(),
+    );
+  }
+
+  /// HTTP 发送失败,切 status=failed。气泡外侧重试按钮。
+  void _markFailed(String localId) {
+    state = state.copyWith(
+      messages: state.messages
+          .map((m) =>
+              m.id == localId ? m.copyWith(status: MessageStatus.failed) : m)
+          .toList(),
+    );
   }
 
   /// 删除/撤回消息。

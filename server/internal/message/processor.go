@@ -2,6 +2,8 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"sync/atomic"
 
@@ -9,6 +11,10 @@ import (
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
+
+// ErrNotParticipant 表示 sender 不是该会话的 participant(权限错误)。
+// 供 HTTP /api/messages 路径区分 403(权限) vs 500(内部错误)。
+var ErrNotParticipant = errors.New("not a participant")
 
 // Processor 处理 WebSocket 消息的持久化和转发。
 //
@@ -101,18 +107,9 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 
 	var convID string
 	if payload.ConversationID != "" {
-		// 新路径：直发到指定会话。校验 sender 是 participant（fail fast 防伪造 conv_id）。
+		// 新路径：直发到指定会话。participant 校验由 PersistAndDispatch 统一负责
+		// (HTTP 路径也走同一方法,错误码分流在 handler 层做)。
 		convID = payload.ConversationID
-		ok, err := p.participantRepo.Exists(convID, senderID, senderType)
-		if err != nil {
-			log.Printf("校验 sender participant 失败 conv=%s: %v", convID, err)
-			return
-		}
-		if !ok {
-			log.Printf("sender 不在会话 participants 中 conv=%s sender=%s/%s",
-				convID, senderType, senderID)
-			return
-		}
 	} else {
 		// 旧路径：按对端 ID 路由 + FindOrCreateDM。
 		// 根据 sender 推导对端与会话双方 ID + 类型。
@@ -159,40 +156,72 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		convID = conv.ID
 	}
 
-	// seq 是 dispatch 序号，与持久化无关，放在事务外即可（避免事务内提序列号在回滚时漏号）。
+	// convID 已确定,复用 PersistAndDispatch(HTTP send_handler 也走同一方法)。
+	// FindOrCreateDM 后 sender 必然是 participant(刚加进去),ErrNotParticipant 理论不会发生;
+	// 直发 conv_id 路径下,非法 sender 在此处被挡掉,fire-and-forget log + return。
+	if _, err := p.PersistAndDispatch(convID, senderType, senderID, payload.Content); err != nil {
+		if errors.Is(err, ErrNotParticipant) {
+			log.Printf("sender 不在会话 participants 中 conv=%s sender=%s/%s",
+				convID, senderType, senderID)
+		} else {
+			log.Printf("持久化失败 conv=%s: %v", convID, err)
+		}
+		return
+	}
+}
+
+// PersistAndDispatch 在已确定的 convID 上做持久化 + dispatch。
+// convID 必须是已存在的会话(调用方负责 FindOrCreateDM 或直接传 conv_id)。
+// sender 必须是 convID 的 participant,否则返 ErrNotParticipant。
+// 返回创建的 Message(含 server 生成的 ID + CreatedAt)。
+//
+// 失败场景:
+//   - sender 不是 participant → ErrNotParticipant
+//   - DB/事务失败 → 包装的 error(具体原因)
+//
+// 调用方:
+//   - HTTP send_handler: 拿 msg.ID / msg.CreatedAt 返给 client;权限错 → 403,其他 → 500
+//   - WS HandleIncoming: 复用本方法,error 时 log + return(保持 fire-and-forget)
+func (p *Processor) PersistAndDispatch(convID, senderType, senderID string, content json.RawMessage) (*model.Message, error) {
+	// 1. 校验 sender 是 participant(fail fast 防伪造 conv_id)
+	ok, err := p.participantRepo.Exists(convID, senderID, senderType)
+	if err != nil {
+		return nil, fmt.Errorf("校验 participant 失败: %w", err)
+	}
+	if !ok {
+		return nil, ErrNotParticipant
+	}
+
+	// 2. seq 序号(dispatch 用,事务外,避免事务内提序列号在回滚时漏号)
 	newSeq := atomic.AddInt64(&p.seq, 1)
 
-	// 事务边界：3 个写操作(message + deliveries + participants)原子提交。
-	// 否则 crash / 并发会出现"消息可见但未读计数错"或"投递状态错"等不一致。
+	// 3. image 消息增强(补 width/height)
+	enhancedContent := p.enhanceImageContent(content)
+
+	// 4. 事务:CreateTx → ListByConversationTx → CreateBatchTx → IncrUnreadTx → Commit
+	//    3 个写操作(message + deliveries + participants)原子提交,保证「消息可见 ⟺
+	//    未读计数对齐 ⟺ 投递状态对齐」,crash / 并发不会出现半提交不一致。
 	tx, err := p.convRepo.BeginTx()
 	if err != nil {
-		log.Println("开启事务失败:", err)
-		return
+		return nil, fmt.Errorf("开启事务失败: %w", err)
 	}
-	defer tx.Rollback() // commit 后调用为 no-op（database/sql 保证）
+	defer tx.Rollback() // commit 后调用为 no-op(database/sql 保证)
 
-	// image 消息增强：补 width/height 到 content.data（前端加载前可知比例，做等比缩放）。
-	// 宽高数据来源 files 表（上传时 imaging 包已生成）。幂等：已有宽高则跳过，避免每条查询。
-	// fail-soft：查不到 / 解析失败都不阻断消息发送，保留原 content（前端走探测兜底）。
-	enhancedContent := p.enhanceImageContent(payload.Content)
-
-	// 1. 创建 message(已无 is_read 字段,per-recipient 状态走 deliveries 表)
+	// 4.1 创建 message(已无 is_read 字段,per-recipient 状态走 deliveries 表)
 	msg, err := p.msgRepo.CreateTx(tx, convID, senderType, senderID, enhancedContent)
 	if err != nil {
-		log.Printf("保存消息失败 conv=%s sender=%s/%s: %v", convID, senderType, senderID, err)
-		return
+		return nil, fmt.Errorf("创建消息失败: %w", err)
 	}
 
-	// 2. 同事务查 participants(避免并发邀请 / 退群脏读)
+	// 4.2 同事务查 participants(避免并发邀请 / 退群脏读)
 	participants, err := p.participantRepo.ListByConversationTx(tx, convID)
 	if err != nil {
-		log.Printf("查 participants 失败 conv=%s: %v", convID, err)
-		return
+		return nil, fmt.Errorf("查 participants 失败: %w", err)
 	}
 
-	// 3. 过滤 sender,得到 recipients(本消息的接收方)
+	// 4.3 过滤 sender 得 recipients(deliveries + unread 都不含 sender)
 	recipients := make([]model.ConversationParticipant, 0, len(participants))
-	senderRole := "member" // fallback:sender 不在 participants 时(理论不应发生)
+	senderRole := "member" // fallback:sender 不在 participants 时(理论不应发生,上面 Exists 已挡)
 	for _, pt := range participants {
 		if pt.MemberID == senderID && pt.MemberType == senderType {
 			senderRole = pt.Role
@@ -201,30 +230,31 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 		recipients = append(recipients, pt)
 	}
 
-	// 4. 批量插 deliveries(每 recipient 一行,read_at=NULL)
+	// 4.4 批量插 deliveries(每 recipient 一行,read_at=NULL)
 	if err := p.deliveryRepo.CreateBatchTx(tx, msg.ID, recipients); err != nil {
-		log.Printf("插 deliveries 失败 msg=%s: %v", msg.ID, err)
-		return
+		return nil, fmt.Errorf("插 deliveries 失败: %w", err)
 	}
 
-	// 5. 全员 unread_count+1(除 sender)
-	//    IncrUnreadTx 是无条件给非 sender 全员 +1,与「是否在看会话」无关;
-	//    client 端 chat_page.dart 在底部时收到消息立即 _markRead() 归零,
-	//    不在底部时本地 +1(显示浮标)。这是 N 方模型的标准口径。
+	// 4.5 全员 unread_count+1(除 sender)
+	//     IncrUnreadTx 无条件给非 sender 全员 +1,与「是否在看会话」无关。
+	//     client 端 chat_page.dart 在底部时收到消息立即 _markRead() 归零,
+	//     不在底部时本地 +1(显示浮标)。这是 N 方模型的标准口径。
 	if err := p.participantRepo.IncrUnreadTx(tx, convID, senderID, senderType); err != nil {
-		log.Printf("未读计数失败 conv=%s: %v", convID, err)
-		return
+		return nil, fmt.Errorf("未读计数失败: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("提交事务失败 conv=%s: %v", convID, err)
-		return
+		return nil, fmt.Errorf("提交事务失败: %w", err)
 	}
 
-	// 6. dispatch(commit 之后):遍历 recipients 按 member_type 路由
+	// 5. dispatch(commit 之后):遍历 participants 按 member_type 路由
 	//    必须在 commit 之后才 dispatch,否则 dispatch 了的消息可能因 rollback 没真存。
 	//    payload 加 sender_role 字段(spec §5.2):client 不破坏(忽略未知字段),新版 APP
 	//    可用于权限按钮显隐(owner/admin/member 显示不同的会话操作)。
+	//
+	//    dispatch 给所有 participants(含 sender),让 sender 也收到自己的 MESSAGE_CREATE echo。
+	//    用于多端同步(同一 user 多设备)和单端 HTTP 发送的去重(S2.x 客户端按 message_id 去重)。
+	//    deliveries / unread_count 仍按 recipients(不含 sender)维护,不影响数据层语义。
 	dispatch := model.WSMessage{
 		Op: model.OpDispatch,
 		T:  model.EventMessageCreate,
@@ -241,13 +271,15 @@ func (p *Processor) HandleIncoming(senderType, senderID string, wsMsg *model.WSM
 	})
 	dispatch.D = dispatchData
 
-	for _, r := range recipients {
+	for _, r := range participants {
 		if r.MemberType == "user" {
 			p.hub.SendToUser(r.MemberID, &dispatch)
 		} else {
 			p.hub.SendToAgent(r.MemberID, &dispatch)
 		}
 	}
+
+	return msg, nil
 }
 
 // enhanceImageContent 对 image 类型消息的 content 补 width/height。

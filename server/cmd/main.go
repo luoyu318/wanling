@@ -87,6 +87,8 @@ func main() {
 
 	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
 
+	sendHandler := handler.NewSendHandler(processor)
+
 	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo)
 
 	approvalRepo := repository.NewApprovalRepo(db)
@@ -213,6 +215,7 @@ func main() {
 		userAuth.GET("/api/conversations/:id/messages", convHandler.Messages)
 		userAuth.POST("/api/conversations/:id/read", convHandler.MarkRead)
 		userAuth.POST("/api/conversations/:id/messages/read", convHandler.MarkMessagesRead)
+		userAuth.POST("/api/messages", sendHandler.Send)
 		userAuth.POST("/api/conversations/:id/pin", convHandler.Pin)
 		userAuth.DELETE("/api/conversations/:id/pin", convHandler.Unpin)
 		userAuth.DELETE("/api/conversations/:id", convHandler.Hide)

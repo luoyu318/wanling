@@ -10,7 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/agent.dart' show AgentStatus;
-import '../models/message.dart' show ChatMessage;
+import '../models/message.dart' show ChatMessage, MessageStatus;
 import '../models/msg_type.dart';
 import '../models/ws_message.dart' show WSMessage;
 import '../providers/agent_provider.dart';
@@ -587,6 +587,45 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     Overlay.of(context).insert(_menuEntry!);
   }
 
+  /// 失败消息的状态指示器点击:弹重试/删除菜单。
+  /// 仅 status=failed 时调(由 _showFailedMenu 入口守卫)。
+  void _showFailedMenu(ChatMessage msg) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh),
+              title: const Text('重试发送'),
+              onTap: () {
+                Navigator.pop(ctx);
+                ref
+                    .read(chatProvider(
+                      (convId: widget.convId, agentId: widget.agentId),
+                    ).notifier)
+                    .retrySend(msg.id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('删除', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(ctx);
+                ref
+                    .read(chatProvider(
+                      (convId: widget.convId, agentId: widget.agentId),
+                    ).notifier)
+                    .removeLocalMessage(msg.id);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMenu(ChatMessage msg, _MenuPlacement p) {
     final canRecall = _canRecall(msg);
     return MessageContextMenu(
@@ -627,6 +666,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _canRecall(ChatMessage msg) {
     final me = ref.read(authProvider).user?.id ?? '';
     if (me.isEmpty || msg.senderId != me) return false;
+    // sending/failed 状态的消息还没在 server 持久化,撤回会 404。
+    // 必须等 status=sent(拿到 server messageId)才能撤回。
+    if (msg.status != MessageStatus.sent) return false;
     return DateTime.now().difference(msg.createdAt) <= _recallWindow;
   }
 
@@ -1222,6 +1264,45 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                       ? () => _toggleSelect(msg.id)
                                       : null,
                                 );
+                          // 自己发的消息且 status != sent 时,气泡外侧(右侧)加状态指示器:
+                          //   sending:14px loading 圈
+                          //   failed:红色 ⚠,点击弹重试/删除菜单
+                          // sent 时无指示器(保留原布局)。
+                          final isMe = msg.senderId == currentUserId;
+                          final bubbleWithStatus = (isMe &&
+                                  !msg.isRecalled &&
+                                  msg.status != MessageStatus.sent)
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Flexible(child: bubble),
+                                    if (msg.status == MessageStatus.sending)
+                                      const Padding(
+                                        padding: EdgeInsets.only(left: 6),
+                                        child: SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                      )
+                                    else if (msg.status == MessageStatus.failed)
+                                      GestureDetector(
+                                        onTap: () => _showFailedMenu(msg),
+                                        child: const Padding(
+                                          padding: EdgeInsets.only(left: 6),
+                                          child: Icon(
+                                            Icons.error_outline,
+                                            color: Colors.red,
+                                            size: 18,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                )
+                              : bubble;
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1243,7 +1324,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                 ),
                               if (showSeparatorBefore)
                                 const UnreadSeparator(),
-                              bubble,
+                              bubbleWithStatus,
                             ],
                           );
                         },
