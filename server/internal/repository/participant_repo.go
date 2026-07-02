@@ -150,6 +150,37 @@ func (r *ParticipantRepo) IncrUnreadTx(tx *sql.Tx, convID, exceptMemberID, excep
 	return err
 }
 
+// RecomputeUnreadForConvTx 按 conv 维度重算所有 participants 的 unread_count。
+//
+// 用途:撤回(message_handler Delete scope=recall)时,被撤回的消息应从未读计数里剔除。
+// 软删(deleted_at = NOW())后调本方法对齐 DB 状态。
+//
+// 口径跟 MarkMessagesReadTx 的重算完全一致:
+//   - deleted_at IS NULL(排除已撤回)
+//   - NOT EXISTS message_hidden(排除该 member 隐藏过的)
+//   - deliveries.read_at IS NULL(排除已读)
+//
+// 一次性 UPDATE 该 conv 所有 participants 行(用相关子查询算每人的新值),
+// 单 SQL 不需要 N+1 查询。事务所有权归调用方(撤回 handler 包外层事务)。
+func (r *ParticipantRepo) RecomputeUnreadForConvTx(tx *sql.Tx, convID string) error {
+	_, err := tx.Exec(`
+		UPDATE conversation_participants p
+		SET unread_count = COALESCE((
+		    SELECT COUNT(*) FROM message_deliveries d
+		    JOIN messages m ON m.id = d.message_id
+		    WHERE d.recipient_id = p.member_id AND d.recipient_type = p.member_type
+		      AND d.read_at IS NULL
+		      AND m.conversation_id = p.conv_id AND m.deleted_at IS NULL
+		      AND NOT EXISTS (
+		        SELECT 1 FROM message_hidden h
+		        WHERE h.message_id = m.id AND h.member_id = p.member_id AND h.member_type = p.member_type
+		      )
+		), 0)
+		WHERE p.conv_id = $1`,
+		convID)
+	return err
+}
+
 // MarkMessagesReadTx 批量标已读:UPDATE deliveries + 重算 unread_count + 更新 last_read_message_id。
 // 返回新的 unread_count(供 WS 推送 / IM 列表 refresh 用)。
 //

@@ -99,7 +99,24 @@ func (h *MessageHandler) Delete(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "超过 5 分钟不可撤回"})
 			return
 		}
-		if err := h.msgRepo.SoftDelete(id); err != nil {
+		// 事务:SoftDelete + 重算 conv 全员 unread_count 原子提交。
+		// 撤回后该消息从未读计数剔除(对未读该消息的成员 -1),
+		// 避免对方列表徽章永久偏高(Bug D)。
+		tx, err := h.convRepo.BeginTx()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "撤回失败"})
+			return
+		}
+		defer tx.Rollback() // commit 后 noop
+		if err := h.msgRepo.SoftDeleteTx(tx, id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "撤回失败"})
+			return
+		}
+		if err := h.participantRepo.RecomputeUnreadForConvTx(tx, msg.ConversationID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "撤回失败"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "撤回失败"})
 			return
 		}

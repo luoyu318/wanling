@@ -146,6 +146,17 @@ func (r *MessageRepo) SoftDelete(id string) error {
 	return err
 }
 
+// SoftDeleteTx 事务版本:撤回 handler 把 SoftDelete + RecomputeUnreadForConvTx
+// 绑同一事务,确保 deleted_at 与 unread_count 原子一致性。
+// 调用方负责 Commit/Rollback。
+func (r *MessageRepo) SoftDeleteTx(tx *sql.Tx, id string) error {
+	_, err := tx.Exec(
+		`UPDATE messages SET deleted_at = NOW() WHERE id = $1`,
+		id,
+	)
+	return err
+}
+
 // SoftDeleteByIDs 批量软删,返回受影响行数。
 func (r *MessageRepo) SoftDeleteByIDs(ids []string) (int64, error) {
 	res, err := r.db.Exec(
