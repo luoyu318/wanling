@@ -58,7 +58,7 @@ migration 列表：
 - `001_init.sql` — 基础表（users / agents / conversations / messages / files）
 - `002_conversation_last_message.sql` — `conversations.last_message_content` JSONB 缓存（017 已删）
 - `003_unread_count.sql` — `conversations.unread_count` + `messages.is_read`（已读回执，015 后 unread_count 下沉到 conversation_participants）
-- `004_pin_hide.sql` — `conversations.hidden_at` + `conversations.pinned_at`（置顶 + 软删除，015 后下沉到 conversation_participants）
+- `004_pin_hide.sql` — `conversations.hidden_at` + `conversations.pinned_at`（置顶 + 软删除，015 后下沉到 conversation_participants）。**「新消息来时 hidden_at 自动清空」语义保留**，015 模型后由 `MessageProcessor.PersistAndDispatch` 事务内调 `ParticipantRepo.UnhideTx` 清整个会话所有 participants 的 hidden_at（含 sender + 全部 recipients）
 - `005_profile_fields.sql` — `users.nickname` + `users.bio` + `agents.bio`（个人资料扩展）
 - `006_message_soft_delete.sql` — `messages.deleted_at`（**撤回**语义：全局软删，双向不可见，NULL=未撤回）+ 部分索引 `idx_messages_conv_not_deleted`
 - `007_pairing_tickets.sql` — 扫码配对票据表（见「扫码配对」节）
@@ -69,7 +69,7 @@ migration 列表：
 - `012_message_navigation.sql` — `idx_messages_conv_created`（messages 表 `(conversation_id, created_at DESC)`，游标分页 ListBefore 专用索引）
 - `013_first_unread_index.sql` — `idx_messages_conv_unread` **partial index**（`messages(conversation_id, created_at) WHERE is_read=FALSE AND deleted_at IS NULL`，FirstUnread 查询 LIMIT 1 命中）
 - `014_user_message_is_read.sql` — 存量 user 消息 `is_read` 回填（user 一律 TRUE，对齐「不计未读」语义；不加 CHECK 约束保留 participants 模型扩展空间）
-- `015_participants_model.sql` — `conversation_participants` 表（N 方参与者通用模型，下沉 unread_count / last_read_message_id / pinned_at / hidden_at / role 到本表；type 字段区分 dm_user_user / dm_user_agent / group_user / group_mixed）
+- `015_participants_model.sql` — `conversation_participants` 表（N 方参与者通用模型，下沉 unread_count / last_read_message_id / pinned_at / hidden_at / role 到本表；type 字段区分 dm_user_user / dm_user_agent / group_user / group_mixed）。新消息事务内调 `ParticipantRepo.UnhideTx(convID)` 清整个会话所有 participants 的 hidden_at（对齐 migration 004 「新消息自动恢复显示」语义）
 - `016_message_hidden.sql` — `message_hidden` 表（per-participant 单向隐藏，配合 deleted_at 形成**双轨制删除**）+ `message_deliveries` 表（每条消息给每个 recipient 落一行，read_at 字段标已读）+ `idx_message_hidden_member`
 - `017_drop_last_message_cache.sql` — 删 `conversations.last_message_content` / `last_message_at` 缓存字段，会话列表查询改子查询实时算（写路径零维护成本，hide / recall 即时反映）
 - `018_file_conv_links.sql` — `file_conv_links` 多对多授权表（file × conv PK 幂等），下载走**三档放行**：owner / 头像白名单（user.avatar_url / agents.avatar_url 命中）/ conv participant，替代原单一 owner 校验，让 dm_user_user 场景对方头像可加载
@@ -96,7 +96,7 @@ Agent 平台插件 (plugin/hermes-plugin)
   - `/api/pair/*` 扫码配对：`POST /tickets` + `GET /tickets/:id` 匿名（凭 256-bit ticket_id）；`POST /tickets/:id/scan` + `POST /tickets/:id/complete` 走 `pairAuth` 组（user JWT）。GET 按 IP 60/min、complete 按 user 10/min 限流（`internal/ratelimit/`）
   - `/ws` 和 `/health` 单独挂，前者用 `AuthMiddleware` 接受 user+agent 双角色
 - **internal/hub/** — WebSocket 连接管理器，用 `sync.Map` 以 `role:id` 为 key 管理所有客户端连接，提供 `SendToUser` / `SendToAgent` / `SendToConv`（user+agent 双发，用于消息删除等多端同步广播）方法。**dispatch.go** 提供 3 个审批相关广播 helper：`BroadcastMessageUpdate`（双端，消息内容更新如审批决策后双写 content）、`SendApprovalDecided`（仅 agent，推决策结果带 session_key/confirm_id）、`SendApprovalExpired`（仅 agent，超时通知）。Hub 持有 `NextSeq()` 自增序列号（per-client 单调递增，供 dispatch 的 WSMessage.s 字段）。
-- **internal/message/processor.go** — 消息处理器。`HandleIncoming` 用事务（BeginTx → CreateTx → DeliveryRepo.CreateBatchTx → ParticipantRepo.IncrUnreadTx → Commit）保证消息持久化和 unread_count 原子性，dispatch 在 commit 之后。017 删 conversations 缓存字段后不再调 UpdateLastMessageTx（写路径零维护）。返回 `*Message`（含 server id + created_at），供 send_handler HTTP 接口返给 client。
+- **internal/message/processor.go** — 消息处理器。`HandleIncoming` 用事务（BeginTx → CreateTx → DeliveryRepo.CreateBatchTx → ParticipantRepo.IncrUnreadTx → **ParticipantRepo.UnhideTx** → Commit）保证消息持久化和 unread_count / hidden_at 重置原子性，dispatch 在 commit 之后。`UnhideTx` 清整个会话所有 participants 的 hidden_at（对齐 migration 004 「新消息自动恢复显示」语义，修复「对方删过会话，我发消息后对方列表不显示」bug）。017 删 conversations 缓存字段后不再调 UpdateLastMessageTx（写路径零维护）。dispatch payload 含 `sender_name`（client 通知显示用）+ `sender_avatar_url`（bg-service 通知大头像主数据源，替代原依赖 UI IPC 同步的链路），两者均由 `senderDisplayName` / `senderAvatarURL` 在 dispatch 前查询填入，查询失败返空串 client fallback。返回 `*Message`（含 server id + created_at），供 send_handler HTTP 接口返给 client。
 - **internal/handler/** — HTTP Handler 集合：
   - `auth_handler.go` — 注册/登录/Agent token 换取
   - `user_handler.go` — `GET /api/users/me`（restoreSession 拉取用户信息）+ `PUT /api/users/me`（更新 nickname / bio / avatar_url）+ `PUT /api/users/me/password`（改密码，校验旧密码）
@@ -113,7 +113,7 @@ Agent 平台插件 (plugin/hermes-plugin)
 - **internal/auth/jwt.go** — JWT 认证，通过 `role` 字段区分 user 和 agent 两种身份。
 - **internal/repository/** — 数据库操作层。
   - **`ConversationRepo`** — `ListForUser`（JOIN conversation_participants + 多个 subquery 拼装 IM 风格列表，含 `last_message_*` 子查询实时算 + 撤回消息 CASE WHEN 改写 + sender 字段）、`GetByID`（单查）、`GetLastVisibleMessage`（取某 user 视角最新可见消息，撤回也保留并改写 content）、`BatchLoadParticipantSummaries`（一次 SQL 批量查多个 conv 的 participants 摘要）、`FindOrCreateDM`（1-1 dm 按 type+双方 member 去重）、`CreateTx`（群聊创建）、`UpdateProfile`（更新群聊 title/avatar）。015 模型重构后不再读写 conversations.user_id / agent_id 等老字段（下沉到 conversation_participants）。
-  - **`ParticipantRepo`** — 操作 `conversation_participants` 表。`AddParticipantsTx`（创建会话/邀请成员用，ON CONFLICT DO NOTHING 幂等）、`Exists`（权限校验，命中 PK 索引）、`Get`（单查）、`ListByConversation` / `ListByConversationTx`（事务版本，发消息用同事务读避免脏读）、`ListByMember`（IM 列表用）、`IncrUnreadTx`（发消息时给非 sender 全员 +1）、`MarkMessagesReadTx`（按 messageId 批量标已读 + 重算 unread_count + 更新 last_read_message_id）、`RecomputeUnreadForConvTx`（撤回时按 conv 维度重算全员 unread_count，跟 MarkMessagesReadTx 同口径）、`SetPinned` / `SetHidden`（个人维度置顶/隐藏）。
+  - **`ParticipantRepo`** — 操作 `conversation_participants` 表。`AddParticipantsTx`（创建会话/邀请成员用，ON CONFLICT DO NOTHING 幂等）、`Exists`（权限校验，命中 PK 索引）、`Get`（单查）、`ListByConversation` / `ListByConversationTx`（事务版本，发消息用同事务读避免脏读）、`ListByMember`（IM 列表用）、`IncrUnreadTx`（发消息时给非 sender 全员 +1）、`UnhideTx`（事务版，**清整个会话所有 participants 的 hidden_at**，发消息流程在事务内调用，对齐 migration 004 「新消息自动恢复显示」语义）、`MarkMessagesReadTx`（按 messageId 批量标已读 + 重算 unread_count + 更新 last_read_message_id）、`RecomputeUnreadForConvTx`（撤回时按 conv 维度重算全员 unread_count，跟 MarkMessagesReadTx 同口径）、`SetPinned` / `SetHidden`（个人维度置顶/隐藏）。
   - **`MessageRepo`** — `CreateTx`（事务版创建消息）、`Get` / `GetByIDs`（不过滤 deleted_at，权限校验用）、`SoftDelete` / `SoftDeleteTx`（事务版，撤回用，置 deleted_at=NOW()）、`HideForUser` / `HideForUsers`（写 message_hidden 表）、`FirstUnread`（走 `idx_messages_conv_unread` partial index LIMIT 1）、`ListBefore` / `CountBefore`（走 `idx_messages_conv_created` 游标分页）、`ListAfter`（向下加载新消息）。撤回消息（deleted_at IS NOT NULL）也返，靠 SanitizeForClient 在 handler 出口改写 content 为 `{msg_type:recalled,data:{}}`，client 据此渲染占位卡片。
   - **`DeliveryRepo`** — 操作 `message_deliveries` 表（每条消息给每个 recipient 落一行）。`CreateBatchTx`（事务版批量插）、`FirstUnread` / `GetUnreadCount`（未读链路）。
   - **`FileRepo`** — 文件 CRUD + `AddConvLink`（写 file_conv_links 幂等）+ `CheckAccess`（三档放行判定：IsOwner / IsUserAvatar / IsAgentAvatar / IsConvParticipant，单 SQL 一次查清）。
@@ -132,12 +132,12 @@ Agent 平台插件 (plugin/hermes-plugin)
 - **lib/router_helpers.dart** — `chatRoute(convId, agentId)` 拼路径 + `startChatAndPush(context, ref, agent)` 统一 findOrCreate + 跳转。
 - **lib/services/api_service.dart** — Dio HTTP 封装。含 `@visibleForTesting withDio` 构造和 dio getter；Dio Interceptor 在 401 时触发全局登出回调（由 authProvider 反向注入，避免 Riverpod 循环依赖）。
 - **lib/services/websocket_service.dart** — WebSocket 客户端，实现完整 Opcode 协议 + 自动重连 + OpResume 补发。
-- **lib/services/background_chat_service.dart** — `flutter_background_service` Android 前台服务，APP 后台/被杀时仍能接收消息推送（保活 WS 连接，3s 重连兜底）。跑在**独立 isolate**，看不到 UI 状态，故通过 IPC（`service.on('setActiveConv')`）接收 UI 同步的「当前正在看的会话」(`_activeConvId`)。收消息时判断「要不要弹通知」：`_appInForeground && convId == _activeConvId` 才跳过（前台但不在该会话仍要弹），避免用户正在看的会话误弹系统通知。**未读计数**：`UnreadCounter`（isolate 本地 Map，进入会话清零，复用 setActiveConv IPC）。**头像同步**：`syncAgentAvatar` IPC 接收 UI 同步的 agent avatar_url，URL 变化时清内存+文件缓存（`clearAvatarFileCache`）。收 agent 消息时按 `_unread.get(convId)` 拼 `[N条]` 前缀，并加载头像（内存→文件缓存→下载→首字母色块兜底）。进入会话时 `cancel(convId.hashCode)` 清通知横幅（不点通知直接进 APP 读消息横幅也消失）。
+- **lib/services/background_chat_service.dart** — `flutter_background_service` Android 前台服务，APP 后台/被杀时仍能接收消息推送（保活 WS 连接，3s 重连兜底）。跑在**独立 isolate**，看不到 UI 状态，故通过 IPC（`service.on('setActiveConv')`）接收 UI 同步的「当前正在看的会话」(`_activeConvId`)。收消息时判断「要不要弹通知」：`_appInForeground && convId == _activeConvId` 才跳过（前台但不在该会话仍要弹），避免用户正在看的会话误弹系统通知。**未读计数**：`UnreadCounter`（isolate 本地 Map，进入会话清零，复用 setActiveConv IPC）。**头像加载主路径**：直接读 dispatch payload 的 `sender_avatar_url`（server 端 processor 填），不再依赖 UI 时机，首次接收消息时也能拿到正确头像；**IPC 兜底**：`syncAgentAvatar` IPC 接收 UI 同步的 agent avatar_url，URL 变化时清内存+文件缓存（`clearAvatarFileCache`），老 server 不带 sender_avatar_url 字段时退化到此。收消息时按 `_unread.get(convId)` 拼 `[N条]` 前缀，并加载头像（内存→文件缓存→下载→首字母色块兜底）。进入会话时 `cancel(convId.hashCode)` 清通知横幅（不点通知直接进 APP 读消息横幅也消失）。
 - **lib/services/notification_service.dart** — `flutter_local_notifications` 封装，后台收到消息时弹通知，点击跳转对应会话。**通知样式**：普通文本样式 + `largeIcon`（192x192 方形圆角头像 bitmap，折叠态右侧大头像位），body 用 `[N条]agent名: 消息` 格式（N>1 时）。**点击跳转用智能单例**（`main.dart` 注入 onTap）：用 `routerDelegate.currentConfiguration` 读真实栈顶 location，若已在某个 `/chat/X`（栈顶是 ChatPage）则 `router.pushReplacement('/chat/Y')` 替换栈顶（避免无限叠加），否则 `router.push('/chat/Y')`。**注意**：ChatPage 是 push 出来的栈帧（基础 location 仍是 `/`），不能用 `router.replace`（replace 替换路由目标 URI 不替换 push 栈帧，栈仍叠加）。
 - **lib/providers/** — Riverpod 状态管理：
   - `authProvider` — 认证（含 user 信息，restoreSession 调 /me）
   - `agentListProvider` — Agent CRUD
-  - `conversationProvider` — IM 列表（订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态；订阅 MESSAGE_DELETE 直接 `load()` 重拉列表，让撤回 / 隐藏即时反映到摘要和未读徽章）。`setActiveConv(convId)` 方法：发 WS op=3 上报正在看的会话，同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate（让后台通知逻辑也感知，避免正在看的会话误弹通知）。`load()` 拉列表成功后调 `syncAgentAvatarsToBgService`，把每个 agent 的 avatar_url 经 IPC 同步到 isolate（供通知下载头像）。
+  - `conversationProvider` — IM 列表（订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态；订阅 MESSAGE_DELETE 直接 `load()` 重拉列表，让撤回 / 隐藏即时反映到摘要和未读徽章）。`setActiveConv(convId)` 方法：发 WS op=3 上报正在看的会话，同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate（让后台通知逻辑也感知，避免正在看的会话误弹通知）。`load()` 拉列表成功后调 `syncAgentAvatarsToBgService`，把每个 agent 的 avatar_url 经 IPC 同步到 isolate（**仅作 bg-service 老 server 兜底用**，主路径走 dispatch payload 的 `sender_avatar_url`，见 `background_chat_service.dart`）。
   - `chatProvider` — family，key 是 record `({convId, agentId})`。订阅 MESSAGE_DELETE：`scope=recall` 时把消息切到 `isRecalled=true` 保留占位（不删 entry）+ 缓存 `recalledByName` 供群聊场景显示；`scope=hide` 时直接从 messages 列表移除。同文件还有 `wsProvider`（仅 watch `authProvider.token`，token 变化才重建 WS，避免 updateProfile 刷新 user 触发误断连）和 `connStateProvider`（StreamProvider 桥接 `wsProvider.connectionStateStream`，订阅期先同步推一次 currentConnState 防 banner 误判）。banner 必须订阅 connStateProvider 而非直接 read wsProvider——切换账号时 wsProvider 重建，直接订阅会监听到已 dispose 的旧实例。
   - `settingsProvider` — 服务器地址（baseUrl，默认 `http://localhost:18008`）。被 main/auth/chat/avatar 多处引用。**设置 UI 入口已隐藏**，baseUrl 现由切换账号流程按账号保存值同步覆盖。
   - `savedLoginsProvider` — 多账号管理（`secure_storage` 加密存储历史登录）。`switchTo(index)` 是核心编排：`setSwitching(true)` → `logout(silent:true)`（保留 isSwitching）→ `select(index)` → `onLogin` 注入（invalidate apiProvider + `settingsProvider.setBaseUrl` + login）→ finally `setSwitching(false)`。AuthState 的 `isSwitching` 标志让路由守卫和 banner 在过渡期不误判（见 router.dart 和 ConnectionBanner）。
@@ -233,6 +233,9 @@ Agent 平台插件 (plugin/hermes-plugin)
 | 7 | Reconnect | S→C | 服务端要求重连 |
 | 10 | Hello | S→C | 连接建立，含心跳间隔 |
 | 11 | HeartbeatACK | S→C | 心跳回应 |
+
+**消息创建 Dispatch 事件**（opcode 同为 0）：
+- `MESSAGE_CREATE` — 新消息推送。payload：`{id, conversation_id, sender_type, sender_id, sender_role, sender_name, sender_avatar_url, content, created_at}`。`sender_name` / `sender_avatar_url` 由 server processor 在 dispatch 前查 user/agent 表填入，bg-service 直接读这两个字段渲染通知（替代原依赖 UI IPC 同步的链路，让首次接收消息也能拿到正确头像）。dispatch 给所有 participants（含 sender 自己，多端同步 + HTTP 发送场景按 message_id 去重）。
 
 **消息删除 Dispatch 事件**（opcode 同为 0）：
 - `MESSAGE_DELETE` — 消息删除。payload：`{ids, conversation_id, scope, ...}`，`scope` 取值：
