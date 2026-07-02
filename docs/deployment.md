@@ -250,6 +250,11 @@ migration 清单：
 - `011_file_thumbnail.sql` — `files.thumbnail_path` + `width` + `height`（图片缩略图）
 - `012_message_navigation.sql` — `idx_messages_conv_created`（游标分页查询索引）
 - `013_first_unread_index.sql` — `idx_messages_conv_unread` partial index（定位首条未读）
+- `014_user_message_is_read.sql` — 存量 user 消息 `is_read` 回填（user 一律 TRUE，对齐「不计未读」语义）
+- `015_participants_model.sql` — `conversation_participants` 表（N 方参与者模型，下沉 unread_count / pinned_at / hidden_at 到本表）
+- `016_message_hidden.sql` — `message_hidden` 表 + `message_deliveries` 表（per-participant 单向隐藏 + 已读回执，配合撤回 deleted_at 形成双轨制）
+- `017_drop_last_message_cache.sql` — 删 `conversations.last_message_content` / `last_message_at` 缓存字段，列表查询改子查询实时算
+- `018_file_conv_links.sql` — `file_conv_links` 多对多授权表（file × conv PK 幂等，下载走三档放行：owner / 头像白名单 / conv participant）
 
 ### 3.3 启动 Redis（可选）
 
