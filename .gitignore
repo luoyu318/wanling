@@ -67,3 +67,5 @@ server/tmp/
 .zcode/*
 .claude/*
 .mcp.json
+# 数据库备份（含生产数据快照，绝不入库）
+server/backups/
