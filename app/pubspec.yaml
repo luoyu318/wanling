@@ -116,6 +116,9 @@ dependency_overrides:
   # wechat_camera_picker 间接拉入 sensors_plus 7.x(需 Kotlin 2.2),
   # 但项目 Built-in Kotlin 为 2.0。固定到 6.x 兼容版本。
   sensors_plus: ^6.1.1
+  # mobile_scanner 7.x 依赖 kotlinx-coroutines 1.11(需 Kotlin 2.2),
+  # 但项目 Built-in Kotlin 为 2.0。精确固定到 6.0.7(coroutines 1.7.3 兼容)。
+  mobile_scanner: 6.0.7
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
