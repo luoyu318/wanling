@@ -1,0 +1,68 @@
+// 模板：新 Handler 骨架
+// 用法：复制到 server/internal/handler/<entity>_handler.go，替换 $ENTITY/$Entity/$TABLE
+// 固化审计经验：owner 校验（H1/M1）/ ctx 透传（H4）/ 不用 MustGet（C2）
+package handler
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/model"
+)
+
+// ${ENTITY}Handler 处理 $ENTITY 相关请求
+type ${ENTITY}Handler struct {
+	repo ${ENTITY}Repo
+	// 其他依赖...
+}
+
+// Get 获取单个 $ENTITY（含 owner 校验）
+func (h *${ENTITY}Handler) Get(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("userID") // 不用 MustGet（审计 C2）
+
+	entity, err := h.repo.GetByID(c.Request.Context(), id) // ctx 透传（审计 H4）
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	// owner 校验（防 IDOR，审计 H1/M1）
+	if entity.OwnerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	c.JSON(http.StatusOK, entity)
+}
+
+// Update 更新 $ENTITY（含 owner 校验）
+func (h *${ENTITY}Handler) Update(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("userID")
+
+	// 先查 + 校验 owner
+	entity, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	if entity.OwnerID != userID { // 防 IDOR
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.repo.Update(c.Request.Context(), id, req.Name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}

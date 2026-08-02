@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ocwl-logs — 实时跟踪万灵 opencode-plugin 日志
+# 用法: ocwl-logs [-p|--profile <suffix>] [journalctl flags...]
+set -euo pipefail
+
+suffix=""
+passthrough=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p|--profile)
+            if [[ $# -lt 2 ]]; then
+                echo "ocwl-logs: -p/--profile 需要参数" >&2
+                exit 2
+            fi
+            suffix="$2"
+            shift 2
+            ;;
+        -p=*|--profile=*)
+            suffix="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
+ocwl-logs — 实时跟踪万灵 opencode-plugin 日志
+
+用法:
+  ocwl-logs [-p <suffix>] [journalctl flags...]
+
+选项:
+  -p, --profile <suffix>   指定实例(默认: opencode-wanling)
+  -h, --help               显示本帮助
+
+附加 flags 原样追加到 -f 后(如 --since "10 min ago"、-n 100)。
+要看静态历史用裸 journalctl --user -u <service>。
+EOF
+            exit 0
+            ;;
+        *)
+            passthrough+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$suffix" ]]; then
+    service="opencode-wanling"
+else
+    service="opencode-wanling-${suffix}"
+fi
+
+# 始终 -f:职责单一就是实时 tail
+exec journalctl --user -u "$service" -f "${passthrough[@]}"

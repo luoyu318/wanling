@@ -1,0 +1,28 @@
+# gitleaks 配置 — 在默认规则基础上加万灵白名单
+# 用法: gitleaks detect --config secscan/.gitleaks.toml --source . --no-git
+
+[extend]
+useDefault = true
+
+# 白名单：已知非密钥的误报模式
+[[allowlists]]
+description = "JWT 示例字符串（文档/测试用）"
+regexes = ['''eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+''']
+
+[[allowlists]]
+description = "测试用 placeholder 密钥"
+regexes = ['''(test|example|placeholder|dummy)-?(key|secret|token)''']
+
+[[allowlists]]
+description = "构建产物、工具配置、agent session 日志（非源码）"
+paths = [
+  '''app/build/''',
+  '''app/\.dart_tool/''',
+  '''\.superpowers/''',
+  '''\.claude/''',
+  '''\.zcode/''',
+  '''\.mcp\.json''',
+  '''server/.env''',
+  '''scripts/\.test_env''',
+  '''\.git/''',
+]

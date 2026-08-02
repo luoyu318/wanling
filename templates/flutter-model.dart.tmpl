@@ -1,0 +1,35 @@
+// 模板：新 Model 骨架
+// 用法：复制到 app/lib/models/<entity>.dart，替换 $ENTITY/$Entity
+// 固化审计经验：fromJson/toJson 替代裸 Map（F5）/ == 和 hashCode
+class ${ENTITY} {
+  final String id;
+  final String name;
+  final DateTime createdAt;
+
+  const ${ENTITY}({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+  });
+
+  // 审计 F5：fromJson/toJson 替代裸 Map<String, dynamic>
+  factory ${ENTITY}.fromJson(Map<String, dynamic> json) => ${ENTITY}(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        createdAt: DateTime.parse(json['created_at'] as String),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'created_at': createdAt.toIso8601String(),
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ${ENTITY} && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}

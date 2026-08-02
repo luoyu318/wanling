@@ -1,0 +1,67 @@
+// 模板：新 Repo 骨架
+// 用法：复制到 server/internal/repository/<entity>_repo.go，替换 $ENTITY/$Entity/$TABLE
+// 固化审计经验：queryExecutor 封装（H4）/ rows.Err（M14）/ LIMIT 兜底（L12）/ *Tx 方法
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/wanling/server/internal/model"
+)
+
+// ${ENTITY}Repo 数据访问层。必须嵌入 queryExecutor（禁止直接用 r.db）。
+type ${ENTITY}Repo struct {
+	queryExecutor
+}
+
+func New${ENTITY}Repo(db *sql.DB) *${ENTITY}Repo {
+	return &${ENTITY}Repo{queryExecutor: queryExecutor{db: db}}
+}
+
+// GetByID 按 ID 查询单个 $ENTITY（走 queryExecutor，ctx 透传）
+func (r *${ENTITY}Repo) GetByID(ctx context.Context, id string) (*model.${ENTITY}, error) {
+	const q = `SELECT id, owner_id, name, created_at FROM ${TABLE} WHERE id = $1`
+	row := r.queryRow(ctx, q, id) // 必须走 queryExecutor（审计 H4 + check-repo-ctx.sh 约束）
+	var e model.${ENTITY}
+	if err := row.Scan(&e.ID, &e.OwnerID, &e.Name, &e.CreatedAt); err != nil {
+		return nil, fmt.Errorf("${ENTITY} get: %w", err)
+	}
+	return &e, nil
+}
+
+// ListByOwner 按 owner 查询列表（LIMIT 兜底 + rows.Err 校验）
+func (r *${ENTITY}Repo) ListByOwner(ctx context.Context, ownerID string, limit int) ([]*model.${ENTITY}, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100 // LIMIT 兜底（审计 L12）
+	}
+	const q = `SELECT id, owner_id, name, created_at FROM ${TABLE} WHERE owner_id = $1 ORDER BY created_at DESC LIMIT $2`
+	rows, err := r.query(ctx, q, ownerID, limit) // 必须走 queryExecutor
+	if err != nil {
+		return nil, fmt.Errorf("${ENTITY} list: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*model.${ENTITY}
+	for rows.Next() {
+		var e model.${ENTITY}
+		if err := rows.Scan(&e.ID, &e.OwnerID, &e.Name, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("${ENTITY} scan: %w", err)
+		}
+		result = append(result, &e)
+	}
+	if err := rows.Err(); err != nil { // rows.Err 校验（审计 M14）
+		return nil, fmt.Errorf("${ENTITY} rows: %w", err)
+	}
+	return result, nil
+}
+
+// CreateTx 事务版创建（16 个 *Tx 方法签名约定：ctx 在 tx 之前）
+func (r *${ENTITY}Repo) CreateTx(ctx context.Context, tx *sql.Tx, /* params */) error {
+	const q = `INSERT INTO ${TABLE} (id, owner_id, name) VALUES ($1, $2, $3)`
+	if _, err := tx.ExecContext(ctx, q, /* args */); err != nil { // *Tx 方法体内显式用 tx.ExecContext
+		return fmt.Errorf("${ENTITY} create: %w", err)
+	}
+	return nil
+}

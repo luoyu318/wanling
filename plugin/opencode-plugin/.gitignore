@@ -1,0 +1,2 @@
+# 提交 lock 文件（覆盖根 .gitignore 的全局排除）
+!package-lock.json

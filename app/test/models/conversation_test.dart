@@ -1,0 +1,174 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:app/models/agent.dart';
+import 'package:app/models/conversation.dart';
+
+void main() {
+  group('Conversation.fromJson', () {
+    test('解析 IM 风格响应（含 agent + last_message_content）', () {
+      final raw = {
+        'id': 'c1',
+        'agent': {
+          'id': 'a1', 'name': 'Bot', 'avatar_url': null,
+          'owner_id': 'u1', 'status': 'online', 'created_at': '2026-06-13T00:00:00Z',
+        },
+        'last_message_content': {'msg_type': 'text', 'data': {'text': 'hi'}},
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      };
+      final c = Conversation.fromJson(raw);
+      expect(c.id, 'c1');
+      expect(c.agent!.name, 'Bot');
+      expect(c.agent!.status, AgentStatus.online);
+      expect(c.lastMessagePreview(currentUserId: 'u1'), 'hi');
+      expect(c.lastMessageAt.year, 2026);
+    });
+
+    test('lastMessagePreview 兼容 null last_message_content（返回空串）', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'agent': {'id':'a','name':'X','avatar_url':null,'owner_id':'u','status':'offline','created_at':'2026-06-13T00:00:00Z'},
+        'last_message_content': null,
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u'), '');
+    });
+
+    test('lastMessagePreview 处理 image 类型', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'agent': {'id':'a','name':'X','avatar_url':null,'owner_id':'u','status':'online','created_at':'2026-06-13T00:00:00Z'},
+        'last_message_content': {'msg_type': 'image', 'data': {'file_id': 'f1'}},
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u'), '[图片]');
+    });
+
+    test('lastMessagePreview 处理 file 类型', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'agent': {'id':'a','name':'X','avatar_url':null,'owner_id':'u','status':'online','created_at':'2026-06-13T00:00:00Z'},
+        'last_message_content': {'msg_type': 'file', 'data': {'file_id': 'f1'}},
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u'), '[文件]');
+    });
+
+    test('lastMessagePreview 在字段缺失时返回空串', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'agent': {
+          'id': 'a', 'name': 'X', 'avatar_url': null,
+          'owner_id': 'u', 'status': 'offline',
+          'created_at': '2026-06-13T00:00:00Z',
+        },
+        // 没有 last_message_content 键
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u'), '');
+      expect(c.lastMessageContent, isNull);
+    });
+
+    test('lastMessageContent 类型异常时抛 FormatException', () {
+      expect(
+        () => Conversation.fromJson({
+          'id': 'c1',
+          'agent': {
+            'id': 'a', 'name': 'X', 'avatar_url': null,
+            'owner_id': 'u', 'status': 'offline',
+            'created_at': '2026-06-13T00:00:00Z',
+          },
+          'last_message_content': 12345,  // 非 null/Map
+          'last_message_at': '2026-06-13T14:32:00Z',
+          'created_at': '2026-06-13T10:00:00Z',
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('lastMessagePreview recalled 切「你撤回」(sender=自己)', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u1',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '你撤回了一条消息');
+    });
+
+    test('lastMessagePreview recalled 切「对方撤回」(sender=对方)', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u-other',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '对方撤回了一条消息');
+    });
+
+    test('lastMessagePreview recalled 群聊场景带 senderDisplayName', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'type': 'group_user',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_sender_id': 'u-other',
+        'last_message_sender_type': 'user',
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(
+        c.lastMessagePreview(
+            currentUserId: 'u1', isGroup: true, senderDisplayName: '小明'),
+        '小明 撤回了一条消息',
+      );
+    });
+
+    test('lastMessagePreview recalled 老 server 不返 sender_id 时 fallback 无称谓', () {
+      final c = Conversation.fromJson({
+        'id': 'c1',
+        'last_message_content': {'msg_type': 'recalled', 'data': {}},
+        'last_message_at': '2026-06-13T14:32:00Z',
+        'created_at': '2026-06-13T10:00:00Z',
+      });
+      expect(c.lastMessagePreview(currentUserId: 'u1'), '撤回了一条消息');
+    });
+  });
+
+  group('Conversation.copyWith', () {
+    Conversation mkBase({String? directory}) => Conversation(
+          id: '1',
+          type: 'agent_session',
+          participants: const [],
+          lastMessageContent: null,
+          lastMessageAt: DateTime(2026, 7, 1),
+          createdAt: DateTime(2026, 7, 1),
+          directory: directory,
+        );
+
+    test('copyWith 保留 directory 字段(未指定 directory 参数时)', () {
+      final c = mkBase(directory: '/proj/src');
+      final updated = c.copyWith(unreadCount: 5);
+      expect(updated.directory, '/proj/src');
+      expect(updated.unreadCount, 5);
+    });
+
+    test('copyWith 允许覆盖 directory', () {
+      final c = mkBase(directory: '/old');
+      final updated = c.copyWith(directory: '/new');
+      expect(updated.directory, '/new');
+    });
+
+    test('copyWith 保留 null directory', () {
+      final c = mkBase(directory: null);
+      final updated = c.copyWith(unreadCount: 1);
+      expect(updated.directory, isNull);
+    });
+  });
+}

@@ -1,0 +1,34 @@
+# This file configures the analyzer, which statically analyzes Dart code to
+# check for errors, warnings, and lints.
+#
+# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
+# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
+# invoked from the command line by running `flutter analyze`.
+
+# The following line activates a set of recommended lints for Flutter apps,
+# packages, and plugins designed to encourage good coding practices.
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # === 现有 7 条（保留） ===
+    avoid_print: true
+    prefer_single_quotes: true
+    prefer_const_constructors: true
+    prefer_const_literals_to_create_immutables: true
+    prefer_const_declarations: true
+    unnecessary_const: true
+    unnecessary_new: true
+    use_key_in_widget_constructors: true
+    # === 新增（harness） ===
+    avoid_dynamic_calls: true          # 审计 F5：禁裸 Map 调方法
+    unawaited_futures: true            # v3 3.4：禁 fire-and-forget async
+    cancel_subscriptions: true        # 内存泄漏
+    close_sinks: true                  # 审计 F1：controller 生命周期
+    use_build_context_synchronously: true  # 审计 M5
+    prefer_const_constructors_in_immutables: true  # 性能
+    require_trailing_commas: true      # 格式统一
+
+analyzer:
+  exclude:
+    - 'lib/widgets/gallery/photo_view/**'  # 审计 S3：vendored 定制版，豁免

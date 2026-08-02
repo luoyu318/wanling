@@ -1,0 +1,81 @@
+// 模板：新 Page 骨架
+// 用法：复制到 app/lib/pages/<entity>_page.dart，替换 $ENTITY/$Entity
+// 固化审计经验：controller 分离（M2）/ const+key（L2/S2）/ initState 副作用（M7）/ loading+error UI（F7）
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+// 规约：Page > 300 行必须拆 controller（审计 M2 chat_page 2302→799）
+class ${ENTITY}Page extends ConsumerStatefulWidget {
+  const ${ENTITY}Page({super.key}); // const + key（审计 L2/S2）
+
+  @override
+  ConsumerState<${ENTITY}Page> createState() => _${ENTITY}PageState();
+}
+
+class _${ENTITY}PageState extends ConsumerState<${ENTITY}Page> {
+  late final TextEditingController _inputController;
+
+  @override
+  void initState() {
+    super.initState();
+    _inputController = TextEditingController();
+    // 副作用放 initState（审计 M7），不放 build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(/* ${entity}Provider */).load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose(); // 资源释放（审计 F1）
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(/* ${entity}Provider */);
+    return Scaffold(
+      appBar: AppBar(title: const Text('${ENTITY}')),
+      body: state.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : state.error != null
+              ? _ErrorView( // 审计 F7：加载失败不静默
+                  message: state.error!,
+                  onRetry: () => ref.read(/* provider */).load(),
+                )
+              : _Body(data: state.data),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorView({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message),
+          ElevatedButton(onPressed: onRetry, child: const Text('重试')),
+        ],
+      ),
+    );
+  }
+}
+
+class _Body extends StatelessWidget {
+  final List<${ENTITY}> data;
+  const _Body({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      itemCount: data.length,
+      itemBuilder: (context, i) => ListTile(title: Text(data[i].name)),
+    );
+  }
+}

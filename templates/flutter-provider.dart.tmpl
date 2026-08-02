@@ -1,0 +1,58 @@
+// 模板：新 Provider 骨架
+// 用法：复制到 app/lib/providers/<entity>_provider.dart，替换 $ENTITY/$Entity/$entity
+// 固化审计经验：State 含 error（F7）/ 禁 static callback（M1）/ 强类型（F5）/ 比较后 notify（M3）
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/$entity.dart';
+import '../services/api_service.dart';
+
+// ═══ State（必须含 loading/data/error 三态）═══
+class ${ENTITY}State {
+  final bool isLoading;
+  final List<$ENTITY> data;
+  final String? error; // 审计 F7：必须有 error 字段
+
+  const ${ENTITY}State({
+    this.isLoading = false,
+    this.data = const [],
+    this.error,
+  });
+
+  ${ENTITY}State copyWith({
+    bool? isLoading,
+    List<$ENTITY>? data,
+    String? error,
+  }) =>
+      ${ENTITY}State(
+        isLoading: isLoading ?? this.isLoading,
+        data: data ?? this.data,
+        error: error, // null 表示清除 error
+      );
+}
+
+// ═══ Notifier ═══
+class ${ENTITY}Notifier extends StateNotifier<${ENTITY}State> {
+  final ApiService _api;
+  // 审计 M1：禁用 static callback，用实例字段
+
+  ${ENTITY}Notifier(this._api) : super(const ${ENTITY}State());
+
+  Future<void> load() async {
+    state = super.state.copyWith(isLoading: true, error: null);
+    try {
+      final result = await _api.get${ENTITY}List(); // 强类型，不准返 Map（审计 F5）
+      // 比较后再 notify（审计 M3 频繁 setState）
+      if (state.data != result) {
+        state = super.state.copyWith(isLoading: false, data: result);
+      } else {
+        state = super.state.copyWith(isLoading: false);
+      }
+    } catch (e) {
+      state = super.state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+}
+
+final ${entity}Provider =
+    StateNotifierProvider<${ENTITY}Notifier, ${ENTITY}State>((ref) {
+  return ${ENTITY}Notifier(ref.watch(apiServiceProvider));
+});

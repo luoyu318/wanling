@@ -1,0 +1,14 @@
+-- 模板：新 Migration 骨架
+-- 用法：复制到 server/migrations/NNN_<描述>.sql（NNN 为下一个序号）
+-- 项目约定：001_init.sql 是合并后的最终 schema，002+ 是增量补丁。
+-- testdb.go 把整个文件作为 up 执行（不拆 -- === up === / -- === down === 段），
+-- 因此不要写实体 down 段，回滚写注释（CHECK 约束示例见 L8）。
+
+ALTER TABLE existing_table  -- 或 CREATE TABLE / CREATE INDEX 等
+  ADD COLUMN ${COL} TEXT NOT NULL DEFAULT 'x' CHECK (${COL} IN ('a', 'b', 'x'));  -- CHECK 约束（审计 L9）
+
+-- 索引（视情况）
+-- CREATE INDEX idx_${TABLE}_${COL} ON ${TABLE}(${COL});
+
+-- 回滚（如需，手执行，不写实体 down 段）：
+--   ALTER TABLE existing_table DROP COLUMN IF EXISTS ${COL};

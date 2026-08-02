@@ -1,0 +1,207 @@
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import 'package:markdown_widget/markdown_widget.dart';
+
+import '../widgets/markdown_block_spacing.dart';
+import '../widgets/markdown_config.dart';
+import '../widgets/markdown_latex.dart';
+import '../widgets/markdown_strong.dart';
+import '../widgets/markdown_view.dart';
+import 'message_content_renderer.dart';
+
+/// MarkdownView 共用的 generators（与 builtin_renderers.dart 一致，改时同步）。
+final List<SpanNodeGeneratorWithTag> _markdownGenerators = [
+  latexGenerator,
+  strongGenerator,
+  hrSpacingGenerator,
+  ...headingSpacingGenerators(),
+];
+
+/// AI 思考链渲染器：读 [MessageRenderContext.isStreaming] 分发到两态子 widget。
+/// - 流式态(isStreaming=true)：✨ 闪烁动画 + 「正在思考...」固定文案
+/// - 终态(isStreaming=false)：✨ 淡化 + 真实 text 预览
+///
+/// 两态共用：白底 + #EEEEEE 边框 + 点击弹底部抽屉看全文。
+class ReasoningRenderer implements MessageContentRenderer {
+  const ReasoningRenderer();
+
+  @override
+  bool get selectable => true;
+
+  @override
+  bool get wrapInBubble => false;
+
+  @override
+  Widget build(BuildContext context, Map<String, dynamic> content, MessageRenderContext rc) {
+    final text = (content['data']?['text'] as String?) ?? '';
+    if (text.isEmpty) return const SizedBox.shrink();
+
+    if (rc.isStreaming) {
+      return _StreamingReasoningCard(text: text);
+    }
+    return _StaticReasoningCard(text: text);
+  }
+}
+
+/// 终态卡：✨ 淡化(opacity 0.6)+ 真实 text 预览。
+class _StaticReasoningCard extends StatelessWidget {
+  final String text;
+  const _StaticReasoningCard({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _showDetail(context, text),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+        ),
+        child: Row(
+          children: [
+            const Opacity(
+              opacity: 0.6,
+              child: Text('✨ ', style: TextStyle(fontSize: 14)),
+            ),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+              ),
+            ),
+            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF888888))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 流式卡:✨ 闪烁动画 + 「正在思考...」固定文案。
+///
+/// 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 之间平滑往返,周期 1800ms。
+class _StreamingReasoningCard extends StatefulWidget {
+  final String text;
+  const _StreamingReasoningCard({required this.text});
+
+  @override
+  State<_StreamingReasoningCard> createState() => _StreamingReasoningCardState();
+}
+
+class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _showDetail(context, widget.text),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+        ),
+        child: Row(
+          children: [
+            // ✨ 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 平滑往返。
+            // SizedBox 固定尺寸外壳必要:终态切换(本 Stateful → _StaticReasoningCard)
+            // 时 element 重建,若 RenderOpacity 直接作为 Row 子节点会引发 SliverList
+            // 位置错位(实测:思考完成后卡片跑到下一条消息下方)。
+            // SizedBox(RenderConstrainedBox) 把动画 layer 变化隔离在子树内,
+            // 不波及 Row 的 child list,与光环版结构一致。
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Center(
+                child: AnimatedBuilder(
+                  animation: _ctrl,
+                  builder: (_, _) {
+                    final t = _ctrl.value;
+                    final opacity = 0.25 + 0.75 * (math.sin(math.pi * 2 * t) * 0.5 + 0.5);
+                    return Opacity(
+                      opacity: opacity,
+                      child: const Text('✨ ', style: TextStyle(fontSize: 14)),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Expanded(
+              child: Text(
+                '正在思考...',
+                style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
+              ),
+            ),
+            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF888888))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showDetail(BuildContext context, String text) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              decoration: BoxDecoration(color: const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2)),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(children: [
+                Text('💭 ', style: TextStyle(fontSize: 16)),
+                Text('思考链', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+              ]),
+            ),
+            const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: MarkdownView(
+                  data: text,
+                  config: markdownStyle(isDark: false, isMe: false, context: ctx),
+                  inlineSyntaxes: [LatexSyntax()],
+                  generators: _markdownGenerators,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}

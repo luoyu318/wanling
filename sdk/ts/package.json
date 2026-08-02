@@ -1,0 +1,37 @@
+{
+  "name": "@wanling/sdk",
+  "version": "0.1.0",
+  "description": "Wanling AI Agent SDK - transport layer for building agent plugins",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ test/",
+    "test": "vitest run"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "eslint": "^9.39.5",
+    "globals": "^17.7.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^2.1.9"
+  }
+}

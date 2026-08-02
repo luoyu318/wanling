@@ -1,0 +1,22 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="万灵 · 万灵之印（浅底版）">
+  <title>万灵 Wanling — 万灵之印 · 浅底版</title>
+  <defs>
+    <radialGradient id="seal-spark-l" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff7e0"/>
+      <stop offset="45%" stop-color="#b8412e"/>
+      <stop offset="100%" stop-color="#b8412e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- 浅底：米白 -->
+  <rect width="200" height="200" rx="45" fill="#f5ecda"/>
+  <rect width="200" height="200" rx="45" fill="none" stroke="#b8412e" stroke-width="1.2" opacity="0.25"/>
+
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#b8412e" stroke-width="1.1" opacity="0.5"/>
+  <polygon points="54,54 146,54 146,146 54,146" fill="none" stroke="#7a1a0e" stroke-width="1.2" opacity="0.55"/>
+  <polygon points="100,32 168,100 100,168 32,100" fill="none" stroke="#7a1a0e" stroke-width="1.2" opacity="0.55"/>
+  <circle cx="100" cy="100" r="60" fill="none" stroke="#b8412e" stroke-width="0.9" opacity="0.45" stroke-dasharray="3 6"/>
+  <circle cx="100" cy="100" r="38" fill="none" stroke="#7a1a0e" stroke-width="1" opacity="0.55"/>
+  <path d="M100,72 L109,91 L128,100 L109,109 L100,128 L91,109 L72,100 L91,91 Z" fill="#b8412e"/>
+  <circle cx="100" cy="100" r="11" fill="url(#seal-spark-l)"/>
+  <circle cx="100" cy="100" r="3.2" fill="#fff7e0"/>
+</svg>

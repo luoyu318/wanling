@@ -1,0 +1,38 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="万灵 · 万灵之印">
+  <title>万灵 Wanling — 万灵之印</title>
+  <defs>
+    <linearGradient id="seal-bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#160726"/>
+      <stop offset="0.55" stop-color="#2a0f44"/>
+      <stop offset="1" stop-color="#1a0830"/>
+    </linearGradient>
+    <radialGradient id="seal-vg" cx="50%" cy="34%" r="78%">
+      <stop offset="62%" stop-color="rgba(0,0,0,0)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.36)"/>
+    </radialGradient>
+    <radialGradient id="seal-spark" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff4d6"/>
+      <stop offset="45%" stop-color="#f4d47c"/>
+      <stop offset="100%" stop-color="#f4d47c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- 底 -->
+  <rect width="200" height="200" rx="45" fill="url(#seal-bg)"/>
+  <rect width="200" height="200" rx="45" fill="url(#seal-vg)"/>
+
+  <!-- 外法印圆环 -->
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#c9a3ff" stroke-width="0.9" opacity="0.5"/>
+  <!-- 八角星轮：两正方形旋转叠合 -->
+  <polygon points="54,54 146,54 146,146 54,146" fill="none" stroke="#c9a3ff" stroke-width="1" opacity="0.45"/>
+  <polygon points="100,32 168,100 100,168 32,100" fill="none" stroke="#c9a3ff" stroke-width="1" opacity="0.45"/>
+  <!-- 内环虚线 -->
+  <circle cx="100" cy="100" r="60" fill="none" stroke="#f4d47c" stroke-width="0.7" opacity="0.4" stroke-dasharray="3 6"/>
+  <!-- 中央圆框 -->
+  <circle cx="100" cy="100" r="38" fill="none" stroke="#e6c98f" stroke-width="0.8" opacity="0.5"/>
+  <!-- 四芒灵光 -->
+  <path d="M100,72 L109,91 L128,100 L109,109 L100,128 L91,109 L72,100 L91,91 Z" fill="#e6c98f" opacity="0.95"/>
+  <!-- 中央迸发光晕 -->
+  <circle cx="100" cy="100" r="11" fill="url(#seal-spark)"/>
+  <circle cx="100" cy="100" r="3.2" fill="#fff4d6"/>
+</svg>

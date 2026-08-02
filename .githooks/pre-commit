@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# 万灵 pre-commit hook — 只查 staged 文件，秒级反馈
+# 只拦 error 级，warning/info 不阻断
+# 用法：make install-hooks 启用；git commit --no-verify 绕过
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# 收集 staged 文件（排除删除和测试文件）
+GO_FILES=$(git diff --cached --name-only --diff-filter=ACM -- 'server/*.go' | grep -v '_test\.go$' || true)
+DART_FILES=$(git diff --cached --name-only --diff-filter=ACM -- 'app/lib/**/*.dart' | grep -v 'gallery/photo_view' || true)
+TS_FILES=$(git diff --cached --name-only --diff-filter=ACM -- 'plugin/opencode-plugin/src/**/*.ts' | grep -v '\.test\.ts$' || true)
+
+FAILED=0
+
+# ── Go ──
+if [[ -n "$GO_FILES" ]]; then
+  echo "🔍 [Go] golangci-lint (staged)..."
+  if ! (cd server && golangci-lint run --new-from-rev=HEAD --timeout 30s ./...); then
+    FAILED=1
+  fi
+fi
+
+# ── Flutter ──
+if [[ -n "$DART_FILES" ]]; then
+  echo "🔍 [Flutter] dart analyze (error only)..."
+  ERRORS=$(cd app && dart analyze lib 2>&1 | grep 'error •' || true)
+  if [[ -n "$ERRORS" ]]; then
+    echo "$ERRORS"
+    FAILED=1
+  fi
+fi
+
+# ── Plugin ──
+if [[ -n "$TS_FILES" ]]; then
+  echo "🔍 [Plugin] tsc + eslint (staged)..."
+  if ! (cd plugin/opencode-plugin && npx tsc --noEmit); then
+    FAILED=1
+  fi
+  for f in $TS_FILES; do
+    rel=${f#plugin/opencode-plugin/}
+    if ! (cd plugin/opencode-plugin && npx eslint "$rel"); then
+      FAILED=1
+    fi
+  done
+fi
+
+if [[ $FAILED -ne 0 ]]; then
+  echo ""
+  echo "❌ pre-commit 检查未通过。修正后重试，或 git commit --no-verify 绕过（不推荐）。"
+  exit 1
+fi
+
+echo "✅ pre-commit 检查通过"
+exit 0

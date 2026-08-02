@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# ocwl-restart — 重启万灵 opencode-plugin 服务
+# 用法: ocwl-restart [-p|--profile <suffix>]
+set -euo pipefail
+
+suffix=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p|--profile)
+            if [[ $# -lt 2 ]]; then
+                echo "ocwl-restart: -p/--profile 需要参数" >&2
+                exit 2
+            fi
+            suffix="$2"
+            shift 2
+            ;;
+        -p=*|--profile=*)
+            suffix="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
+ocwl-restart — 重启万灵 opencode-plugin 服务
+
+用法:
+  ocwl-restart [-p <suffix>]
+
+选项:
+  -p, --profile <suffix>   指定实例(默认: opencode-wanling)
+  -h, --help               显示本帮助
+EOF
+            exit 0
+            ;;
+        *)
+            echo "ocwl-restart: 未知参数 '$1'(只接受 -p/--profile)" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$suffix" ]]; then
+    service="opencode-wanling"
+else
+    service="opencode-wanling-${suffix}"
+fi
+
+exec systemctl --user restart "$service"

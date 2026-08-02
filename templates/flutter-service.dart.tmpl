@@ -1,0 +1,36 @@
+// 模板：新 Service 骨架
+// 用法：复制到 app/lib/services/<entity>_service.dart，替换 $ENTITY/$Entity
+// 固化审计经验：资源生命周期 / 重建机制（F1 disconnect→connect）
+import 'dart:async';
+
+class ${ENTITY}Service {
+  StreamController<void>? _controller; // 非 final（审计 F1）
+  bool _disposed = false;
+
+  ${ENTITY}Service() {
+    _ensureController();
+  }
+
+  // 重建机制（审计 F1：disconnect→connect controller 已关闭不重建）
+  void _ensureController() {
+    if (_controller == null || _controller!.isClosed) {
+      _controller = StreamController<void>.broadcast();
+    }
+  }
+
+  Stream<void> get changes {
+    _ensureController();
+    return _controller!.stream;
+  }
+
+  void notifyChanged() {
+    _ensureController();
+    _controller?.add(null);
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _controller?.close();
+  }
+}

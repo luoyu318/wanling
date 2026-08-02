@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "wanling": {
+      "command": "./sdk/.venv/bin/python",
+      "args": ["-m", "wanling_mcp"],
+      "env": {
+        "WANLING_AGENT_ID": "<your-agent-id>",
+        "WANLING_SECRET_KEY": "<your-secret-key>",
+        "WANLING_USER_ID": "<default-target-user-id>",
+        "WANLING_SERVER": "https://your-wanling-host:10008"
+      }
+    }
+  }
+}

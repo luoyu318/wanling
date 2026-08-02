@@ -1,0 +1,192 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import '../utils/notification_payload.dart';
+
+/// 通知渠道 ID 常量。
+class _Channels {
+  /// 消息通知渠道：HIGH 优先级，弹横幅 + 声音 + 震动
+  static const messages = 'wanling_messages';
+
+  /// 前台服务常驻标志：LOW 优先级，无声音
+  static const service = 'wanling_service';
+}
+
+/// 通知点击回调类型。调用方实现后注入。
+typedef OnNotificationTap = void Function(NotificationPayload payload);
+
+/// flutter_local_notifications 单例封装。
+/// 全局单例（不通过 Riverpod 注入），方便 service isolate 内直接调。
+class NotificationService {
+  static final NotificationService instance = NotificationService._();
+  NotificationService._();
+
+  final _plugin = FlutterLocalNotificationsPlugin();
+
+  /// 点击回调。由 main.dart 在初始化时设置。
+  OnNotificationTap? onTap;
+
+  /// 冷启动时拉起 APP 的 payload（用户从通知点开 APP）。
+  /// 由 main.dart 在初始化时通过 [consumeLaunchPayload] 读取。
+  NotificationPayload? _launchPayload;
+
+  /// 初始化插件 + channel + 点击监听。
+  /// 必须在 main() 里 runApp 前调一次。
+  Future<void> init() async {
+    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosInit = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
+    // Linux desktop 必填(v18+ 抛 ArgumentError 阻断启动)。
+    // defaultActionName 是点击通知触发的 DBus action 标识,
+    // 点击路由仍走 onDidReceiveNotificationResponse 统一处理。
+    const linuxInit = LinuxInitializationSettings(
+      defaultActionName: 'Open notification',
+    );
+    const initSettings = InitializationSettings(
+      android: androidInit,
+      iOS: iosInit,
+      linux: linuxInit,
+    );
+
+    await _plugin.initialize(
+      settings: initSettings,
+      onDidReceiveNotificationResponse: _onTap,
+    );
+
+    // 创建两个 channel（Android 8+ 强制）
+    if (Platform.isAndroid) {
+      await _createAndroidChannels();
+    }
+
+    // 检查冷启动 payload(仅移动端;Linux 平台未实现该 API,调用会抛 UnimplementedError,
+    // 且 desktop 无「从系统通知冷启动 APP」的产品语义)
+    if (Platform.isAndroid || Platform.isIOS) {
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        _launchPayload = NotificationPayload.fromJsonString(
+          launchDetails!.notificationResponse?.payload,
+        );
+      }
+    }
+  }
+
+  Future<void> _createAndroidChannels() async {
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+
+    // 消息通知：HIGH 优先级弹横幅
+    const messagesChannel = AndroidNotificationChannel(
+      _Channels.messages,
+      '消息通知',
+      description: '收到 agent 发来的新消息时通知',
+      importance: Importance.high,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    // 服务常驻：LOW 优先级
+    const serviceChannel = AndroidNotificationChannel(
+      _Channels.service,
+      '后台服务',
+      description: 'APP 在后台运行时显示常驻通知',
+      importance: Importance.low,
+      showBadge: false,
+    );
+
+    await androidPlugin?.createNotificationChannel(messagesChannel);
+    await androidPlugin?.createNotificationChannel(serviceChannel);
+  }
+
+  /// 申请通知权限（Android 13+）。返回是否已授权。
+  Future<bool> requestPermissions() async {
+    if (!Platform.isAndroid) return true;
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final granted = await androidPlugin?.requestNotificationsPermission();
+    return granted ?? false;
+  }
+
+  /// 弹一条新消息通知(MessagingStyle,带头像 + 计数)。
+  ///
+  /// [title] 通知标题。单聊场景传 sender 名,群聊场景传群名。
+  /// [body] 消息预览文本。单聊传消息内容,群聊传「${sender}：${内容}」。
+  /// [unreadCount] 该会话累计未读数(>1 时 body 前加「[N条]」)。
+  /// [avatarBytes] sender 头像 PNG bytes(方形+圆角),null 时 Android 不显示头像位。
+  /// [payload] 含 convId/agentId/agentName,点击时用于路由跳转。
+  Future<void> showMessageNotification({
+    required NotificationPayload payload,
+    required String title,
+    required String body,
+    required int unreadCount,
+    Uint8List? avatarBytes,
+  }) async {
+    // body 加 [N条] 前缀(N>1 时),title 不变。
+    // 单聊 N=1:title=sender 名,body=内容
+    // 单聊 N>1:title=sender 名,body=[N条]内容
+    // 群聊 N=1:title=群名,body=sender：内容
+    // 群聊 N>1:title=群名,body=[N条]sender：内容
+    final displayBody = prefixBody(unreadCount, body);
+
+    final androidDetails = AndroidNotificationDetails(
+      _Channels.messages,
+      '消息通知',
+      channelDescription: '收到 agent 发来的新消息时通知',
+      importance: Importance.high,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.message,
+      // largeIcon 渲染在通知右侧大头像位(192x192 bitmap,系统自动缩放)。
+      largeIcon: avatarBytes != null ? ByteArrayAndroidBitmap(avatarBytes) : null,
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    // notification id 用 convId.hashCode 保证同一会话覆盖更新(不堆叠)
+    final id = payload.convId.hashCode;
+    await _plugin.show(
+      id: id,
+      title: title,
+      body: displayBody,
+      notificationDetails: details,
+      payload: payload.toJsonString(),
+    );
+  }
+
+  /// 取消指定通知(进入会话读了消息后,清掉该会话的横幅)。
+  /// id 与 show 时一致 = convId.hashCode。
+  void cancel(int id) {
+    _plugin.cancel(id: id);
+  }
+
+  /// 构造通知 body(格式):N>1 时 `[N条]消息`,否则原 `消息`。
+  /// 仅加未读数前缀,title 由调用方决定(单聊 sender 名 / 群聊群名)。
+  /// 纯函数便于单测。
+  @visibleForTesting
+  static String prefixBody(int count, String body) =>
+      count > 1 ? '[$count条]$body' : body;
+
+  /// 取冷启动 payload（用户从通知拉起 APP 时携带的会话信息）。
+  /// 取一次后清空，避免重复跳转。
+  NotificationPayload? consumeLaunchPayload() {
+    final p = _launchPayload;
+    _launchPayload = null;
+    return p;
+  }
+
+  void _onTap(NotificationResponse response) {
+    final payload = NotificationPayload.fromJsonString(response.payload);
+    if (payload != null) {
+      onTap?.call(payload);
+    }
+  }
+}

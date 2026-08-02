@@ -1,0 +1,31 @@
+# 万灵自定义安全规则 — 从三轮审计提炼
+# 用法: semgrep --config secscan/semgrep-rules.yml server/ plugin/
+
+# 注：审计 H1/M1 IDOR 防护（Handler 调 repo Update/Delete 前校验 owner）无法用 semgrep
+# 可靠表达——真正要检查的是"缺少 entity.OwnerID == userID 比较"，semgrep 的 pattern-not-inside
+# 只能匹配字面量 userID := c.GetString("userID")，且方法名 regex 匹配不到真实的
+# UpdateSessionMeta/DeleteMessage 等。IDOR 防护依赖 go-handler.go.tmpl（含 owner 校验骨架）
+# + code review 兜底。
+
+rules:
+  # 规则 2: SecretKey 字段必须 json:"-" 脱敏
+  # 来源: 审计 M6 (SecretKey 回显)
+  - id: wanling-secret-key-must-be-redacted
+    patterns:
+      - pattern-regex: 'json:"secret_key"'
+    message: "secret_key 字段必须 json:\"-\" 脱敏，不准序列化到 JSON。审计 M6"
+    languages: [go]
+    severity: ERROR
+    paths:
+      include: ["server/internal/model/*.go"]
+
+  # 规则 3: TS 禁用 ! 非空断言（与 eslint 重叠，双保险）
+  # 来源: 审计 L8
+  - id: wanling-ts-no-non-null-assertion
+    pattern: $X!
+    message: "禁用 ! 非空断言，用守卫方法。审计 L8"
+    languages: [typescript]
+    severity: ERROR
+    paths:
+      include: ["plugin/opencode-plugin/src/**/*.ts"]
+      exclude: ["*.test.ts"]

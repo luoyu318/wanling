@@ -1,0 +1,70 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable-all: false
+  disable-all: true
+  enable:
+    - errcheck        # 必须处理 error 返回值（审计 H6/M8/M5/I1）
+    - govet           # 可疑代码（审计 C2 MustGet）
+    - staticcheck     # 综合（审计 L3 死代码）
+    - unused          # 未使用（审计 L1-L6）
+    - gosec           # 安全（审计 C4/M8-L2/L15）
+    - gocritic        # 改进建议
+    - misspell        # 注释拼写
+    - gofmt           # 格式
+    - goimports       # import 顺序
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true  # 审计 C2：类型断言必须检查 ok
+    check-blank: false
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # 纯内存优化（240→232B），业务收益极小，重排 struct 会丢失字段注释
+      - shadow          # if-err 惯用模式噪音过大（Go 社区惯例）
+  gosec:
+    excludes:
+      - G104  # errcheck 已覆盖，避免重复告警
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+    disabled-checks:
+      - hugeParam      # 性能建议：改指针参数影响 repo 方法签名/API 稳定性
+      - rangeValCopy   # 性能建议：改 range 索引有逻辑风险（副本语义）
+      - ifElseChain    # 风格建议：改 switch 可选，非 bug
+  staticcheck:
+    checks: ["all"]
+
+issues:
+  exclude-rules:
+    # 测试文件宽松（类型断言/错误忽略是测试惯例）
+    - path: _test\.go
+      linters: [errcheck, gosec, gocritic]
+    # Go 事务/资源惯用模式（defer Rollback 在 commit 后返回 ErrTxDone 是预期行为）
+    - linters: [errcheck]
+      source: 'defer .+\.(Rollback|Close)\(\)'
+    # hub 消息分发：SendTo*/bufferedSend 失败=对方离线/连接断，不阻断业务（审计已知）
+    - linters: [errcheck]
+      source: '\.(SendToUser|SendToAgent|bufferedSend)\('
+    # presence 状态：Online/Offline/RefreshTTL 失败不阻断消息分发（审计已知）
+    - linters: [errcheck]
+      source: 'h\.presence\.'
+    # migrate 一次性工具：错误忽略可接受
+    - path: cmd/migrate/
+      linters: [errcheck, gocritic]
+    # ws_handler：WebSocket 读写操作失败=连接断（审计已知）
+    - path: internal/handler/ws_handler\.go
+      linters: [errcheck]
+    # hub.go：sync.Map 类型断言（v.([]*Client) 等）类型安全由写入方保证
+    - path: internal/hub/hub\.go
+      linters: [errcheck]
+    # main 函数 exitAfterDefer：defer db.Close + log.Fatal 是 main 常见模式
+    - linters: [gocritic]
+      source: '(log\.Fatal|os\.Exit)\('
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false

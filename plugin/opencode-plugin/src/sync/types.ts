@@ -1,0 +1,46 @@
+export interface SessionState {
+  reasoning: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
+  text: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
+  convId: string
+  toolPartsSent: Set<string>
+  // text/reasoning part 已被 idle 兜底(flushText/flushReasoning)发走终态的 partID 集合。
+  // OC 延迟推来的 part_updated(end) 到达时检查,命中则跳过避免重复发终态(两条消息都入库)。
+  textPartsFlushed: Set<string>
+  toolCardMsgIds: Map<string, string>
+  pendingToolCard?: { toolName: string; input: Record<string, unknown>; partId: string }
+  // sendCardMessage(running) 已发起但 msgId 尚未返回的 inflight Promise。
+  // completed/error 事件可能在此窗口到达,通过 await 这条 promise 拿到 msgId。
+  toolCardInflight: Map<string, Promise<string>>
+  // pendingToolCard 的 child 关联(task 工具用)。
+  // wide-review I-1:onPermissionAsked/onQuestionAsked 刷新 pendingToolCard 时调
+  // _flushPendingToolCard(state) 无参,若 childSessionId 仅靠参数传递会丢,
+  // 导致 childSessionTree 永不注册 → 子 agent 输出全丢。存入 pending 对象本身,
+  // 所有 flush 路径(含审批/提问抢占)一致读取。
+  pendingChildSessionId?: string
+  pendingParentSessionId?: string
+  // 是否为子 session(childSessionTree 注册的)。命中即走 sendChildMsg 透传 parent/root
+  isChildSession?: boolean
+  // 反向引用对应的 ChildSessionEntry,避免每次 sendChildMsg 都查 Map
+  childEntry?: ChildSessionEntry
+  // 是否为主 session(用户直接对话的 agent 循环),区别于子 agent(Task 工具派生)。
+  // idle 时仅主 session 发 step_finish finished=true(响铃 + 计未读),子 session idle 只通知主 agent。
+  isMainSession?: boolean
+}
+
+// 子 session 注册项。Task 7 在 task/running 事件命中时塞入 childSessionTree。
+// 本任务只搭框架:验证子 session 事件不再被 getOrCreateState 丢弃,并能透传 parent/root。
+export interface ChildSessionEntry {
+  parentMsgId: string       // 直接父 task 卡片 msgId
+  rootMsgId: string         // 根 task 卡片 msgId(可能 == parentMsgId)
+  depth: number             // 0=主, 1=一层子, 2=嵌套
+  state: SessionState       // 子 session 自己的 state
+  parentSessionId: string   // 父 opencode sessionID
+  hasFirstEvent: boolean    // 是否已触发 working PATCH(每个 child 仅一次)
+  // task 卡片初始 input + childSessionId,working PATCH 时复用(server UpdateContent 整体替换,
+  // 不能只发 status 否则 input/sub_session_id 丢失,APP 渲染空白)。
+  taskInput?: Record<string, unknown>
+  childSessionId?: string
+  // 兜底超时清理句柄:task 崩溃或漏发 completed/error SSE 时,10min 后强制清理避免泄漏。
+  // 正常路径(task/completed|error)在 _handleTaskTool 清理前 clearTimeout。
+  cleanupTimer?: ReturnType<typeof setTimeout>
+}

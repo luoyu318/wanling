@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# ocwl — 万灵 opencode-plugin 启动器(带 proxy Basic Auth)
+# 用法: ocwl [-p|--profile <suffix>] [opencode attach flags...]
+set -euo pipefail
+
+# 解析 ocwl 自己的 flag(-p/--profile),剩余透传给 opencode attach。
+# 必须先吃掉 -p,否则 attach 会把它当 password。
+suffix=""
+passthrough=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p|--profile)
+            if [[ $# -lt 2 ]]; then
+                echo "ocwl: -p/--profile 需要参数" >&2
+                exit 2
+            fi
+            suffix="$2"
+            shift 2
+            ;;
+        -p=*|--profile=*)
+            suffix="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
+ocwl — 连上万灵 opencode-plugin proxy(带 Basic Auth)
+
+用法:
+  ocwl [-p <suffix>] [attach flags...]
+
+选项:
+  -p, --profile <suffix>   指定实例(默认: ~/.config/opencode-wanling)
+  -h, --help               显示本帮助
+
+附加 flags 原样转给 opencode attach(如 --dir /path、-c)。
+
+退出码:
+   0   成功
+   2   profile 未安装(config.json 不存在)
+   3   jq 不可用
+   4   proxyPassword 缺失(plugin 未启动过)
+   5   proxyPort 损坏
+EOF
+            exit 0
+            ;;
+        *)
+            passthrough+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# 拼 configDir + service 名
+if [[ -z "$suffix" ]]; then
+    config_dir="${HOME}/.config/opencode-wanling"
+    service="opencode-wanling"
+else
+    config_dir="${HOME}/.config/opencode-wanling-${suffix}"
+    service="opencode-wanling-${suffix}"
+fi
+config_file="${config_dir}/config.json"
+
+# preflight 校验
+if [[ ! -f "$config_file" ]]; then
+    echo "ocwl: profile '${suffix:-default}' 未安装(config 不在 ${config_file})" >&2
+    exit 2
+fi
+if ! command -v jq &>/dev/null; then
+    echo "ocwl: 需要 jq 解析 config.json,请先安装 jq" >&2
+    exit 3
+fi
+
+proxy_port=$(jq -r '.proxyPort // empty' "$config_file" 2>/dev/null || true)
+proxy_password=$(jq -r '.proxyPassword // empty' "$config_file" 2>/dev/null || true)
+
+if [[ -z "$proxy_password" ]]; then
+    echo "ocwl: proxyPassword 缺失,plugin 未启动过或 config 损坏。请先 systemctl --user start ${service}" >&2
+    exit 4
+fi
+if [[ -z "$proxy_port" || ! "$proxy_port" =~ ^[0-9]+$ ]]; then
+    echo "ocwl: proxyPort 缺失或非数字,config 损坏:${config_file}" >&2
+    exit 5
+fi
+
+# exec 替换进程:attach 接管 TTY,Ctrl+C 直接传给 OC
+# 仅当用户未传 --dir 时注入默认(避免双 --dir 冲突)
+has_dir=0
+for arg in "${passthrough[@]:-}"; do
+    case "$arg" in
+        --dir|--dir=*) has_dir=1; break ;;
+    esac
+done
+
+if [[ $has_dir -eq 0 ]]; then
+    exec opencode attach "http://localhost:${proxy_port}" \
+        -u opencode -p "$proxy_password" \
+        --dir "$PWD" \
+        "${passthrough[@]}"
+else
+    exec opencode attach "http://localhost:${proxy_port}" \
+        -u opencode -p "$proxy_password" \
+        "${passthrough[@]}"
+fi

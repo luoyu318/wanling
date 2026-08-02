@@ -1,0 +1,79 @@
+# === 日志 ===
+*.log
+*.stackdump
+
+# === AI 辅助开发中间产物（不入库）===
+.superpowers/
+
+# === 历史设计文档（开发私有，不入开源仓库）===
+docs/superpowers/
+docs/plans/
+docs/audit/
+docs/research/
+
+# === Python ===
+__pycache__/
+*.pyc
+
+# === Node ===
+node_modules/
+package-lock.json
+
+# === TypeScript 编译产物 ===
+dist/
+
+# === 文件上传存储目录（server 默认 STORAGE_PATH=./uploads，相对 cwd）===
+# 生产用绝对路径 /usr/local/wanling/uploads，本地跑会落到仓库根 uploads/
+uploads/
+
+# === Android ===
+# local.properties 含本机 SDK 路径（sdk.dir / flutter.sdk），必须过滤
+app/android/local.properties
+# .gradle 是 Gradle 构建缓存
+app/android/.gradle/
+
+# === iOS / macOS CocoaPods 依赖 ===
+app/ios/Pods/
+app/macos/Pods/
+
+# === Flutter 自动生成的原生插件注册（flutter pub get 会重建）===
+# 行业惯例过滤：生成文件不该进 git，clone 后跑 flutter pub get 自动生成
+app/macos/Flutter/GeneratedPluginRegistrant.swift
+app/ios/Runner/GeneratedPluginRegistrant.h
+app/ios/Runner/GeneratedPluginRegistrant.m
+app/linux/flutter/generated_plugin_registrant.cc
+app/linux/flutter/generated_plugin_registrant.h
+app/linux/flutter/generated_plugins.cmake
+app/windows/flutter/generated_plugin_registrant.cc
+app/windows/flutter/generated_plugin_registrant.h
+app/windows/flutter/generated_plugins.cmake
+
+# === Web（万灵不做 web 版，Flutter 默认生成产物）===
+app/web/
+
+# === Docker Compose 运行产物 ===
+# 用户从 .example.yml 拷贝出来的实际文件（含可能的本地 secret 调整）
+.env*
+!.env.*example*
+data/
+docker-compose.yml
+docker-compose.prod.yml
+docker-compose.dev.yml
+docker-compose.override.yml
+
+# === Go 本地编译产物（go build ./cmd/... 时产生）===
+server/*.exe
+server/migrate
+server/wanling-server
+server/wanling-migrate
+server/wanling-admin
+# air 热重载构建产物（dev 模式 .air.toml 的 tmp_dir = "tmp"）
+server/tmp/
+
+.zcode/*
+.claude/*
+.mcp.json
+# 数据库备份（含生产数据快照，绝不入库）
+server/backups/
+# Flutter mockup 临时产物
+mockups/

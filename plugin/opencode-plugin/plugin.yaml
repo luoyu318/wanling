@@ -1,0 +1,39 @@
+name: opencode-plugin
+label: OpenCode
+kind: platform
+version: 0.1.0
+description: >
+  OpenCode adapter for Wanling. Bridges OpenCode AI coding agent
+  sessions to Wanling IM, enabling seamless CLI ↔ APP conversation
+  continuity. Requires a pre-registered agent on the Wanling server.
+author: Wanling
+requires_env:
+  - name: WANLING_AGENT_ID
+    description: "Agent ID on the Wanling server (UUID)"
+    prompt: "Agent ID"
+    password: false
+  - name: WANLING_SECRET_KEY
+    description: "Agent secret key (used to exchange JWT token)"
+    prompt: "Secret key"
+    password: true
+  - name: OPENCODE_PORT
+    description: "OpenCode headless server port (default: 4096)"
+    prompt: "OpenCode port"
+    password: false
+optional_env:
+  - name: WANLING_SERVER_URL
+    description: "Wanling server base URL (default: http://localhost:18008)"
+    prompt: "Server URL"
+    password: false
+  - name: WANLING_ALLOW_ALL_USERS
+    description: "Allow any user to talk to the agent (default: true)"
+    prompt: "Allow all users?"
+    password: false
+  - name: WANLING_ALLOWED_USERS
+    description: "Comma-separated user IDs allowed to talk to the agent"
+    prompt: "Allowed user IDs (comma-separated)"
+    password: false
+  - name: CONTROL_PORT
+    description: "Control API port (default: 19780)"
+    prompt: "Control port"
+    password: false
