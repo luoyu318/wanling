@@ -632,8 +632,17 @@ class WanlingAdapter(BasePlatformAdapter):
         session_key: str,
         description: str = "dangerous command",
         metadata: Optional[Dict[str, Any]] = None,
+        allow_permanent: bool = True,
+        allow_session: bool = True,
+        smart_denied: bool = False,
     ) -> SendResult:
         """发起命令审批卡片（hermes gateway 的跨平台契约）。
+
+        allow_permanent / allow_session / smart_denied 为 hermes 新版
+        gateway 契约入参：控制卡片是否提供 session/always 长期放行选项
+        （Tirith 安全扫描会禁掉 permanent），smart_denied 表示智能审核
+        已判 DENY。Wanling 卡片由 server 端渲染动作按钮，此处仅透传
+        语义不影响流程，留参保持向后兼容。
 
         重要语义：本方法只负责**发出审批卡片**，立即返回。不等 user 决策。
         hermes gateway 通过 tools/approval.py 的 queue 自己管 approval 等待，
