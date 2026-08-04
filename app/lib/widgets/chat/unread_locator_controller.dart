@@ -4,6 +4,7 @@ import 'package:scrollview_observer/scrollview_observer.dart';
 
 import '../../providers/chat_provider.dart' show chatProvider;
 import '../../utils/chat/render_box_utils.dart' show globalRectOf, listViewRect;
+import 'jump_controller.dart' show dualSliverBottomTarget;
 
 /// [UnreadLocatorController] 的依赖注入容器。
 ///
@@ -125,6 +126,24 @@ class UnreadLocatorController {
       return;
     }
 
+    // firstUnread 就是最新历史(index==0,贴锚点):直接贴底,不做 30% 对齐。
+    //
+    // 背景:observer.jumpTo(alignment:0.3) 只在目标尚不可见时才滚动;
+    // index==0 的目标本就在视口底部边缘(history[0] 贴锚点),observer 判定
+    // "已在视口"只滚一小段(真机实测 px≈-34.8),30% 对齐从未执行,导致
+    // history 底部 + live 顶部同时露出(上下 sliver 各半)。且历史不足一屏时
+    // 几何上不可能把 index==0 对齐到 30% 而不越锚点。
+    // 语义上 firstUnread 是最新一条 = 用户本就应在底部,直接复用无未读场景
+    // 的贴底逻辑(dualSliverBottomTarget),行为一致。
+    if (index == 0) {
+      debugPrint(
+        '[locateUnread] firstUnread is newest history (index=0), '
+        'fallback to bottom (skip 30% align)',
+      );
+      _scrollToBottomForFirstUnread();
+      return;
+    }
+
     final observerController = _ctx.getObserverController();
     // Bug A 自旋等待:SliverViewObserver 内部 sliverContexts 在 initState 的
     // PostFrameCallback 中填充。即使我们用了 loading overlay 让 SliverViewObserver
@@ -207,5 +226,38 @@ class UnreadLocatorController {
         ? scrollCtrl.position.pixels
         : null;
     debugPrint('[locateUnread] rightAfter jumpTo call: px=$pxRightAfterJump');
+  }
+
+  /// firstUnread 即最新历史(index==0)时直接贴底(与无未读场景一致)。
+  ///
+  /// 目标由 [dualSliverBottomTarget] 计算(live 空 → max(minScrollExtent, -vd);
+  /// live 非空 → maxScrollExtent),同步 _isLocating 生命周期 + onLocateComplete,
+  /// 与 observer.jumpTo 分支的收尾一致(预加载历史 + 检查已见未读)。
+  void _scrollToBottomForFirstUnread() {
+    final scrollCtrl = _ctx.getScrollCtrl();
+    if (!scrollCtrl.hasClients) {
+      debugPrint('[locateUnread] (bottom fallback) no clients');
+      return;
+    }
+    _isLocating = true;
+    final pos = scrollCtrl.position;
+    final chatState = _ctx.ref.read(chatProvider(_ctx.chatKey));
+    final target = dualSliverBottomTarget(
+      minScrollExtent: pos.minScrollExtent,
+      maxScrollExtent: pos.maxScrollExtent,
+      viewportDimension: pos.viewportDimension,
+      liveEmpty: chatState.liveMessages.isEmpty,
+    );
+    debugPrint(
+      '[locateUnread] (bottom fallback) jumpTo $target '
+      '(min=${pos.minScrollExtent}, max=${pos.maxScrollExtent}, '
+      'vd=${pos.viewportDimension}, liveEmpty=${chatState.liveMessages.isEmpty})',
+    );
+    scrollCtrl.jumpTo(target);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isLocating = false;
+      debugPrint('[locateUnread] (bottom fallback) _isLocating released');
+      _ctx.onLocateComplete();
+    });
   }
 }
