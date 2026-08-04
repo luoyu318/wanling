@@ -220,6 +220,13 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 		return
 	}
 
+	// 保留原消息的 silent 字段:plugin 更新卡片 status 时 content 只带
+	// {msg_type,data,status},若直接整体替换会抹掉创建时的 silent=true,
+	// 导致 tool_card 等过程消息被后续未读重算误当"非 silent"计入(未读残留)。
+	// 语义:silent 是创建时确定的元数据,PATCH 只应改 data/status,不该动 silent。
+	// 新 content 显式带 silent 时以新值为准(尊重 caller 的显式意图)。
+	req.Content = mergePreservedSilent(msg.Content, req.Content)
+
 	// 更新(repo WHERE 带 sender_id 兜底防 IDOR,handler 校验与 SQL 校验双保险)
 	if err := h.msgRepo.UpdateContent(c.Request.Context(), id, actorID, req.Content); err != nil {
 		// Get 已确认存在,此处 ErrNoRows 说明 Get 与 UPDATE 之间被并发撤回 → 404
@@ -449,4 +456,40 @@ func (h *MessageHandler) buildDeleteMsg(ctx context.Context, convID string, ids 
 		T:  model.EventMessageDelete,
 		D:  data,
 	}
+}
+
+// mergePreservedSilent 把原 content 的 silent 字段并入新 content(若新 content 未显式带)。
+//
+// 场景:plugin PATCH 卡片 status 时 content 只带 {msg_type,data,status},不含 silent。
+// 直接整体替换会抹掉创建时的 silent=true(tool_card 等过程消息创建时 silent=true,
+// server 据此跳过 IncrUnread;PATCH 后丢失会被未读重算误当"非 silent"计入 → 残留)。
+//
+// 规则:
+//   - 新 content 显式带 silent → 用新值(caller 显式意图优先)
+//   - 新 content 未带 silent 且原 content 有 → 并入原值(保留创建时元数据)
+//   - 解析失败(非 object / 缺字段)→ 原样返回新 content(不破坏 PATCH 语义)
+func mergePreservedSilent(origContent, newContent json.RawMessage) json.RawMessage {
+	var orig map[string]json.RawMessage
+	if err := json.Unmarshal(origContent, &orig); err != nil || orig == nil {
+		return newContent
+	}
+	origSilent, hasOrigSilent := orig["silent"]
+	if !hasOrigSilent {
+		return newContent
+	}
+
+	var neu map[string]json.RawMessage
+	if err := json.Unmarshal(newContent, &neu); err != nil || neu == nil {
+		return newContent
+	}
+	if _, hasNewSilent := neu["silent"]; hasNewSilent {
+		return newContent
+	}
+
+	neu["silent"] = origSilent
+	merged, err := json.Marshal(neu)
+	if err != nil {
+		return newContent
+	}
+	return merged
 }

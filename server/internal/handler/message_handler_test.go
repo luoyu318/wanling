@@ -512,3 +512,68 @@ func TestMessageHandlerUpdateContentContentNotObject(t *testing.T) {
 	w := patchUpdateContent(t, env, env.agentID, "agent", badContent)
 	AssertErr(t, w, http.StatusBadRequest, "bad_request")
 }
+
+// TestMessageHandlerUpdateContentPreservesSilent PATCH 更新 status 时保留原 silent 字段。
+//
+// 背景:tool_card 创建时 silent=true(process 跳过 IncrUnread),但 plugin 后续 PATCH
+// status 时 content 只带 {msg_type,data,status} 不含 silent,server 整体替换后
+// silent 字段丢失 → 重算未读时把该消息当"非 silent"计入,导致未读残留。
+// 修复:PATCH 时新 content 若未带 silent,并入原消息的 silent 值。
+func TestMessageHandlerUpdateContentPreservesSilent(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userRepo := repository.NewUserRepo(db)
+	agentRepo := repository.NewAgentRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	participantRepo := repository.NewParticipantRepo(db)
+
+	user, err := userRepo.Create(t.Context(), shortName(t, "upds"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := agentRepo.Create(t.Context(), user.ID, "Agent", "secret-key", "")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreateDM(t.Context(), "dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+
+	// 创建一条 silent=true 的 tool_card(模拟 plugin 发卡)
+	content := json.RawMessage(`{"msg_type":"tool_card","data":{"name":"read","status":"running"},"silent":true}`)
+	msg, err := msgRepo.Create(t.Context(), conv.ID, "agent", agent.ID, content)
+	if err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
+	}
+
+	h := hub.NewHub(nil, agentRepo, participantRepo, nil)
+	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
+
+	// PATCH 更新 status,content 不含 silent(模拟 plugin tool_card.ts 的 updateMessageContent)
+	newContent := json.RawMessage(`{"msg_type":"tool_card","data":{"name":"read","status":"completed"}}`)
+	body, _ := json.Marshal(map[string]json.RawMessage{"content": newContent})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/messages/"+msg.ID, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: msg.ID}}
+	c.Set("userID", agent.ID)
+	c.Set("role", "agent")
+	mh.UpdateContent(c)
+	AssertOk(t, w, http.StatusOK)
+
+	// 验证 DB content 保留了 silent=true
+	updated, _ := msgRepo.Get(t.Context(), msg.ID)
+	var got map[string]any
+	if err := json.Unmarshal(updated.Content, &got); err != nil {
+		t.Fatalf("unmarshal DB content 失败: %v", err)
+	}
+	silent, ok := got["silent"].(bool)
+	if !ok || !silent {
+		t.Errorf("PATCH 后 silent 应保留 true, 实际 %v (silent=%v)", got["silent"], silent)
+	}
+}

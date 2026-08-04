@@ -104,6 +104,8 @@ func (r *DeliveryRepo) MarkReadBatchTx(ctx context.Context, tx *sql.Tx, messageI
 // ListUnreadMessageIDsByConv 返回某 recipient 在某 conv 的所有未读 message_id。
 // 用于整会话标已读(MarkRead)前取目标集合,再交给 MarkReadBatchTx 批量更新。
 // 过滤软删消息(配 messages.deleted_at IS NULL)。
+// 排除 silent 过程消息:silent 不参与未读(与 IncrUnread 自增 + FirstUnread 一致),
+// 不应被整会话已读标记选中(last_read_message_id 锚点应落在真实可读消息上)。
 // 事务所有权归调用方:本方法只接收 tx,不做 BeginTx/Commit/Rollback。
 // ctx 用于让 tx 内 query 也响应 cancel(tx.QueryContext 会消费此 ctx)。
 func (r *DeliveryRepo) ListUnreadMessageIDsByConv(ctx context.Context, tx *sql.Tx, convID, recipientID, recipientType string) ([]string, error) {
@@ -112,6 +114,7 @@ func (r *DeliveryRepo) ListUnreadMessageIDsByConv(ctx context.Context, tx *sql.T
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NULL
 		  AND m.conversation_id = $3 AND m.deleted_at IS NULL
+		  AND m.content->>'silent' IS DISTINCT FROM 'true'
 	`, recipientID, recipientType, convID)
 	if err != nil {
 		return nil, err

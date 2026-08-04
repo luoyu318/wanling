@@ -155,6 +155,9 @@ func (r *ParticipantRepo) IncrUnreadTx(ctx context.Context, tx *sql.Tx, convID, 
 //   - deleted_at IS NULL(排除已撤回)
 //   - NOT EXISTS message_hidden(排除该 member 隐藏过的)
 //   - deliveries.read_at IS NULL(排除已读)
+//   - content->>'silent' IS DISTINCT FROM 'true'(排除 silent 过程消息,
+//     与 processor.IncrUnreadTx 的自增口径对齐 — 否则重算会把 silent 的未读
+//     delivery 计入,导致 markRead 后 unread_count 不归零,会话列表徽章残留)
 //
 // 一次性 UPDATE 该 conv 所有 participants 行(用相关子查询算每人的新值),
 // 单 SQL 不需要 N+1 查询。事务所有权归调用方(撤回 handler 包外层事务)。
@@ -169,6 +172,7 @@ func (r *ParticipantRepo) RecomputeUnreadForConvTx(ctx context.Context, tx *sql.
 		    WHERE d.recipient_id = p.member_id AND d.recipient_type = p.member_type
 		      AND d.read_at IS NULL
 		      AND m.conversation_id = p.conv_id AND m.deleted_at IS NULL
+		      AND m.content->>'silent' IS DISTINCT FROM 'true'
 		      AND NOT EXISTS (
 		        SELECT 1 FROM message_hidden h
 		        WHERE h.message_id = m.id AND h.member_id = p.member_id AND h.member_type = p.member_type
@@ -209,12 +213,14 @@ func (r *ParticipantRepo) MarkMessagesReadTx(ctx context.Context, tx *sql.Tx, co
 
 	// 2. 重算 unread_count(只算该 conv 内的未读,不是全局)
 	//    过滤软删 + 该 member 隐藏过的消息(hidden 消息不计未读,徽章数字才准)
+	//    + silent 过程消息(与 processor.IncrUnreadTx 自增口径对齐,silent 不计数)
 	var newUnread int
 	err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM message_deliveries d
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.recipient_id = $1 AND d.recipient_type = $2 AND d.read_at IS NULL
 		  AND m.conversation_id = $3 AND m.deleted_at IS NULL
+		  AND m.content->>'silent' IS DISTINCT FROM 'true'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM message_hidden h
 		    WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = $2

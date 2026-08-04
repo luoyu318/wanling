@@ -635,3 +635,78 @@ func TestParticipantRepo_OwnerLeaveDestroyConversation(t *testing.T) {
 		t.Errorf("deliveries 应被级联删, 实际 count=%d", dRemain)
 	}
 }
+
+// insertMessageContent 插一条指定 content 的 message,返回 id。
+func insertMessageContent(t *testing.T, db *sql.DB, convID, senderType, senderID string, content map[string]any) string {
+	t.Helper()
+	raw, _ := json.Marshal(content)
+	var id string
+	if err := db.QueryRow(`
+		INSERT INTO messages (conversation_id, sender_type, sender_id, content)
+		VALUES ($1, $2, $3, $4::jsonb) RETURNING id
+	`, convID, senderType, senderID, raw).Scan(&id); err != nil {
+		t.Fatalf("insert message 失败: %v", err)
+	}
+	return id
+}
+
+// TestParticipantRepo_MarkMessagesRead_SilentResidual 复现「silent 消息重算残留未读」。
+//
+// 场景(APP 实测):agent 一条回复里含 silent 过程消息(reasoning) + 非 silent 终态(text)。
+//   - processor.IncrUnreadTx 只给非 silent +1(silent 跳过)→ unread_count=1
+//   - 用户看完后退出,APP 只把「视口内 seen 的非 silent 消息」标记已读
+//   - MarkMessagesReadTx 重算 unread_count 时,把 silent 消息的未读 delivery 也计入
+//     (重算 COUNT 无 `silent IS DISTINCT FROM 'true'` 过滤)→ 残留 1 条未读
+//     → 会话列表下拉刷新徽章恒 1,重进会话才清。
+func TestParticipantRepo_MarkMessagesRead_SilentResidual(t *testing.T) {
+	db, repo, seed := seedParticipantsTestDB(t)
+
+	tx := beginTx(t, db)
+	if err := repo.AddParticipantsTx(t.Context(), tx, seed.convID, []ParticipantInput{
+		{MemberID: seed.userAID, MemberType: "user", Role: "owner"},
+		{MemberID: seed.agentID, MemberType: "agent", Role: "member"},
+	}); err != nil {
+		t.Fatalf("AddParticipants conv1 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit 失败: %v", err)
+	}
+
+	// 1. agent 发 2 条:silent(reasoning) + 非 silent(text),都投递给 user_a 未读
+	silentID := insertMessageContent(t, db, seed.convID, "agent", seed.agentID, map[string]any{
+		"msg_type": "reasoning", "data": map[string]string{"text": "思考..."}, "silent": true,
+	})
+	textID := insertMessageContent(t, db, seed.convID, "agent", seed.agentID, map[string]any{
+		"msg_type": "text", "data": map[string]string{"text": "最终回答"},
+	})
+	for _, id := range []string{silentID, textID} {
+		insertDelivery(t, db, id, seed.userAID, "user", nil) // 未读
+	}
+
+	// 2. 模拟 processor 的 IncrUnreadTx:silent 跳过,只给非 silent +1 → user_a unread=1
+	tx = beginTx(t, db)
+	if err := repo.IncrUnreadTx(t.Context(), tx, seed.convID, seed.agentID, "agent"); err != nil {
+		t.Fatalf("IncrUnreadTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit 失败: %v", err)
+	}
+	assertUnread(t, db, seed.convID, seed.userAID, "user", 1)
+
+	// 3. 用户看完,APP 只标记非 silent 那条已读(silent 的过程消息不在 seen 集合)
+	tx = beginTx(t, db)
+	newUnread, err := repo.MarkMessagesReadTx(t.Context(), tx, seed.convID, seed.userAID, "user", []string{textID})
+	if err != nil {
+		t.Fatalf("MarkMessagesReadTx 失败: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit 失败: %v", err)
+	}
+
+	// 证据链断言:silent 不参与未读,重算后应归 0。
+	// 当前实现重算 COUNT 未过滤 silent → 会把 silent 的未读 delivery 计入 → 实际 1。
+	if newUnread != 0 {
+		t.Errorf("证据链复现: silent 消息被 MarkMessagesReadTx 重算计入未读, newUnread=%d, 期望 0", newUnread)
+	}
+	assertUnread(t, db, seed.convID, seed.userAID, "user", 0)
+}
