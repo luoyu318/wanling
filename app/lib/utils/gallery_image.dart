@@ -136,14 +136,22 @@ enum SaveResult { success, failed }
 /// （gal 按 magic bytes 自动推断真实格式，无需假设扩展名）。任一步失败即返回
 /// [SaveResult.failed]（fail fast，不吞异常但转为业务结果）。
 ///
+/// [onProgress] 可选注入：dio 下载进度回调 `(received, total)`。`total` 为
+/// 服务端 Content-Length，未知时为 -1（UI 据此决定显示百分比或不定转圈）。
+/// 大图原图可达数 MB，超时放宽到 connect 10s / receive 60s（receive 按两段
+/// 数据间隔计，非总时长），避免大图下载超时误报失败。
+///
 /// [dio] 可选注入，便于单测 mock；默认新建独立 Dio 实例（不走 ApiService
-/// 拦截器，因 headers 已自带鉴权，无需 401 登出等副作用），设 3 秒超时
-/// 防止慢网络下 UI 无反馈（对齐 avatar_bitmap 的超时设置）。
-Future<SaveResult> saveToGallery(GalleryImage image, {Dio? dio}) async {
+/// 拦截器，因 headers 已自带鉴权，无需 401 登出等副作用）。
+Future<SaveResult> saveToGallery(
+  GalleryImage image, {
+  Dio? dio,
+  void Function(int received, int total)? onProgress,
+}) async {
   final client = dio ??
       Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 3),
-        receiveTimeout: const Duration(seconds: 3),
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 60),
       ));
   try {
     // 1. 鉴权下载图片字节（headers 已含 Authorization）。
@@ -153,6 +161,7 @@ Future<SaveResult> saveToGallery(GalleryImage image, {Dio? dio}) async {
         headers: image.headers,
         responseType: ResponseType.bytes,
       ),
+      onReceiveProgress: onProgress,
     );
     final bytes = resp.data;
     if (bytes == null || bytes.isEmpty) return SaveResult.failed;

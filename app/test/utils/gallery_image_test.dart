@@ -7,10 +7,26 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 
 /// 假 HttpClientAdapter：固定返回给定状态码和字节。
+///
+/// [chunks] 分块返回模拟大图流式下载（配合 [contentLengthHeader] 产生进度）；
+/// 缺省时整体一块返回。
 class _FakeAdapter implements HttpClientAdapter {
-  _FakeAdapter({required this.statusCode, required this.body});
+  _FakeAdapter({
+    required this.statusCode,
+    required this.body,
+    this.contentLength,
+  }) : chunks = [body];
+
+  _FakeAdapter.chunked({
+    required this.statusCode,
+    required this.chunks,
+    required this.contentLength,
+  }) : body = const [];
+
   final int statusCode;
   final List<int> body;
+  final List<List<int>> chunks;
+  final int? contentLength;
 
   @override
   void close({bool force = false}) {}
@@ -21,10 +37,15 @@ class _FakeAdapter implements HttpClientAdapter {
     Stream<List<int>>? requestStream,
     Future<void>? cancelFuture,
   ) async {
-    final stream = Stream<Uint8List>.fromIterable([Uint8List.fromList(body)]);
-    return ResponseBody(stream, statusCode, headers: {
+    final stream = Stream<Uint8List>.fromIterable(
+      chunks.map(Uint8List.fromList),
+    );
+    final headers = {
       Headers.contentTypeHeader: ['application/octet-stream'],
-    });
+      if (contentLength != null)
+        Headers.contentLengthHeader: ['$contentLength'],
+    };
+    return ResponseBody(stream, statusCode, headers: headers);
   }
 }
 
@@ -141,6 +162,86 @@ void main() {
 
       final result = await saveToGallery(image, dio: dio);
       expect(result, SaveResult.failed);
+    });
+
+    test('onProgress 回调收到下载进度（content-length 分块）', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(galChannel, (call) async {
+        switch (call.method) {
+          case 'requestAccess':
+            return true;
+          case 'putImageBytes':
+            return null;
+          default:
+            return null;
+        }
+      });
+
+      final dio = Dio();
+      // 3 块 100 字节模拟大图分块到达，总长 300。
+      dio.httpClientAdapter = _FakeAdapter.chunked(
+        statusCode: 200,
+        chunks: [
+          List.filled(100, 0x89),
+          List.filled(100, 0x89),
+          List.filled(100, 0x89),
+        ],
+        contentLength: 300,
+      );
+
+      final image = GalleryImage(
+        url: 'https://example.com/api/files/abc',
+        fileId: 'abc',
+        headers: const {},
+      );
+
+      final received = <int>[];
+      final totals = <int>[];
+      await saveToGallery(image, dio: dio, onProgress: (r, t) {
+        received.add(r);
+        totals.add(t);
+      });
+
+      // 进度回调至少触发一次且总字节数递增，最后等于 content-length。
+      expect(received, isNotEmpty);
+      expect(received.last, 300);
+      expect(totals.last, 300);
+      expect(received, equals(received.toSet().toList()));
+    });
+
+    test('onProgress 回调收到下载进度（total 未知=-1 时）', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(galChannel, (call) async {
+        switch (call.method) {
+          case 'requestAccess':
+            return true;
+          case 'putImageBytes':
+            return null;
+          default:
+            return null;
+        }
+      });
+
+      final dio = Dio();
+      // 无 content-length → total=-1，进度回调 total 应为 -1。
+      dio.httpClientAdapter = _FakeAdapter(
+        statusCode: 200,
+        body: List.filled(50, 0x89),
+      );
+
+      final image = GalleryImage(
+        url: 'https://example.com/api/files/abc',
+        fileId: 'abc',
+        headers: const {},
+      );
+
+      final totals = <int>[];
+      await saveToGallery(image, dio: dio, onProgress: (r, t) {
+        totals.add(t);
+      });
+
+      expect(totals, isNotEmpty);
+      expect(totals.last, -1);
     });
 
     test('gal 写入抛异常 → SaveResult.failed（不抛到调用方）', () async {
