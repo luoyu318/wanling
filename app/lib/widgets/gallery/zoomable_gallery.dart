@@ -27,10 +27,18 @@ class ZoomableGallery extends StatefulWidget {
   final List<GalleryImage> images;
   final int initialIndex;
 
+  /// 保存函数注入点（默认 [saveToGallery]；测试传假实现验证进度/结果 UI）。
+  final Future<SaveResult> Function(
+    GalleryImage image, {
+    void Function(int received, int total)? onProgress,
+  })?
+      save;
+
   const ZoomableGallery({
     super.key,
     required this.images,
     required this.initialIndex,
+    this.save,
   });
 
   @override
@@ -58,6 +66,13 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
   /// 翻页后待重置的离开页索引。滚动到该页完全消失（|page - index| >= 1.0）时才重置，
   /// 避免图片在半屏可见时被缩回原大小。null 表示无待重置页。
   int? _resetPendingIndex;
+
+  /// 是否正在保存图片（防重复弹 sheet + sheet 内转进度态）。
+  bool _saving = false;
+
+  /// 保存进度态最短展示时长：内网/小图下载可能毫秒级完成，保证用户能看清
+  /// 「保存中… + 进度环」的反馈，而非一闪而过。
+  static const Duration _minSaveFeedback = Duration(milliseconds: 800);
 
   @override
   void initState() {
@@ -145,50 +160,137 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
 
   /// 长按图片：弹出底部菜单（复用 PanelItem 样式，与加号面板视觉统一）。
   ///
-  /// BottomSheet 顶部圆角 12、背景 #F7F7F7。点「保存图片」先 pop sheet 再异步
-  /// 保存（标准 IM 交互，不让 sheet 卡住等异步下载）。
+  /// BottomSheet 顶部圆角 12、背景 #F7F7F7。点「保存图片」后 sheet 原地转成
+  /// 进度态（圆环 + 百分比），下载/写入期间保持可见（不受 2s SnackBar 限制），
+  /// 完成后自动关闭并 SnackBar 反馈结果（标准 IM 交互，反馈全程无空白窗口）。
   void _showSaveSheet(LongPressStartDetails _) {
+    // 保存中防重复弹 sheet。
+    final saving = ValueNotifier<bool>(_saving);
+    // 下载进度 0.0~1.0；total 未知（-1）时保持 null → 显示不定转圈。
+    final progress = ValueNotifier<double?>(null);
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       backgroundColor: const Color(0xFFF7F7F7),
-      builder: (_) => SafeArea(
+      // 保存中不可下滑/点外部关闭（避免用户误关导致无反馈）。
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 18, 8, 24),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              PanelItem(
-                icon: Icons.download_for_offline_outlined,
-                label: '保存图片',
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _doSave();
-                },
-              ),
-            ],
+          child: ValueListenableBuilder<bool>(
+            valueListenable: saving,
+            builder: (_, isSaving, _) {
+              if (isSaving) {
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    ValueListenableBuilder<double?>(
+                      valueListenable: progress,
+                      builder: (_, p, _) {
+                        final indeterminate = p == null;
+                        return Row(
+                          children: [
+                            SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  CircularProgressIndicator(
+                                    value: indeterminate ? null : p,
+                                    strokeWidth: 3,
+                                    color: const Color(0xFF597BFF),
+                                  ),
+                                  if (!indeterminate)
+                                    Text(
+                                      '${(p * 100).round()}%',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF597BFF),
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            const Text(
+                              '保存中…',
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: Color(0xFF333333),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  PanelItem(
+                    icon: Icons.download_for_offline_outlined,
+                    label: '保存图片',
+                    onTap: () async {
+                      // 记录开始时刻：内网下载可能毫秒级完成，进度态需保证
+                      // 至少展示 [_minSaveFeedback] 时长，避免一闪而过看不到反馈。
+                      final startedAt = DateTime.now();
+                      saving.value = true;
+                      _saving = true;
+                      final image = widget.images[_currentIndex];
+                      final result = await _doSave(
+                        image,
+                        onProgress: (received, total) {
+                          if (total > 0) {
+                            progress.value = (received / total).clamp(0.0, 1.0);
+                          }
+                        },
+                      );
+                      final elapsed = DateTime.now().difference(startedAt);
+                      if (elapsed < _minSaveFeedback) {
+                        await Future<void>.delayed(_minSaveFeedback - elapsed);
+                      }
+                      if (!mounted) return;
+                      _saving = false;
+                      saving.value = false;
+                      // 用 sheetCtx pop（State.context 可能已是页面路由，误 pop 会关掉画廊）。
+                      if (sheetCtx.mounted) Navigator.pop(sheetCtx);
+                      showAppSnackBar(
+                        context,
+                        result == SaveResult.success
+                            ? '已保存到相册'
+                            : '保存失败，请稍后重试',
+                        type: result == SaveResult.success
+                            ? SnackBarType.success
+                            : SnackBarType.error,
+                      );
+                    },
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
 
-  /// 保存当前页图片到相册，SnackBar 反馈结果。
+  /// 保存指定图片到相册，返回 [SaveResult]。
   ///
-  /// 取当前 _currentIndex 对应图（长按必发生在当前显示页，二者等价）。
-  Future<void> _doSave() async {
-    final image = widget.images[_currentIndex];
-    final result = await saveToGallery(image);
-    if (!mounted) return;
-    showAppSnackBar(
-      context,
-      result == SaveResult.success ? '已保存到相册' : '保存失败，请稍后重试',
-      type: result == SaveResult.success
-          ? SnackBarType.success
-          : SnackBarType.error,
-    );
+  /// [onProgress] 透传给 [saveToGallery] 的下载进度回调。
+  Future<SaveResult> _doSave(
+    GalleryImage image, {
+    required void Function(int received, int total) onProgress,
+  }) {
+    final saveFn = widget.save ?? saveToGallery;
+    return saveFn(image, onProgress: onProgress);
   }
 
   @override

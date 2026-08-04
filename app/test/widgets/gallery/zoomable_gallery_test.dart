@@ -145,4 +145,86 @@ void main() {
     // 不应弹菜单
     expect(find.text('保存图片'), findsNothing);
   });
+
+  testWidgets('点保存 → sheet 转进度态（保存中…）→ 完成关闭并 SnackBar 成功', (tester) async {
+    // 假 save：先报进度 50%，再返回成功。
+    Future<SaveResult> fakeSave(
+      GalleryImage image, {
+      void Function(int received, int total)? onProgress,
+    }) async {
+      onProgress?.call(150, 300);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      return SaveResult.success;
+    }
+
+    final images = [
+      const GalleryImage(
+          url: 'https://ex.com/api/files/1', fileId: '1', headers: {}),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: ZoomableGallery(
+        images: images,
+        initialIndex: 0,
+        save: fakeSave,
+      ),
+    ));
+    await tester.pump();
+
+    // 长按弹菜单
+    await tester.longPress(find.byType(ZoomableGallery));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('保存图片'), findsOneWidget);
+
+    // 点保存：sheet 转进度态
+    await tester.tap(find.text('保存图片'));
+    await tester.pump(const Duration(milliseconds: 20));
+    // 进度态出现
+    expect(find.text('保存中…'), findsOneWidget);
+    // 50% 进度文字（150/300 = 50%）
+    expect(find.text('50%'), findsOneWidget);
+
+    // fakeSave 50ms 已完成，但最小展示时长（800ms）未到 → 仍显示保存中
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('保存中…'), findsOneWidget,
+        reason: '最小展示时长内不应关闭');
+
+    // 超过最小展示时长 → sheet 关闭 + 成功 SnackBar
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.text('保存中…'), findsNothing);
+    expect(find.text('已保存到相册'), findsOneWidget);
+  });
+
+  testWidgets('点保存 → 保存失败 → SnackBar 失败提示', (tester) async {
+    Future<SaveResult> fakeFail(
+      GalleryImage image, {
+      void Function(int received, int total)? onProgress,
+    }) async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      return SaveResult.failed;
+    }
+
+    final images = [
+      const GalleryImage(
+          url: 'https://ex.com/api/files/1', fileId: '1', headers: {}),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: ZoomableGallery(
+        images: images,
+        initialIndex: 0,
+        save: fakeFail,
+      ),
+    ));
+    await tester.pump();
+
+    await tester.longPress(find.byType(ZoomableGallery));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('保存图片'));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('保存中…'), findsOneWidget);
+
+    // 超过最小展示时长（fakeFail 100ms + 800ms）→ 关闭 + 失败提示
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.text('保存中…'), findsNothing);
+    expect(find.text('保存失败，请稍后重试'), findsOneWidget);
+  });
 }
