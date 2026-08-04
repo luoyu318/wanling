@@ -1187,8 +1187,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ), // Stack
               ), // SelectableRegion
             ),
-            // agent_session: strip + mode bar + 输入栏合为 Stack
-            if (chatState.convType == 'agent_session' && chatState.sessionMeta != null)
+            // 多选模式优先:所有会话类型(含 agent_session)统一显示底部操作栏。
+            // agent_session 的 strip/mode bar/输入栏在多选期间不渲染,避免操作栏被遮挡。
+            if (_multiSelectController.isSelectionMode)
+              SelectionBottomBar(
+                selectedCount: _multiSelectController.selectedCount,
+                onBatchCopy: _multiSelectController.batchCopy,
+                onConfirmDelete: () =>
+                    _confirmDelete(_multiSelectController.selectedIdsList),
+              )
+            else if (chatState.convType == 'agent_session' && chatState.sessionMeta != null)
               Stack(
                 children: [
                   Column(
