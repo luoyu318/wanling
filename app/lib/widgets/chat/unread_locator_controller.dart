@@ -6,6 +6,25 @@ import '../../providers/chat_provider.dart' show chatProvider;
 import '../../utils/chat/render_box_utils.dart' show globalRectOf, listViewRect;
 import 'jump_controller.dart' show dualSliverBottomTarget;
 
+/// 计算"把目标消息顶部对齐到视口 alignment 处"的目标 px。
+///
+/// 双 sliver 下不用 ensureVisible(对超高消息会滚过头把顶部推出视口),
+/// 改用屏幕几何自算:markdown 顶部当前在屏幕 targetTop,要移到视口顶部
+/// 下方 alignment*vd 处。屏幕移动量 = targetTop - (viewportTop + alignment*vd),
+/// 内容上移(px 增大)对应屏幕 y 减小,故 newPx = currentPx + 屏幕移动量。
+///
+/// 参数用纯数值(不依赖 RenderBox),便于单测;调用方从 globalRectOf/listViewRect 提取。
+double computeTargetPx({
+  required double currentPx,
+  required double targetTop,
+  required double viewportTop,
+  required double viewportHeight,
+  required double alignment,
+}) {
+  final screenDelta = targetTop - (viewportTop + alignment * viewportHeight);
+  return currentPx + screenDelta;
+}
+
 /// [UnreadLocatorController] 的依赖注入容器。
 ///
 /// chat_page 在 initState 构造一次,把所有外部依赖打包传入,controller
@@ -133,7 +152,7 @@ class UnreadLocatorController {
     // "已在视口"只滚一小段(真机实测 px≈-34.8),30% 对齐从未执行,导致
     // history 底部 + live 顶部同时露出(上下 sliver 各半)。且历史不足一屏时
     // 几何上不可能把 index==0 对齐到 30% 而不越锚点。
-    // 语义上 firstUnread 是最新一条 = 用户本就应在底部,直接复用无未读场景
+    // 语义上 firstUnread 是最新一条 = 用户本就应在底部,复用无未读场景
     // 的贴底逻辑(dualSliverBottomTarget),行为一致。
     if (index == 0) {
       debugPrint(
@@ -174,7 +193,7 @@ class UnreadLocatorController {
       sliverContext: _ctx.getHistorySliverContext(),
     )
         .then((_) async {
-      // jumpTo 完成后 firstUnread 必然已渲染,BuildContext 可拿
+      // jumpTo 完成后目标消息必然已渲染,BuildContext 可拿
       if (!_ctx.isMounted()) {
         _isLocating = false;
         debugPrint('[locateUnread] jumpTo completed but not mounted');
@@ -193,24 +212,50 @@ class UnreadLocatorController {
           ? scrollCtrl.position.pixels
           : null;
       debugPrint(
-        '[locateUnread] jumpTo done, calling ensureVisible, px before=$pxBeforeEnsure',
+        '[locateUnread] jumpTo done, computing target px, px before=$pxBeforeEnsure',
       );
-      // 第二步:ensureVisible 精确对齐(无动画,消除视觉滚动感)。
-      // jumpTo 的 alignment 不够精确,需 ensureVisible 兜底。
-      // 但如果 jumpTo 已经把 firstUnread 拉进视口,ensureVisible 会反向
-      // 滚到 sliver 末尾导致跳动,故仅在不在视口时兜底。
-      if (isMessageInViewport(firstUnreadId)) {
-        debugPrint('[locateUnread] jumpTo already in viewport, skip ensureVisible');
-      } else {
-        await Scrollable.ensureVisible(
-          ctx,
+      // 第二步:屏幕几何自算目标 px(替代 ensureVisible——对超高 markdown 会滚过头,
+      // 把顶部推出视口需手动下滑才看到)。
+      // 拿目标消息 RenderBox 屏幕矩形 + 视口屏幕矩形,算"目标顶部对齐视口
+      // alignment 处"的精确 px。
+      final targetRect = globalRectOf(_ctx.getBubbleKeys()[firstUnreadId]);
+      final viewportRect = listViewRect(_ctx.getListViewKey(), _ctx.getContext());
+      if (targetRect != null && scrollCtrl.hasClients) {
+        final pos = scrollCtrl.position;
+        final targetPx = computeTargetPx(
+          currentPx: pos.pixels,
+          targetTop: targetRect.top,
+          viewportTop: viewportRect.top,
+          viewportHeight: pos.viewportDimension,
           alignment: 0.3,
-          duration: Duration.zero,
-          curve: Curves.easeOut,
         );
-        if (_ctx.isMounted() && scrollCtrl.hasClients) {
+        debugPrint(
+          '[locateUnread] computeTargetPx: targetTop=${targetRect.top} '
+          'viewportTop=${viewportRect.top} vd=${pos.viewportDimension} '
+          '→ px=$targetPx',
+        );
+        scrollCtrl.jumpTo(targetPx);
+      } else {
+        debugPrint(
+          '[locateUnread] targetRect null 或 no clients, fallback jumpTo done px=$pxBeforeEnsure',
+        );
+      }
+      // 贴底保护:自算 px 可能把目标滚到"顶部对齐 30%"的位置,若目标接近锚点
+      // (history 底部),视口底会越过锚点露出 live sliver 空白。
+      // clamp 回贴底目标(dualSliverBottomTarget),保证不露 live。
+      if (_ctx.isMounted() && scrollCtrl.hasClients) {
+        final pos = scrollCtrl.position;
+        final chatState = _ctx.ref.read(chatProvider(_ctx.chatKey));
+        final bottomTarget = dualSliverBottomTarget(
+          minScrollExtent: pos.minScrollExtent,
+          maxScrollExtent: pos.maxScrollExtent,
+          viewportDimension: pos.viewportDimension,
+          liveEmpty: chatState.liveMessages.isEmpty,
+        );
+        if (pos.pixels > bottomTarget) {
+          scrollCtrl.jumpTo(bottomTarget);
           debugPrint(
-            '[locateUnread] after ensureVisible: px=${scrollCtrl.position.pixels}',
+            '[locateUnread] 自算 px 越锚点,clamp 回贴底: px=${scrollCtrl.position.pixels}',
           );
         }
       }

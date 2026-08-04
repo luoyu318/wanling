@@ -203,7 +203,7 @@ void main() {
       ));
     }
 
-    test('finished 汇总条(tokens Xk)不入主聊天列表', () async {
+    test('finished 主循环汇总条入主聊天列表(tokens 小字,定位锚点)', () async {
       final container = makeContainer();
       final key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
@@ -211,7 +211,10 @@ void main() {
       emitStepFinish('sf-finished');
       await Future.delayed(Duration.zero);
 
-      expect(container.read(chatProvider(key)).displayMessages, isEmpty);
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      expect(msgs.first.content['msg_type'], 'step_finish');
+      expect((msgs.first.content['data'] as Map)['finished'], isTrue);
     });
 
     test('推理步元信息行(无 finished)不入主聊天列表', () async {

@@ -583,12 +583,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     // silent 控制回复（permission_reply / question_reply）不入列表：
     // 见 _filterDisplayable 根因说明。
-    // step_finish（Token 用量/耗时元信息行）仅服务端/插件需要，app 不渲染：
-    // 见 _filterDisplayable 根因说明。
+    // step_finish:finished=true 主循环汇总条放行(渲染 tokens 小字 + 作未读锚点),
+    // 中间推理步(finished 缺失)继续过滤(过程元数据不打扰)。见 _filterDisplayable。
     final t = MsgTypeX.fromString(effective.content['msg_type'] as String?);
     if (t == MsgType.permissionReply ||
         t == MsgType.questionReply ||
-        t == MsgType.stepFinish) return;
+        (t == MsgType.stepFinish && !_isMainLoopStepFinish(effective.content))) {
+      return;
+    }
 
     // 流式终态预处理(race fix):streamId 非空时,live 可能已有占位需替换/清理。
     // 必须在 dedup 之前处理:dedup 会因 history 已含终态(_mergeHistory race 拉入)
@@ -1325,13 +1327,23 @@ List<ChatMessage> _filterDisplayable(Iterable<ChatMessage> msgs) {
       if (!m.isPendingChildApproval) return false;
     }
     final t = MsgTypeX.fromString(m.content['msg_type'] as String?);
-    // step_finish（Token 用量/耗时元信息行）由 StepFinishRenderer 渲染，
-    // 仅是 agent 循环的过程/汇总元数据，app 不展示。server 仍会发送，
-    // 不影响未读计数/会话列表预览（[完成]）/通知响铃等独立路径。
+    // step_finish 分两类:
+    // - finished=true 主循环汇总条(plugin part_dispatcher isLoopEnd 发,silent=false
+    //   计未读 + 响铃):StepFinishRenderer 渲染 tokens 小字,也是未读定位锚点,必须放行,
+    //   否则 server FirstUnread 返回它而列表里找不到 → 定位 ABORT(锚点悬空)。
+    // - finished 缺失中间推理步(silent=true 过程元数据):app 不展示,过滤。
     return t != MsgType.permissionReply &&
         t != MsgType.questionReply &&
-        t != MsgType.stepFinish;
+        !(t == MsgType.stepFinish && !_isMainLoopStepFinish(m.content));
   }).toList();
+}
+
+/// step_finish 是否主循环结束汇总条(finished=true,plugin part_dispatcher 的 isLoopEnd)。
+/// 主循环结束:渲染 tokens 小字 + 作为未读定位锚点;中间推理步:过滤。
+bool _isMainLoopStepFinish(Map<String, dynamic> content) {
+  final data = content['data'];
+  if (data is! Map) return false;
+  return data['finished'] == true;
 }
 
 bool _isPendingChildApprovalCard(Map<String, dynamic> msgData) {

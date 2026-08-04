@@ -49,6 +49,61 @@ ChatMessage _msg(String id) {
 void main() {
   const chatKey = (convId: 'c1', agentId: 'agent-1');
 
+  // ========== 纯函数:computeTargetPx 自算目标 px(替代 ensureVisible)==========
+  // 背景:ensureVisible(0.3) 对超高 markdown 会滚过头,把 markdown 顶部推出视口
+  // (需手动下滑才看到)。改为屏幕几何自算:目标顶部对齐视口 alignment 处。
+  group('computeTargetPx 屏幕几何自算', () {
+    test('markdown 在视口下方(需上移)→ px 增大,顶部对齐 30%', () {
+      // 视口 [100, 100+600], markdown 顶部当前在屏幕 700(视口下方)
+      // 30% 处 = 100 + 0.3*600 = 280。markdown 顶部要移到 280:上移 420px。
+      final px = computeTargetPx(
+        currentPx: -1000,
+        targetTop: 700,
+        viewportTop: 100,
+        viewportHeight: 600,
+        alignment: 0.3,
+      );
+      // 屏幕移动量 = 700 - 280 = 420(上移)→ px 增大 420
+      expect(px, closeTo(-580, 0.001));
+    });
+
+    test('markdown 顶部已在视口 30% 处 → px 不变', () {
+      final px = computeTargetPx(
+        currentPx: -1000,
+        targetTop: 280,
+        viewportTop: 100,
+        viewportHeight: 600,
+        alignment: 0.3,
+      );
+      expect(px, closeTo(-1000, 0.001));
+    });
+
+    test('markdown 在视口上方(顶部超出视口,需下滑)→ px 减小', () {
+      // markdown 顶部当前在屏幕 50(视口上方),30% 处 = 280
+      // 屏幕移动量 = 50 - 280 = -230(下移)→ px 减小 230
+      final px = computeTargetPx(
+        currentPx: -1000,
+        targetTop: 50,
+        viewportTop: 100,
+        viewportHeight: 600,
+        alignment: 0.3,
+      );
+      expect(px, closeTo(-1230, 0.001));
+    });
+
+    test('alignment=0 → 顶部对齐视口顶(无上方历史填充时)', () {
+      final px = computeTargetPx(
+        currentPx: -1000,
+        targetTop: 700,
+        viewportTop: 100,
+        viewportHeight: 600,
+        alignment: 0,
+      );
+      // 屏幕移动量 = 700 - 100 = 600 → px = -400
+      expect(px, closeTo(-400, 0.001));
+    });
+  });
+
   // ========== 修复:未读不足一屏/未读即最新时定位偏差 ==========
   // 现象:firstUnread 是 historyMessages.first(最新历史,index==0)时,
   // observer.jumpTo(alignment:0.3) 判定目标已在视口只滚一小段(px≈-34.8),
