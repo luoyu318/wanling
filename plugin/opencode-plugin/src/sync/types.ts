@@ -1,6 +1,13 @@
 export interface SessionState {
   reasoning: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
   text: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
+  // 最终回复 text 终态的缓存(根治:未读锚点 = 真实内容)。
+  // text part 终态先于 step-finish 到达,此时不知道是否"回合最终回复"。
+  // 缓存到 pendingText,等 step-finish 的 isLoopEnd 判定后再发:
+  // - isLoopEnd → 以 silent=false 发(最终回复计未读,成为未读锚点)
+  // - 非 isLoopEnd → 以 silent=true 发(中间步骤不打扰)
+  // 兜底(flushText / 新 text 打断 / stop)以 silent=true 发,避免滞留。
+  pendingText?: { text: string; partID: string; streamId?: string }
   convId: string
   toolPartsSent: Set<string>
   // text/reasoning part 已被 idle 兜底(flushText/flushReasoning)发走终态的 partID 集合。

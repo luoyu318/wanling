@@ -258,6 +258,13 @@ export class SessionStore {
   }
 
   flushText(state: SessionState): void {
+    // 兜底:缓存的最终 text 终态(未等来 step-finish)→ 以 silent=true 发掉,避免滞留。
+    if (state.pendingText) {
+      const pt = state.pendingText
+      state.pendingText = undefined
+      this.router.send(state, "markdown",
+        pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text }, true)
+    }
     if (!state.text?.text.trim()) return
     // I-P:子 agent 文本输出强制 silent=true(与 case "text" 同步口径)。
     this.router.send(state, "markdown", { text: state.text.text }, true)

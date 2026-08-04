@@ -2132,8 +2132,8 @@ function makePartDispatcherFixture() {
   const partDispatcher = new PartDispatcher({
     store: store as any,
     router: router as any,
-    metaSync: {} as any,
-    compaction: {} as any,
+    metaSync: { syncAfterLoopEnd: vi.fn() } as any,
+    compaction: { completePending: vi.fn() } as any,
     emitter: new EventEmitter(),
     wanling: wanling as any,
   })
@@ -2187,7 +2187,7 @@ describe("PartDispatcher 流式输出", () => {
     expect(wanling.sendStream).not.toHaveBeenCalled()
   })
 
-  it("终态 part.end 附 _stream_id,清理 streamId", async () => {
+  it("终态 part.end 附 _stream_id 缓存到 pendingText(根治:等 step-finish 判定 silent)", async () => {
     const { partDispatcher, state, router } = makePartDispatcherFixture()
     state.isChildSession = false
     await partDispatcher.onPartUpdated({
@@ -2197,15 +2197,129 @@ describe("PartDispatcher 流式输出", () => {
     const streamId = state.text?.streamId
     expect(streamId).toBeTruthy()
 
-    // part.end → 终态消息附 _stream_id(让 APP 替换占位)
+    // part.end → 终态消息缓存到 pendingText(附 _stream_id,等 step-finish 判定后发出)
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-1", text: "回复", time: { start: 1, end: 2 } },
       time: 2,
     })
-    expect(router.send).toHaveBeenCalledWith(state, "markdown", { text: "回复", _stream_id: streamId }, true)
+    expect(state.pendingText?.text).toBe("回复")
+    expect(state.pendingText?.streamId).toBe(streamId)
+    expect(router.send).not.toHaveBeenCalled()
     // state.text 清空(streamId 随之释放)
     expect(state.text).toBeNull()
+  })
+
+  // ===== 根治:最终回复 markdown 非静默(未读锚点 = 真实内容)=====
+  // 背景:agent 最终回复的 markdown 被 silent=true 标记(不计未读),server 只能用
+  // step_finish 哨兵(finished=true,silent 缺失)作未读锚点 → APP 定位到哨兵,
+  // 前面的 markdown 开头被截。根治:text 终态缓存到 pendingText,等 step-finish
+  // 判定 isLoopEnd 后再发——最终回复以 silent=false 发(markdown 成为未读载体),
+  // 中间步骤以 silent=true 发(不打扰)。
+  it("text 终态缓存到 pendingText(不立即发),等 step-finish 判定", async () => {
+    const { partDispatcher, state, router } = makePartDispatcherFixture()
+    state.isChildSession = false
+
+    // text start + delta → end
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "", time: { start: 1 } }, time: 1,
+    })
+    partDispatcher.onPartDelta({ sessionID: "sess-1", messageID: "m-1", partID: "p-1", field: "text", delta: "最终回复" })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "最终回复", time: { start: 1, end: 2 } }, time: 2,
+    })
+
+    // 断言:text 终态已缓存到 pendingText,未立即发(等 isLoopEnd 判定)
+    expect(state.pendingText?.text).toBe("最终回复")
+    expect(router.send).not.toHaveBeenCalled()
+  })
+
+  it("step-finish isLoopEnd → 缓存 text 以 silent=false 发(最终回复成为未读载体)", async () => {
+    const { partDispatcher, state, router } = makePartDispatcherFixture()
+    state.isChildSession = false
+
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "", time: { start: 1 } }, time: 1,
+    })
+    partDispatcher.onPartDelta({ sessionID: "sess-1", messageID: "m-1", partID: "p-1", field: "text", delta: "最终回复" })
+    const streamId = state.text?.streamId
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "最终回复", time: { start: 1, end: 2 } }, time: 2,
+    })
+    router.send.mockClear()
+
+    // step-finish isLoopEnd(reason=stop,主 session)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: {
+        type: "step-finish", id: "p-finish-1", reason: "stop",
+        cost: 0.01, tokens: { total: 100 },
+      },
+      time: 3,
+    })
+
+    // 断言:缓存的 markdown 以 silent=false 发(_stream_id 保留让 APP 替换占位)
+    expect(router.send).toHaveBeenCalledWith(
+      state, "markdown",
+      { text: "最终回复", _stream_id: streamId },
+      false, // silent=false → 最终回复计未读
+    )
+    expect(state.pendingText).toBeUndefined()
+  })
+
+  it("step-finish 非 isLoopEnd → 缓存 text 以 silent=true 发(中间步骤不打扰)", async () => {
+    const { partDispatcher, state, router } = makePartDispatcherFixture()
+    state.isChildSession = false
+
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "", time: { start: 1 } }, time: 1,
+    })
+    partDispatcher.onPartDelta({ sessionID: "sess-1", messageID: "m-1", partID: "p-1", field: "text", delta: "中间小结" })
+    const streamId = state.text?.streamId
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1", part: { type: "text", id: "p-1", text: "中间小结", time: { start: 1, end: 2 } }, time: 2,
+    })
+    router.send.mockClear()
+
+    // step-finish 非 isLoopEnd(reason=tool,中间步骤)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: {
+        type: "step-finish", id: "p-finish-mid", reason: "tool",
+        cost: 0.005, tokens: { total: 60 },
+      },
+      time: 3,
+    })
+
+    // 断言:缓存的 markdown 以 silent=true 发
+    expect(router.send).toHaveBeenCalledWith(
+      state, "markdown",
+      { text: "中间小结", _stream_id: streamId },
+      true,
+    )
+    expect(state.pendingText).toBeUndefined()
+  })
+
+  it("无 text 终态(纯工具回合)→ isLoopEnd 不发 markdown,仅 step_finish(silent=false 兜底)", async () => {
+    const { partDispatcher, state, router } = makePartDispatcherFixture()
+    state.isChildSession = false
+
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: {
+        type: "step-finish", id: "p-finish-1", reason: "stop",
+        cost: 0.01, tokens: { total: 100 },
+      },
+      time: 3,
+    })
+
+    // 断言:无缓存 text → 只发 step_finish(silent=false,哨兵兜底)
+    expect(router.send).toHaveBeenCalledTimes(1)
+    expect(router.send).toHaveBeenCalledWith(
+      state, "step_finish",
+      expect.objectContaining({ finished: true, reason: "stop" }),
+      false,
+    )
   })
 })
 

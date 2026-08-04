@@ -53,11 +53,13 @@ export class PartDispatcher {
 
       const part = payload.part
 
-      // 流式补帧:收到非 reasoning/text 的 part_updated(tool/step-start/step-finish 等)=
+      // 流式补帧:收到非 reasoning/text 的 part_updated(tool/step-start 等,不含 step-finish)=
       // LLM 已切换走,该 part 的 delta 不会再来了。若 state.text/reasoning 还有未推完的
       // 累积值(被 300ms 节流跳过的最后几个 delta),强制补推一帧 op=14 全量快照,让 APP
       // 占位立即显示完整文本。不发终态(终态仍等 part_updated(time.end) 用 OC 权威值)。
-      if (part.type !== "reasoning" && part.type !== "text") {
+      // 注:step-finish 不在此列——它要判定 isLoopEnd 决定 pendingText 的 silent,
+      // 若在此强制 flush 会把缓存的最终回复以 silent=true 提前发掉,根治失效。
+      if (part.type !== "reasoning" && part.type !== "text" && part.type !== "step-finish") {
         this.forceFlushStream(state, "reasoning")
         this.forceFlushStream(state, "text")
         // 消息顺序修复(tool/text 乱序根因):OC 的 part.updated(text, time.end) 会延迟到
@@ -103,13 +105,28 @@ export class PartDispatcher {
               // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
               if (state.text) this.forceFlushStream(state, "text")
               console.log(`[SSE-DBG] part_updated text END sid=${sid ?? "-"} ocLen=${text.length} child=${!!state.isChildSession} head=${JSON.stringify(text.slice(0, 30))}`)
-              // I-P:子 agent 文本输出必须 silent=true(对齐 reasoning/step_finish),
-              // 否则会触发 server 端 unread +1,给用户弹通知,与卡片静默体验割裂。
-              if (text.trim()) this.router.send(state, "markdown",
-                sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
+              // 根治(未读锚点=真实内容):text 终态缓存到 pendingText,不立即发。
+              // 最终回复(step-finish isLoopEnd)以 silent=false 发(markdown 计未读),
+              // 中间步骤以 silent=true 发。子 agent 文本恒 silent=true。
+              if (text.trim()) {
+                if (!state.isChildSession) {
+                  state.pendingText = { text, partID: part.id, streamId: sid }
+                } else {
+                  this.router.send(state, "markdown",
+                    sid ? { text, _stream_id: sid } : { text }, true)
+                }
+              }
               state.text = null
             }
           } else {
+            // 新 text part 开始:若上一个 text 终态还缓存在 pendingText(未等来 step-finish),
+            // 以 silent=true 立即发掉(不打扰),避免被新 part 覆盖丢失。
+            if (state.pendingText) {
+              const pt = state.pendingText
+              state.pendingText = undefined
+              this.router.send(state, "markdown",
+                pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text }, true)
+            }
             state.text = { text: part.text || "", partID: part.id }
             this.store.indexPart(part.id, state)
           }
@@ -128,6 +145,18 @@ export class PartDispatcher {
           // 主 session 中间步骤(reason!="stop")和子 session 所有 step-finish 保持 silent=true。
           const isLoopEnd = part.reason === "stop" && !state.isChildSession
           console.log(`[streamer] step-finish session=${payload.sessionID.slice(0, 12)} isChild=${!!state.isChildSession} reason=${part.reason} isLoopEnd=${isLoopEnd} convId=${state.convId?.slice(0, 8)}`)
+          // 根治(未读锚点=真实内容):step-finish 判定时把缓存的最终 text 终态发出。
+          // - isLoopEnd(回合结束)→ silent=false,markdown 计未读成为未读锚点
+          // - 非 isLoopEnd(中间步骤)→ silent=true,不打扰
+          // 兜底:若 text 未走 end 缓存路径(异常时序,state.text 还在累积)先 silent=true 发掉。
+          if (state.text) {
+            const t = state.text
+            state.text = null
+            if (t.flushTimer) { clearTimeout(t.flushTimer) }
+            this.router.send(state, "markdown",
+              t.streamId && !state.isChildSession ? { text: t.text, _stream_id: t.streamId } : { text: t.text }, true)
+          }
+          this.flushPendingText(state, isLoopEnd ? false : true)
           this.router.send(state, "step_finish", {
             reason: part.reason || "",
             cost: part.cost || 0,
@@ -261,6 +290,8 @@ export class PartDispatcher {
   }
 
   flushText(state: SessionState): void {
+    // 兜底:缓存的最终 text 终态(未等来 step-finish 判定)→ 以 silent=true 发掉,避免滞留。
+    this.flushPendingText(state, true)
     if (!state.text?.text.trim()) return
     // 清尾部兜底定时器(终态发出后不再需要补推)
     if (state.text.flushTimer) { clearTimeout(state.text.flushTimer); state.text.flushTimer = undefined }
@@ -274,5 +305,17 @@ export class PartDispatcher {
       sid && !state.isChildSession ? { text: state.text.text, _stream_id: sid } : { text: state.text.text }, true)
     state.textPartsFlushed.add(state.text.partID)
     state.text = null
+  }
+
+  // 把缓存的最终 text 终态(pendingText)发出。
+  // silent 由调用方决定:step-finish isLoopEnd → false(计未读);其余兜底 → true。
+  private flushPendingText(state: SessionState, silent: boolean): void {
+    if (!state.pendingText) return
+    const pt = state.pendingText
+    state.pendingText = undefined
+    console.log(`[SSE-DBG] FLUSH(pendingText) silent=${silent} ocLen=${pt.text.length} head=${JSON.stringify(pt.text.slice(0, 30))}`)
+    this.router.send(state, "markdown",
+      pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text },
+      silent)
   }
 }
