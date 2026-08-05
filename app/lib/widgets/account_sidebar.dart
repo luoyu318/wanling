@@ -333,7 +333,7 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
   }
 }
 
-/// 侧边栏内的账号卡片。样式对齐旧 switch_account_sheet 的 _AccountCard。
+/// 侧边栏内的账号卡片。
 class _AccountCard extends StatelessWidget {
   final SavedLogin login;
   final bool isCurrent;
