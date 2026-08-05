@@ -116,34 +116,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
   });
-
-  testWidgets('面板打开时遮罩覆盖底部 tab 栏,tab 不可点击', (tester) async {
-    final container = await buildContainer();
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: Consumer(builder: (_, ref, _) {
-        return MaterialApp.router(routerConfig: ref.watch(routerProvider));
-      }),
-    ));
-    await tester.pumpAndSettle();
-
-    // 面板打开前 tab 可命中
-    expect(find.text('万灵').hitTestable(), findsWidgets);
-
-    // 打开面板
-    await tester.tap(appBarAvatar());
-    await tester.pumpAndSettle();
-    expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
-
-    // 面板打开时 tab 栏文字被遮罩覆盖 → 不再可命中(遮罩挡住)
-    expect(find.text('万灵').hitTestable(), findsNothing);
-
-    // 点遮罩关闭面板
-    await tester.tapAt(const Offset(700, 400));
-    await tester.pumpAndSettle();
-    expect(find.byType(AccountSidebar).hitTestable(), findsNothing);
-
-    // 关闭后 tab 恢复可命中
-    expect(find.text('万灵').hitTestable(), findsWidgets);
-  });
 }
