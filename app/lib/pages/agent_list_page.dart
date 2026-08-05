@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import '../models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/conversation_provider.dart';
+import '../theme/app_colors.dart';
 import '../widgets/agent_badge.dart';
+import '../widgets/app_dropdown_field.dart';
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
 
@@ -31,6 +33,7 @@ class _AgentListPageState extends ConsumerState<AgentListPage>
     return ColoredBox(
       color: Colors.white,
       child: RefreshIndicator(
+        color: AppColors.accentGreen,
         onRefresh: () => ref.read(agentListProvider.notifier).load(),
         child: agents.isEmpty
             ? ListView(
@@ -74,15 +77,15 @@ class _AgentListPageState extends ConsumerState<AgentListPage>
               decoration: const InputDecoration(labelText: 'Agent 名称'),
             ),
             const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: agentType,
-              decoration: const InputDecoration(labelText: '类型'),
+            AppDropdownFormField<String>(
+              value: agentType,
+              label: '类型',
               items: const [
-                DropdownMenuItem(value: '', child: Text('普通')),
-                DropdownMenuItem(
-                    value: AgentCategory.hermes, child: Text('Hermes')),
-                DropdownMenuItem(
-                    value: AgentCategory.opencode, child: Text('OpenCode')),
+                AppDropdownItem(value: '', label: '普通'),
+                AppDropdownItem(
+                    value: AgentCategory.hermes, label: 'Hermes'),
+                AppDropdownItem(
+                    value: AgentCategory.opencode, label: 'OpenCode'),
               ],
               onChanged: (v) => setState(() => agentType = v ?? ''),
             ),

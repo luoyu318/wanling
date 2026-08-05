@@ -97,12 +97,12 @@ void main() {
     );
   });
 
-  testWidgets('header shows agent avatar with size 40 when agent provided',
+  testWidgets('header shows agent avatar with size 52 when agent provided',
       (tester) async {
     await tester.pumpWidget(buildFrame(agent: testAgent, directories: dirs));
     expect(find.byType(Avatar), findsOneWidget);
     final avatar = tester.widget<Avatar>(find.byType(Avatar));
-    expect(avatar.size, 40);
+    expect(avatar.size, 52);
     expect(avatar.name, 'Wanling');
   });
 
@@ -119,12 +119,12 @@ void main() {
     expect(find.text('工作目录'), findsNothing);
   });
 
-  testWidgets('header falls back to "工作目录" when bio is null', (tester) async {
+  testWidgets('header hides bio when bio is null', (tester) async {
     await tester.pumpWidget(buildFrame(agent: testAgent, directories: dirs));
-    expect(find.text('工作目录'), findsOneWidget);
+    expect(find.text('工作目录'), findsNothing);
   });
 
-  testWidgets('header falls back to "工作目录" when bio is empty', (tester) async {
+  testWidgets('header hides bio when bio is empty', (tester) async {
     final agentEmptyBio = AgentSummary(
       id: 'agent-1',
       name: 'Wanling',
@@ -133,6 +133,6 @@ void main() {
     );
     await tester.pumpWidget(
         buildFrame(agent: agentEmptyBio, directories: dirs));
-    expect(find.text('工作目录'), findsOneWidget);
+    expect(find.text('工作目录'), findsNothing);
   });
 }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../models/agent.dart' hide AgentStatus;
+import '../theme/app_colors.dart';
 import '../models/conversation.dart';
 import '../providers/agent_provider.dart' show agentByIdProvider;
 import '../providers/agent_sessions_provider.dart';
@@ -403,6 +404,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     if (list.isEmpty) {
       return Center(
         child: RefreshIndicator(
+          color: AppColors.accentGreen,
           onRefresh: notifier.load,
           child: ListView(
             children: const [
@@ -419,6 +421,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     }
 
     return RefreshIndicator(
+      color: AppColors.accentGreen,
       onRefresh: notifier.load,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
