@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/models/user.dart';
 import 'package:app/pages/home_page.dart';
+import 'package:app/widgets/avatar.dart';
 
 void main() {
   group('truncateBio', () {
@@ -121,6 +122,27 @@ void main() {
       await pumpAppBar(tester, isWanling: false, user: null);
       // displayName='' → Avatar fallback '?'
       expect(find.text('?'), findsOneWidget);
+    });
+
+    testWidgets('头像可点击触发 onAvatarTap', (tester) async {
+      var tapped = false;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              appBar: buildHomeAppBar(
+                isWanling: false,
+                user: baseUser,
+                onScan: () {},
+                onCreateAgent: () {},
+                onAvatarTap: () => tapped = true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byType(Avatar));
+      expect(tapped, isTrue);
     });
   });
 }

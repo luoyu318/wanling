@@ -11,6 +11,7 @@ import '../providers/agent_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart' show totalUnreadProvider;
 import '../theme/app_colors.dart';
+import '../widgets/account_sidebar.dart';
 import '../widgets/avatar.dart';
 import '../widgets/connection_banner.dart';
 import '../widgets/local_store_banner.dart';
@@ -36,6 +37,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   final PageController _pageCtrl = PageController(initialPage: 0);
   int _pageIndex = 0; // PageView 当前页：0=A 组, 1=我的
   int _aIndex = 0; // A 组内部 index：0=消息, 1=万灵
+  bool _sidebarOpen = false; // 左侧切换账号面板开关
+
+  void _openSidebar() => setState(() => _sidebarOpen = true);
+  void _closeSidebar() => setState(() => _sidebarOpen = false);
 
   @override
   void dispose() {
@@ -91,26 +96,66 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
 
-    return Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: NestedPageView(
-              controller: _pageCtrl,
-              onPageChanged: _onPageChanged,
-              // 只有 2 页：A 组合页 + ProfilePage
+    return PopScope(
+      canPop: !_sidebarOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _sidebarOpen) _closeSidebar();
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            Column(
               children: [
-                _AGroupPage(
-                  aIndex: _aIndex,
-                  onAIndexChanged: (i) => setState(() => _aIndex = i),
+                Expanded(
+                  child: NestedPageView(
+                    controller: _pageCtrl,
+                    onPageChanged: _onPageChanged,
+                    // 只有 2 页：A 组合页 + ProfilePage
+                    children: [
+                      _AGroupPage(
+                        aIndex: _aIndex,
+                        onAIndexChanged: (i) => setState(() => _aIndex = i),
+                        onOpenSidebar: _openSidebar,
+                      ),
+                      const ProfilePage(),
+                    ],
+                  ),
                 ),
-                const ProfilePage(),
               ],
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
+            // —— 遮罩：常驻，动画控制透明度，关闭时忽略点击 ——
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !_sidebarOpen,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  opacity: _sidebarOpen ? 1 : 0,
+                  child: GestureDetector(
+                    onTap: _closeSidebar,
+                    child: const ColoredBox(color: Colors.black38),
+                  ),
+                ),
+              ),
+            ),
+            // —— 侧滑面板：常驻，AnimatedSlide 控制位移 ——
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              child: IgnorePointer(
+                ignoring: !_sidebarOpen,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+                  child: AccountSidebar(onClose: _closeSidebar),
+                ),
+              ),
+            ),
+          ],
+        ),
+        bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentNavIndex,
         backgroundColor: const Color(0xFFF7F7F7),
         onTap: _onNavTap,
@@ -138,6 +183,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -149,10 +195,12 @@ class _HomePageState extends ConsumerState<HomePage> {
 class _AGroupPage extends ConsumerStatefulWidget {
   final int aIndex; // 0=消息, 1=万灵
   final ValueChanged<int> onAIndexChanged;
+  final VoidCallback onOpenSidebar;
 
   const _AGroupPage({
     required this.aIndex,
     required this.onAIndexChanged,
+    required this.onOpenSidebar,
   });
 
   @override
@@ -223,6 +271,7 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
       user: user,
       onScan: () => context.push('/pair/scan'),
       onCreateAgent: _showCreateAgentDialog,
+      onAvatarTap: widget.onOpenSidebar,
     );
   }
 
@@ -286,9 +335,15 @@ PreferredSizeWidget buildHomeAppBar({
   required User? user,
   required VoidCallback onScan,
   required VoidCallback onCreateAgent,
+  VoidCallback? onAvatarTap,
 }) {
   final displayName = user?.displayName ?? '';
   final avatarUrl = user?.avatarUrl;
+
+  final Widget avatar = GestureDetector(
+    onTap: onAvatarTap,
+    child: Avatar(name: displayName, url: avatarUrl, size: 36, radius: 18),
+  );
 
   final actions = [
     PopupMenuButton<String>(
@@ -313,7 +368,7 @@ PreferredSizeWidget buildHomeAppBar({
       title: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Avatar(name: displayName, url: avatarUrl, size: 36, radius: 18),
+          avatar,
           const SizedBox(width: 10),
           const Text(
             '万灵',
@@ -331,7 +386,7 @@ PreferredSizeWidget buildHomeAppBar({
     title: Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Avatar(name: displayName, url: avatarUrl, size: 36, radius: 18),
+        avatar,
         const SizedBox(width: 10),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
