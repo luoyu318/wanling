@@ -577,3 +577,74 @@ func TestMessageHandlerUpdateContentPreservesSilent(t *testing.T) {
 		t.Errorf("PATCH 后 silent 应保留 true, 实际 %v (silent=%v)", got["silent"], silent)
 	}
 }
+
+// 聚合卡回合结束:PATCH silent 从 true 翻转为 false 时,应对非 sender 全员 IncrUnread。
+//
+// 场景:aggregate_card 创建时 silent=true(回合进行中不打扰),回合结束 plugin PATCH
+// 显式带 silent=false 让结果对用户可见 → 该消息从"不计数"翻转为"计数",
+// 应对非 sender(user) unread_count +1,与发消息 IncrUnreadTx 口径一致。
+func TestUpdateContent_SilentFlip_IncrsUnread(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userRepo := repository.NewUserRepo(db)
+	agentRepo := repository.NewAgentRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	participantRepo := repository.NewParticipantRepo(db)
+
+	user, err := userRepo.Create(t.Context(), shortName(t, "silentflip"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := agentRepo.Create(t.Context(), user.ID, "Agent", "secret-key", "")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreateDM(t.Context(), "dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+
+	// agent 发一张 silent=true 的聚合卡(回合进行中,不触发未读)
+	content := json.RawMessage(`{"msg_type":"aggregate_card","data":{"status":"running"},"silent":true}`)
+	msg, err := msgRepo.Create(t.Context(), conv.ID, "agent", agent.ID, content)
+	if err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
+	}
+
+	// 前置:user 未读应为 0(silent 消息不计数)
+	p, err := participantRepo.Get(t.Context(), conv.ID, user.ID, "user")
+	if err != nil || p == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p.UnreadCount != 0 {
+		t.Fatalf("前置:silent=true 时 user 未读应为 0,实际 %d", p.UnreadCount)
+	}
+
+	h := hub.NewHub(nil, agentRepo, participantRepo, nil)
+	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
+
+	// PATCH content 显式带 silent=false(回合结束,聚合卡结果对用户可见)
+	newContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"status":"done"},"silent":false}`)
+	body, _ := json.Marshal(map[string]json.RawMessage{"content": newContent})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/messages/"+msg.ID, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: msg.ID}}
+	c.Set("userID", agent.ID)
+	c.Set("role", "agent")
+	mh.UpdateContent(c)
+	AssertOk(t, w, http.StatusOK)
+
+	// 翻转后:user 未读应为 1(非 sender 全员 IncrUnread)
+	p2, err := participantRepo.Get(t.Context(), conv.ID, user.ID, "user")
+	if err != nil || p2 == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p2.UnreadCount != 1 {
+		t.Errorf("silent true→false 翻转后 user 未读应为 1,实际 %d", p2.UnreadCount)
+	}
+}

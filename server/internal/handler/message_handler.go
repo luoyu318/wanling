@@ -227,6 +227,20 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 	// 新 content 显式带 silent 时以新值为准(尊重 caller 的显式意图)。
 	req.Content = mergePreservedSilent(msg.Content, req.Content)
 
+	// 聚合卡回合结束:原消息 silent=true 且 PATCH 后 silent 翻转为 false 时,
+	// 该消息从"不计数"翻转为"计数",应对非 sender 全员 +1 unread。
+	// 与发消息时 IncrUnreadTx 的自增口径一致(silent=false 正常计数)。
+	// mergePreservedSilent 保证:新 content 未显式带 silent 会保留原值,
+	// 因此此处 merged silent=false 只可能来自新 content 显式传 false。
+	if origSilent, ok := contentSilent(msg.Content); ok && origSilent {
+		if mergedSilent, ok := contentSilent(req.Content); ok && !mergedSilent {
+			if err := h.participantRepo.IncrUnread(c.Request.Context(), msg.ConversationID, msg.SenderID, msg.SenderType); err != nil {
+				ErrMsg(c, http.StatusInternalServerError, "更新消息失败")
+				return
+			}
+		}
+	}
+
 	// 更新(repo WHERE 带 sender_id 兜底防 IDOR,handler 校验与 SQL 校验双保险)
 	if err := h.msgRepo.UpdateContent(c.Request.Context(), id, actorID, req.Content); err != nil {
 		// Get 已确认存在,此处 ErrNoRows 说明 Get 与 UPDATE 之间被并发撤回 → 404
@@ -492,4 +506,22 @@ func mergePreservedSilent(origContent, newContent json.RawMessage) json.RawMessa
 		return newContent
 	}
 	return merged
+}
+
+// contentSilent 解析 content JSON 的 silent 字段值。
+// 非 object / 无 silent 字段 / 解析失败 → (false, false),调用方据此跳过翻转判断。
+// 与 mergePreservedSilent 共用解析口径(silent 是 content 顶层的 bool)。
+func contentSilent(content json.RawMessage) (silent, ok bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(content, &m); err != nil || m == nil {
+		return false, false
+	}
+	raw, has := m["silent"]
+	if !has {
+		return false, false
+	}
+	if err := json.Unmarshal(raw, &silent); err != nil {
+		return false, false
+	}
+	return silent, true
 }
