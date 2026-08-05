@@ -102,16 +102,16 @@ class _HomePageState extends ConsumerState<HomePage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _sidebarOpen) _closeSidebar();
       },
-      child: Scaffold(
-        body: Stack(
-          children: [
-            Column(
+      // Stack 在 Scaffold 外层：遮罩 + 侧滑面板覆盖整个 Scaffold(含底部 tab 栏)
+      child: Stack(
+        children: [
+          Scaffold(
+            body: Column(
               children: [
                 Expanded(
                   child: NestedPageView(
                     controller: _pageCtrl,
                     onPageChanged: _onPageChanged,
-                    // 只有 2 页：A 组合页 + ProfilePage
                     children: [
                       _AGroupPage(
                         aIndex: _aIndex,
@@ -124,66 +124,69 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               ],
             ),
-            // —— 遮罩：常驻，动画控制透明度，关闭时忽略点击 ——
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !_sidebarOpen,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                  opacity: _sidebarOpen ? 1 : 0,
-                  child: GestureDetector(
-                    onTap: _closeSidebar,
-                    child: const ColoredBox(color: Colors.black38),
+            bottomNavigationBar: BottomNavigationBar(
+              currentIndex: _currentNavIndex,
+              backgroundColor: const Color(0xFFF7F7F7),
+              onTap: _onNavTap,
+              items: [
+                BottomNavigationBarItem(
+                  icon: _TabIcon(
+                    icon: Icons.chat_bubble_outline,
+                    badge: totalUnread,
                   ),
+                  activeIcon: _TabIcon(
+                    icon: Icons.chat_bubble,
+                    badge: totalUnread,
+                  ),
+                  label: '消息',
+                ),
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  activeIcon: Icon(Icons.auto_awesome),
+                  label: '万灵',
+                ),
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.person_outline),
+                  activeIcon: Icon(Icons.person),
+                  label: '我的',
+                ),
+              ],
+            ),
+          ),
+          // —— 遮罩：覆盖全 Scaffold(含 tab 栏),常驻动画控制透明度 ——
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !_sidebarOpen,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+                opacity: _sidebarOpen ? 1 : 0,
+                child: GestureDetector(
+                  onTap: _closeSidebar,
+                  child: const ColoredBox(color: Colors.black38),
                 ),
               ),
             ),
-            // —— 侧滑面板：常驻，AnimatedSlide 控制位移 ——
-            Positioned(
-              top: 0,
-              bottom: 0,
-              left: 0,
-              child: IgnorePointer(
-                ignoring: !_sidebarOpen,
-                child: AnimatedSlide(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                  offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+          ),
+          // —— 侧滑面板：包透明 Material 恢复 DefaultTextStyle 继承 ——
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: 0,
+            child: IgnorePointer(
+              ignoring: !_sidebarOpen,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+                offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+                child: Material(
+                  type: MaterialType.transparency,
                   child: AccountSidebar(onClose: _closeSidebar),
                 ),
               ),
             ),
-          ],
-        ),
-        bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentNavIndex,
-        backgroundColor: const Color(0xFFF7F7F7),
-        onTap: _onNavTap,
-        items: [
-          BottomNavigationBarItem(
-            icon: _TabIcon(
-              icon: Icons.chat_bubble_outline,
-              badge: totalUnread,
-            ),
-            activeIcon: _TabIcon(
-              icon: Icons.chat_bubble,
-              badge: totalUnread,
-            ),
-            label: '消息',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.auto_awesome_outlined),
-            activeIcon: Icon(Icons.auto_awesome),
-            label: '万灵',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: '我的',
           ),
         ],
-      ),
       ),
     );
   }

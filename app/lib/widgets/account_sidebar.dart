@@ -273,10 +273,10 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
           ),
         ],
       ),
-      child: SafeArea(
-        child: Stack(
-          children: [
-            Column(
+      child: Stack(
+        children: [
+          SafeArea(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // —— 用户信息头部：白底，昵称下方简介，无关闭按钮 ——
@@ -323,7 +323,6 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: Color(0xFFE4E4E4)),
                 // —— 标题行 ——
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -382,27 +381,27 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                 ),
               ],
             ),
-            // 切换中遮罩(防抖 + 用户感知,拦截面板内交互)
-            if (_switching)
-              Positioned.fill(
-                child: Container(
-                  color: Colors.black38,
-                  alignment: Alignment.center,
-                  child: const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(strokeWidth: 2),
-                      SizedBox(height: 12),
-                      Text(
-                        '切换中…',
-                        style: TextStyle(color: Colors.white, fontSize: 13),
-                      ),
-                    ],
-                  ),
+          ),
+          // 切换中遮罩(防抖 + 用户感知,覆盖整个侧边栏含状态栏区域)
+          if (_switching)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black38,
+                alignment: Alignment.center,
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(strokeWidth: 2),
+                    SizedBox(height: 12),
+                    Text(
+                      '切换中…',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ],
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
