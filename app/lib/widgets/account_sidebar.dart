@@ -9,6 +9,7 @@ import '../theme/account_palette.dart';
 import '../utils/dio_error.dart';
 import '../utils/snackbar.dart';
 import 'account_mark_editor.dart';
+import 'app_action_menu.dart';
 import 'avatar.dart';
 import 'feedback/app_dialog.dart';
 import 'password_text_field.dart';
@@ -531,47 +532,47 @@ class _AccountCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                  // ⋯ 菜单:编辑 / 复制 / 删除(带 icon 竖排)
-                  PopupMenuButton<String>(
-                    tooltip: '更多操作',
-                    onSelected: (v) {
-                      if (v == 'edit') {
-                        onEdit();
-                      } else if (v == 'duplicate') {
-                        onDuplicate();
-                      } else if (v == 'delete') {
-                        onDelete();
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'edit',
-                        child: ListTile(
-                          leading: Icon(Icons.edit_outlined, size: 20),
-                          title: Text('编辑'),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'duplicate',
-                        child: ListTile(
-                          leading: Icon(Icons.copy_outlined, size: 20),
-                          title: Text('复制'),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: ListTile(
-                          leading: Icon(Icons.delete_outline, size: 20),
-                          title: Text('删除'),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                        ),
-                      ),
-                    ],
+                  // ⋯ 菜单:编辑 / 复制 / 删除(统一竖排菜单样式)
+                  Builder(
+                    builder: (menuCtx) => IconButton(
+                      icon: const Icon(Icons.more_horiz, size: 20),
+                      tooltip: '更多操作',
+                      onPressed: () async {
+                        final box =
+                            menuCtx.findRenderObject() as RenderBox?;
+                        final pos =
+                            box?.localToGlobal(Offset.zero) ?? Offset.zero;
+                        final selected = await showAppActionMenu(
+                          menuCtx,
+                          pos,
+                          items: const [
+                            ActionMenuItem(
+                              value: 'edit',
+                              label: '编辑',
+                              icon: Icons.edit_outlined,
+                            ),
+                            ActionMenuItem(
+                              value: 'duplicate',
+                              label: '复制',
+                              icon: Icons.copy_outlined,
+                            ),
+                            ActionMenuItem(
+                              value: 'delete',
+                              label: '删除',
+                              icon: Icons.delete_outline,
+                              color: Color(0xFFFA5151),
+                            ),
+                          ],
+                        );
+                        if (selected == 'edit') {
+                          onEdit();
+                        } else if (selected == 'duplicate') {
+                          onDuplicate();
+                        } else if (selected == 'delete') {
+                          onDelete();
+                        }
+                      },
+                    ),
                   ),
                 ],
               ),

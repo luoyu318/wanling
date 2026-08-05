@@ -224,7 +224,7 @@ void main() {
     testWidgets('点 ⋯ 弹编辑 dialog 并保存', (tester) async {
       await pumpSidebar(tester);
       // 第二张卡(测试服,非当前)的 ⋯ 菜单
-      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
       await tester.pumpAndSettle();
       expect(find.text('编辑'), findsOneWidget);
       await tester.tap(find.text('编辑'));
@@ -242,7 +242,7 @@ void main() {
     testWidgets('点 ⋯ 复制生成完整副本', (tester) async {
       await pumpSidebar(tester);
       final before = notifier.state.logins.length;
-      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
       await tester.pumpAndSettle();
       await tester.tap(find.text('复制'));
       await tester.pumpAndSettle();
@@ -257,7 +257,7 @@ void main() {
 
     testWidgets('点 ⋯ 删除弹确认并删除', (tester) async {
       await pumpSidebar(tester);
-      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
       await tester.pumpAndSettle();
       await tester.tap(find.text('删除'));
       await tester.pumpAndSettle();

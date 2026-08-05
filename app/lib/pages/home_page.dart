@@ -12,6 +12,7 @@ import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart' show totalUnreadProvider;
 import '../theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
+import '../widgets/app_action_menu.dart';
 import '../widgets/avatar.dart';
 import '../widgets/connection_banner.dart';
 import '../widgets/local_store_banner.dart';
@@ -347,19 +348,36 @@ PreferredSizeWidget buildHomeAppBar({
   );
 
   final actions = [
-    PopupMenuButton<String>(
-      icon: const Icon(Icons.add, color: AppColors.accentGreen),
-      onSelected: (v) {
-        if (v == 'scan') {
-          onScan();
-        } else if (v == 'create') {
-          onCreateAgent();
-        }
-      },
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'scan', child: Text('扫一扫')),
-        PopupMenuItem(value: 'create', child: Text('创建 Agent')),
-      ],
+    Builder(
+      builder: (btnCtx) => IconButton(
+        icon: const Icon(Icons.add, color: AppColors.accentGreen),
+        tooltip: '更多',
+        onPressed: () async {
+          final box = btnCtx.findRenderObject() as RenderBox?;
+          final pos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+          final selected = await showAppActionMenu(
+            btnCtx,
+            pos,
+            items: const [
+              ActionMenuItem(
+                value: 'scan',
+                label: '扫一扫',
+                icon: Icons.qr_code_scanner,
+              ),
+              ActionMenuItem(
+                value: 'create',
+                label: '创建 Agent',
+                icon: Icons.add_box_outlined,
+              ),
+            ],
+          );
+          if (selected == 'scan') {
+            onScan();
+          } else if (selected == 'create') {
+            onCreateAgent();
+          }
+        },
+      ),
     ),
   ];
 
