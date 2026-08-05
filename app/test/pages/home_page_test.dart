@@ -58,6 +58,10 @@ void main() {
     return container;
   }
 
+  /// 限定在 AppBar 内的头像（面板头部也有一个 52px Avatar，不能按 .first 找）。
+  Finder appBarAvatar() => find.descendant(
+      of: find.byType(AppBar), matching: find.byType(Avatar));
+
   testWidgets('点 AppBar 头像弹出侧边栏,点遮罩关闭', (tester) async {
     final container = await buildContainer();
     await tester.pumpWidget(UncontrolledProviderScope(
@@ -68,20 +72,23 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // 初始面板不可见（IgnorePointer + offset -1，但仍在树中）
-    // 点击 AppBar 头像
-    await tester.tap(find.byType(Avatar).first);
+    // 面板常驻挂载但 IgnorePointer(ignoring:true) 不可命中 → 初始为关闭态
+    expect(find.byType(AccountSidebar).hitTestable(), findsNothing);
+
+    // 点 AppBar 头像 → 打开
+    await tester.tap(appBarAvatar());
     await tester.pumpAndSettle();
-    expect(find.byType(AccountSidebar), findsOneWidget);
-    expect(find.text('切换账号'), findsOneWidget);
+    expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
 
     // 点遮罩关闭:面板宽 78%(默认测试面 800px→624px),点右侧空白处落在遮罩上
     await tester.tapAt(const Offset(700, 400));
     await tester.pumpAndSettle();
-    // 面板已逻辑关闭（opacity 0）。验证 Avatar 可再点开。
-    await tester.tap(find.byType(Avatar).first);
+    expect(find.byType(AccountSidebar).hitTestable(), findsNothing);
+
+    // 可再点开 → 确认面板确实重新进入可交互态
+    await tester.tap(appBarAvatar());
     await tester.pumpAndSettle();
-    expect(find.text('切换账号'), findsOneWidget);
+    expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
   });
 
   testWidgets('系统返回键关闭面板而非退出', (tester) async {
@@ -94,18 +101,19 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(Avatar).first);
+    await tester.tap(appBarAvatar());
     await tester.pumpAndSettle();
-    expect(find.text('切换账号'), findsOneWidget);
+    expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
 
-    final dynamic widgetsAppState =
-        tester.state(find.byType(WidgetsApp));
-    // 模拟系统返回
-    await widgetsAppState.didPopRoute();
+    // 模拟系统返回键：WidgetsBinding.handlePopRoute 走 observer.didPopRoute →
+    // PopScope(canPop:false) → 不退出路由，只关面板
+    await WidgetsBinding.instance.handlePopRoute();
     await tester.pumpAndSettle();
-    // 面板关闭：再次点击头像仍可打开（说明没退出 App）
-    await tester.tap(find.byType(Avatar).first);
+    expect(find.byType(AccountSidebar).hitTestable(), findsNothing);
+
+    // 面板关闭后仍可再点开 → 说明 App 未退出
+    await tester.tap(appBarAvatar());
     await tester.pumpAndSettle();
-    expect(find.text('切换账号'), findsOneWidget);
+    expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
   });
 }
