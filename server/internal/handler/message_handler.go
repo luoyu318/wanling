@@ -227,20 +227,6 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 	// 新 content 显式带 silent 时以新值为准(尊重 caller 的显式意图)。
 	req.Content = mergePreservedSilent(msg.Content, req.Content)
 
-	// 聚合卡回合结束:原消息 silent=true 且 PATCH 后 silent 翻转为 false 时,
-	// 该消息从"不计数"翻转为"计数",应对非 sender 全员 +1 unread。
-	// 与发消息时 IncrUnreadTx 的自增口径一致(silent=false 正常计数)。
-	// mergePreservedSilent 保证:新 content 未显式带 silent 会保留原值,
-	// 因此此处 merged silent=false 只可能来自新 content 显式传 false。
-	if origSilent, ok := contentSilent(msg.Content); ok && origSilent {
-		if mergedSilent, ok := contentSilent(req.Content); ok && !mergedSilent {
-			if err := h.participantRepo.IncrUnread(c.Request.Context(), msg.ConversationID, msg.SenderID, msg.SenderType); err != nil {
-				ErrMsg(c, http.StatusInternalServerError, "更新消息失败")
-				return
-			}
-		}
-	}
-
 	// 更新(repo WHERE 带 sender_id 兜底防 IDOR,handler 校验与 SQL 校验双保险)
 	if err := h.msgRepo.UpdateContent(c.Request.Context(), id, actorID, req.Content); err != nil {
 		// Get 已确认存在,此处 ErrNoRows 说明 Get 与 UPDATE 之间被并发撤回 → 404
@@ -250,6 +236,24 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 		}
 		ErrMsg(c, http.StatusInternalServerError, "更新消息失败")
 		return
+	}
+
+	// 聚合卡回合结束:原消息 silent=true 且 PATCH 后 silent 翻转为 false 时,
+	// 该消息从"不计数"翻转为"计数",应对非 sender 全员 +1 unread。
+	// 与发消息时 IncrUnreadTx 的自增口径一致(silent=false 正常计数)。
+	// mergePreservedSilent 保证:新 content 未显式带 silent 会保留原值,
+	// 因此此处 merged silent=false 只可能来自新 content 显式传 false。
+	// 计数放在 UpdateContent 成功之后:若更新失败(500 / 并发撤回 404),
+	// content 仍为 silent=true,不发生"内容未翻转却 +1"的假未读;
+	// silent 语义由 delivery 重算口径(content->>'silent' IS DISTINCT FROM 'true')
+	// 兜底,故计数失败不影响最终展示。
+	if origSilent, ok := contentSilent(msg.Content); ok && origSilent {
+		if mergedSilent, ok := contentSilent(req.Content); ok && !mergedSilent {
+			if err := h.participantRepo.IncrUnread(c.Request.Context(), msg.ConversationID, msg.SenderID, msg.SenderType); err != nil {
+				ErrMsg(c, http.StatusInternalServerError, "更新消息失败")
+				return
+			}
+		}
 	}
 
 	// 广播 MESSAGE_UPDATE 给会话全员(APP 据此重渲染卡片)
