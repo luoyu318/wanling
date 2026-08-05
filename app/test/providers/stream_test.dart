@@ -84,6 +84,40 @@ void main() {
     ));
   }
 
+  /// 通过 MESSAGE_CREATE 注入聚合卡消息(msg_type=aggregate_card)。
+  void emitAggregateCard(String id,
+      {List<Map<String, dynamic>>? elements, String state = 'generating'}) {
+    ws.emit(WSMessage(
+      op: 0,
+      t: 'MESSAGE_CREATE',
+      d: {
+        'id': id,
+        'conversation_id': 'c1',
+        'sender_type': 'agent',
+        'sender_id': 'a1',
+        'content': {
+          'msg_type': 'aggregate_card',
+          'data': {'state': state, 'elements': elements ?? []},
+        },
+        'created_at': '2026-07-24T00:00:00Z',
+      },
+    ));
+  }
+
+  /// 通过 op=14 STREAM 注入聚合模式元素级流式帧(带 aggregate 定位字段)。
+  void emitAggregateStream(String streamId, String text,
+      {required String msgId,
+      required String elementId,
+      String msgType = 'markdown'}) {
+    ws.emitStream({
+      'conversation_id': 'c1',
+      'stream_id': streamId,
+      'msg_type': msgType,
+      'text': text,
+      'aggregate': {'message_id': msgId, 'element_id': elementId},
+    });
+  }
+
   group('live 插入顺序:新消息应在 busy 占位上方', () {
     test('思考中(isStreaming 占位)到达的卡片插到占位之前,不排在占位下方',
         () async {
@@ -328,5 +362,131 @@ void main() {
     // server 三分支任一完成即置 true,pendingInitialScroll 据此判断
     // 底部输入区(convType/sessionMeta)已稳定,避免过早 jumpTo 被 strip 遮挡
     expect(container.read(chatProvider(key)).isServerInitialized, isTrue);
+  });
+
+  group('聚合卡 op=14 元素级流式(带 aggregate 字段)', () {
+    test('带 aggregate 的 delta 更新聚合卡元素 data.text,不建独立占位', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      // 先有聚合卡消息(plugin ensureCard 建的 MESSAGE_CREATE)
+      emitAggregateCard('agg-1', elements: [
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': 'Hi'},
+        },
+      ]);
+      await pump();
+
+      // 元素级流式:更新 markdown_1 的 text(全量替换)
+      emitAggregateStream('s1', 'Hello world',
+          msgId: 'agg-1', elementId: 'markdown_1');
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      // 只更新卡片,不新增独立占位
+      expect(msgs.length, 1);
+      expect(msgs.first.id, 'agg-1');
+      expect(msgs.where((m) => m.id == 'stream:s1'), isEmpty);
+      final elements =
+          (msgs.first.content['data'] as Map)['elements'] as List;
+      final element = elements.first as Map;
+      expect(element['element_id'], 'markdown_1');
+      expect((element['data'] as Map)['text'], 'Hello world');
+    });
+
+    test('多元素卡片仅更新 element_id 匹配的元素,其余保持不变', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      emitAggregateCard('agg-1', elements: [
+        {
+          'type': 'reasoning',
+          'element_id': 'reasoning_1',
+          'data': {'text': '思考中'},
+        },
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': '正文'},
+        },
+      ]);
+      await pump();
+
+      emitAggregateStream('s1', '更新后的正文',
+          msgId: 'agg-1', elementId: 'markdown_1');
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final elements =
+          ((msgs.first.content['data'] as Map)['elements'] as List)
+              .cast<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+      expect(elements.length, 2);
+      expect((elements[0]['data'] as Map)['text'], '思考中'); // reasoning 未动
+      expect((elements[1]['data'] as Map)['text'], '更新后的正文');
+    });
+
+    test('aggregate 帧找不到聚合卡 → 不建占位(静默丢弃,等待 MESSAGE_UPDATE 兜底)',
+        () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      // 流式帧早于建卡 MESSAGE_CREATE 到达
+      emitAggregateStream('s1', 'x', msgId: 'ghost', elementId: 'markdown_1');
+      await pump();
+
+      expect(container.read(chatProvider(key)).displayMessages, isEmpty);
+    });
+
+    test('aggregate 帧 element_id 不匹配 → 卡片不动,不建占位', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      emitAggregateCard('agg-1', elements: [
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': '原文'},
+        },
+      ]);
+      await pump();
+
+      emitAggregateStream('s1', '新文本',
+          msgId: 'agg-1', elementId: 'markdown_2');
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      final elements =
+          ((msgs.first.content['data'] as Map)['elements'] as List);
+      final element = elements.first as Map;
+      expect((element['data'] as Map)['text'], '原文'); // 未匹配,保持不变
+    });
+
+    test('非聚合模式(无 aggregate 字段)仍走旧占位逻辑', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      emitStream('s1', 'Hel');
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      expect(msgs.first.id, 'stream:s1');
+      expect(msgs.first.isStreaming, isTrue);
+    });
   });
 }

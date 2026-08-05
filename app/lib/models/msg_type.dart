@@ -23,6 +23,7 @@ enum MsgType {
   questionReply,
   slashEcho,
   compactDivider,
+  aggregateCard,
   unknown;
 }
 
@@ -50,6 +51,7 @@ extension MsgTypeX on MsgType {
         MsgType.questionReply => 'question_reply',
         MsgType.slashEcho => 'slash_echo',
         MsgType.compactDivider => 'compact_divider',
+        MsgType.aggregateCard => 'aggregate_card',
         MsgType.unknown => 'unknown',
       };
 
@@ -116,11 +118,30 @@ extension MsgTypeX on MsgType {
         return text.isNotEmpty ? '[命令] $text' : '[命令]';
       case MsgType.compactDivider:
         return null;
+      case MsgType.aggregateCard:
+        return _aggregateCardPreview(data);
       case MsgType.mixed:
         return null;
       case MsgType.unknown:
         return null;
     }
+  }
+
+  /// 聚合卡预览文本:取最后一个 markdown 元素(最终回复)的 text,截断 50 字符;
+  /// 无 markdown 元素时 fallback `[聚合回复]`。
+  /// 回合结束时聚合卡才计未读 + 推送通知,此时 elements 已含最终正文。
+  static String? _aggregateCardPreview(Map<String, dynamic>? data) {
+    final elements = data?['elements'];
+    if (elements is List) {
+      for (final raw in elements.reversed) {
+        if (raw is! Map) continue;
+        if (raw['type'] != 'markdown') continue;
+        final text = (raw['data'] as Map?)?['text'] as String? ?? '';
+        if (text.isEmpty) continue;
+        return text.length > 50 ? text.substring(0, 50) : text;
+      }
+    }
+    return '[聚合回复]';
   }
 
   static MsgType fromString(String? raw) {
@@ -169,6 +190,8 @@ extension MsgTypeX on MsgType {
         return MsgType.slashEcho;
       case 'compact_divider':
         return MsgType.compactDivider;
+      case 'aggregate_card':
+        return MsgType.aggregateCard;
       default:
         return MsgType.unknown;
     }

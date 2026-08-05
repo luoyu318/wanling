@@ -678,6 +678,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
         return;
       }
 
+      // 聚合模式元素级流式:op=14 帧带 aggregate{message_id, element_id} 时,
+      // 不建独立占位,直接更新聚合卡消息内对应元素的 data.text(全量替换)。
+      // 元素最终内容仍由 plugin patchElements 的 MESSAGE_UPDATE 持久化兜底,
+      // 此处仅实时刷新正在观看会话的 user 端。无 aggregate 字段走旧占位逻辑。
+      final aggregate = d['aggregate'] as Map<String, dynamic>?;
+      if (aggregate != null) {
+        _applyAggregateStreamUpdate(aggregate, text);
+        return;
+      }
+
       final placeholderId = 'stream:$streamId';
       final idx = state.liveMessages.indexWhere((m) => m.id == placeholderId);
       final newContent = <String, dynamic>{
@@ -706,6 +716,72 @@ class ChatNotifier extends StateNotifier<ChatState> {
         debugPrint('[SSE-DBG] _listenStream 新建占位 sid=$streamId len=${text.length}');
       }
     });
+  }
+
+  /// 聚合卡元素级流式更新：定位聚合卡消息（id == aggregate.message_id 且
+  /// msg_type == aggregate_card），全量替换 element_id 匹配元素的 data.text。
+  ///
+  /// 找不到聚合卡（流式帧早于建卡 MESSAGE_CREATE 到达 / 元素未就绪）时静默丢弃：
+  /// 元素最终内容由 plugin patchElements 的 MESSAGE_UPDATE 持久化兜底，不丢数据。
+  /// 与 plugin patch 语义一致：全量替换 elements[]（非增量 diff）。
+  void _applyAggregateStreamUpdate(Map<String, dynamic> aggregate, String text) {
+    final messageId = aggregate['message_id'] as String?;
+    final elementId = aggregate['element_id'] as String?;
+    if (messageId == null ||
+        messageId.isEmpty ||
+        elementId == null ||
+        elementId.isEmpty) {
+      return;
+    }
+
+    // 定位聚合卡消息（live/history 双 list 任一命中即可）
+    ChatMessage? card;
+    for (final m in state.liveMessages) {
+      if (m.id == messageId &&
+          MsgTypeX.fromString(m.content['msg_type'] as String?) ==
+              MsgType.aggregateCard) {
+        card = m;
+        break;
+      }
+    }
+    if (card == null) {
+      for (final m in state.historyMessages) {
+        if (m.id == messageId &&
+            MsgTypeX.fromString(m.content['msg_type'] as String?) ==
+                MsgType.aggregateCard) {
+          card = m;
+          break;
+        }
+      }
+    }
+    if (card == null) return;
+
+    final data = card.content['data'] as Map<String, dynamic>? ?? const {};
+    final rawElements = data['elements'] as List?;
+    if (rawElements == null) return;
+
+    // 全量替换 elements[],element_id 匹配的元素 data.text 整体替换
+    final newElements = <Map<String, dynamic>>[];
+    var matched = false;
+    for (final raw in rawElements) {
+      if (raw is! Map) continue;
+      final e = Map<String, dynamic>.from(raw);
+      if (e['element_id'] == elementId) {
+        final eData = Map<String, dynamic>.from(e['data'] as Map? ?? const {});
+        eData['text'] = text;
+        e['data'] = eData;
+        matched = true;
+      }
+      newElements.add(e);
+    }
+    if (!matched) return;
+
+    final newContent = <String, dynamic>{
+      'msg_type': MsgType.aggregateCard.value,
+      'data': {...data, 'elements': newElements},
+    };
+    state = _updateMessageById(messageId, (m) => m.copyWith(content: newContent));
+    debugPrint('[SSE-DBG] _listenStream 聚合元素更新 msgId=$messageId element=$elementId len=${text.length}');
   }
 
   void _listenWS() {
