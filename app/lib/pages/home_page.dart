@@ -3,11 +3,15 @@ import 'package:nested_scroll_views/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/messages_page.dart';
 import '../pages/profile_page.dart';
 import '../providers/agent_provider.dart';
+import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart' show totalUnreadProvider;
+import '../theme/app_colors.dart';
+import '../widgets/avatar.dart';
 import '../widgets/connection_banner.dart';
 import '../widgets/local_store_banner.dart';
 import '../widgets/feedback/app_dialog.dart';
@@ -209,28 +213,16 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
   }
 
   /// 根据 aIndex 构建 AppBar。
-  /// 消息 / 万灵 两个 tab 共用同一个 + 号菜单（扫一扫 / 创建 Agent），
-  /// 仅 title 随 tab 切换。
+  /// - 消息 tab：靠左头像 + 用户名 + 简介（简介 >10 字截断加省略号）
+  /// - 万灵 tab：头像在 leading + "万灵"标题靠左
+  /// 两 tab 共用 + 号菜单（扫一扫 / 创建 Agent）使用 [buildHomeAppBar]。
   PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      title: Text(widget.aIndex == 1 ? '万灵' : '消息'),
-      backgroundColor: const Color(0xFFF7F7F7),
-      actions: [
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.add, color: Color(0xFF07C160)),
-          onSelected: (v) {
-            if (v == 'scan') {
-              context.push('/pair/scan');
-            } else if (v == 'create') {
-              _showCreateAgentDialog();
-            }
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'scan', child: Text('扫一扫')),
-            PopupMenuItem(value: 'create', child: Text('创建 Agent')),
-          ],
-        ),
-      ],
+    final user = ref.watch(authProvider).user;
+    return buildHomeAppBar(
+      isWanling: widget.aIndex == 1,
+      user: user,
+      onScan: () => context.push('/pair/scan'),
+      onCreateAgent: _showCreateAgentDialog,
     );
   }
 
@@ -281,4 +273,103 @@ class _TabIcon extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 构建"消息 / 万灵"首页共享的 AppBar。
+///
+/// - [isWanling]=false（消息 tab）：靠左头像 + 用户名 + 简介
+/// - [isWanling]=true（万灵 tab）：靠左头像 + "万灵"标题（与消息 tab 同尺寸同间距）
+///
+/// 简介（bio）超过 10 个字（按字素簇计数）会截断加 "…"，null/空则不渲染简介行。
+PreferredSizeWidget buildHomeAppBar({
+  required bool isWanling,
+  required User? user,
+  required VoidCallback onScan,
+  required VoidCallback onCreateAgent,
+}) {
+  final displayName = user?.displayName ?? '';
+  final avatarUrl = user?.avatarUrl;
+
+  final actions = [
+    PopupMenuButton<String>(
+      icon: const Icon(Icons.add, color: AppColors.accentGreen),
+      onSelected: (v) {
+        if (v == 'scan') {
+          onScan();
+        } else if (v == 'create') {
+          onCreateAgent();
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'scan', child: Text('扫一扫')),
+        PopupMenuItem(value: 'create', child: Text('创建 Agent')),
+      ],
+    ),
+  ];
+
+  if (isWanling) {
+    return AppBar(
+      centerTitle: false,
+      title: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Avatar(name: displayName, url: avatarUrl, size: 36, radius: 18),
+          const SizedBox(width: 10),
+          const Text(
+            '万灵',
+            style: TextStyle(fontWeight: FontWeight.w400),
+          ),
+        ],
+      ),
+      actions: actions,
+    );
+  }
+
+  final bio = truncateBio(user?.bio);
+  return AppBar(
+    centerTitle: false,
+    title: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Avatar(name: displayName, url: avatarUrl, size: 36, radius: 18),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+              Text(
+                displayName,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              if (bio != null)
+                Text(
+                  bio,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+          ],
+        ),
+      ],
+    ),
+    actions: actions,
+  );
+}
+
+/// 简介（bio）截断：>10 字（按字素簇计数）取前 10 字 + "…"，
+/// null / 空字符串返回 null（调用方据此跳过渲染简介行）。
+String? truncateBio(String? bio) {
+  if (bio == null || bio.isEmpty) return null;
+  final chars = bio.characters;
+  if (chars.length > 10) {
+    return '${chars.take(10).join()}…';
+  }
+  return bio;
 }
