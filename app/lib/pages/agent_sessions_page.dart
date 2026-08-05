@@ -489,7 +489,10 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
       onPointerUp: (_) => _setPressed(false),
       onPointerCancel: (_) => _setPressed(false),
       child: GestureDetector(
-        onLongPressStart: widget.onLongPressStart,
+        onLongPressStart: (details) {
+          HapticFeedback.selectionClick();
+          widget.onLongPressStart(details);
+        },
         child: InkWell(
           onTap: widget.onTap,
           splashColor: Colors.transparent,
