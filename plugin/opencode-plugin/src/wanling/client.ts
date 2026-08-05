@@ -15,6 +15,7 @@ import type {
 } from "./types.js"
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
+import type { AggregateElement } from "../sync/domains/aggregate_card.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -350,6 +351,23 @@ export class WanlingClient extends EventEmitter {
       throw new Error("sendCardMessage: invalid response")
     }
     return json.data.message_id as string
+  }
+
+  // 聚合卡 PATCH:复用 updateMessageContent 的 REST PATCH 通道,全量替换 elements[]。
+  // data.state 缺省 generating(聚合卡创建后持续增量,回合结束由调用方显式翻 done)。
+  // silent 语义:undefined 不写字段 → server mergePreservedSilent 保留原值;
+  // 显式 silent:false 时翻转计未读(silent 翻转计数由 server Task 1 支持)。
+  async patchAggregateMessage(
+    msgId: string,
+    data: { state?: string; elements: AggregateElement[] },
+    opts?: { silent?: boolean },
+  ): Promise<void> {
+    const content: Record<string, unknown> = {
+      msg_type: "aggregate_card",
+      data: { state: data.state ?? "generating", elements: data.elements },
+    }
+    if (opts?.silent !== undefined) content.silent = opts.silent
+    await this.updateMessageContent(msgId, content as { msg_type: string; data: Record<string, unknown>; silent?: boolean })
   }
 
   async updateMessageContent(

@@ -15,6 +15,9 @@ export interface SessionState {
   textPartsFlushed: Set<string>
   toolCardMsgIds: Map<string, string>
   pendingToolCard?: { toolName: string; input: Record<string, unknown>; partId: string }
+  // 聚合卡 msgId(Task 2):AggregateCardManager.ensureCard 建卡后缓存,
+  // 幂等复用依赖此字段,跨 manager 实例共享 state 也能拿到同一卡片。
+  aggregateCardMsgId?: string
   // sendCardMessage(running) 已发起但 msgId 尚未返回的 inflight Promise。
   // completed/error 事件可能在此窗口到达,通过 await 这条 promise 拿到 msgId。
   toolCardInflight: Map<string, Promise<string>>
