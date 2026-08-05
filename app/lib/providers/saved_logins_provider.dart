@@ -155,6 +155,38 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
       saveOrAdd(server, username, password,
           label: label, mark: mark, select: select);
 
+  /// 克隆指定索引的完整卡片(server/password/label/mark 原样)插入列表末尾。
+  /// username 保持原值会撞唯一性(server+username),故加 _copy/_copy_2 后缀递增去重。
+  /// 不改变当前选中,便于用户后续编辑成同服务器的其他账号。
+  Future<void> duplicate(int index) async {
+    if (index < 0 || index >= state.logins.length) {
+      throw RangeError('duplicate index 越界: $index');
+    }
+    final src = state.logins[index];
+    // 生成不撞唯一性的 username 后缀:u → u_copy → u_copy_2 → ...
+    var candidate = '${src.username}_copy';
+    var n = 2;
+    while (state.logins.any((l) => l.matches(src.server, candidate))) {
+      candidate = '${src.username}_copy_$n';
+      n += 1;
+    }
+    final updated = [
+      ...state.logins,
+      SavedLogin(
+        server: src.server,
+        username: candidate,
+        password: src.password,
+        label: src.label,
+        mark: src.mark,
+      ),
+    ];
+    state = SavedLoginsState(
+      logins: updated,
+      selectedIndex: state.selectedIndex,
+    );
+    await _persist();
+  }
+
   /// 编辑指定索引。如果 server+username 跟其他卡片撞,抛 ArgumentError。
   ///
   /// label 哨兵语义:null=不改;""=清空为 null;非空=更新。

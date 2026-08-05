@@ -223,7 +223,11 @@ void main() {
 
     testWidgets('点 ⋯ 弹编辑 dialog 并保存', (tester) async {
       await pumpSidebar(tester);
-      await tester.tap(find.byIcon(Icons.more_horiz).first);
+      // 第二张卡(测试服,非当前)的 ⋯ 菜单
+      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑'), findsOneWidget);
+      await tester.tap(find.text('编辑'));
       await tester.pumpAndSettle();
       expect(find.text('编辑账号'), findsOneWidget);
       await tester.enterText(
@@ -235,9 +239,27 @@ void main() {
       expect(notifier.state.logins[1].label, '改备注');
     });
 
-    testWidgets('点删除弹确认并删除', (tester) async {
+    testWidgets('点 ⋯ 复制生成完整副本', (tester) async {
       await pumpSidebar(tester);
-      await tester.tap(find.byIcon(Icons.delete_outline).first);
+      final before = notifier.state.logins.length;
+      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('复制'));
+      await tester.pumpAndSettle();
+      expect(notifier.state.logins.length, before + 1);
+      final clone = notifier.state.logins.last;
+      expect(clone.server, 'http://test');
+      expect(clone.username, 'uB_copy');
+      expect(clone.label, '测试服');
+      // 不改变当前选中
+      expect(notifier.state.selectedIndex, 0);
+    });
+
+    testWidgets('点 ⋯ 删除弹确认并删除', (tester) async {
+      await pumpSidebar(tester);
+      await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除'));
       await tester.pumpAndSettle();
       expect(find.text('确认删除'), findsOneWidget);
       await tester.tap(find.text('确认'));

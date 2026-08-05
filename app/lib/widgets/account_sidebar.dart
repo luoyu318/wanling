@@ -239,6 +239,20 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
     );
   }
 
+  /// 克隆账号卡片:生成同 server 的完整副本(自动处理 username 冲突),提示用户去编辑。
+  void _duplicate(int index) {
+    ref.read(savedLoginsProvider.notifier).duplicate(index).then((_) {
+      if (mounted) {
+        showAppSnackBar(context, '已复制,可点击 ⋯ 编辑新账号',
+            type: SnackBarType.success);
+      }
+    }).catchError((e) {
+      if (mounted) {
+        showAppSnackBar(context, e.toString(), type: SnackBarType.error);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(savedLoginsProvider);
@@ -350,6 +364,7 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                             isCurrent: i == state.selectedIndex,
                             onTap: () => _switchTo(i),
                             onEdit: () => _showEditDialog(state.logins[i], i),
+                            onDuplicate: () => _duplicate(i),
                             onDelete: () =>
                                 _showDeleteConfirm(i, state.logins[i]),
                           ),
@@ -398,6 +413,7 @@ class _AccountCard extends StatelessWidget {
   final bool isCurrent;
   final VoidCallback onTap;
   final VoidCallback onEdit;
+  final VoidCallback onDuplicate;
   final VoidCallback onDelete;
 
   const _AccountCard({
@@ -405,6 +421,7 @@ class _AccountCard extends StatelessWidget {
     required this.isCurrent,
     required this.onTap,
     required this.onEdit,
+    required this.onDuplicate,
     required this.onDelete,
   });
 
@@ -417,9 +434,7 @@ class _AccountCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: isCurrent
-            ? theme.colorScheme.primaryContainer
-            : const Color(0xFFF5F5F5),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           onTap: isCurrent ? null : onTap,
@@ -469,21 +484,49 @@ class _AccountCard extends StatelessWidget {
                       '当前',
                       style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
                     ),
-                  )
-                else ...[
-                  IconButton(
-                    icon: const Icon(Icons.more_horiz, size: 20),
-                    onPressed: onEdit,
                   ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      size: 18,
-                      color: Color(0xFF999999),
+                // ⋯ 菜单:编辑 / 复制 / 删除(带 icon 竖排)
+                PopupMenuButton<String>(
+                  tooltip: '更多操作',
+                  onSelected: (v) {
+                    if (v == 'edit') {
+                      onEdit();
+                    } else if (v == 'duplicate') {
+                      onDuplicate();
+                    } else if (v == 'delete') {
+                      onDelete();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: ListTile(
+                        leading: Icon(Icons.edit_outlined, size: 20),
+                        title: Text('编辑'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
                     ),
-                    onPressed: onDelete,
-                  ),
-                ],
+                    PopupMenuItem(
+                      value: 'duplicate',
+                      child: ListTile(
+                        leading: Icon(Icons.copy_outlined, size: 20),
+                        title: Text('复制'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        leading: Icon(Icons.delete_outline, size: 20),
+                        title: Text('删除'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
