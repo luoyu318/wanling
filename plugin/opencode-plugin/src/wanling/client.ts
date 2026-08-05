@@ -138,11 +138,18 @@ export class WanlingClient extends EventEmitter {
   // 流式输出:把生成中的文本全量快照推给"正在看本会话"的 user 连接。
   // op=14 绕过 dispatchBuffer/Resume,不带 seq、不落库、不计未读。
   // 终态仍由 sendTypedMessage 发 MESSAGE_CREATE(带 _stream_id 让 APP 替换占位)。
+  // aggregate(聚合模式):指向聚合卡内某元素(element_id),APP 把流式内容渲染到该元素,
+  // 不建独立流式占位气泡;无 aggregate 字段 = 非聚合模式,APP 走旧独立占位逻辑。
   // 与 sendTyping 一致:WS 未连接时 silently drop,不 emit error 不 warn
   // (流式为瞬态,终态消息兜底;agent 建会话期间短窗口掉帧可接受)。
   sendStream(
     convId: string,
-    payload: { stream_id: string; msg_type: string; text: string },
+    payload: {
+      stream_id: string
+      msg_type: string
+      text: string
+      aggregate?: { message_id: string; element_id: string }
+    },
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.log(`[SSE-DBG] sendStream DROP(ws未连接) sid=${payload.stream_id} len=${payload.text.length}`)

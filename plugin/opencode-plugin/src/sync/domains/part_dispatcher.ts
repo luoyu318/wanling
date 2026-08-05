@@ -12,6 +12,10 @@ import type { MetaSync } from "./meta_sync.js"
 import type { CompactionTracker } from "./compaction.js"
 import { AggregateCardManager, type AggregateElement } from "./aggregate_card.js"
 
+// 流式 holder 类型:reasoning/text part 的累积状态(streamId/lastFlushAt/lastFlushedLen/flushTimer
+// + 聚合卡元素预留序号 seq)。与 SessionState.reasoning/text 结构一致。
+type StreamHolder = NonNullable<SessionState["reasoning"]>
+
 // PartDispatcher:part_updated / part_delta 分发领域模块。
 // 职责:reasoning / text / step-finish 三类 part 的状态机分发 + part_delta 增量
 // 追加 + flush 缓冲(reasoning/text 兜底输出)+ reasoning/text 流式快照(300ms 节流)。
@@ -22,9 +26,15 @@ import { AggregateCardManager, type AggregateElement } from "./aggregate_card.js
 // reasoning 终态 → reasoning 元素;markdown 终态 → markdown 元素(缓存 pendingText 等
 // step-finish 判定 silent);step_finish → footer 元素 + 整卡翻转 {silent:false,state:"done"}。
 // 子 session 恒走旧独立消息(保持 parent/root 串树语义);流式 maybeFlushStream/forceFlushStream
-// 保留 op=14(正文打字机体验,终态才上聚合卡)。开关 false 时完全回退旧逻辑。
+// 保留 op=14(正文打字机体验,终态才上聚合卡),聚合模式下帧带 aggregate:{message_id, element_id}
+// 指向聚合卡内正在流式的元素(避免 APP 建独立流式占位)。开关 false 时完全回退旧逻辑。
 // 聚合卡元素序号(aggregateSeq)/累计(aggregateElements)/patch 串行队列(aggregatePatchQueue)
 // 都在 SessionState 上维护,跨 manager 实例共享。不持有状态,错误经注入的 emitter 上抛。
+// 流式元素定位(Task 3.5):聚合模式下 op=14 帧带 aggregate:{message_id, element_id} 指向聚合卡内
+// 正在流式的元素。element_id 用"预留 seq"(streamSeq 首次推帧时取 nextSeq 并缓存到 holder),
+// 流式期间所有帧 + 终态 append 用同一 element_id(APP 按 element_id 定位,若终态换号会导致
+// 流式定位断裂 → 内容显示在错误元素)。无 aggregate 字段 = 非聚合模式,APP 走旧独立占位。
+// holder.seq 即预留序号;reasoning/text holder 与 pendingText 的 seq 字段见 SessionState。
 export class PartDispatcher {
   private readonly store: SessionStore
   private readonly router: MessageRouter
@@ -96,7 +106,8 @@ export class PartDispatcher {
               console.log(`[SSE-DBG] part_updated reasoning END sid=${sid ?? "-"} ocLen=${text.length} child=${!!state.isChildSession} head=${JSON.stringify(text.slice(0, 30))}`)
               if (text.trim()) {
                 if (this.useAggregate(state)) {
-                  await this.appendElement(state, AggregateCardManager.reasoning(text, this.nextSeq(state)))
+                  // 流式已预留 seq 则复用(终态与流式帧同一 element_id),未流式走 nextSeq
+                  await this.appendElement(state, AggregateCardManager.reasoning(text, state.reasoning?.seq ?? this.nextSeq(state)))
                 } else {
                   this.router.send(state, "reasoning",
                     sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
@@ -127,7 +138,8 @@ export class PartDispatcher {
               // 中间步骤以 silent=true 发。子 agent 文本恒 silent=true。
               if (text.trim()) {
                 if (!state.isChildSession) {
-                  state.pendingText = { text, partID: part.id, streamId: sid }
+                  // seq 透传:流式预留的聚合卡元素序号,终态 append 用同一 element_id
+                  state.pendingText = { text, partID: part.id, streamId: sid, ...(state.text?.seq !== undefined ? { seq: state.text.seq } : {}) }
                 } else {
                   this.router.send(state, "markdown",
                     sid ? { text, _stream_id: sid } : { text }, true)
@@ -168,7 +180,7 @@ export class PartDispatcher {
             state.text = null
             if (t.flushTimer) { clearTimeout(t.flushTimer) }
             if (this.useAggregate(state)) {
-              const element = AggregateCardManager.markdown(t.text, this.nextSeq(state))
+              const element = AggregateCardManager.markdown(t.text, t.seq ?? this.nextSeq(state))
               void this.appendElement(state, element).catch((err) => {
                 this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
               })
@@ -276,11 +288,7 @@ export class PartDispatcher {
     const now = Date.now()
     if (holder.lastFlushAt === 0 || now - (holder.lastFlushAt ?? 0) >= PartDispatcher.FLUSH_INTERVAL_MS) {
       console.log(`[SSE-DBG] maybeFlushStream PUSH sid=${holder.streamId} kind=${kind} len=${holder.text.length} first=${holder.lastFlushAt === 0}`)
-      this.wanling.sendStream(state.convId, {
-        stream_id: holder.streamId,
-        msg_type: kind === "reasoning" ? "reasoning" : "markdown",
-        text: holder.text,
-      })
+      this.pushStreamFrame(state, kind, holder)
       holder.lastFlushAt = now
       holder.lastFlushedLen = holder.text.length
     }
@@ -304,12 +312,41 @@ export class PartDispatcher {
     if (holder.flushTimer) { clearTimeout(holder.flushTimer); holder.flushTimer = undefined }
     if (holder.text.length <= (holder.lastFlushedLen ?? 0)) return
     console.log(`[SSE-DBG] forceFlushStream 补推 sid=${holder.streamId} kind=${kind} len=${holder.text.length} prev=${holder.lastFlushedLen ?? 0}`)
-    this.wanling.sendStream(state.convId, {
-      stream_id: holder.streamId,
-      msg_type: kind === "reasoning" ? "reasoning" : "markdown",
-      text: holder.text,
-    })
+    this.pushStreamFrame(state, kind, holder)
     holder.lastFlushedLen = holder.text.length
+  }
+
+  // 推一帧 op=14 全量快照。聚合模式下 payload 附加 aggregate:{message_id, element_id}:
+  // - element_id = 预留序号的 markdown/reasoning 元素(与终态 append 同一 element_id,APP 定位连续)
+  // - message_id 需 ensureCard 异步拿(首次建卡走 REST),fire-and-forget 发送 + 失败 emit error,
+  //   与 appendElement 的既有错误处理风格一致;流式帧为瞬态,建卡失败由终态 append 兜底报错
+  // 非聚合模式不加 aggregate 字段(APP 走旧独立占位逻辑)。
+  private pushStreamFrame(state: SessionState, kind: "reasoning" | "text", holder: StreamHolder): void {
+    const prefix = kind === "reasoning" ? "reasoning" : "markdown"
+    const payload = {
+      stream_id: holder.streamId as string,
+      msg_type: prefix,
+      text: holder.text,
+    }
+    if (!this.useAggregate(state)) {
+      this.wanling.sendStream(state.convId, payload)
+      return
+    }
+    const elementId = `${prefix}_${this.streamSeq(state, holder)}`
+    const manager = new AggregateCardManager(this.wanling, state)
+    void manager.ensureCard().then((messageId) => {
+      this.wanling.sendStream(state.convId, { ...payload, aggregate: { message_id: messageId, element_id: elementId } })
+    }).catch((err) => {
+      this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+    })
+  }
+
+  // 流式元素预留序号:首次推帧时取"下一个 seq"并缓存到 holder。
+  // 之后流式期间所有帧与终态 append 复用 holder.seq,保证 element_id 稳定不随
+  // 中途其他元素(如 tool_card / 中途 reasoning 终态)的 append 而漂移。
+  private streamSeq(state: SessionState, holder: StreamHolder): number {
+    if (holder.seq === undefined) holder.seq = this.nextSeq(state)
+    return holder.seq
   }
 
   // flush 缓冲 reasoning(public 暴露:SessionLifecycle Task 8 单 session flush 调用)。
@@ -323,7 +360,7 @@ export class PartDispatcher {
     const sid = state.reasoning.streamId
     console.log(`[SSE-DBG] FLUSH(reasoning)兜底 sid=${sid ?? "-"} accLen=${state.reasoning.text.length} head=${JSON.stringify(state.reasoning.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.reasoning(state.reasoning.text, this.nextSeq(state))
+      const element = AggregateCardManager.reasoning(state.reasoning.text, state.reasoning.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -347,7 +384,7 @@ export class PartDispatcher {
     const sid = state.text.streamId
     console.log(`[SSE-DBG] FLUSH(text)兜底 sid=${sid ?? "-"} accLen=${state.text.text.length} head=${JSON.stringify(state.text.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.markdown(state.text.text, this.nextSeq(state))
+      const element = AggregateCardManager.markdown(state.text.text, state.text.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -370,7 +407,7 @@ export class PartDispatcher {
     state.pendingText = undefined
     console.log(`[SSE-DBG] FLUSH(pendingText) silent=${silent} ocLen=${pt.text.length} head=${JSON.stringify(pt.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.markdown(pt.text, this.nextSeq(state))
+      const element = AggregateCardManager.markdown(pt.text, pt.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })

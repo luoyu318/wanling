@@ -166,7 +166,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
   })
 
   it("流式仍走 op=14(sendStream),聚合卡模式不改 PATCH", async () => {
-    const { partDispatcher, state, wanling } = makeFixture()
+    const { partDispatcher, wanling } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "", time: { start: 1 } },
@@ -175,11 +175,140 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     partDispatcher.onPartDelta({
       sessionID: "sess-1", messageID: "m-1", partID: "p-t1", field: "text", delta: "打",
     })
+    // 聚合模式下 sendStream 经 ensureCard 微任务后异步发出,waitFor 等首帧落地。
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalledWith(
+        "conv-1",
+        expect.objectContaining({ msg_type: "markdown", text: "打" }),
+      )
+    })
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+
+  it("聚合模式 markdown 流式帧带 aggregate:{message_id, element_id}", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-t1", field: "text", delta: "打",
+    })
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalled()
+    })
     expect(wanling.sendStream).toHaveBeenCalledWith(
       "conv-1",
-      expect.objectContaining({ msg_type: "markdown", text: "打" }),
+      expect.objectContaining({
+        stream_id: expect.any(String),
+        msg_type: "markdown",
+        text: "打",
+        aggregate: { message_id: "card-1", element_id: "markdown_1" },
+      }),
     )
-    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+    // aggregate 定位字段需要建卡,首帧前 ensureCard 建聚合卡
+    expect(wanling.sendCardMessage).toHaveBeenCalled()
+  })
+
+  it("聚合模式 reasoning 流式帧带 aggregate:{message_id, element_id}", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "reasoning", id: "p-r1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-r1", field: "text", delta: "想",
+    })
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalled()
+    })
+    expect(wanling.sendStream).toHaveBeenCalledWith(
+      "conv-1",
+      expect.objectContaining({
+        msg_type: "reasoning",
+        text: "想",
+        aggregate: { message_id: "card-1", element_id: "reasoning_1" },
+      }),
+    )
+  })
+
+  it("终态 append 用流式预留的同一 element_id(APP 端定位连续)", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-t1", field: "text", delta: "打",
+    })
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalledWith(
+        "conv-1",
+        expect.objectContaining({ aggregate: { message_id: "card-1", element_id: "markdown_1" } }),
+      )
+    })
+    // text 终态 → pendingText → step-finish → 终态 markdown 元素与流式帧同一 element_id
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "打", time: { start: 1, end: 2 } },
+      time: 2,
+    })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
+      time: 3,
+    })
+    const calls = wanling.patchAggregateMessage.mock.calls
+    const last = calls[calls.length - 1]
+    expect(last[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
+      "markdown_1",
+      "footer_2",
+    ])
+  })
+
+  it("流式中途其他元素 append 不挤占预留 seq(终态 markdown 仍用流式 element_id)", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-t1", field: "text", delta: "打",
+    })
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalledWith(
+        "conv-1",
+        expect.objectContaining({ aggregate: { message_id: "card-1", element_id: "markdown_1" } }),
+      )
+    })
+    // 流式中途 reasoning 终态追加元素,取下一个 seq=2(不挤占流式预留的 1)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "reasoning", id: "p-r2", text: "中间思考", time: { start: 2, end: 3 } },
+      time: 3,
+    })
+    // text 终态 + step-finish:markdown 仍用预留的 markdown_1,footer 取 seq 3
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "打", time: { start: 1, end: 2 } },
+      time: 4,
+    })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "step-finish", id: "p-f1", reason: "stop" },
+      time: 5,
+    })
+    const calls = wanling.patchAggregateMessage.mock.calls
+    const last = calls[calls.length - 1]
+    expect(last[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
+      "reasoning_2",
+      "markdown_1",
+      "footer_3",
+    ])
   })
 
   it("子 session 不聚合:reasoning/text 仍走独立消息(保持 parent/root 串树语义)", async () => {
@@ -227,6 +356,26 @@ describe("PartDispatcher 聚合卡开关回退(AGGREGATE_CARD_ENABLED=false)", (
     // 全程不建卡
     expect(wanling.sendCardMessage).not.toHaveBeenCalled()
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+
+  it("非聚合模式流式帧不带 aggregate(APP 走旧独立占位)", async () => {
+    const { partDispatcher, wanling } = makeFixture({ aggregateCardEnabled: false })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-t1", field: "text", delta: "打",
+    })
+    expect(wanling.sendStream).toHaveBeenCalledWith(
+      "conv-1",
+      expect.objectContaining({ msg_type: "markdown", text: "打" }),
+    )
+    const call = wanling.sendStream.mock.calls[0]
+    expect(call[1].aggregate).toBeUndefined()
+    // 非聚合模式不建卡,流式帧不需要 message_id
+    expect(wanling.sendCardMessage).not.toHaveBeenCalled()
   })
 
   it("开关默认开启(不传 aggregateCardEnabled → 聚合路径)", async () => {
