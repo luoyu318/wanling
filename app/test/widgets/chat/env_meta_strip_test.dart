@@ -204,4 +204,34 @@ void main() {
       expect(tapped, isTrue);
     });
   });
+
+  testWidgets('超长内容包裹横向 SingleChildScrollView 可滚动', (tester) async {
+    final longBranch =
+        'feature/very-long-branch-name-${List.filled(30, 'x').join('')}';
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 200,
+          child: EnvMetaStrip(
+            cwd: '/home/user/projects/${longBranch}',
+            gitBranch: longBranch,
+            contextUsed: 123456,
+            contextLimit: 1000000,
+          ),
+        ),
+      ),
+    ));
+
+    final scrollView = find.byWidgetPredicate(
+      (w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.horizontal,
+    );
+    expect(scrollView, findsOneWidget);
+
+    final position = tester
+        .widget<SingleChildScrollView>(scrollView)
+        .scrollDirection;
+    expect(position, Axis.horizontal);
+  });
 }
