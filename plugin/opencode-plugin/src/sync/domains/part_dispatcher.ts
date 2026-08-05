@@ -10,14 +10,21 @@ import type { SessionStore } from "../session_store.js"
 import type { MessageRouter } from "../messaging.js"
 import type { MetaSync } from "./meta_sync.js"
 import type { CompactionTracker } from "./compaction.js"
+import { AggregateCardManager, type AggregateElement } from "./aggregate_card.js"
 
 // PartDispatcher:part_updated / part_delta 分发领域模块。
 // 职责:reasoning / text / step-finish 三类 part 的状态机分发 + part_delta 增量
 // 追加 + flush 缓冲(reasoning/text 兜底输出)+ reasoning/text 流式快照(300ms 节流)。
 // tool/compaction case 不在此处:ToolCardManager 和 CompactionTracker 各自订阅 part_updated
 // 事件按 part.type 自行过滤处理,本模块的 onPartUpdated switch 只保留 reasoning/text/step-finish。
-// 不持有状态(reasoning/text 在 SessionState 上,partIndex 在 store)。
-// 错误经注入的 emitter(Streamer extends EventEmitter,传 this 作 emitter)上抛。
+// 聚合卡改造(Task 3):AGGREGATE_CARD_ENABLED=true(默认)时 reasoning/markdown/step_finish
+// 不再发独立消息,而是追加到聚合卡(AggregateCardManager.patchElements 全量替换):
+// reasoning 终态 → reasoning 元素;markdown 终态 → markdown 元素(缓存 pendingText 等
+// step-finish 判定 silent);step_finish → footer 元素 + 整卡翻转 {silent:false,state:"done"}。
+// 子 session 恒走旧独立消息(保持 parent/root 串树语义);流式 maybeFlushStream/forceFlushStream
+// 保留 op=14(正文打字机体验,终态才上聚合卡)。开关 false 时完全回退旧逻辑。
+// 聚合卡元素序号(aggregateSeq)/累计(aggregateElements)/patch 串行队列(aggregatePatchQueue)
+// 都在 SessionState 上维护,跨 manager 实例共享。不持有状态,错误经注入的 emitter 上抛。
 export class PartDispatcher {
   private readonly store: SessionStore
   private readonly router: MessageRouter
@@ -25,6 +32,8 @@ export class PartDispatcher {
   private readonly compaction: CompactionTracker
   private readonly emitter: EventEmitter
   private readonly wanling: WanlingClient
+  // 聚合卡开关:false 回退旧逐条发送(router.send)。默认 true。
+  private readonly aggregateCardEnabled: boolean
 
   // 流式节流间隔:主 session reasoning/text 累积满 300ms 推一次 STREAM(op=14)全量快照。
   // 首块立即推(用户看到流式瞬间启动),后续 300ms 一次平衡 WS 帧数与流畅度。
@@ -37,6 +46,7 @@ export class PartDispatcher {
     compaction: CompactionTracker
     emitter: EventEmitter
     wanling: WanlingClient
+    aggregateCardEnabled?: boolean
   }) {
     this.store = deps.store
     this.router = deps.router
@@ -44,6 +54,7 @@ export class PartDispatcher {
     this.compaction = deps.compaction
     this.emitter = deps.emitter
     this.wanling = deps.wanling
+    this.aggregateCardEnabled = deps.aggregateCardEnabled ?? true
   }
 
   async onPartUpdated(payload: PartUpdatedPayload): Promise<void> {
@@ -83,8 +94,14 @@ export class PartDispatcher {
               // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
               if (state.reasoning) this.forceFlushStream(state, "reasoning")
               console.log(`[SSE-DBG] part_updated reasoning END sid=${sid ?? "-"} ocLen=${text.length} child=${!!state.isChildSession} head=${JSON.stringify(text.slice(0, 30))}`)
-              if (text.trim()) this.router.send(state, "reasoning",
-                sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
+              if (text.trim()) {
+                if (this.useAggregate(state)) {
+                  await this.appendElement(state, AggregateCardManager.reasoning(text, this.nextSeq(state)))
+                } else {
+                  this.router.send(state, "reasoning",
+                    sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
+                }
+              }
               state.reasoning = null
             }
           } else {
@@ -122,10 +139,7 @@ export class PartDispatcher {
             // 新 text part 开始:若上一个 text 终态还缓存在 pendingText(未等来 step-finish),
             // 以 silent=true 立即发掉(不打扰),避免被新 part 覆盖丢失。
             if (state.pendingText) {
-              const pt = state.pendingText
-              state.pendingText = undefined
-              this.router.send(state, "markdown",
-                pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text }, true)
+              this.flushPendingText(state, true)
             }
             state.text = { text: part.text || "", partID: part.id }
             this.store.indexPart(part.id, state)
@@ -153,21 +167,42 @@ export class PartDispatcher {
             const t = state.text
             state.text = null
             if (t.flushTimer) { clearTimeout(t.flushTimer) }
-            this.router.send(state, "markdown",
-              t.streamId && !state.isChildSession ? { text: t.text, _stream_id: t.streamId } : { text: t.text }, true)
+            if (this.useAggregate(state)) {
+              const element = AggregateCardManager.markdown(t.text, this.nextSeq(state))
+              void this.appendElement(state, element).catch((err) => {
+                this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+              })
+            } else {
+              this.router.send(state, "markdown",
+                t.streamId && !state.isChildSession ? { text: t.text, _stream_id: t.streamId } : { text: t.text }, true)
+            }
           }
           this.flushPendingText(state, isLoopEnd ? false : true)
-          // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
-          // 响铃/未读职责由最终文本(flushPendingText isLoopEnd → silent=false)承担,
-          // 避免循环结束时两条消息各计一次未读、通知 body 被覆盖成「[完成]」。
-          // finished=isLoopEnd 仍保留,APP 照常渲染 tokens 汇总行。
-          this.router.send(state, "step_finish", {
-            reason: part.reason || "",
-            cost: part.cost || 0,
-            tokens: part.tokens || {},
-            duration,
-            finished: isLoopEnd,
-          }, true)
+          if (this.useAggregate(state)) {
+            // step-finish 转 footer 元素:不再发独立 step_finish 消息。
+            // - isLoopEnd → 最后一个 footer + 整卡翻转 {silent:false,state:"done"}
+            //   (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)
+            // - 中间步骤 → footer 追加但 silent 不翻转,state 保持 generating
+            await this.appendElement(state, AggregateCardManager.footer({
+              reason: part.reason || "",
+              cost: part.cost || 0,
+              tokens: part.tokens || {},
+              duration,
+              finished: isLoopEnd,
+            }, this.nextSeq(state)), isLoopEnd ? { silent: false, state: "done" } : undefined)
+          } else {
+            // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
+            // 响铃/未读职责由最终文本(flushPendingText isLoopEnd → silent=false)承担,
+            // 避免循环结束时两条消息各计一次未读、通知 body 被覆盖成「[完成]」。
+            // finished=isLoopEnd 仍保留,APP 照常渲染 tokens 汇总行。
+            this.router.send(state, "step_finish", {
+              reason: part.reason || "",
+              cost: part.cost || 0,
+              tokens: part.tokens || {},
+              duration,
+              finished: isLoopEnd,
+            }, true)
+          }
           // 循环结束时主动同步 session_meta:agent 在跑期间 / 跑之前用户可能在 shell
           // 切了 git 分支(OC 不发 vcs.branch.updated),EnvMetaStrip 不刷新。
           // 读 knownFullMeta 缓存 cwd → vcs.get 拉最新 branch → updateSessionMeta。
@@ -287,8 +322,15 @@ export class PartDispatcher {
     this.forceFlushStream(state, "reasoning")
     const sid = state.reasoning.streamId
     console.log(`[SSE-DBG] FLUSH(reasoning)兜底 sid=${sid ?? "-"} accLen=${state.reasoning.text.length} head=${JSON.stringify(state.reasoning.text.slice(0, 30))}`)
-    this.router.send(state, "reasoning",
-      sid && !state.isChildSession ? { text: state.reasoning.text, _stream_id: sid } : { text: state.reasoning.text }, true)
+    if (this.useAggregate(state)) {
+      const element = AggregateCardManager.reasoning(state.reasoning.text, this.nextSeq(state))
+      void this.appendElement(state, element).catch((err) => {
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+      })
+    } else {
+      this.router.send(state, "reasoning",
+        sid && !state.isChildSession ? { text: state.reasoning.text, _stream_id: sid } : { text: state.reasoning.text }, true)
+    }
     state.textPartsFlushed.add(state.reasoning.partID)
     state.reasoning = null
   }
@@ -304,22 +346,72 @@ export class PartDispatcher {
     this.forceFlushStream(state, "text")
     const sid = state.text.streamId
     console.log(`[SSE-DBG] FLUSH(text)兜底 sid=${sid ?? "-"} accLen=${state.text.text.length} head=${JSON.stringify(state.text.text.slice(0, 30))}`)
-    // I-P:子 agent 文本输出强制 silent=true(与 case "text" 同步口径)。
-    this.router.send(state, "markdown",
-      sid && !state.isChildSession ? { text: state.text.text, _stream_id: sid } : { text: state.text.text }, true)
+    if (this.useAggregate(state)) {
+      const element = AggregateCardManager.markdown(state.text.text, this.nextSeq(state))
+      void this.appendElement(state, element).catch((err) => {
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+      })
+    } else {
+      // I-P:子 agent 文本输出强制 silent=true(与 case "text" 同步口径)。
+      this.router.send(state, "markdown",
+        sid && !state.isChildSession ? { text: state.text.text, _stream_id: sid } : { text: state.text.text }, true)
+    }
     state.textPartsFlushed.add(state.text.partID)
     state.text = null
   }
 
   // 把缓存的最终 text 终态(pendingText)发出。
   // silent 由调用方决定:step-finish isLoopEnd → false(计未读);其余兜底 → true。
+  // 聚合卡模式下 silent 参数被忽略:markdown 元素追加时保持原卡 silent,
+  // 最终回复的计未读由 step-finish 的整卡翻转 {silent:false} 承接。
   private flushPendingText(state: SessionState, silent: boolean): void {
     if (!state.pendingText) return
     const pt = state.pendingText
     state.pendingText = undefined
     console.log(`[SSE-DBG] FLUSH(pendingText) silent=${silent} ocLen=${pt.text.length} head=${JSON.stringify(pt.text.slice(0, 30))}`)
-    this.router.send(state, "markdown",
-      pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text },
-      silent)
+    if (this.useAggregate(state)) {
+      const element = AggregateCardManager.markdown(pt.text, this.nextSeq(state))
+      void this.appendElement(state, element).catch((err) => {
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+      })
+    } else {
+      this.router.send(state, "markdown",
+        pt.streamId ? { text: pt.text, _stream_id: pt.streamId } : { text: pt.text },
+        silent)
+    }
+  }
+
+  // 聚合卡是否对本 state 生效:开关开启且非子 session。
+  // 子 session 的 reasoning/text/step_finish 恒走独立消息(保持 parent/root 串树语义,
+  // 聚合卡上无法表达 child 层级)。
+  private useAggregate(state: SessionState): boolean {
+    return this.aggregateCardEnabled && !state.isChildSession
+  }
+
+  // 聚合卡元素序号计数器:reasoning/markdown/footer 共用,保证 element_id 全卡唯一递增。
+  private nextSeq(state: SessionState): number {
+    const seq = (state.aggregateSeq ?? 0) + 1
+    state.aggregateSeq = seq
+    return seq
+  }
+
+  // 追加聚合卡元素并 PATCH(全量替换)。patchElements 读回 state.aggregateElements 累计
+  // 再拼新元素。串行队列(aggregatePatchQueue)保证同一 session 并发 flush(reasoning end
+  // 与 text end 同时到达)时按序执行,避免全量替换互相覆盖丢元素。
+  // 返回 Promise 不吞错误:调用方 await 走外层 try/catch,fire-and-forget 处自行 catch emit。
+  private appendElement(
+    state: SessionState,
+    element: AggregateElement,
+    opts?: { silent?: boolean; state?: "generating" | "done" },
+  ): Promise<void> {
+    const prev = state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const elements = [...(state.aggregateElements ?? []), element]
+      state.aggregateElements = elements
+      await new AggregateCardManager(this.wanling, state).patchElements(elements, opts)
+    })
+    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
+    state.aggregatePatchQueue = next.catch(() => {})
+    return next
   }
 }

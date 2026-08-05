@@ -45,14 +45,33 @@ export class AggregateCardManager {
 
   // 建聚合卡(空元素,state=generating)返回真实 msgId;已建则复用。
   // sendCardMessage 默认 silent=true(回合进行中不打扰,计未读职责由回合结束翻转承接)。
+  // 并发首调竞态修复:sendCardMessage 飞行中把 Promise 缓存到 state.aggregateCardInflight,
+  // 共享同一 state 的并发 ensureCard(如 reasoning end 与 text end 同时 flush)await
+  // 同一 Promise,只发一次建卡请求(否则双卡)。参考 tool_card.ts 的 toolCardInflight 模式。
   async ensureCard(): Promise<string> {
     if (this.state.aggregateCardMsgId) return this.state.aggregateCardMsgId
-    const msgId = await this.wanling.sendCardMessage(this.state.convId, "aggregate_card", {
+    const inflight = this.state.aggregateCardInflight
+    if (inflight) {
+      try {
+        return await inflight
+      } catch {
+        // 建卡失败:落到下方重新发起(失败后不再复用坏 Promise)
+      }
+    }
+    const promise = this.wanling.sendCardMessage(this.state.convId, "aggregate_card", {
       state: "generating",
       elements: [],
     })
-    this.state.aggregateCardMsgId = msgId
-    return msgId
+    this.state.aggregateCardInflight = promise
+    try {
+      const msgId = await promise
+      this.state.aggregateCardMsgId = msgId
+      return msgId
+    } finally {
+      if (this.state.aggregateCardInflight === promise) {
+        this.state.aggregateCardInflight = undefined
+      }
+    }
   }
 
   // 全量替换 elements[](非增量 diff)。opts.state 缺省 generating(client 端兜底)。

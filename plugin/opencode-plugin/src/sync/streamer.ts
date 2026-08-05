@@ -69,6 +69,7 @@ export class Streamer extends EventEmitter {
     ensureDeps: Omit<EnsureDeps, "wanling">,
     dispatcher: RPCDispatcher,
     childTimeoutMs?: number,
+    aggregateCardEnabled?: boolean,
   ) {
     super()
     this.subscriber = subscriber
@@ -110,6 +111,7 @@ export class Streamer extends EventEmitter {
       compaction: this.compaction,
       emitter: this,
       wanling,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.interaction = new InteractionCards({
       store: this.store,

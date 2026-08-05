@@ -49,6 +49,46 @@ describe("AggregateCardManager ensureCard", () => {
     expect(second).toBe(first)
     expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
   })
+
+  it("并发首调:sendCardMessage 飞行中共享 state 两次 ensureCard 只建一张卡", async () => {
+    let resolveCard!: (v: string) => void
+    wanling.sendCardMessage.mockReturnValue(new Promise((r) => { resolveCard = r }))
+    const state = makeState()
+    const manager1 = new AggregateCardManager(wanling, state)
+    const manager2 = new AggregateCardManager(wanling, state)
+    const p1 = manager1.ensureCard()
+    const p2 = manager2.ensureCard()
+    resolveCard("card-1")
+    const [id1, id2] = await Promise.all([p1, p2])
+    expect(id1).toBe("card-1")
+    expect(id2).toBe("card-1")
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
+    // 完成后再调 ensureCard 走 msgId 缓存,不再发建卡
+    const again = await new AggregateCardManager(wanling, state).ensureCard()
+    expect(again).toBe("card-1")
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it("并发首调建卡失败:失败方 reject,等待方重新发起建卡(不产生双卡)", async () => {
+    wanling.sendCardMessage
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce("card-2")
+    const state = makeState()
+    const m1 = new AggregateCardManager(wanling, state)
+    const m2 = new AggregateCardManager(wanling, state)
+    const p1 = m1.ensureCard()
+    const p2 = m2.ensureCard()
+    // 发起方失败(首建卡请求 reject)
+    await expect(p1).rejects.toThrow("boom")
+    // 等待方 await 同一 inflight 失败后重新发起建卡 → 拿到 card-2
+    // (p1 未建成,重新发起不产生双卡)
+    await expect(p2).resolves.toBe("card-2")
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(2)
+    // 建卡成功后幂等复用,不再发建卡
+    const again = await new AggregateCardManager(wanling, state).ensureCard()
+    expect(again).toBe("card-2")
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe("AggregateCardManager patchElements", () => {

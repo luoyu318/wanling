@@ -41,7 +41,9 @@ function makeStreamer(mainSessionId: string, opts: { dispatcher?: RPCDispatcher;
   if (opts.agentId === undefined && "agentId" in opts) delete wanling.agentId
   const opencode = { getSessionTitle: vi.fn().mockResolvedValue(""), getSessionDirectory: vi.fn().mockResolvedValue(""), getClient: vi.fn(() => null) } as any
   const dispatcher = opts.dispatcher ?? new RPCDispatcher()
-  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher)
+  // aggregateCardEnabled=false:现有整链测试断言旧逐条发送语义,聚合路径由
+  // part_dispatcher.test.ts 单独覆盖(PartDispatcher 聚合卡改造)。
+  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, false)
   return { streamer, wanling, opencode, dispatcher }
 }
 
@@ -2138,6 +2140,9 @@ function makePartDispatcherFixture() {
     compaction: { completePending: vi.fn() } as any,
     emitter: new EventEmitter(),
     wanling: wanling as any,
+    // 聚合卡开关默认 true,但现有流式/终态测试断言旧逐条发送(router.send),
+    // 显式关掉避免误入聚合路径;聚合路径由 part_dispatcher.test.ts 单独覆盖。
+    aggregateCardEnabled: false,
   })
   return { partDispatcher, state, store, router, wanling }
 }

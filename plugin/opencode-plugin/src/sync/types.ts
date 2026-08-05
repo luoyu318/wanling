@@ -1,3 +1,5 @@
+import type { AggregateElement } from "./domains/aggregate_card.js"
+
 export interface SessionState {
   reasoning: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
   text: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout> } | null
@@ -18,6 +20,18 @@ export interface SessionState {
   // 聚合卡 msgId(Task 2):AggregateCardManager.ensureCard 建卡后缓存,
   // 幂等复用依赖此字段,跨 manager 实例共享 state 也能拿到同一卡片。
   aggregateCardMsgId?: string
+  // ensureCard 并发首调去重:sendCardMessage 飞行中缓存 Promise,并发共享 state
+  // 的多个 manager 实例 await 同一 Promise,避免重复建卡出现双卡。
+  aggregateCardInflight?: Promise<string>
+  // 聚合卡元素序号计数器:element_id 按 type_seq 命名,reasoning/markdown/footer
+  // 共用同一计数全局递增,保证 element_id 全卡唯一。
+  aggregateSeq?: number
+  // 聚合卡已追加元素累计:patchElements 是全量替换语义,追加需「读回累计 + 新元素」。
+  // 放 state 而非 manager 实例,保证跨 manager 实例(每次 flush 新建)累计不丢。
+  aggregateElements?: AggregateElement[]
+  // 聚合卡 patch 串行队列:同一 session 并发 flush 时(如 reasoning end 与 text end
+  // 同时到达),多次 patch 全量替换会互相覆盖丢元素,按序执行避免。
+  aggregatePatchQueue?: Promise<unknown>
   // sendCardMessage(running) 已发起但 msgId 尚未返回的 inflight Promise。
   // completed/error 事件可能在此窗口到达,通过 await 这条 promise 拿到 msgId。
   toolCardInflight: Map<string, Promise<string>>

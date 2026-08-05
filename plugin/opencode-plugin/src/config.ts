@@ -17,6 +17,7 @@ export interface Config {
   defaultDirectory: string
   proxyPassword: string
   maxDownloadBytes: number
+  aggregateCardEnabled: boolean
 }
 
 const DEFAULT_CONFIG_DIR = join(homedir(), ".config", "opencode-wanling")
@@ -66,6 +67,9 @@ export function loadConfig(): Config {
     defaultDirectory: envStr("WANLING_DEFAULT_DIRECTORY", ""),
     proxyPassword: envStr("WANLING_PROXY_PASSWORD", ""),
     maxDownloadBytes: Number(envStr("WANLING_MAX_DOWNLOAD_BYTES", String(20 * 1024 * 1024))),
+    // 聚合卡开关(Task 3):reasoning/markdown/step_finish 转聚合卡元素。
+    // 默认 true;false 时 plugin 回退旧逐条发送(独立消息)。
+    aggregateCardEnabled: envBool("WANLING_AGGREGATE_CARD_ENABLED", true),
   }
 
   const file = configPath()
