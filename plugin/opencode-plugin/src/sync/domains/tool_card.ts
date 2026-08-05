@@ -6,11 +6,25 @@ import type { SessionStore } from "../session_store.js"
 import type { MessageRouter } from "../messaging.js"
 import { buildDiff } from "../utils/diff.js"
 import { extractDuration, extractTaskMetadata } from "../utils/task_meta.js"
+import { AggregateCardManager, type ToolCardData } from "./aggregate_card.js"
 
 // ToolCardManager:tool/task 卡片状态机领域模块。
 // 职责:普通 tool 卡片 + task 工具卡片的状态机(running/completed/error),
 // 含 inflight Promise(running 卡片在 sendCardMessage 往返期间的竞态修复) +
 // childSessionTree 注册经 store 委托。
+// 聚合卡改造(Task 4):AGGREGATE_CARD_ENABLED=true(默认)时,主 session 普通 tool 不再发
+// 独立 tool_card 消息,而是追加到聚合卡元素(Task 2 AggregateCardManager):
+//   running   → 追加 tool_card 元素(status:running),partId→element_id 映射存
+//               state.aggregateToolElementIds(同步写入,append 前),completed/error 据此定位。
+//   completed → 全量替换聚合卡元素,更新目标元素 status:completed + output + file_diff。
+//   error     → 更新目标元素 status:error + error 字段。
+// task 工具恒走独立卡(不聚合):childSessionTree 的 parentMsgId/rootMsgId 是消息级语义
+// (子 session 消息透传 parent_msg_id 串树 + working PATCH 都按消息 id 操作),
+// 聚合卡内元素无法承载消息级 parent_msg_id,故 task 卡保持独立,子 session 也恒不聚合。
+// 开关 false 时完全回退旧逻辑(sendCard 独立卡 + updateMessageContent PATCH)。
+// 聚合序号(nextSeq)/累计(aggregateElements)/patch 串行队列(aggregatePatchQueue)
+// 都在 SessionState 上维护,与 PartDispatcher 共用同一计数器与队列,element_id 全卡唯一、
+// 全量替换并发不覆盖。
 // 不持有状态(toolPartsSent / toolCardMsgIds / toolCardInflight / pendingToolCard
 // 都在 SessionState 上,随 state 参数流动)。错误经注入的 emitter 上抛
 // (Streamer extends EventEmitter,传 this 作 emitter)。
@@ -19,17 +33,21 @@ export class ToolCardManager {
   private readonly router: MessageRouter
   private readonly wanling: WanlingClient
   private readonly emitter: EventEmitter
+  // 聚合卡开关:false 回退旧逐条发送(独立 tool_card + PATCH)。默认 true。
+  private readonly aggregateCardEnabled: boolean
 
   constructor(deps: {
     store: SessionStore
     router: MessageRouter
     wanling: WanlingClient
     emitter: EventEmitter
+    aggregateCardEnabled?: boolean
   }) {
     this.store = deps.store
     this.router = deps.router
     this.wanling = deps.wanling
     this.emitter = deps.emitter
+    this.aggregateCardEnabled = deps.aggregateCardEnabled ?? true
   }
 
   // case "tool" 方法体(从 Streamer.onPartUpdated 逐字迁入)。
@@ -71,28 +89,29 @@ export class ToolCardManager {
       setImmediate(() => this.flushPending(state))
 
     } else if (status === "completed") {
+      // 聚合模式:聚合卡内定位目标工具元素并全量替换更新(status/completed + output + file_diff),
+      // 不再 resolveMsgId(无独立卡 msgId,聚合卡 msgId 由 patchElements 内部 ensureCard 拿)。
+      if (this.useAggregate(state)) {
+        const fileDiffData = this.buildFileDiff(toolName, input, output)
+        const patchData: Record<string, unknown> = {
+          name: toolName,
+          input: input || {},
+          output: output || "",
+          status: "completed",
+        }
+        if (fileDiffData) {
+          patchData.file_diff = fileDiffData
+        }
+        await this.updateToolElement(state, part, patchData)
+        return
+      }
+
       const msgId = await this.resolveMsgId(state, part)
       if (!msgId) {
         console.warn(`[streamer] tool_card msgId 缺失,跳过 PATCH: session=${sessionID.slice(0, 12)} part=${part.id}`)
       } else {
         console.log(`[TC-DBG] completed PATCH msgId=${msgId} part=${part.id} tool=${toolName}`)
-        let fileDiffData: Record<string, unknown> | undefined
-        if ((toolName === "edit" || toolName === "write") && input) {
-          const filePath = (input as Record<string, unknown>).filePath as string || ""
-          if (filePath) {
-            const basename = filePath.split(/[/\\]/).pop() || filePath
-            const diffText = buildDiff(toolName, input as Record<string, unknown>, output || "")
-            if (diffText) {
-              fileDiffData = {
-                file: basename,
-                additions: (diffText.match(/^\+[^+]/gm) || []).length,
-                deletions: (diffText.match(/^-[^-]/gm) || []).length,
-                diff: diffText,
-              }
-            }
-          }
-        }
-
+        const fileDiffData = this.buildFileDiff(toolName, input, output)
         const patchData: Record<string, unknown> = {
           name: toolName,
           input: input || {},
@@ -109,6 +128,16 @@ export class ToolCardManager {
       }
 
     } else if (status === "error") {
+      // 聚合模式:定位目标工具元素更新 status:error + error 字段。
+      if (this.useAggregate(state)) {
+        await this.updateToolElement(state, part, {
+          name: toolName,
+          input: input || {},
+          error: error || "",
+          status: "error",
+        })
+        return
+      }
       const msgId = await this.resolveMsgId(state, part)
       if (!msgId) {
         console.warn(`[streamer] tool_card msgId 缺失,跳过 PATCH: session=${sessionID.slice(0, 12)} part=${part.id}`)
@@ -278,6 +307,14 @@ export class ToolCardManager {
     state.pendingChildSessionId = undefined
     state.pendingParentSessionId = undefined
 
+    // 聚合模式(仅普通 tool):把工具追加为聚合卡元素,不再发独立 tool_card。
+    // task 工具恒走独立卡(下方独立卡逻辑,保留 childSessionTree 消息级 parent/root),
+    // 子 session 恒不聚合(useAggregate 判定)。
+    if (pending.toolName !== "task" && this.useAggregate(state)) {
+      this.flushAggregateTool(state, pending)
+      return
+    }
+
     // task 工具卡片初始 status 用 starting(后续由子 session 首事件 PATCH 切 working,
     // task/completed PATCH 切 completed);普通工具仍是 running。
     const cardData: Record<string, unknown> = {
@@ -312,5 +349,112 @@ export class ToolCardManager {
       state.toolCardInflight.delete(pending.partId)
       this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
     })
+  }
+
+  // 聚合模式工具 running 追加:取号 → 同步写入 partId→element_id 映射(completed/error 据此
+  // 定位)→ 追加 tool_card 元素并 PATCH。append 失败 emit error(与独立卡发送失败一致口径,
+  // 不静默吞,否则工具卡在聚合卡里缺失且无任何可见迹象)。
+  private flushAggregateTool(
+    state: SessionState,
+    pending: { toolName: string; input: Record<string, unknown>; partId: string },
+  ): void {
+    const seq = this.nextSeq(state)
+    const elementId = `tool_card_${seq}`
+    if (!state.aggregateToolElementIds) state.aggregateToolElementIds = new Map()
+    state.aggregateToolElementIds.set(pending.partId, elementId)
+    console.log(`[TC-DBG] flushPending 聚合追加 tool_card_${seq} tool=${pending.toolName} part=${pending.partId}`)
+    void this.appendToolElement(state, { name: pending.toolName, input: pending.input, status: "running" }, seq)
+      .catch((err) => {
+        console.error(`[streamer] 延迟 tool_card 聚合追加失败: ${err instanceof Error ? err.message : err}`)
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+      })
+  }
+
+  // 追加工具元素并 PATCH(全量替换)。与 PartDispatcher.appendElement 同一实现:
+  // 读回 state.aggregateElements 累计再拼新元素,入 state.aggregatePatchQueue 串行队列
+  // (与 reasoning/markdown/footer 的追加共用同一队列,避免并发全量替换互相覆盖丢元素)。
+  private appendToolElement(
+    state: SessionState,
+    data: ToolCardData,
+    seq: number,
+  ): Promise<void> {
+    const prev = state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const elements = [...(state.aggregateElements ?? []), AggregateCardManager.toolCard(data, seq)]
+      state.aggregateElements = elements
+      await new AggregateCardManager(this.wanling, state).patchElements(elements)
+    })
+    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
+    state.aggregatePatchQueue = next.catch(() => {})
+    return next
+  }
+
+  // 聚合模式 completed/error:按 partId 定位聚合卡内目标工具元素,更新其 data 后全量替换 PATCH。
+  // 串行队列:与 running 的 append 共用 state.aggregatePatchQueue,保证「append 先于 update 执行」,
+  // update 读到的 state.aggregateElements 已含目标元素。
+  // 竞态修复(等效旧逻辑 resolveMsgId 分支 3):completed/error 抢占 setImmediate(running 的
+  // flushPending 尚未执行)时,映射缺失但 pendingToolCard 匹配 → 同步补发 running 元素入队,
+  // update 排在其后执行。事后 setImmediate 再跑 flushPending 时 pending 已被消费 → 直接 return,
+  // 不会产生重复 running 元素。
+  private async updateToolElement(
+    state: SessionState,
+    part: PartUpdatedPayload["part"],
+    patchData: Record<string, unknown>,
+  ): Promise<void> {
+    if (!state.aggregateToolElementIds?.has(part.id) && state.pendingToolCard?.partId === part.id) {
+      const pending = state.pendingToolCard
+      state.pendingToolCard = undefined
+      this.flushAggregateTool(state, pending)
+    }
+    const elementId = state.aggregateToolElementIds?.get(part.id)
+    if (!elementId) {
+      console.warn(`[streamer] 聚合卡工具元素定位缺失,跳过更新: conv=${state.convId.slice(0, 12)} part=${part.id}`)
+      return
+    }
+    const prev = state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const elements = (state.aggregateElements ?? []).map((e) =>
+        e.element_id === elementId ? { ...e, data: { ...e.data, ...patchData } } : e,
+      )
+      state.aggregateElements = elements
+      await new AggregateCardManager(this.wanling, state).patchElements(elements)
+    })
+    state.aggregatePatchQueue = next.catch(() => {})
+    await next
+  }
+
+  // 聚合卡是否对本 state 生效:开关开启且非子 session。
+  // 子 session 的 tool_card 恒走独立消息(保持 parent/root 串树语义,聚合卡上无法表达 child 层级)。
+  private useAggregate(state: SessionState): boolean {
+    return this.aggregateCardEnabled && !state.isChildSession
+  }
+
+  // 聚合卡元素序号计数器:与 PartDispatcher 共用 state.aggregateSeq,
+  // reasoning/markdown/footer/tool_card 全卡唯一递增。
+  private nextSeq(state: SessionState): number {
+    const seq = (state.aggregateSeq ?? 0) + 1
+    state.aggregateSeq = seq
+    return seq
+  }
+
+  // edit/write 工具 completed 的 file_diff 统计:从 input.filePath 取文件名,
+  // 对 output 构建 diff 计算新增/删除行。非 edit/write 或无 filePath 返回 undefined。
+  private buildFileDiff(
+    toolName: string,
+    input: Record<string, unknown> | undefined,
+    output: string | undefined,
+  ): Record<string, unknown> | undefined {
+    if ((toolName !== "edit" && toolName !== "write") || !input) return undefined
+    const filePath = (input as Record<string, unknown>).filePath as string || ""
+    if (!filePath) return undefined
+    const basename = filePath.split(/[/\\]/).pop() || filePath
+    const diffText = buildDiff(toolName, input as Record<string, unknown>, output || "")
+    if (!diffText) return undefined
+    return {
+      file: basename,
+      additions: (diffText.match(/^\+[^+]/gm) || []).length,
+      deletions: (diffText.match(/^-[^-]/gm) || []).length,
+      diff: diffText,
+    }
   }
 }

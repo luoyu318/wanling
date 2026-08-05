@@ -33,6 +33,10 @@ export interface SessionState {
   // 聚合卡 patch 串行队列:同一 session 并发 flush 时(如 reasoning end 与 text end
   // 同时到达),多次 patch 全量替换会互相覆盖丢元素,按序执行避免。
   aggregatePatchQueue?: Promise<unknown>
+  // 聚合模式下工具元素定位:partId → 聚合卡内 tool_card element_id。
+  // 工具 running 时同步写入(append 前),completed/error 时按 partId 找到目标元素
+  // 做全量替换更新 status/output/error/file_diff。非聚合模式不写入。
+  aggregateToolElementIds?: Map<string, string>
   // sendCardMessage(running) 已发起但 msgId 尚未返回的 inflight Promise。
   // completed/error 事件可能在此窗口到达,通过 await 这条 promise 拿到 msgId。
   toolCardInflight: Map<string, Promise<string>>

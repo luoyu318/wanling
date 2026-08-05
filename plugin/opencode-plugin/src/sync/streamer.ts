@@ -103,6 +103,7 @@ export class Streamer extends EventEmitter {
       router: this.router,
       wanling,
       emitter: this,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.partDispatcher = new PartDispatcher({
       store: this.store,
