@@ -121,7 +121,7 @@ class Conversation {
   /// 不再从 session_meta.cwd 读(已彻底剔除)。
   final String? directory;
 
-  final String? lastUserMessageContent;
+  final String? lastAgentReplyContent;
 
   Conversation({
     required this.id,
@@ -144,7 +144,7 @@ class Conversation {
     this.pendingCount = 0,
     this.sessionMeta,
     this.directory,
-    this.lastUserMessageContent,
+    this.lastAgentReplyContent,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -201,7 +201,7 @@ class Conversation {
       directory: (json['directory'] as String?)?.isEmpty == true
           ? null
           : json['directory'] as String?,
-      lastUserMessageContent: json['last_user_message_content'] as String?,
+      lastAgentReplyContent: json['last_agent_reply_content'] as String?,
     );
   }
 
@@ -331,7 +331,7 @@ class Conversation {
     int? sessionCount,
     int? pendingCount,
     String? directory,
-    String? lastUserMessageContent,
+    String? lastAgentReplyContent,
   }) {
     DateTime? newPinnedAt = pinnedAt ?? this.pinnedAt;
     if (isPinned != null) {
@@ -357,7 +357,7 @@ class Conversation {
       sessionCount: sessionCount ?? this.sessionCount,
       pendingCount: pendingCount ?? this.pendingCount,
       directory: directory ?? this.directory,
-      lastUserMessageContent: lastUserMessageContent ?? this.lastUserMessageContent,
+      lastAgentReplyContent: lastAgentReplyContent ?? this.lastAgentReplyContent,
     );
   }
 

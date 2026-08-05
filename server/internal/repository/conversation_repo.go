@@ -805,25 +805,21 @@ func (r *ConversationRepo) ListAgentSessionsForUser(ctx context.Context, userID,
 		           AND m.deleted_at IS NULL
 		       ) AS pending_count,
 		       (
-		         SELECT CASE WHEN m.content->>'msg_type' = 'tui_user'
-		                     THEN concat('[TUI] ', m.content->'data'->>'text')
-		                     ELSE m.content->'data'->>'text'
-		                END
+		         SELECT m.content->'data'->>'text'
 		         FROM messages m
 		         WHERE m.conversation_id = c.id
 		           AND m.is_main_stream
-		           AND (
-		             (m.sender_type = 'user' AND m.sender_id = $1)
-		             OR m.content->>'msg_type' = 'tui_user'
-		           )
-		           AND m.content->>'msg_type' IN ('text', 'tui_user')
+		           AND m.sender_type = 'agent'
+		           AND m.sender_id = $2
+		           AND m.content->>'msg_type' IN ('text', 'markdown')
+		           AND m.content->>'silent' IS DISTINCT FROM 'true'
 		           AND m.deleted_at IS NULL
 		           AND NOT EXISTS (
 		             SELECT 1 FROM message_hidden h
 		             WHERE h.message_id = m.id AND h.member_id = $1 AND h.member_type = 'user'
 		           )
 		         ORDER BY m.created_at DESC LIMIT 1
-		       ) AS last_user_message_content
+		       ) AS last_agent_reply_content
 		FROM conversations c
 		JOIN conversation_participants pu
 		  ON pu.conv_id = c.id AND pu.member_id = $1 AND pu.member_type = 'user'
@@ -873,7 +869,7 @@ func (r *ConversationRepo) ListAgentSessionsForUser(ctx context.Context, userID,
 		item.LastMessageSenderID = senderIDNS.String
 		item.LastMessageSenderType = senderTypeNS.String
 		item.LastMessageSenderName = senderNameNS.String
-		item.LastUserMessageContent = userMsgNS.String
+		item.LastAgentReplyContent = userMsgNS.String
 		items = append(items, item)
 	}
 	return items, rows.Err()

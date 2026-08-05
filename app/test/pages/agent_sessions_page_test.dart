@@ -630,7 +630,7 @@ void main() {
               createdAt: DateTime(2026, 7, 1),
               unreadCount: 0,
               pendingCount: 0,
-              lastUserMessageContent: 'hello world',
+              lastAgentReplyContent: 'hello world',
             ),
           ]);
       when(() => api.getAgents()).thenAnswer((_) async => [

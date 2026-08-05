@@ -124,20 +124,20 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
         (content?['msg_type'] == 'permission_card' ||
                 content?['msg_type'] == 'question_card') &&
             cardStatus == 'pending';
-    // 实时派生 lastUserMessageContent:仅 user 自己发的 text 消息更新
-    // (与 server ListAgentSessionsForUser SQL 的 msg_type IN ('text','tui_user')
-    // 规则对齐)。preview 函数对 tui_user 自带 [TUI] 前缀,与 server CASE 对齐。
-    // tui_user 由 plugin 用 agent JWT 代发(sender_id=agent),isOwn 为 false,
-    // 此处按 msg_type 归位为用户消息(与 chat page 的 effectiveIsMe = isMe || isTuiUser 同构)。
+    // 实时派生 lastAgentReplyContent:仅 agent 发的非 silent text/markdown 更新
+    // (与 server ListAgentSessionsForUser SQL 的
+    //  msg_type IN ('text','markdown') AND silent IS DISTINCT FROM 'true' 规则对齐)。
+    // reasoning/step_finish/tool_card 等过程消息(silent=true)不覆盖简介。
     final msgTypeStr = content?['msg_type'] as String?;
-    final isUserTextMsg =
-        (isOwn && msgTypeStr == 'text') || msgTypeStr == 'tui_user';
-    final newLastUserMsg = isUserTextMsg
+    final isAgentReply = senderId == _agentId &&
+        !isSilent &&
+        (msgTypeStr == 'text' || msgTypeStr == 'markdown');
+    final newLastAgentReply = isAgentReply
         ? (MsgTypeX.preview(
               MsgTypeX.fromString(msgTypeStr),
               content?['data'] as Map<String, dynamic>?,
-            ) ?? item.lastUserMessageContent)
-        : item.lastUserMessageContent;
+            ) ?? item.lastAgentReplyContent)
+        : item.lastAgentReplyContent;
     final newItem = item.copyWith(
       lastMessageContent: content,
       lastMessageAt: createdAtStr != null
@@ -145,7 +145,7 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
           : item.lastMessageAt,
       unreadCount: newUnread,
       pendingCount: isPendingCard ? item.pendingCount + 1 : item.pendingCount,
-      lastUserMessageContent: newLastUserMsg,
+      lastAgentReplyContent: newLastAgentReply,
     );
     final updated = List<Conversation>.from(s);
     updated[idx] = newItem;

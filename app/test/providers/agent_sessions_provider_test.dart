@@ -391,15 +391,17 @@ void main() {
     });
   });
 
-  // ========== lastUserMessageContent 实时派生 ==========
-  // 二级列表摘要只显示「用户最后一条文字消息」(与 server
-  // ListAgentSessionsForUser SQL 的 msg_type IN ('text','tui_user') 规则对齐)。
+  // ========== lastAgentReplyContent 实时派生 ==========
+  // 二级列表摘要显示「agent 最后一条最终回复」(与 server
+  // ListAgentSessionsForUser SQL 的 msg_type IN ('text','markdown')
+  // AND silent IS DISTINCT FROM 'true' 规则对齐)。
   // WS MESSAGE_CREATE 实时派生避免下拉刷新才看到最新摘要。
-  group('lastUserMessageContent 实时派生', () {
-    WSMessage _userMessage({
+  group('lastAgentReplyContent 实时派生', () {
+    WSMessage _agentReply({
       required String id,
       required String msgType,
       required String text,
+      bool silent = false,
     }) {
       return WSMessage(
         op: 0,
@@ -408,120 +410,84 @@ void main() {
         d: {
           'id': id,
           'conversation_id': 'c1',
-          'sender_type': 'user',
-          'sender_id': 'user-1',
+          'sender_type': 'agent',
+          'sender_id': 'agent-1',
           'content': {
             'msg_type': msgType,
             'data': {'text': text},
+            if (silent) 'silent': true,
           },
           'created_at': '2026-07-01T11:30:00Z',
         },
       );
     }
 
-    test('user 发 text → lastUserMessageContent 实时更新为文本', () async {
+    test('agent 发非 silent markdown → lastAgentReplyContent 实时更新为文本', () async {
       final notifier = await boot();
-      // 初始为空(server SQL 未返回 last_user_message_content 时为 null)
-      expect(notifier.state!.first.lastUserMessageContent, isNull);
+      // 初始为空(server SQL 未返回 last_agent_reply_content 时为 null)
+      expect(notifier.state!.first.lastAgentReplyContent, isNull);
 
-      ws.emit(_userMessage(id: 'm-u1', msgType: 'text', text: '帮我改bug'));
+      ws.emit(_agentReply(id: 'm-a1', msgType: 'markdown', text: '已经改好了'));
       await Future.delayed(Duration.zero);
 
-      expect(notifier.state!.first.lastUserMessageContent, '帮我改bug');
+      expect(notifier.state!.first.lastAgentReplyContent, '已经改好了');
     });
 
-    test('user 发 tui_user → lastUserMessageContent 带 [TUI] 前缀', () async {
+    test('agent 发非 silent text → lastAgentReplyContent 也更新', () async {
       final notifier = await boot();
 
-      ws.emit(_userMessage(id: 'm-u2', msgType: 'tui_user', text: '终端里敲的'));
+      ws.emit(_agentReply(id: 'm-a2', msgType: 'text', text: '文字回复'));
       await Future.delayed(Duration.zero);
 
-      expect(notifier.state!.first.lastUserMessageContent, '[TUI] 终端里敲的');
+      expect(notifier.state!.first.lastAgentReplyContent, '文字回复');
     });
 
-    test('text 后发 tui_user → 取最新 tui_user(覆盖旧 text)', () async {
+    test('agent 发 silent 过程消息 → lastAgentReplyContent 不变', () async {
       final notifier = await boot();
-
-      ws.emit(_userMessage(id: 'm-u3', msgType: 'text', text: '旧指令'));
+      // 先一条最终回复设基线
+      ws.emit(_agentReply(id: 'm-a3', msgType: 'markdown', text: '基线回复'));
       await Future.delayed(Duration.zero);
-      expect(notifier.state!.first.lastUserMessageContent, '旧指令');
+      expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
 
-      ws.emit(_userMessage(id: 'm-u4', msgType: 'tui_user', text: '新指令'));
+      // silent 过程消息(中间步骤 markdown / reasoning / step_finish)不应覆盖
+      ws.emit(_agentReply(
+          id: 'm-a4', msgType: 'markdown', text: '中间步骤', silent: true));
       await Future.delayed(Duration.zero);
+      expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
 
-      expect(notifier.state!.first.lastUserMessageContent, '[TUI] 新指令');
+      ws.emit(_agentReply(
+          id: 'm-a5', msgType: 'reasoning', text: '思考中', silent: true));
+      await Future.delayed(Duration.zero);
+      expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
     });
 
-    test('user 发 image → lastUserMessageContent 不变(非文字类型不参与)', () async {
+    test('user 发消息 → lastAgentReplyContent 不变(只跟踪 agent 回复)', () async {
       final notifier = await boot();
-      // 先发一条 text 设定基线
-      ws.emit(_userMessage(id: 'm-u5', msgType: 'text', text: '基线'));
+      // 先 agent 发一条回复
+      ws.emit(_agentReply(id: 'm-a6', msgType: 'markdown', text: '我的答复'));
       await Future.delayed(Duration.zero);
-      expect(notifier.state!.first.lastUserMessageContent, '基线');
+      expect(notifier.state!.first.lastAgentReplyContent, '我的答复');
 
-      // 再发 image,不应覆盖
+      // user 新指令,不应覆盖 lastAgentReplyContent
       ws.emit(WSMessage(
         op: 0,
         t: 'MESSAGE_CREATE',
         s: 1,
         d: {
-          'id': 'm-u6',
+          'id': 'm-u1',
           'conversation_id': 'c1',
           'sender_type': 'user',
           'sender_id': 'user-1',
           'content': {
-            'msg_type': 'image',
-            'data': {'url': 'x.png'},
+            'msg_type': 'text',
+            'data': {'text': '新问题'},
           },
           'created_at': '2026-07-01T11:31:00Z',
         },
       ));
       await Future.delayed(Duration.zero);
 
-      expect(notifier.state!.first.lastUserMessageContent, '基线');
-    });
-
-    test('agent 发消息 → lastUserMessageContent 不变(只跟踪 user 自己)', () async {
-      final notifier = await boot();
-      // 先 user 发一条 text
-      ws.emit(_userMessage(id: 'm-u7', msgType: 'text', text: '我的问题'));
-      await Future.delayed(Duration.zero);
-      expect(notifier.state!.first.lastUserMessageContent, '我的问题');
-
-      // agent 回复,不应覆盖 lastUserMessageContent
-      ws.emit(_agentMessage(id: 'm-a1', silent: false, msgType: 'text'));
-      await Future.delayed(Duration.zero);
-
-      expect(notifier.state!.first.lastUserMessageContent, '我的问题');
-    });
-
-    test('plugin 代发 tui_user(sender=agent) → lastUserMessageContent 仍带 [TUI] 前缀', () async {
-      final notifier = await boot();
-      // plugin 用 agent JWT 连 WS,落库 sender_type=agent/sender_id=agent-1。
-      // 与 chat page 的 effectiveIsMe = isMe || isTuiUser 同构,摘要层也应归位为用户消息。
-      // 生产三路(proxy/engine/ensure)恒发 silent:true,测试对齐生产避免与真实数据不符。
-      ws.emit(WSMessage(
-        op: 0,
-        t: 'MESSAGE_CREATE',
-        s: 1,
-        d: {
-          'id': 'm-tui-agent',
-          'conversation_id': 'c1',
-          'sender_type': 'agent',
-          'sender_id': 'agent-1',
-          'content': {
-            'msg_type': 'tui_user',
-            'data': {'text': '终端代发的'},
-            'silent': true,
-          },
-          'created_at': '2026-07-01T11:36:00Z',
-        },
-      ));
-      await Future.delayed(Duration.zero);
-
-      expect(notifier.state!.first.lastUserMessageContent, '[TUI] 终端代发的');
-      // tui_user 是用户自己终端发的,silent 保证不计未读(避免自己给自己加未读)
-      expect(notifier.state!.first.unreadCount, 0);
+      expect(notifier.state!.first.lastAgentReplyContent, '我的答复');
     });
   });
 }

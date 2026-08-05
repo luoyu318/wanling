@@ -65,7 +65,7 @@ type ConversationListItem struct {
 	Participants           []ParticipantSummary `json:"participants" db:"-"`                        // 应用层组装
 	SessionCount           int                  `json:"session_count,omitempty"`                    // opencode dm 行: agent_session 数量
 	PendingCount           int                  `json:"pending_count,omitempty"`                    // opencode dm 行: 待处理交互卡片数
-	LastUserMessageContent string               `json:"last_user_message_content,omitempty" db:"-"` // agent_session: 当前用户最后一条文字指令预览
+	LastAgentReplyContent string               `json:"last_agent_reply_content,omitempty" db:"-"` // agent_session: agent 最后一条最终回复预览
 	SessionMeta            NullJSON             `json:"session_meta" db:"session_meta"`             // agent_session: {mode, model_id, provider_id, variant}
 	Directory              *string              `json:"directory,omitempty" db:"directory"`
 }

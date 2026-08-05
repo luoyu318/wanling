@@ -568,8 +568,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                             )
                           else
                             Text(
-                              (c.lastUserMessageContent?.isNotEmpty ?? false)
-                                  ? '${c.lastUserMessageContent!} · ${_formatCreationDate(c.createdAt)}'
+                              (c.lastAgentReplyContent?.isNotEmpty ?? false)
+                                  ? '${c.lastAgentReplyContent!} · ${_formatCreationDate(c.createdAt)}'
                                   : _formatCreationDate(c.createdAt),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
