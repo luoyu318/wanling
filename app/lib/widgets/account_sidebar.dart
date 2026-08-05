@@ -45,8 +45,11 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       showAppSnackBar(context, '已切换账号', type: SnackBarType.success);
     } catch (e) {
       if (mounted) {
-        showAppSnackBar(context, extractDioErrorMessage(e),
-            type: SnackBarType.error);
+        showAppSnackBar(
+          context,
+          extractDioErrorMessage(e),
+          type: SnackBarType.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _switching = false);
@@ -71,19 +74,25 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
               key: const ValueKey('sidebar_label_field'),
               controller: labelCtrl,
               decoration: const InputDecoration(
-                  labelText: '备注名(可选)', border: OutlineInputBorder()),
+                labelText: '备注名(可选)',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: serverCtrl,
               decoration: const InputDecoration(
-                  labelText: '服务器地址', border: OutlineInputBorder()),
+                labelText: '服务器地址',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: usernameCtrl,
               decoration: const InputDecoration(
-                  labelText: '用户名', border: OutlineInputBorder()),
+                labelText: '用户名',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             PasswordTextField(controller: passwordCtrl),
@@ -111,7 +120,9 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
           return;
         }
         try {
-          await ref.read(savedLoginsProvider.notifier).edit(
+          await ref
+              .read(savedLoginsProvider.notifier)
+              .edit(
                 index,
                 server: s,
                 username: u,
@@ -147,27 +158,30 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
               key: const ValueKey('sidebar_label_field'),
               controller: labelCtrl,
               decoration: const InputDecoration(
-                  labelText: '备注名(可选)', border: OutlineInputBorder()),
+                labelText: '备注名(可选)',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: serverCtrl,
               decoration: const InputDecoration(
-                  labelText: '服务器地址', border: OutlineInputBorder()),
+                labelText: '服务器地址',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: usernameCtrl,
               decoration: const InputDecoration(
-                  labelText: '用户名', border: OutlineInputBorder()),
+                labelText: '用户名',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             PasswordTextField(controller: passwordCtrl),
             const SizedBox(height: 16),
-            AccountMarkEditor(
-              initial: null,
-              onChanged: (m) => currentMark = m,
-            ),
+            AccountMarkEditor(initial: null, onChanged: (m) => currentMark = m),
           ],
         ),
       ),
@@ -184,11 +198,15 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
           return;
         }
         try {
-          await ref.read(savedLoginsProvider.notifier).add(
+          await ref
+              .read(savedLoginsProvider.notifier)
+              .add(
                 s,
                 u,
                 p,
-                label: labelCtrl.text.trim().isEmpty ? null : labelCtrl.text.trim(),
+                label: labelCtrl.text.trim().isEmpty
+                    ? null
+                    : labelCtrl.text.trim(),
                 mark: currentMark,
               );
           if (mounted) Navigator.of(context).pop();
@@ -207,7 +225,17 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       title: '确认删除',
       content: Text('确认删除 ${login.username} @ ${login.server}?'),
       confirmText: '确认',
-      onConfirm: () => ref.read(savedLoginsProvider.notifier).remove(index),
+      dismissOnConfirm: false,
+      onConfirm: () async {
+        try {
+          await ref.read(savedLoginsProvider.notifier).remove(index);
+          if (mounted) Navigator.of(context).pop();
+        } catch (e) {
+          if (mounted) {
+            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
+          }
+        }
+      },
     );
   }
 
@@ -231,101 +259,132 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
         ],
       ),
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Stack(
           children: [
-            // —— 用户信息头部：白底，昵称下方简介，无关闭按钮 ——
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-              child: Row(
-                children: [
-                  Avatar(
-                    name: user?.displayName ?? '?',
-                    url: user?.avatarUrl,
-                    size: 52,
-                    radius: 10,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // —— 用户信息头部：白底，昵称下方简介，无关闭按钮 ——
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+                  child: Row(
+                    children: [
+                      Avatar(
+                        name: user?.displayName ?? '?',
+                        url: user?.avatarUrl,
+                        size: 52,
+                        radius: 10,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user?.displayName ?? '未登录',
+                              style: const TextStyle(
+                                color: Color(0xFF111111),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (user != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                (user.bio != null && user.bio!.isNotEmpty)
+                                    ? user.bio!
+                                    : (current?.server ?? ''),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF999999),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user?.displayName ?? '未登录',
-                          style: const TextStyle(
-                            color: Color(0xFF111111),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
+                ),
+                const Divider(height: 1, color: Color(0xFFE4E4E4)),
+                // —— 标题行 ——
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  child: Row(
+                    children: [
+                      Text(
+                        '切换账号',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Spacer(),
+                      Text(
+                        '点击账号直接切换',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF999999),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // —— 账号列表 ——
+                Expanded(
+                  child: state.isEmpty
+                      ? const Center(
+                          child: Text(
+                            '暂无记录',
+                            style: TextStyle(color: Color(0xFF999999)),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: state.logins.length,
+                          itemBuilder: (_, i) => _AccountCard(
+                            login: state.logins[i],
+                            isCurrent: i == state.selectedIndex,
+                            onTap: () => _switchTo(i),
+                            onEdit: () => _showEditDialog(state.logins[i], i),
+                            onDelete: () =>
+                                _showDeleteConfirm(i, state.logins[i]),
                           ),
                         ),
-                        if (user != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            (user.bio != null && user.bio!.isNotEmpty)
-                                ? user.bio!
-                                : (current?.server ?? ''),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFF999999),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                ),
+                // —— 添加服务器 ——
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: OutlinedButton.icon(
+                    onPressed: _showAddDialog,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('添加服务器'),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const Divider(height: 1, color: Color(0xFFE4E4E4)),
-            // —— 标题行 ——
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
-              child: Row(
-                children: [
-                  Text(
-                    '切换账号',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  Spacer(),
-                  Text(
-                    '点击账号直接切换',
-                    style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            // —— 账号列表 ——
-            Expanded(
-              child: state.isEmpty
-                  ? const Center(
-                      child: Text('暂无记录',
-                          style: TextStyle(color: Color(0xFF999999))),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: state.logins.length,
-                      itemBuilder: (_, i) => _AccountCard(
-                        login: state.logins[i],
-                        isCurrent: i == state.selectedIndex,
-                        onTap: () => _switchTo(i),
-                        onEdit: () => _showEditDialog(state.logins[i], i),
-                        onDelete: () =>
-                            _showDeleteConfirm(i, state.logins[i]),
+            // 切换中遮罩(防抖 + 用户感知,拦截面板内交互)
+            if (_switching)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black38,
+                  alignment: Alignment.center,
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(strokeWidth: 2),
+                      SizedBox(height: 12),
+                      Text(
+                        '切换中…',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
                       ),
-                    ),
-            ),
-            // —— 添加服务器 ——
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: OutlinedButton.icon(
-                onPressed: _showAddDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('添加服务器'),
+                    ],
+                  ),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -368,39 +427,48 @@ class _AccountCard extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(width: 4, color: stripeColor),
-              ),
+              border: Border(left: BorderSide(width: 4, color: stripeColor)),
             ),
             child: Row(
               children: [
                 if (login.mark?.emoji != null) ...[
-                  Text(login.mark!.emoji!,
-                      style: const TextStyle(fontSize: 18)),
+                  Text(
+                    login.mark!.emoji!,
+                    style: const TextStyle(fontSize: 18),
+                  ),
                   const SizedBox(width: 8),
                 ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(accountCardTitle(login),
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w500)),
+                      Text(
+                        accountCardTitle(login),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                       const SizedBox(height: 2),
-                      Text('${login.username} @ ${login.server}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF999999))),
+                      Text(
+                        '${login.username} @ ${login.server}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF999999),
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 if (isCurrent)
                   const Padding(
                     padding: EdgeInsets.only(left: 8),
-                    child: Text('当前',
-                        style: TextStyle(
-                            fontSize: 11, color: Color(0xFF999999))),
+                    child: Text(
+                      '当前',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
+                    ),
                   )
                 else ...[
                   IconButton(
@@ -408,8 +476,11 @@ class _AccountCard extends StatelessWidget {
                     onPressed: onEdit,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        size: 18, color: Color(0xFF999999)),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: Color(0xFF999999),
+                    ),
                     onPressed: onDelete,
                   ),
                 ],

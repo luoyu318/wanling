@@ -15,7 +15,11 @@ void main() {
   group('accountCardTitle', () {
     test('label 优先', () {
       const l = SavedLogin(
-          server: 'http://a', username: 'u', password: 'p', label: '备注');
+        server: 'http://a',
+        username: 'u',
+        password: 'p',
+        label: '备注',
+      );
       expect(accountCardTitle(l), '备注');
     });
 
@@ -42,9 +46,7 @@ void main() {
         UncontrolledProviderScope(
           container: container,
           child: MaterialApp(
-            home: Scaffold(
-              body: AccountSidebar(onClose: () => closeCalls++),
-            ),
+            home: Scaffold(body: AccountSidebar(onClose: () => closeCalls++)),
           ),
         ),
       );
@@ -66,11 +68,18 @@ void main() {
         onLogin: (u, p) async => loginCalls.add('$u:$p'),
         onSwitchingChange: (_) {},
       );
-      await notifier.add('http://prod', 'uA', 'pA',
-          label: '正式服', mark: const AccountMark(colorIndex: 3));
+      await notifier.add(
+        'http://prod',
+        'uA',
+        'pA',
+        label: '正式服',
+        mark: const AccountMark(colorIndex: 3),
+      );
       await notifier.add('http://test', 'uB', 'pB', label: '测试服');
       notifier.select(0);
-      final authNotifier = AuthNotifier(ApiService(baseUrl: 'http://test.local'));
+      final authNotifier = AuthNotifier(
+        ApiService(baseUrl: 'http://test.local'),
+      );
       authNotifier.state = AuthState(
         user: User(
           id: 'u1',
@@ -144,13 +153,83 @@ void main() {
       expect(find.text('添加服务器'), findsOneWidget);
     });
 
+    testWidgets('切换失败显示错误提示且不关闭面板', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final failNotifier = SavedLoginsNotifier(
+        prefs: prefs,
+        storage: SecureStorage(deviceId: 'test-device'),
+        onBaseUrlChange: (_) {},
+        onLogout: ({bool silent = false}) async {},
+        onLogin: (u, p) async => throw Exception('密码错误'),
+        onSwitchingChange: (_) {},
+      );
+      await failNotifier.add('http://a', 'u1', 'p1', label: '账号A');
+      await failNotifier.add('http://b', 'u2', 'p2', label: '账号B');
+      failNotifier.select(0);
+      final c = ProviderContainer(
+        overrides: [savedLoginsProvider.overrideWith((ref) => failNotifier)],
+      );
+      addTearDown(c.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: c,
+          child: MaterialApp(
+            home: Scaffold(body: AccountSidebar(onClose: () {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('账号B'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('密码错误'), findsOneWidget);
+    });
+
+    testWidgets('切换中显示 loading 遮罩', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final slowNotifier = SavedLoginsNotifier(
+        prefs: prefs,
+        storage: SecureStorage(deviceId: 'test-device'),
+        onBaseUrlChange: (_) {},
+        onLogout: ({bool silent = false}) async {},
+        onLogin: (u, p) async {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        },
+        onSwitchingChange: (_) {},
+      );
+      await slowNotifier.add('http://a', 'u1', 'p1', label: '账号A');
+      await slowNotifier.add('http://b', 'u2', 'p2', label: '账号B');
+      slowNotifier.select(0);
+      final c = ProviderContainer(
+        overrides: [savedLoginsProvider.overrideWith((ref) => slowNotifier)],
+      );
+      addTearDown(c.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: c,
+          child: MaterialApp(
+            home: Scaffold(body: AccountSidebar(onClose: () {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('账号B'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('切换中…'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.text('切换中…'), findsNothing);
+    });
+
     testWidgets('点 ⋯ 弹编辑 dialog 并保存', (tester) async {
       await pumpSidebar(tester);
       await tester.tap(find.byIcon(Icons.more_horiz).first);
       await tester.pumpAndSettle();
       expect(find.text('编辑账号'), findsOneWidget);
       await tester.enterText(
-          find.byKey(const ValueKey('sidebar_label_field')), '改备注');
+        find.byKey(const ValueKey('sidebar_label_field')),
+        '改备注',
+      );
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
       expect(notifier.state.logins[1].label, '改备注');
