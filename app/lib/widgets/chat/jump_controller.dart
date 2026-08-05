@@ -255,22 +255,50 @@ class JumpController {
   ///
   /// 已在底部(|target - px| <= 5)时跳过动画,消除「已到底还要 animateTo」
   /// 造成的抖动。
+  ///
+  /// 修复「发送新消息后不跳到底部」:postFrame 时刻 SliverList 懒加载下,
+  /// 新消息(高卡片/大图/超长 markdown > cacheExtent)可能尚未布局,
+  /// maxScrollExtent 未包含其高度 → target≈px → 第一次即提前 return,
+  /// 之后无任何代码再触发滚动。这里在首次 animateTo 发起后调度**一次**
+  /// postFrame 校准:新内容布局后重算 target,若仍未到底再滚一次。
+  ///
+  /// 注意:校准**只做一次**(单次 postFrame,不递归),避免 agent 流式回复持续
+  /// 增长 maxScrollExtent 时陷入无限滚动循环。流式场景由 streamer 的
+  /// 流式跟随(jumpTo 实时底部)接管,这里只兜底一次性大高度内容漏滚。
   void scrollToBottom() {
     final scrollCtrl = _ctx.getScrollCtrl();
     if (!scrollCtrl.hasClients) return;
-    final pos = scrollCtrl.position;
     final target = dualSliverBottomTarget(
-      minScrollExtent: pos.minScrollExtent,
-      maxScrollExtent: pos.maxScrollExtent,
-      viewportDimension: pos.viewportDimension,
+      minScrollExtent: scrollCtrl.position.minScrollExtent,
+      maxScrollExtent: scrollCtrl.position.maxScrollExtent,
+      viewportDimension: scrollCtrl.position.viewportDimension,
       liveEmpty: _ctx.getLiveEmpty(),
     );
-    if ((target - pos.pixels).abs() <= 5) return;
+    if ((target - scrollCtrl.position.pixels).abs() <= 5) return;
     scrollCtrl.animateTo(
       target,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
-    );
+    ).then((_) {
+      // 一次性校准(不递归,无循环):首次动画期间新内容(大高度卡片)可能才被
+      // SliverList 布局、maxScrollExtent 增长 → 若仍未到底再滚一次即停。
+      // 流式增长由 streamer 流式跟随接管,这里不重复追。
+      if (!_ctx.isMounted()) return;
+      if (!scrollCtrl.hasClients) return;
+      final newTarget = dualSliverBottomTarget(
+        minScrollExtent: scrollCtrl.position.minScrollExtent,
+        maxScrollExtent: scrollCtrl.position.maxScrollExtent,
+        viewportDimension: scrollCtrl.position.viewportDimension,
+        liveEmpty: _ctx.getLiveEmpty(),
+      );
+      if ((newTarget - scrollCtrl.position.pixels).abs() > 5) {
+        scrollCtrl.animateTo(
+          newTarget,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   /// 释放高亮 Timer,避免页面退出后 setState-after-dispose。

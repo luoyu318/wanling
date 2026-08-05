@@ -626,4 +626,295 @@ void main() {
       verifyNever(() => convSync.markRead());
     });
   });
+
+  // ========== 自己发消息(self-echo)后无条件滚底(pendingScroll)==========
+  // 需求:用户发送消息后应无条件滚到底看到自己刚发的消息,
+  // 不受 userScrolledAway / 未读定位 / 列表状态影响。
+  group('self-echo 发送消息后 pendingScroll 滚底', () {
+    test('普通场景:用户发消息 → 设置 pendingScroll', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+      ));
+
+      final prev =
+          ChatState(historyMessages: [_msg('m-old')], isInitialLoading: false);
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('用户已滚动离开 + 发消息 → 仍设置 pendingScroll(无条件滚底)', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: true,
+      ));
+
+      final prev =
+          ChatState(historyMessages: [_msg('m-old')], isInitialLoading: false);
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('有未读定位 + 发消息 → 仍设置 pendingScroll(定位后也应滚底)', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      // 首次 state 带未读 → 触发分支(1) 置 _didLocateUnread=true
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        convSync: convSync,
+        unreadLocator: _StubLocator(locating: false),
+      ));
+
+      // 第一次:进入会话,带未读
+      listener.onChatStateChanged(
+        null,
+        ChatState(
+          historyMessages: [_msg('m-old')],
+          firstUnreadMessageId: 'm-old',
+          isInitialLoading: false,
+        ),
+      );
+
+      // 用户发送消息(self-echo)
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('liveMessages 有新消息 + 发消息 → 设置 pendingScroll', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+      ));
+
+      final prev = ChatState(
+        liveMessages: [_msg('m-old')],
+        isInitialLoading: false,
+      );
+      // 用户发消息进 liveMessages 末尾(最新)
+      final next = ChatState(
+        liveMessages: [
+          _msg('m-old'),
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+        ],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('真实路径:进入有未读会话(已置 _didLocateUnread) + 定位动画中发消息 → 滚底',
+        () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        convSync: convSync,
+        unreadLocator: _StubLocator(locating: true),
+      ));
+
+      // 进入有未读会话:prev=null → next 带未读,分支(1)触发 _didLocateUnread=true
+      listener.onChatStateChanged(
+        null,
+        ChatState(
+          historyMessages: [_msg('m-old')],
+          firstUnreadMessageId: 'm-old',
+          isInitialLoading: false,
+        ),
+      );
+
+      // 定位动画中(isLocating=true)用户发消息 → 应滚底
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('未读定位进行中(isLocating) + 发消息 → 定位结束后仍应滚底', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        convSync: convSync,
+        unreadLocator: _StubLocator(locating: true),
+      ));
+
+      // 首次 state 带未读 → 触发分支(1) 置 _didLocateUnread=true
+      listener.onChatStateChanged(
+        null,
+        ChatState(
+          historyMessages: [_msg('m-old')],
+          firstUnreadMessageId: 'm-old',
+          isInitialLoading: false,
+        ),
+      );
+
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('BUG 复现:进入会话定位未完成即发消息 → self-echo 被守卫拦截不滚底',
+        () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        convSync: convSync,
+        unreadLocator: _StubLocator(locating: true),
+      ));
+
+      // 模拟进入有未读会话的瞬间(分支1已置 _didLocateUnread=true,
+      // 但定位动画 isLocating=true 仍在进行),用户立刻发消息。
+      listener.onChatStateChanged(
+        null,
+        ChatState(
+          historyMessages: [_msg('m-old')],
+          firstUnreadMessageId: 'm-old',
+          isInitialLoading: false,
+        ),
+      );
+
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user').copyWith(
+            createdAt: DateTime.utc(2026, 7, 15, 0, 0, 1),
+          ),
+          _msg('m-old'),
+        ],
+        firstUnreadMessageId: 'm-old',
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      expect(listener.pendingScroll, isTrue);
+    });
+
+    test('BUG 复现:createdAt 相同 + 排序不稳定 → self-echo 被误判为对方消息',
+        () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+      ));
+
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        isInitialLoading: false,
+      );
+      // 用户消息与已有消息 createdAt 完全相同 → displayMessages 排序不稳定,
+      // first 可能不是用户消息 → self-echo 判定失败。
+      final next = ChatState(
+        historyMessages: [
+          _msg('u-self', senderType: 'user'), // 与 m-old 同 createdAt
+          _msg('m-old'),
+        ],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+
+      // 需求:无条件滚底。若 pendingScroll 为 false 说明被误判拦截。
+      expect(listener.pendingScroll, isTrue);
+    });
+  });
 }

@@ -430,6 +430,155 @@ void main() {
     });
   });
 
+  group('scrollToBottom 提前返回边界', () {
+    testWidgets('BUG 验证:目标已含新内容,但 px 恰在底部容差内 → no-op(不再滚)',
+        (tester) async {
+      // 模拟双 sliver 场景:发送新消息后 postFrame 时刻新消息尚未被布局,
+      // maxScrollExtent 未包含其高度 → target≈px → abs()<=5 → 提前 return。
+      // 后续没有其他滚动调用,用户看到新消息停留在视口下方。
+      final scrollCtrl = ScrollController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: ListView(
+                controller: scrollCtrl,
+                children: List.generate(
+                  10,
+                  (_) => const SizedBox(height: 50),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 停在中间,距底部 > 5
+      scrollCtrl.jumpTo(100);
+      final before = scrollCtrl.position.pixels;
+      final ctrl = JumpController(_buildContext(
+        getScrollCtrl: () => scrollCtrl,
+        getLiveEmpty: () => false,
+      ));
+      ctrl.scrollToBottom();
+      await tester.pumpAndSettle();
+      // 会滚到底(正常)
+      expect(scrollCtrl.position.pixels, scrollCtrl.position.maxScrollExtent);
+      ctrl.dispose();
+    });
+
+    testWidgets('二次校准:首次滚动后新内容布局 → 动画结束自动再滚到底',
+        (tester) async {
+      // 真实场景模拟:内容很多,第一次 scrollToBottom 滚到当前 maxScrollExtent,
+      // 期间新消息(高 item)布局进来使 maxScrollExtent 增长 → 二次校准应再滚。
+      final scrollCtrl = ScrollController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 200,
+              child: ListView(
+                controller: scrollCtrl,
+                children: List.generate(
+                  10,
+                  (_) => const SizedBox(height: 50),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      scrollCtrl.jumpTo(50); // 离底部
+      await tester.pump(); // 让 jumpTo 就绪
+      final maxExtent = scrollCtrl.position.maxScrollExtent;
+      final ctrl = JumpController(_buildContext(
+        getScrollCtrl: () => scrollCtrl,
+        getLiveEmpty: () => false,
+      ));
+      ctrl.scrollToBottom();
+      await tester.pumpAndSettle(); // 跑完第一次动画 + 二次校准递归
+      // 此时应已在底部
+      expect(scrollCtrl.position.pixels, maxExtent);
+      ctrl.dispose();
+    });
+
+    testWidgets('回归:流式增长不死循环(二次校准后不再递归)', (tester) async {
+      // 模拟 agent 流式回复:二次校准后 maxScrollExtent 又增长,验证 scrollToBottom
+      // 只做一次二次校准就停(不会无限 animateTo → UI 卡死)。
+      final scrollCtrl = ScrollController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 200,
+              child: ListView(
+                controller: scrollCtrl,
+                children: List.generate(
+                  10,
+                  (_) => const SizedBox(height: 50),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      scrollCtrl.jumpTo(50);
+      await tester.pump();
+      final ctrl = JumpController(_buildContext(
+        getScrollCtrl: () => scrollCtrl,
+        getLiveEmpty: () => false,
+      ));
+
+      ctrl.scrollToBottom();
+      // 推进多次,让第一次动画 + 二次校准都完成。
+      // 若实现存在递归死循环,此处会一直有 pending 动画 → pumpAndSettle 永不结束。
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      final pxAfterCalibration = scrollCtrl.position.pixels;
+      // 再推进足够时间,px 应保持稳定(二次校准后不再有新的 animateTo)。
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(scrollCtrl.position.pixels, pxAfterCalibration,
+          reason: '二次校准后不应再滚动');
+      ctrl.dispose();
+    });
+
+    testWidgets('BUG 复现:滚动目标 == 当前 px(内容刚够一屏)→ no-op',
+        (tester) async {
+      // 关键场景:live 非空但内容刚好铺满视口 → maxScrollExtent=0,px=0,
+      // |target-px|<=5 → 提前 return。此时若新消息高度 > cacheExtent 尚未布局,
+      // 发送后不滚底。
+      final scrollCtrl = ScrollController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: ListView(
+                controller: scrollCtrl,
+                children: List.generate(
+                  6,
+                  (_) => const SizedBox(height: 50),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 300px 视口,6*50=300px 内容 → maxScrollExtent=0
+      expect(scrollCtrl.position.maxScrollExtent, 0);
+      final ctrl = JumpController(_buildContext(
+        getScrollCtrl: () => scrollCtrl,
+        getLiveEmpty: () => false,
+      ));
+      ctrl.scrollToBottom();
+      await tester.pump();
+      // 已在底部(内容不够滚动),无动画
+      expect(scrollCtrl.position.pixels, 0);
+      ctrl.dispose();
+    });
+  });
+
   group('dualSliverBottomTarget(双 sliver 底部目标 px)', () {
     test('live 非空 → maxScrollExtent(正向 sliver 末尾)', () {
       expect(
