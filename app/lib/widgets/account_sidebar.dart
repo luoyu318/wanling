@@ -428,106 +428,153 @@ class _AccountCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final stripeColor = login.mark != null
+    final mark = login.mark != null
         ? AccountPalette.colorAt(login.mark!.colorIndex)
         : theme.colorScheme.primary;
+    final title = accountCardTitle(login);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: isCurrent ? null : onTap,
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border(left: BorderSide(width: 4, color: stripeColor)),
+          gradient: isCurrent
+              ? LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    mark.withValues(alpha: 0.22),
+                    mark.withValues(alpha: 0.06),
+                  ],
+                )
+              : null,
+          color: isCurrent ? null : mark.withValues(alpha: 0.06),
+          border: Border(
+            left: BorderSide(
+              width: isCurrent ? 4 : 2,
+              color: isCurrent ? mark : mark.withValues(alpha: 0.5),
             ),
-            child: Row(
-              children: [
-                if (login.mark?.emoji != null) ...[
-                  Text(
-                    login.mark!.emoji!,
-                    style: const TextStyle(fontSize: 18),
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: isCurrent ? null : onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  // leading 方块：mark 色字/字母
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: isCurrent
+                          ? mark.withValues(alpha: 0.18)
+                          : mark.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      login.mark?.emoji ??
+                          (login.username.isNotEmpty
+                              ? login.username.characters.first.toUpperCase()
+                              : '?'),
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: isCurrent ? mark : null,
+                        fontWeight: isCurrent ? FontWeight.w600 : null,
+                      ),
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        accountCardTitle(login),
-                        style: const TextStyle(
-                          fontSize: 14,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight:
+                                isCurrent ? FontWeight.w700 : FontWeight.w500,
+                            color: const Color(0xFF111111),
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          '${login.username} @ ${login.server}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF999999),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isCurrent)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: mark,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        '当前',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${login.username} @ ${login.server}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF999999),
+                    ),
+                  // ⋯ 菜单:编辑 / 复制 / 删除(带 icon 竖排)
+                  PopupMenuButton<String>(
+                    tooltip: '更多操作',
+                    onSelected: (v) {
+                      if (v == 'edit') {
+                        onEdit();
+                      } else if (v == 'duplicate') {
+                        onDuplicate();
+                      } else if (v == 'delete') {
+                        onDelete();
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: ListTile(
+                          leading: Icon(Icons.edit_outlined, size: 20),
+                          title: Text('编辑'),
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'duplicate',
+                        child: ListTile(
+                          leading: Icon(Icons.copy_outlined, size: 20),
+                          title: Text('复制'),
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_outline, size: 20),
+                          title: Text('删除'),
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
                         ),
                       ),
                     ],
                   ),
-                ),
-                if (isCurrent)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 8),
-                    child: Text(
-                      '当前',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
-                    ),
-                  ),
-                // ⋯ 菜单:编辑 / 复制 / 删除(带 icon 竖排)
-                PopupMenuButton<String>(
-                  tooltip: '更多操作',
-                  onSelected: (v) {
-                    if (v == 'edit') {
-                      onEdit();
-                    } else if (v == 'duplicate') {
-                      onDuplicate();
-                    } else if (v == 'delete') {
-                      onDelete();
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: 'edit',
-                      child: ListTile(
-                        leading: Icon(Icons.edit_outlined, size: 20),
-                        title: Text('编辑'),
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'duplicate',
-                      child: ListTile(
-                        leading: Icon(Icons.copy_outlined, size: 20),
-                        title: Text('复制'),
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: ListTile(
-                        leading: Icon(Icons.delete_outline, size: 20),
-                        title: Text('删除'),
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

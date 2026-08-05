@@ -306,79 +306,123 @@ class _LoginCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 色条:有 mark 用 mark 颜色(选中态也用 mark 色,与弹层卡片一致);
-    // 无 mark 时选中用主题色、非选中透明。
-    final stripeColor = login.mark != null
+    // mark 色:有 mark 用 mark 颜色,否则主题色(同侧边栏方案 E 取色逻辑)
+    final mark = login.mark != null
         ? AccountPalette.colorAt(login.mark!.colorIndex)
-        : (selected ? theme.colorScheme.primary : Colors.transparent);
-    // 主标题:label 优先,无 label 回退 server(与切换账号弹层卡片一致)
+        : theme.colorScheme.primary;
+    // 主标题:label 优先,无 label 回退 username(对齐侧边栏 accountCardTitle)
     final title = (login.label != null && login.label!.isNotEmpty)
         ? login.label!
-        : login.server;
+        : (login.username.isNotEmpty ? login.username : login.server);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: selected
-            ? theme.colorScheme.primaryContainer
-            : theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onTap,
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(
-                  width: 4,
-                  color: stripeColor,
-                ),
-              ),
+          gradient: selected
+              ? LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    mark.withValues(alpha: 0.22),
+                    mark.withValues(alpha: 0.06),
+                  ],
+                )
+              : null,
+          color: selected ? null : mark.withValues(alpha: 0.06),
+          border: Border(
+            left: BorderSide(
+              width: selected ? 4 : 2,
+              color: selected ? mark : mark.withValues(alpha: 0.5),
             ),
-            child: Row(
-              children: [
-                if (login.mark?.emoji != null) ...[
-                  Text(login.mark!.emoji!,
-                      style: const TextStyle(fontSize: 18)),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (selected)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: Row(
-                            children: [
-                              Icon(Icons.check_circle,
-                                  size: 12, color: theme.colorScheme.primary),
-                              const SizedBox(width: 4),
-                            ],
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  // leading 方块：mark 色字/字母
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? mark.withValues(alpha: 0.18)
+                          : mark.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      login.mark?.emoji ??
+                          (login.username.isNotEmpty
+                              ? login.username.characters.first.toUpperCase()
+                              : '?'),
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: selected ? mark : null,
+                        fontWeight: selected ? FontWeight.w600 : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w500,
+                            color: const Color(0xFF111111),
                           ),
                         ),
-                      Text(title,
+                        const SizedBox(height: 1),
+                        Text(
+                          '${login.username} @ ${login.server}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 2),
-                      Text('${login.username} @ ${login.server}',
-                          style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF999999))),
-                    ],
+                              fontSize: 12, color: Color(0xFF999999)),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                IconButton(
-                  key: ValueKey('edit_$index'),
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  onPressed: onEdit,
-                ),
-                IconButton(
-                  key: ValueKey('delete_$index'),
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  onPressed: onDelete,
-                ),
-              ],
+                  if (selected)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: mark,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        '当前',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    key: ValueKey('edit_$index'),
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    onPressed: onEdit,
+                  ),
+                  IconButton(
+                    key: ValueKey('delete_$index'),
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    onPressed: onDelete,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
