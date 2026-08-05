@@ -10,7 +10,7 @@
 
 ## builtin_renderers
 
-内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调
+内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
 
 ### FileContentRenderer（v1.0.6 重写）
 

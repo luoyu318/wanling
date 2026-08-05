@@ -104,7 +104,7 @@ agent_session 环境信息条(v1.0.10)：读 `SessionMeta.cwd`/`gitBranch` 渲�
 自定义 ScrollPhysics(继承 ClampingScrollPhysics)。重写 `applyBoundaryConditions`,live 空(纯历史会话)时上界收紧为 `max(minScrollExtent, -vd)` 阻止手动下滑/惯性滑入空白区。`getLiveEmpty` 闭包在 ChatPage initState 创建一次(build 引用同一实例避免 rebuild 抖动)
 
 ### StreamingText `lib/widgets/`(非 chat/)
-流式逐字符渐显 widget。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。已渲染部分正常显示,新增 delta 用 `FadeTransition`(150ms)逐字符淡入。`_settledLength` 追踪已稳定字符数,新 delta append 后推进 settledLength 并触发淡入动画。reasoning renderer 不接(单行省略卡片无需逐字符)
+流式文本渲染(2026-08-05 改造)。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。**整段文本走一次 mdBuilder(markdown 渲染),不拆分 settled/tail、无渐显动画**。背景:原「逐字符渐显」实现中 settled/tail 两块各自独立解析 markdown,语法跨边界(如 `**加` 在 settled、`粗**abc` 在 tail)时未闭合段必然以源码示人,settle 瞬间源码→富文本突变 + 上下抖动。整段统一解析后语法始终完整,未闭合语法由解析器降级为普通文本。reasoning renderer 不接(单行省略卡片)
 
 ### EnterExpand `lib/widgets/chat/`(入场展开动画)
 新消息入场动画:首次 build 从 0 高度向下展开(SizeTransition, 200ms easeOut, axisAlignment -1.0 顶部锚定)。`animate=false` 等价直接显示 child(用于历史加载/终态替换不重播)。由 ChatMessageItemBuilder 对 live 区卡片/审批卡与流式 reasoning 包装

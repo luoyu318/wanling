@@ -87,7 +87,7 @@ IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选�
 
 ## StreamingText
 
-流式逐字符渐显(2026-07-31)。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。已渲染部分正常显示,新增 delta 用 `FadeTransition`(150ms)逐字符淡入。`_settledLength` 追踪已稳定字符数推进。reasoning renderer 不接(单行省略卡片无需逐字符)。详见 [chat-components.md](./chat-components.md#streamingtext)
+流式文本渲染(2026-08-05 改造)。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。流式期间**整段文本走一次 mdBuilder(markdown 渲染),不拆分 settled/tail、无渐显动画**——拆分会令 markdown 语法跨边界断裂(如 `**加` 在 settled、`粗**abc` 在 tail),未闭合段以源码示人导致形态突变+上下抖动。整段统一解析后语法始终完整,未闭合语法由解析器降级为普通文本,闭合后自然变标题/粗体。reasoning renderer 不接(单行省略卡片)。详见 [chat-components.md](./chat-components.md#streamingtext)
 
 ## AgentBadge
 
