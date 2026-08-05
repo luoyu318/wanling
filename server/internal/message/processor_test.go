@@ -2392,3 +2392,105 @@ func TestPersistAndDispatch_StripsStreamID(t *testing.T) {
 		t.Fatalf("未收到 dispatch payload(user client Send chan 超时)")
 	}
 }
+
+// TestAggregateCardSend 验证:agent 发 aggregate_card 消息(silent=true)
+// → 正常落库 + 广播 MESSAGE_CREATE + 不计数未读。
+//
+// 背景:聚合卡是 plugin 流式输出新增的消息类型(sendCardMessage 走
+// REST POST /api/conversations/:id/messages,默认 silent=true,回合进行中不打扰)。
+// server 的 msg_type 是字符串透传(PersistAndDispatch 无白名单拦截),
+// 本测试固化「aggregate_card 天然放行」行为,防未来加 msg_type 白名单时误伤。
+//
+// 走 PersistAndDispatch(WS HandleIncoming / HTTP SendAsAgent 两条发送路径的共同核心),
+// 覆盖两通道共用的落库 + dispatch + silent 语义。
+func TestAggregateCardSend(t *testing.T) {
+	fix := seedDM(t)
+
+	// 构造真 hub + 注册 user client,捕获广播(与 TestPersistAndDispatch_StripsStreamID 同模式)。
+	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp, nil)
+	userClient := &hub.Client{
+		ID:            fix.userID,
+		Role:          "user",
+		Send:          make(chan []byte, 8),
+		LastHeartbeat: time.Now(),
+	}
+	h.RegisterClient(userClient)
+	p := NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo, fix.fileRepo,
+		fix.participantRp, fix.deliveryRp, nil, nil, nil)
+
+	// plugin sendCardMessage(convId, "aggregate_card", {state, elements}) 构造的 content。
+	content, _ := json.Marshal(map[string]any{
+		"msg_type": "aggregate_card",
+		"data": map[string]any{
+			"state":    "generating",
+			"elements": []any{map[string]any{"type": "markdown", "seq": 1, "text": "..."}},
+		},
+		"silent": true,
+	})
+	msg, err := p.PersistAndDispatch(t.Context(), fix.convID, "agent", fix.agentID, content, nil, nil)
+	if err != nil {
+		t.Fatalf("aggregate_card 发送失败: %v", err)
+	}
+
+	// 1. 落库:content 保留 msg_type=aggregate_card + silent=true(查 DB 真值,防假绿)
+	var dbContent json.RawMessage
+	err = fix.db.QueryRowContext(t.Context(), `SELECT content FROM messages WHERE id = $1`, msg.ID).Scan(&dbContent)
+	if err != nil {
+		t.Fatalf("查 DB content 失败: %v", err)
+	}
+	var stored struct {
+		MsgType string          `json:"msg_type"`
+		Data    json.RawMessage `json:"data"`
+		Silent  bool            `json:"silent"`
+	}
+	if err := json.Unmarshal(dbContent, &stored); err != nil {
+		t.Fatalf("解析落库 content 失败: %v", err)
+	}
+	if stored.MsgType != "aggregate_card" {
+		t.Errorf("落库 msg_type 应为 aggregate_card,实际 %q", stored.MsgType)
+	}
+	if !stored.Silent {
+		t.Errorf("落库 silent 应保留 true,实际 %v", stored.Silent)
+	}
+	if len(stored.Data) == 0 {
+		t.Errorf("落库 data 不应为空(应保留 elements)")
+	}
+
+	// 2. 广播 MESSAGE_CREATE 到在线 user client,content 保留 aggregate_card
+	select {
+	case raw := <-userClient.Send:
+		var ws model.WSMessage
+		if err := json.Unmarshal(raw, &ws); err != nil {
+			t.Fatalf("解析 dispatch 失败: %v", err)
+		}
+		if ws.T != model.EventMessageCreate {
+			t.Fatalf("期望 MESSAGE_CREATE,实际 %q", ws.T)
+		}
+		var d struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(ws.D, &d); err != nil {
+			t.Fatalf("解析 dispatch.D 失败: %v", err)
+		}
+		var bc struct {
+			MsgType string `json:"msg_type"`
+		}
+		if err := json.Unmarshal(d.Content, &bc); err != nil {
+			t.Fatalf("解析广播 content 失败: %v", err)
+		}
+		if bc.MsgType != "aggregate_card" {
+			t.Errorf("广播 content msg_type 应为 aggregate_card,实际 %q", bc.MsgType)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("未收到 dispatch payload(user client Send chan 超时)")
+	}
+
+	// 3. 不计数未读:silent=true 跳过 IncrUnread,user unread_count 应为 0
+	userP, err := fix.participantRp.Get(t.Context(), fix.convID, fix.userID, "user")
+	if err != nil {
+		t.Fatalf("Get user participant 失败: %v", err)
+	}
+	if userP.UnreadCount != 0 {
+		t.Errorf("silent=true 的 aggregate_card 不应计数未读,实际 unread_count=%d", userP.UnreadCount)
+	}
+}
