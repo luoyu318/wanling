@@ -136,6 +136,33 @@ void main() {
       expect(notifier.state.logins[0].password, 'p2');
       expect(notifier.state.selectedIndex, 0);
     });
+
+    test('add select:false 新增不改变当前选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      notifier.select(0);
+      await notifier.add('http://y', 'u2', 'p2', select: false);
+      expect(notifier.state.logins.length, 2);
+      expect(notifier.state.selectedIndex, 0); // 仍选中原账号
+    });
+
+    test('add select:false 重复组合更新密码不改变当前选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://y', 'u2', 'p2');
+      notifier.select(0);
+      await notifier.add('http://y', 'u2', 'p3', select: false);
+      expect(notifier.state.logins.length, 2);
+      expect(notifier.state.logins[1].password, 'p3');
+      expect(notifier.state.selectedIndex, 0);
+    });
+
+    test('saveOrAdd select:false 保持原选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://y', 'u2', 'p2');
+      notifier.select(0);
+      await notifier.saveOrAdd('http://z', 'u3', 'p3', select: false);
+      expect(notifier.state.logins.length, 3);
+      expect(notifier.state.selectedIndex, 0);
+    });
   });
 
   group('edit', () {

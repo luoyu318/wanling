@@ -107,6 +107,7 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
     String password, {
     String? label,
     AccountMark? mark,
+    bool select = true,
   }) async {
     final idx = state.logins.indexWhere((l) => l.matches(server, username));
     if (idx >= 0) {
@@ -116,7 +117,10 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
         label: label ?? updated[idx].label,
         mark: mark ?? updated[idx].mark,
       );
-      state = SavedLoginsState(logins: updated, selectedIndex: idx);
+      state = SavedLoginsState(
+        logins: updated,
+        selectedIndex: select ? idx : state.selectedIndex,
+      );
     } else {
       final updated = [
         ...state.logins,
@@ -128,20 +132,28 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
           mark: mark,
         ),
       ];
-      state = SavedLoginsState(logins: updated, selectedIndex: updated.length - 1);
+      state = SavedLoginsState(
+        logins: updated,
+        selectedIndex: select ? updated.length - 1 : state.selectedIndex,
+      );
     }
     await _persist();
   }
 
-  /// 选择账号页「+」按钮:新增并选中。重复则更新密码。
+  /// 添加账号(不选中):「+」按钮新增服务器/账号,不改动当前选中。
+  /// 登录态下用户点卡片自行切换,登出态下选择账号页点卡片自行登录。
+  /// [select] 默认 false:纯添加操作不应改变 selectedIndex。
+  /// 重复则更新密码(label/mark 不清空)。
   Future<void> add(
     String server,
     String username,
     String password, {
     String? label,
     AccountMark? mark,
+    bool select = false,
   }) =>
-      saveOrAdd(server, username, password, label: label, mark: mark);
+      saveOrAdd(server, username, password,
+          label: label, mark: mark, select: select);
 
   /// 编辑指定索引。如果 server+username 跟其他卡片撞,抛 ArgumentError。
   ///
