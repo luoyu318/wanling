@@ -157,13 +157,17 @@ export class PartDispatcher {
               t.streamId && !state.isChildSession ? { text: t.text, _stream_id: t.streamId } : { text: t.text }, true)
           }
           this.flushPendingText(state, isLoopEnd ? false : true)
+          // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
+          // 响铃/未读职责由最终文本(flushPendingText isLoopEnd → silent=false)承担,
+          // 避免循环结束时两条消息各计一次未读、通知 body 被覆盖成「[完成]」。
+          // finished=isLoopEnd 仍保留,APP 照常渲染 tokens 汇总行。
           this.router.send(state, "step_finish", {
             reason: part.reason || "",
             cost: part.cost || 0,
             tokens: part.tokens || {},
             duration,
             finished: isLoopEnd,
-          }, isLoopEnd ? false : true)
+          }, true)
           // 循环结束时主动同步 session_meta:agent 在跑期间 / 跑之前用户可能在 shell
           // 切了 git 分支(OC 不发 vcs.branch.updated),EnvMetaStrip 不刷新。
           // 读 knownFullMeta 缓存 cwd → vcs.get 拉最新 branch → updateSessionMeta。
