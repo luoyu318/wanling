@@ -193,6 +193,15 @@ describe("AggregateCardManager 静态构造器(element_id 规则 type_seq)", () 
     })
   })
 
+  it("footer 元素透传 FooterData(含 mode/model 快照字段)", () => {
+    const data = { reason: "stop", cost: 0.1, tokens: { total: 1200 }, duration: 3.2, finished: true, mode: "build", model: "DeepSeek-V3" }
+    expect(AggregateCardManager.footer(data, 4)).toEqual({
+      type: "footer",
+      element_id: "footer_4",
+      data,
+    })
+  })
+
   it("questionCard 元素透传 QuestionCardData", () => {
     const data = {
       oc_request_id: "q-1",

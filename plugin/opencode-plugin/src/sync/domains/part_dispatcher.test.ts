@@ -37,7 +37,7 @@ function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const partDispatcher = new PartDispatcher({
     store: store as any,
     router: router as any,
-    metaSync: { syncAfterLoopEnd: vi.fn() } as any,
+    metaSync: { syncAfterLoopEnd: vi.fn(), peekFullMeta: vi.fn(() => undefined) } as any,
     compaction: { completePending: vi.fn() } as any,
     emitter: new EventEmitter(),
     wanling: wanling as any,
@@ -119,6 +119,48 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(4)
     // 不再发独立 step_finish 消息
     expect(router.send).not.toHaveBeenCalled()
+  })
+
+  it("step-finish isLoopEnd → footer 带 mode/model 快照(读 metaSync.peekFullMeta)", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    ;(partDispatcher as any).metaSync.peekFullMeta = vi.fn(() => ({ mode: "build", modelId: "deepseek-v3", modelName: "DeepSeek-V3" }))
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
+      time: 2,
+    })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
+      time: 3,
+    })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1",
+      { op: "append", element: expect.objectContaining({
+        type: "footer",
+        data: expect.objectContaining({ mode: "build", model: "DeepSeek-V3", finished: true }),
+      }) },
+    )
+  })
+
+  it("step-finish metaSync.peekFullMeta 未命中 → footer 不写 mode/model", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    ;(partDispatcher as any).metaSync.peekFullMeta = vi.fn(() => undefined)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
+      time: 2,
+    })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
+      time: 3,
+    })
+    const footerCall = wanling.patchAggregateMessage.mock.calls
+      .map(([, b]: [string, any]) => b)
+      .find((b: any) => b.op === "append" && b.element.type === "footer")
+    expect(footerCall.element.data.mode).toBeUndefined()
+    expect(footerCall.element.data.model).toBeUndefined()
   })
 
   it("step-finish 非 isLoopEnd(中间步骤)→ 追加 footer 元素但 silent 不翻转、state 不翻 done", async () => {

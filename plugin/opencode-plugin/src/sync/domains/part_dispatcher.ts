@@ -195,12 +195,15 @@ export class PartDispatcher {
             // - isLoopEnd → 最后一个 footer + 整卡翻转 {silent:false,state:"done"}
             //   (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)
             // - 中间步骤 → footer 追加但 silent 不翻转,state 保持 generating
+            const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
             await this.appendElement(state, AggregateCardManager.footer({
               reason: part.reason || "",
               cost: part.cost || 0,
               tokens: part.tokens || {},
               duration,
               finished: isLoopEnd,
+              // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
+              ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
             }, this.nextSeq(state)), isLoopEnd ? { silent: false, state: "done" } : undefined)
             // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
             // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。

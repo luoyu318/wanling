@@ -33,6 +33,10 @@ export type FooterData = {
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number; cache?: { read?: number; write?: number } }
   duration?: number
   finished?: boolean
+  // 回合结束快照:mode(model 模式)/model(模型显示名,modelName ?? modelId)。
+  // 消息快照语义:回合结束时的值固化进 footer,不随 sessionMeta 实时态变动。
+  mode?: string
+  model?: string
 }
 
 // question_card 元素 data:对齐现有 question_card renderer 消费字段
