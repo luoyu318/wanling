@@ -202,6 +202,13 @@ export class PartDispatcher {
               duration,
               finished: isLoopEnd,
             }, this.nextSeq(state)), isLoopEnd ? { silent: false, state: "done" } : undefined)
+            // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
+            // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
+            // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
+            // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
+            if (isLoopEnd) {
+              this.resetAggregateCard(state)
+            }
           } else {
             // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
             // 响铃/未读职责由最终文本(flushPendingText isLoopEnd → silent=false)承担,
@@ -322,7 +329,7 @@ export class PartDispatcher {
   //   与 appendElement 的既有错误处理风格一致;流式帧为瞬态,建卡失败由终态 append 兜底报错
   // 非聚合模式不加 aggregate 字段(APP 走旧独立占位逻辑)。
   private pushStreamFrame(state: SessionState, kind: "reasoning" | "text", holder: StreamHolder): void {
-    const prefix = kind === "reasoning" ? "reasoning" : "markdown"
+    const prefix: "reasoning" | "markdown" = kind === "reasoning" ? "reasoning" : "markdown"
     const payload = {
       stream_id: holder.streamId as string,
       msg_type: prefix,
@@ -334,11 +341,34 @@ export class PartDispatcher {
     }
     const elementId = `${prefix}_${this.streamSeq(state, holder)}`
     const manager = new AggregateCardManager(this.wanling, state)
-    void manager.ensureCard().then((messageId) => {
+    void manager.ensureCard().then(async (messageId) => {
+      // I1:流式首帧前先确保目标元素已 append 进聚合卡(占位),否则 APP 端
+      // _applyAggregateStreamUpdate 因元素不存在丢弃帧 → 整个生成期无中间文本,
+      // 直到 step-finish 才一次性出全文。占位元素 PATCH 落地后才发帧(帧能命中)。
+      await this.ensureStreamElement(state, holder, prefix)
       this.wanling.sendStream(state.convId, { ...payload, aggregate: { message_id: messageId, element_id: elementId } })
     }).catch((err) => {
       this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
     })
+  }
+
+  // I1 流式占位:把目标元素(reasoning/markdown,用 holder 预留 seq)append 进聚合卡。
+  // aggregateStreamedElementIds 同步去重:并发首帧/后续帧到达时只占位一次,
+  // 不会重复 append(否则同一 element_id 在卡里出现两次)。
+  private async ensureStreamElement(
+    state: SessionState,
+    holder: StreamHolder,
+    prefix: "reasoning" | "markdown",
+  ): Promise<void> {
+    if (holder.seq === undefined) return
+    const elementId = `${prefix}_${holder.seq}`
+    if (state.aggregateStreamedElementIds?.has(elementId)) return
+    if (!state.aggregateStreamedElementIds) state.aggregateStreamedElementIds = new Set()
+    state.aggregateStreamedElementIds.add(elementId)
+    const element = prefix === "reasoning"
+      ? AggregateCardManager.reasoning(holder.text, holder.seq)
+      : AggregateCardManager.markdown(holder.text, holder.seq)
+    await this.appendElement(state, element)
   }
 
   // 流式元素预留序号:首次推帧时取"下一个 seq"并缓存到 holder。
@@ -432,9 +462,25 @@ export class PartDispatcher {
     return seq
   }
 
+  // C1 多轮重置:step-finish isLoopEnd 的 footer PATCH 排空后调用,清空本轮聚合卡
+  // 状态(建卡 msgId/序号/累计/串行队列/工具元素映射/当前 state/流式占位)。
+  // 下一轮 ensureCard 会重新建卡,element 序号从 1 重新计数("一次问答一张卡")。
+  private resetAggregateCard(state: SessionState): void {
+    state.aggregateCardMsgId = undefined
+    state.aggregateCardInflight = undefined
+    state.aggregateCardState = undefined
+    state.aggregateSeq = undefined
+    state.aggregateElements = undefined
+    state.aggregatePatchQueue = undefined
+    state.aggregateToolElementIds = undefined
+    state.aggregateStreamedElementIds = undefined
+  }
+
   // 追加聚合卡元素并 PATCH(全量替换)。patchElements 读回 state.aggregateElements 累计
   // 再拼新元素。串行队列(aggregatePatchQueue)保证同一 session 并发 flush(reasoning end
   // 与 text end 同时到达)时按序执行,避免全量替换互相覆盖丢元素。
+  // upsert 语义(I1):同一 element_id 已存在(流式首帧 append 的占位元素)则原位替换,
+  // 终态 append 同 element_id 时把占位更新为完整文本,避免占位 + 终态两个同名元素并存。
   // 返回 Promise 不吞错误:调用方 await 走外层 try/catch,fire-and-forget 处自行 catch emit。
   private appendElement(
     state: SessionState,
@@ -443,7 +489,10 @@ export class PartDispatcher {
   ): Promise<void> {
     const prev = state.aggregatePatchQueue ?? Promise.resolve()
     const next = prev.then(async () => {
-      const elements = [...(state.aggregateElements ?? []), element]
+      const existed = (state.aggregateElements ?? []).some((e) => e.element_id === element.element_id)
+      const elements = existed
+        ? (state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
+        : [...(state.aggregateElements ?? []), element]
       state.aggregateElements = elements
       await new AggregateCardManager(this.wanling, state).patchElements(elements, opts)
     })

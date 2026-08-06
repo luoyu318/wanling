@@ -74,16 +74,23 @@ export class AggregateCardManager {
     }
   }
 
-  // 全量替换 elements[](非增量 diff)。opts.state 缺省 generating(client 端兜底)。
+  // 全量替换 elements[](非增量 diff)。
+  // state 语义(I3):server 端 UpdateContent 全量替换 data,未显式带 state 的 PATCH
+  // (如迟到 tool 终态)会丢 state 字段。故这里维护 state.aggregateCardState 当前值:
+  // - opts.state 显式传 → 更新 state.aggregateCardState 并写入 PATCH
+  // - opts.state 未传   → 沿用 state.aggregateCardState(建卡默认 generating),
+  //   保证回合结束(done)后的迟到 PATCH 不把卡片翻回 generating。
   // silent 翻转时传 {silent:false} → content 显式带 silent:false 触发计未读。
   async patchElements(
     elements: AggregateElement[],
     opts?: { silent?: boolean; state?: "generating" | "done" },
   ): Promise<void> {
+    const nextState = opts?.state ?? this.state.aggregateCardState ?? "generating"
+    if (opts?.state) this.state.aggregateCardState = opts.state
     const msgId = await this.ensureCard()
     await this.wanling.patchAggregateMessage(
       msgId,
-      { state: opts?.state, elements },
+      { state: nextState, elements },
       opts?.silent === undefined ? undefined : { silent: opts.silent },
     )
   }

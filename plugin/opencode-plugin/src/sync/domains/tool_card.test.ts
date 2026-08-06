@@ -131,6 +131,30 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     )
   })
 
+  it("I3 done 后迟到工具 completed PATCH 不把卡片翻回 generating(state 保持 done)", async () => {
+    const { manager, state, wanling } = makeFixture()
+    // 模拟回合已结束:聚合卡 state 已翻 done,工具 running 元素在卡上
+    state.aggregateCardState = "done"
+    state.aggregateSeq = 2
+    state.aggregateElements = [
+      AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
+      AggregateCardManager.markdown("最终回复", 2),
+    ]
+    state.aggregateToolElementIds = new Map([["p-bash-1", "tool_card_1"]])
+    // 回合结束(done)后,迟到的 tool completed 事件 PATCH 更新目标元素
+    await manager.onPartUpdated(
+      toolPart("p-bash-1", "bash", "completed", { input: { command: "ls" }, output: "done" }),
+      state, "sess-1",
+    )
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    const [, body] = lastPatch(wanling)
+    // 未显式传 state 的 PATCH 必须保留当前 done,不得被 client 兜底成 generating
+    expect(body.state).toBe("done")
+    expect(body.elements[0].data.status).toBe("completed")
+  })
+
   it("工具 error → 更新目标元素 status:error + error 字段", async () => {
     const { manager, state, wanling } = makeFixture()
     await manager.onPartUpdated(

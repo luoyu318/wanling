@@ -98,14 +98,14 @@ describe("AggregateCardManager patchElements", () => {
     wanling = makeWanling().wanling
   })
 
-  it("全量替换:patchAggregateMessage 传 elements,state 默认 generating", async () => {
+  it("全量替换:patchAggregateMessage 传 elements,未显式 state 时沿用维护的当前值(generating)", async () => {
     const manager = new AggregateCardManager(wanling, makeState())
     const elements = [AggregateCardManager.markdown("hello", 1)]
     await manager.patchElements(elements)
     expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { state: undefined, elements },
+      { state: "generating", elements },
       undefined,
     )
   })

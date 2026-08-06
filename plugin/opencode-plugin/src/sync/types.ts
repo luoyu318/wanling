@@ -33,6 +33,13 @@ export interface SessionState {
   // 聚合卡 patch 串行队列:同一 session 并发 flush 时(如 reasoning end 与 text end
   // 同时到达),多次 patch 全量替换会互相覆盖丢元素,按序执行避免。
   aggregatePatchQueue?: Promise<unknown>
+  // 聚合卡当前 state:server 端 UpdateContent 是全量替换 data,未显式带 state 的 PATCH
+  // (如迟到 tool 终态)若不补 state 会丢字段。这里由状态机维护当前值:
+  // 建卡 generating → 回合结束显式翻 done;未显式传 state 的 PATCH 沿用此值。
+  aggregateCardState?: "generating" | "done"
+  // 聚合卡流式已占位元素:流式首帧前把目标 markdown/reasoning 元素 append 进卡,
+  // 之后帧才能命中。Set 记录已 append 的 element_id,防并发帧重复占位。
+  aggregateStreamedElementIds?: Set<string>
   // 聚合模式下工具元素定位:partId → 聚合卡内 tool_card element_id。
   // 工具 running 时同步写入(append 前),completed/error 时按 partId 找到目标元素
   // 做全量替换更新 status/output/error/file_diff。非聚合模式不写入。
