@@ -248,18 +248,66 @@ export class OpencodeBridge extends EventEmitter {
   // async 语义下 OC 收到请求即刻返回,慢的 LLM 生成不阻塞 fetch,
   // retry 窗口缩到几十 ms,重复概率趋零。
   // model?: APP 端选中的模型覆盖,snake→camel 转换由调用方(engine)完成。
+  // v2 queue 语义:delivery="queue" 让 opencode 持久化入队、按序调度,排队消息
+  // 在当前 agent loop 内按小回合穿插执行;resume=true 保持 loop 运行。
+  // 返回 opencode messageID(SessionInputAdmitted.id),供排队状态关联(engine 记 FIFO)。
+  // model 处理:已实测 v2 prompt body 丢弃 model(admitted 只回显 prompt.text),
+  // 故先调 session.switchModel 切到目标模型,再发 prompt(不带 model)。
   async promptAsync(
     sessionId: string,
     text: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
+  ): Promise<string | null> {
+    if (!this.clientV2) throw new Error("opencode v2 client not ready")
+    if (agent) {
+      await this.switchSessionAgent(sessionId, agent)
+    }
+    if (model) {
+      await this.switchSessionModel(sessionId, model)
+    }
+    const session = this.clientV2.session as unknown as {
+      prompt: (params: Record<string, unknown>) => Promise<{ data?: { id?: string } }>
+    }
+    const result = await session.prompt({
+      sessionID: sessionId,
+      prompt: { text },
+      delivery: "queue",
+      resume: true,
+    })
+    // v2 返回 SessionInputAdmitted,含 opencode 生成的 messageID 与 admittedSeq
+    return result?.data?.id ?? null
+  }
+
+  // 切换 session agent(v2 POST /api/session/{id}/agent)。与 model 同理:v2 prompt
+  // 无法透传 agent,用 switchAgent 让排队消息使用 APP 选中的 mode。
+  async switchSessionAgent(
+    sessionId: string,
+    agent: string,
   ): Promise<void> {
-    await this.requireClient().session.promptAsync({
-      path: { id: sessionId },
-      body: {
-        ...(agent ? { agent } : {}),
-        ...(model ? { model } : {}),
-        parts: [{ type: "text" as const, text }],
+    if (!this.clientV2) throw new Error("opencode v2 client not ready")
+    const session = this.clientV2.session as unknown as {
+      switchAgent: (params: Record<string, unknown>) => Promise<unknown>
+    }
+    await session.switchAgent({ sessionID: sessionId, agent })
+  }
+
+  // 切换 session 模型(v2 POST /api/session/{id}/model)。v2 prompt 无法透传 model,
+  // 用 switchModel 让排队消息使用 APP 选中的模型。影响该 session 后续消息
+  // (同会话队列消息共用此模型,语义可接受)。幂等:切换失败抛错由调用方重试。
+  async switchSessionModel(
+    sessionId: string,
+    model: { providerID: string; modelID: string },
+  ): Promise<void> {
+    if (!this.clientV2) throw new Error("opencode v2 client not ready")
+    const session = this.clientV2.session as unknown as {
+      switchModel: (params: Record<string, unknown>) => Promise<unknown>
+    }
+    await session.switchModel({
+      sessionID: sessionId,
+      model: {
+        providerID: model.providerID,
+        id: model.modelID,
       },
     })
   }
