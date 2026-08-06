@@ -4,6 +4,7 @@ import { ensureConversation } from "./ensure_conversation.js"
 import { findBySessionId } from "./mapper.js"
 import type { SessionState, ChildSessionEntry } from "./types.js"
 import type { MessageRouter } from "./messaging.js"
+import { AggregateCardManager } from "./domains/aggregate_card.js"
 
 // SessionStore:跨事件共享状态仓。
 // 持有 sessions / childSessionTree / partIndex / idleHandled / createStateInflight
@@ -63,15 +64,24 @@ export class SessionStore {
       if (!child.hasFirstEvent) {
         child.hasFirstEvent = true
         try {
-          await this.wanling.updateMessageContent(child.parentMsgId, {
-            msg_type: "tool_card",
-            data: {
-              name: "task",
-              input: child.taskInput || {},
-              status: "working",
-              ...(child.childSessionId ? { sub_session_id: child.childSessionId } : {}),
-            },
-          })
+          if (child.aggregateElementId && child.aggregateParentState) {
+            // 聚合模式:task 卡是聚合卡内元素,working 更新经 updateElement 合并进元素 data
+            // (保留 input/sub_session_id,不丢字段),不再 updateMessageContent 独立卡。
+            await new AggregateCardManager(this.wanling, child.aggregateParentState).updateElement(
+              child.aggregateElementId,
+              { status: "working" },
+            )
+          } else {
+            await this.wanling.updateMessageContent(child.parentMsgId, {
+              msg_type: "tool_card",
+              data: {
+                name: "task",
+                input: child.taskInput || {},
+                status: "working",
+                ...(child.childSessionId ? { sub_session_id: child.childSessionId } : {}),
+              },
+            })
+          }
         } catch (err) {
           console.error(`[streamer] 子 session working PATCH 失败: ${err instanceof Error ? err.message : err}`)
         }
@@ -175,6 +185,7 @@ export class SessionStore {
     childSessionId: string,
     parentSessionId: string | undefined,
     taskInput: Record<string, unknown>,
+    aggregateOpts?: { elementId: string },
   ): ChildSessionEntry {
     // 嵌套继承:若父 state 本身是 child(即 isChildSession=true),说明本次 task 是
     // 二层子 agent,rootMsgId 必须取父 childEntry 的 rootMsgId(指向最顶层),
@@ -203,6 +214,12 @@ export class SessionStore {
       taskInput,
       childSessionId,
     }
+    // 聚合模式:task 卡是聚合卡内元素,记录 element_id + 父 state,
+    // working PATCH / 超时兜底 PATCH 经 updateElement 更新聚合元素。
+    if (aggregateOpts) {
+      entry.aggregateElementId = aggregateOpts.elementId
+      entry.aggregateParentState = parentState
+    }
     childState.childEntry = entry
     // wide-review M-2:同 childSessionId key 覆盖旧 entry 时先 clearTimeout 旧 timer,
     // 避免理论边界(同 session 复用)下旧 timer 悬挂泄漏。
@@ -216,19 +233,29 @@ export class SessionStore {
     entry.cleanupTimer = setTimeout(() => {
       console.warn(`[streamer] 子 session 超时未完成,清理 + PATCH 父卡片为 error: ${childSessionId.slice(0, 12)}`)
       this.childSessionTree.delete(childSessionId)
-      this.wanling.updateMessageContent(taskCardMsgId, {
-        msg_type: "tool_card",
-        data: {
-          name: "task",
-          input: taskInput,
-          output: "子 Agent 超时未完成(>30min)",
-          status: "error",
-          ...(childSessionId ? { sub_session_id: childSessionId } : {}),
-        },
-      }).catch((patchErr) => {
-        // PATCH 失败不再阻塞,日志即可,卡片可能已被 completed/error PATCH 过
-        console.error(`[streamer] 超时 PATCH 父卡片失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
-      })
+      if (entry.aggregateElementId && entry.aggregateParentState) {
+        // 聚合模式:更新聚合卡内 task 元素为 error(updateElement 合并保留 input/sub_session_id)。
+        new AggregateCardManager(this.wanling, entry.aggregateParentState).updateElement(
+          entry.aggregateElementId,
+          { output: "子 Agent 超时未完成(>30min)", status: "error" },
+        ).catch((patchErr) => {
+          console.error(`[streamer] 超时更新聚合卡 task 元素失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
+        })
+      } else {
+        this.wanling.updateMessageContent(taskCardMsgId, {
+          msg_type: "tool_card",
+          data: {
+            name: "task",
+            input: taskInput,
+            output: "子 Agent 超时未完成(>30min)",
+            status: "error",
+            ...(childSessionId ? { sub_session_id: childSessionId } : {}),
+          },
+        }).catch((patchErr) => {
+          // PATCH 失败不再阻塞,日志即可,卡片可能已被 completed/error PATCH 过
+          console.error(`[streamer] 超时 PATCH 父卡片失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
+        })
+      }
     }, this.childTimeoutMs)
     return entry
   }

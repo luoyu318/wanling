@@ -18,9 +18,11 @@ import { AggregateCardManager, type ToolCardData } from "./aggregate_card.js"
 //               state.aggregateToolElementIds(同步写入,append 前),completed/error 据此定位。
 //   completed → 全量替换聚合卡元素,更新目标元素 status:completed + output + file_diff。
 //   error     → 更新目标元素 status:error + error 字段。
-// task 工具恒走独立卡(不聚合):childSessionTree 的 parentMsgId/rootMsgId 是消息级语义
-// (子 session 消息透传 parent_msg_id 串树 + working PATCH 都按消息 id 操作),
-// 聚合卡内元素无法承载消息级 parent_msg_id,故 task 卡保持独立,子 session 也恒不聚合。
+// task 工具聚合模式:主 session 的 task 卡同样追加为聚合卡内 tool_card 元素
+// (status:starting + sub_session_id,APP 点击跳子 agent 详情页),completed/error 更新该元素。
+// childSessionTree 的 parentMsgId 聚合模式下取聚合卡 msgId(子 session 消息仍走独立子流,
+// 经 parent/root 串到聚合卡下);working/超时 PATCH 聚合模式下经 updateElement 更新元素。
+// 子 session 恒不聚合(useAggregate 判定),其内部 task 仍走独立卡。
 // 开关 false 时完全回退旧逻辑(sendCard 独立卡 + updateMessageContent PATCH)。
 // 聚合序号(nextSeq)/累计(aggregateElements)/patch 串行队列(aggregatePatchQueue)
 // 都在 SessionState 上维护,与 PartDispatcher 共用同一计数器与队列,element_id 全卡唯一、
@@ -236,6 +238,28 @@ export class ToolCardManager {
       setImmediate(() => this.flushPending(state, childSessionId, sessionID))
 
     } else if (status === "completed") {
+      // 聚合模式:更新聚合卡内 task 元素(status:completed + output + duration + sub_session_id),
+      // 非聚合走下方独立 task 卡 updateMessageContent。
+      if (this.useAggregate(state)) {
+        let patched = false
+        try {
+          const duration = extractDuration(part)
+          const patchData: Record<string, unknown> = {
+            name: "task",
+            input: input || {},
+            output: output || "",
+            status: "completed",
+          }
+          if (childSessionId) patchData.sub_session_id = childSessionId
+          if (duration !== null) patchData.duration = duration
+          await this.updateToolElement(state, part, patchData)
+          patched = true
+        } catch (err) {
+          console.error(`[streamer] task completed 聚合更新失败: ${err instanceof Error ? err.message : err}`)
+        }
+        if (patched) this.store.cleanupChild(childSessionId)
+        return
+      }
       // 终态 PATCH 失败时保留 childSessionTree + 兜底 timer,让 30min 兜底兜住
       // (旧实现 finally 无条件 cleanup,反而拆掉自己的兜底 → 卡片永卡 working)
       let patched = false
@@ -267,6 +291,25 @@ export class ToolCardManager {
       if (patched) this.store.cleanupChild(childSessionId)
 
     } else if (status === "error") {
+      // 聚合模式:更新聚合卡内 task 元素(status:error + error 字段)。
+      if (this.useAggregate(state)) {
+        let patched = false
+        try {
+          const patchData: Record<string, unknown> = {
+            name: "task",
+            input: input || {},
+            error: (part.state?.error as string) || "",
+            status: "error",
+          }
+          if (childSessionId) patchData.sub_session_id = childSessionId
+          await this.updateToolElement(state, part, patchData)
+          patched = true
+        } catch (err) {
+          console.error(`[streamer] task error 聚合更新失败: ${err instanceof Error ? err.message : err}`)
+        }
+        if (patched) this.store.cleanupChild(childSessionId)
+        return
+      }
       let patched = false
       try {
         const msgId = await this.resolveMsgId(state, part, childSessionId, sessionID)
@@ -307,11 +350,10 @@ export class ToolCardManager {
     state.pendingChildSessionId = undefined
     state.pendingParentSessionId = undefined
 
-    // 聚合模式(仅普通 tool):把工具追加为聚合卡元素,不再发独立 tool_card。
-    // task 工具恒走独立卡(下方独立卡逻辑,保留 childSessionTree 消息级 parent/root),
+    // 聚合模式:把工具(tool + task)追加为聚合卡元素,不再发独立 tool_card。
     // 子 session 恒不聚合(useAggregate 判定)。
-    if (pending.toolName !== "task" && this.useAggregate(state)) {
-      this.flushAggregateTool(state, pending)
+    if (this.useAggregate(state)) {
+      this.flushAggregateTool(state, pending, effectiveChild, effectiveParent)
       return
     }
 
@@ -352,18 +394,47 @@ export class ToolCardManager {
   }
 
   // 聚合模式工具 running 追加:取号 → 同步写入 partId→element_id 映射(completed/error 据此
-  // 定位)→ 追加 tool_card 元素并 PATCH。append 失败 emit error(与独立卡发送失败一致口径,
-  // 不静默吞,否则工具卡在聚合卡里缺失且无任何可见迹象)。
+  // 定位)→ 追加 tool_card 元素并 PATCH。task 工具追加 status:starting + sub_session_id,
+  // append 成功后(聚合卡 msgId 就绪)注册 childSessionTree(等价独立卡 sendCard 的 .then)。
+  // append 失败 emit error(与独立卡发送失败一致口径,不静默吞)。
   private flushAggregateTool(
     state: SessionState,
     pending: { toolName: string; input: Record<string, unknown>; partId: string },
+    childSessionId?: string,
+    parentSessionId?: string,
   ): void {
     const seq = this.nextSeq(state)
     const elementId = `tool_card_${seq}`
     if (!state.aggregateToolElementIds) state.aggregateToolElementIds = new Map()
     state.aggregateToolElementIds.set(pending.partId, elementId)
+    // 审批/提问抢占路径(updateToolElement preempt 直接调本方法)无参,
+    // fallback 到 state.pending*(flushPending 路径已清空,由参数携带)。
+    const effectiveChild = childSessionId ?? state.pendingChildSessionId
+    const effectiveParent = parentSessionId ?? state.pendingParentSessionId
+    const isTask = pending.toolName === "task"
+    const data: ToolCardData = {
+      name: pending.toolName,
+      input: pending.input,
+      status: isTask ? "starting" : "running",
+    }
+    if (isTask && effectiveChild) {
+      data.sub_session_id = effectiveChild
+    }
     console.log(`[TC-DBG] flushPending 聚合追加 tool_card_${seq} tool=${pending.toolName} part=${pending.partId}`)
-    void this.appendToolElement(state, { name: pending.toolName, input: pending.input, status: "running" }, seq)
+    void this.appendToolElement(state, data, seq)
+      .then(() => {
+        // task 工具:聚合卡 append 成功后(ensureCard 已建卡,msgId 就绪)注册 childSessionTree,
+        // 子 session 事件才能命中 getOrCreateState 走透传路径。聚合卡 msgId 作为
+        // parentMsgId,子 session 消息经 parent/root 串到聚合卡下。
+        if (isTask && effectiveChild) {
+          const msgId = state.aggregateCardMsgId
+          if (msgId) {
+            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId })
+          } else {
+            console.error(`[streamer] task 聚合追加后聚合卡 msgId 缺失,childSessionTree 未注册: part=${pending.partId}`)
+          }
+        }
+      })
       .catch((err) => {
         console.error(`[streamer] 延迟 tool_card 聚合追加失败: ${err instanceof Error ? err.message : err}`)
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))

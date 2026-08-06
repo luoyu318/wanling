@@ -79,4 +79,10 @@ export interface ChildSessionEntry {
   // 兜底超时清理句柄:task 崩溃或漏发 completed/error SSE 时,10min 后强制清理避免泄漏。
   // 正常路径(task/completed|error)在 _handleTaskTool 清理前 clearTimeout。
   cleanupTimer?: ReturnType<typeof setTimeout>
+  // 聚合模式下 task 卡是聚合卡内 tool_card 元素(非独立消息):
+  // aggregateElementId 定位聚合卡内 task 元素,aggregateParentState 承载聚合卡累计
+  // (elements/串行队列/msgId)。命中时 working PATCH / 超时兜底 PATCH 走
+  // AggregateCardManager.updateElement,不再 updateMessageContent 独立 task 卡。
+  aggregateElementId?: string
+  aggregateParentState?: SessionState
 }

@@ -6,9 +6,9 @@ import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 
 // ToolCardManager 聚合卡改造单测:mock store/router/wanling,直接断言
-// 普通 tool 在聚合开关开/关、子 session 三种场景下的行为差异。
-// task 工具恒走独立卡(保留 childSessionTree 消息级 parent/root 串树语义),
-// 不受聚合开关影响,这里覆盖其保持独立的回归。
+// 普通 tool + task 在聚合开关开/关、子 session 三种场景下的行为差异。
+// 聚合模式:主 session 的 task 卡作为聚合卡内 tool_card 元素(含 sub_session_id),
+// childSessionTree 以聚合卡 msgId 为 parentMsgId;子 session 恒不聚合(独立卡串树)。
 function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const state: SessionState = {
     reasoning: null,
@@ -226,8 +226,39 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     ])
   })
 
-  it("聚合模式下 task 工具保持独立卡(保留 childSessionTree 消息级 parent/root 语义)", async () => {
+  it("聚合模式下 task running → 追加 tool_card 元素(status:starting + sub_session_id),注册 childSessionTree", async () => {
     const { manager, state, store, router, wanling } = makeFixture()
+    const taskPart = toolPart("p-task-1", "task", "running", {
+      input: { description: "子任务", prompt: "..." },
+      metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+    })
+    await manager.onPartUpdated(taskPart, state, "sess-1")
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    await vi.waitFor(() => {
+      expect(store.registerChild).toHaveBeenCalled()
+    })
+    const [msgId, body] = lastPatch(wanling)
+    expect(msgId).toBe("card-1")
+    expect(body.elements).toEqual([
+      AggregateCardManager.toolCard(
+        { name: "task", input: { description: "子任务", prompt: "..." }, status: "starting", sub_session_id: "sess-child" },
+        1,
+      ),
+    ])
+    // 不再发独立 task 卡(sendCard 不被调)
+    expect(router.sendCard).not.toHaveBeenCalled()
+    // registerChild 以聚合卡 msgId 为 parentMsgId(子 session 消息串到聚合卡下)
+    expect(store.registerChild).toHaveBeenCalledWith(
+      state, "card-1", "sess-child", "sess-1",
+      { description: "子任务", prompt: "..." },
+      expect.objectContaining({ elementId: "tool_card_1" }),
+    )
+  })
+
+  it("聚合模式下 task completed → 更新聚合元素 status:completed + output + sub_session_id,并清理 childSessionTree", async () => {
+    const { manager, state, store, wanling } = makeFixture()
     await manager.onPartUpdated(
       toolPart("p-task-1", "task", "running", {
         input: { description: "子任务", prompt: "..." },
@@ -235,15 +266,102 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       }),
       state, "sess-1",
     )
-    await new Promise((r) => setImmediate(r))
-    await Promise.resolve()
-    // task 卡仍走独立 sendCard(starting 状态),不追加聚合元素
-    expect(router.sendCard).toHaveBeenCalledWith(
-      state, "tool_card",
-      expect.objectContaining({ name: "task", status: "starting", sub_session_id: "sess-child" }),
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    await vi.waitFor(() => {
+      expect(store.registerChild).toHaveBeenCalled()
+    })
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "completed", {
+        input: { description: "子任务", prompt: "..." },
+        output: "任务完成",
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
     )
-    expect(store.registerChild).toHaveBeenCalled()
-    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+    })
+    const [, body] = lastPatch(wanling)
+    expect(body.elements).toEqual([
+      AggregateCardManager.toolCard(
+        { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
+        1,
+      ),
+    ])
+    // 不对独立 task 卡发 updateMessageContent PATCH
+    expect(wanling.updateMessageContent).not.toHaveBeenCalled()
+    expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
+  })
+
+  it("聚合模式下 task error → 更新聚合元素 status:error + error 字段", async () => {
+    const { manager, state, store, wanling } = makeFixture()
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
+    )
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    await vi.waitFor(() => {
+      expect(store.registerChild).toHaveBeenCalled()
+    })
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "error", {
+        input: { description: "子任务", prompt: "..." },
+        error: "boom",
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
+    )
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+    })
+    const [, body] = lastPatch(wanling)
+    expect(body.elements).toEqual([
+      AggregateCardManager.toolCard(
+        { name: "task", input: { description: "子任务", prompt: "..." }, error: "boom", status: "error", sub_session_id: "sess-child" },
+        1,
+      ),
+    ])
+    expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
+  })
+
+  it("聚合模式下 task completed 抢占 setImmediate:同步补发 starting 元素再更新,registerChild 仍注册", async () => {
+    const { manager, state, store, wanling } = makeFixture()
+    const running = toolPart("p-task-1", "task", "running", {
+      input: { description: "子任务", prompt: "..." },
+      metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+    })
+    const completed = toolPart("p-task-1", "task", "completed", {
+      input: { description: "子任务", prompt: "..." },
+      output: "任务完成",
+      metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+    })
+    await manager.onPartUpdated(running, state, "sess-1")
+    // 不排空 setImmediate,completed 立即到达(等效旧逻辑 resolveMsgId 分支 3 抢占窗口)
+    await manager.onPartUpdated(completed, state, "sess-1")
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+    })
+    await vi.waitFor(() => {
+      expect(store.registerChild).toHaveBeenCalled()
+    })
+    // 之后 setImmediate 执行 flushPending 时 pending 已被消费,不产生重复 starting 元素
+    await new Promise((r) => setImmediate(r))
+    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+    const [, body] = lastPatch(wanling)
+    expect(body.elements).toEqual([
+      AggregateCardManager.toolCard(
+        { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
+        1,
+      ),
+    ])
+    expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
   })
 })
 
@@ -306,6 +424,59 @@ describe("ToolCardManager 非聚合回退(AGGREGATE_CARD_ENABLED=false)", () => 
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
     expect(router.sendCard).not.toHaveBeenCalled()
+  })
+
+  it("非聚合模式下 task running 仍走独立卡(starting + sub_session_id),registerChild 用 task 卡 msgId", async () => {
+    const { manager, state, store, router, wanling } = makeFixture({ aggregateCardEnabled: false })
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
+    )
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+    expect(router.sendCard).toHaveBeenCalledWith(
+      state, "tool_card",
+      expect.objectContaining({ name: "task", status: "starting", sub_session_id: "sess-child" }),
+    )
+    expect(store.registerChild).toHaveBeenCalledWith(
+      state, "tool-msg-1", "sess-child", "sess-1",
+      { description: "子任务", prompt: "..." },
+    )
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+    expect(wanling.sendCardMessage).not.toHaveBeenCalled()
+  })
+
+  it("非聚合模式下 task completed 对独立卡 updateMessageContent PATCH(status:completed + sub_session_id)", async () => {
+    const { manager, state, store, wanling } = makeFixture({ aggregateCardEnabled: false })
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
+    )
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "completed", {
+        input: { description: "子任务", prompt: "..." },
+        output: "任务完成",
+        metadata: { parentSessionId: "sess-1", sessionId: "sess-child" },
+      }),
+      state, "sess-1",
+    )
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith(
+      "tool-msg-1",
+      expect.objectContaining({
+        msg_type: "tool_card",
+        data: expect.objectContaining({ status: "completed", output: "任务完成", sub_session_id: "sess-child" }),
+      }),
+    )
+    expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
   })
 })
 
