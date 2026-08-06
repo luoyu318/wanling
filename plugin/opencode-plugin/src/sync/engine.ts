@@ -7,10 +7,17 @@ import type {
 import {
   upsertSessionMap,
   getSessionMap,
-  listSessionMaps
+  listSessionMaps,
+  findBySessionId,
 } from "./mapper.js"
 import { getCard, deleteCard } from "./card_store.js"
-import { enqueueSentMessage } from "./queue_state.js"
+import {
+  setSessionBusy,
+  isSessionBusy,
+  enqueuePendingMessage,
+  dequeueNextMessage,
+  getPendingCount,
+} from "./queue_state.js"
 import { EventEmitter } from "events"
 
 export class SyncEngine extends EventEmitter {
@@ -54,6 +61,7 @@ export class SyncEngine extends EventEmitter {
   private async handleIncomingMessage(
     payload: MessageCreatePayload,
   ): Promise<void> {
+    console.log(`[sync] handleIncomingMessage msgId=${payload.id?.slice(0, 8)} sender=${payload.sender_type} conv=${payload.conversation_id?.slice(0, 8)}`)
     if (payload.sender_type !== "user") return
     if (!payload.sender_id) return
 
@@ -164,7 +172,7 @@ export class SyncEngine extends EventEmitter {
         const model = rawModel && rawModel.provider_id && rawModel.model_id
           ? { providerID: rawModel.provider_id, modelID: rawModel.model_id }
           : undefined
-        await this.promptWithRetry(map.opencodeSessionId, String(data.text || ""), payload.id, agent, model)
+        await this.enqueueOrSend(map.opencodeSessionId, payload.id, String(data.text || ""), agent, model)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -229,7 +237,6 @@ export class SyncEngine extends EventEmitter {
   private async promptWithRetry(
     sessionId: string,
     text: string,
-    wanlingMsgId: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<void> {
@@ -238,9 +245,6 @@ export class SyncEngine extends EventEmitter {
     let lastErr: Error | null = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        // 发送前登记 FIFO:opencode 入队后 subscriber 的 admitted/prompted 事件
-        // 按序到达,queue_state 据此关联回 wanling 消息(排队徽标定位)。
-        enqueueSentMessage(sessionId, wanlingMsgId, text)
         await this.opencode.promptAsync(sessionId, text, agent, model)
         return
       } catch (err) {
@@ -253,6 +257,48 @@ export class SyncEngine extends EventEmitter {
       }
     }
     throw lastErr ?? new Error("promptWithRetry: unreachable")
+  }
+
+  // 本地排队发送:session 忙(busy)时新消息入队 + 发 queued:true 徽标;
+  // 空闲时直接发送并标记 busy。session 空闲后由 processPendingQueue 串行补发。
+  private async enqueueOrSend(
+    sessionId: string,
+    wanlingMsgId: string,
+    text: string,
+    agent?: string,
+    model?: { providerID: string; modelID: string },
+  ): Promise<void> {
+    if (isSessionBusy(sessionId)) {
+      enqueuePendingMessage(sessionId, { wanlingMsgId, text, agent, model })
+      this.sendQueuedStatus(sessionId, wanlingMsgId, true)
+      console.log(`[sync] session busy, 消息排队 msgId=${wanlingMsgId.slice(0, 8)} queueLen=${getPendingCount(sessionId)}`)
+      return
+    }
+    setSessionBusy(sessionId, true)
+    this.sendQueuedStatus(sessionId, wanlingMsgId, false)
+    await this.promptWithRetry(sessionId, text, agent, model)
+  }
+
+  // session 空闲时推进队列:清 busy 标记,取下一条待发消息发送(串行),发 queued:false 移除徽标。
+  // 由 streamer 的 onSessionIdle(会话结束主路径)经事件触发。
+  async processPendingQueue(sessionId: string): Promise<void> {
+    setSessionBusy(sessionId, false)
+    const next = dequeueNextMessage(sessionId)
+    if (!next) return
+    setSessionBusy(sessionId, true)
+    this.sendQueuedStatus(sessionId, next.wanlingMsgId, false)
+    await this.promptWithRetry(sessionId, next.text, next.agent, next.model)
+  }
+
+  // 发 queued_status 轻量状态消息(APP 更新用户气泡排队徽标,不插列表)。
+  private sendQueuedStatus(sessionId: string, wanlingMsgId: string, queued: boolean): void {
+    if (!wanlingMsgId) return
+    const map = findBySessionId(sessionId)
+    if (!map) return
+    this.wanling.sendTypedMessage(map.wanlingConvId, "queued_status", {
+      message_id: wanlingMsgId,
+      queued,
+    })
   }
 
   // 从 media 消息 data 提取 file_id:mixed 优先 items[0].file_id,否则顶层 file_id。
@@ -289,7 +335,7 @@ export class SyncEngine extends EventEmitter {
     }
     if (!this.downloader) {
       console.warn("[sync] downloader not configured, cannot handle media message")
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType), wanlingMsgId ?? "")
+      await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
 
@@ -303,10 +349,10 @@ export class SyncEngine extends EventEmitter {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[sync] media download failed: ${msg}`)
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType), wanlingMsgId ?? "")
+      await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
-    await this.promptWithRetry(sessionId, this.mediaPromptText(msgType, result.path), wanlingMsgId ?? "")
+    await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
   }
 
   private mediaPromptText(msgType: string, path: string): string {

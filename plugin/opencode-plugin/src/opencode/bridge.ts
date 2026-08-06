@@ -248,78 +248,30 @@ export class OpencodeBridge extends EventEmitter {
   // async 语义下 OC 收到请求即刻返回,慢的 LLM 生成不阻塞 fetch,
   // retry 窗口缩到几十 ms,重复概率趋零。
   // model?: APP 端选中的模型覆盖,snake→camel 转换由调用方(engine)完成。
-  // v2 queue 语义:delivery="queue" 让 opencode 持久化入队、按序调度,排队消息
-  // 在当前 agent loop 内按小回合穿插执行;resume=true 保持 loop 运行。
-  // 返回 opencode messageID(SessionInputAdmitted.id),供排队状态关联(engine 记 FIFO)。
-  // model 处理:已实测 v2 prompt body 丢弃 model(admitted 只回显 prompt.text),
-  // 故先调 session.switchModel 切到目标模型,再发 prompt(不带 model)。
+  // 通道选择:v2 prompt(delivery=queue/steer)在 opencode 1.18.12 实测只入队不执行
+  // (agent loop 不启动,消息永久滞留),故回退 v1 session.prompt_async(已验证能执行)。
+  // 排队由 plugin 本地队列承担(见 queue_state.ts / engine 发送逻辑)。
+  // agent/model 直接透传 v1 body(v1 promptAsync 支持 agent/model 字段)。
   async promptAsync(
     sessionId: string,
     text: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<string | null> {
-    if (!this.clientV2) throw new Error("opencode v2 client not ready")
-    if (agent) {
-      await this.switchSessionAgent(sessionId, agent)
-    }
-    if (model) {
-      await this.switchSessionModel(sessionId, model)
-    }
-    const session = this.clientV2.session as unknown as {
-      prompt: (params: Record<string, unknown>) => Promise<{ data?: { id?: string } }>
-    }
-    const result = await session.prompt({
-      sessionID: sessionId,
-      prompt: { text },
-      delivery: "queue",
-      resume: true,
+    const client = this.requireClient()
+    await client.session.promptAsync({
+      path: { id: sessionId },
+      body: {
+        ...(agent ? { agent } : {}),
+        ...(model ? { model } : {}),
+        parts: [{ type: "text" as const, text }],
+      },
     })
-    // v2 返回 SessionInputAdmitted,含 opencode 生成的 messageID 与 admittedSeq
-    return result?.data?.id ?? null
+    return null
   }
 
   // 切换 session agent(POST /api/session/{id}/agent)。与 model 同理:v2 prompt
   // 无法透传 agent,用 switchAgent 让排队消息使用 APP 选中的 mode。
-  // 注意:SDK 1.18.3 的 v2 client 运行时不暴露 switchAgent(类型有但对象没有,
-  // 真机实测 undefined),故用 fetch 直接调 API,不依赖 SDK 方法。
-  async switchSessionAgent(
-    sessionId: string,
-    agent: string,
-  ): Promise<void> {
-    const resp = await fetch(`http://localhost:${this.port}/api/session/${encodeURIComponent(sessionId)}/agent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent }),
-    })
-    if (!resp.ok) {
-      throw new Error(`switchAgent failed: ${resp.status} ${await resp.text().catch(() => "")}`)
-    }
-  }
-
-  // 切换 session 模型(POST /api/session/{id}/model)。v2 prompt 无法透传 model,
-  // 用 switchModel 让排队消息使用 APP 选中的模型。影响该 session 后续消息
-  // (同会话队列消息共用此模型,语义可接受)。幂等:切换失败抛错由调用方重试。
-  // 同 switchAgent:SDK 1.18.3 运行时无 switchModel 方法,用 fetch 直接调。
-  async switchSessionModel(
-    sessionId: string,
-    model: { providerID: string; modelID: string },
-  ): Promise<void> {
-    const resp = await fetch(`http://localhost:${this.port}/api/session/${encodeURIComponent(sessionId)}/model`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: {
-          providerID: model.providerID,
-          id: model.modelID,
-        },
-      }),
-    })
-    if (!resp.ok) {
-      throw new Error(`switchModel failed: ${resp.status} ${await resp.text().catch(() => "")}`)
-    }
-  }
-
   // 调用 opencode session.command API 执行斜杠命令。
   // 与 promptAsync 对应的两条通道:
   //   - promptAsync → POST /session/{id}/prompt_async(普通消息)

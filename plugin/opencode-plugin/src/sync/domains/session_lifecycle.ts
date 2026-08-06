@@ -143,6 +143,10 @@ export class SessionLifecycle {
     //    sessions.get() 拿到的都是主 session(子 session 在 childSessionTree 中,不入 sessions map)。
     //    因此无需 isMainSession 守卫——能到这里的就是用户关心的对话 session。
     this.wanling.sendSessionStatus(state.convId, "idle")
+    // 3. 通知 engine 推进本地发送队列(排队消息串行补发)。
+    //    opencode 1.18.12 无 v2 queue 执行,排队由 plugin 本地队列承担,
+    //    idle 是「当前生成结束」的信号,engine 从队列取下一条发送。
+    this.emitter.emit("session_idle_processed", { sessionId: sessionID })
   }
 
   // 清理心跳 timer + activeSessions。由 Streamer.stop 调用,store 内的

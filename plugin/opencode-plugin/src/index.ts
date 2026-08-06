@@ -90,6 +90,11 @@ async function main(): Promise<void> {
       }, dispatcher, config.childTimeoutMs, config.aggregateCardEnabled)
       subscriber.on("error", (err: unknown) => console.error("[subscriber] error:", err))
       streamer.on("error", (err: Error) => console.error("[streamer] error:", err.message))
+      // 会话结束(idle)后推进 engine 本地发送队列:排队消息串行补发。
+      // 每次重连重建 streamer,故在回调内绑定(重连后新 streamer 也生效)。
+      streamer.on("session_idle_processed", (payload: { sessionId: string }) => {
+        void sync.processPendingQueue(payload.sessionId)
+      })
       subscriber.start().catch((err) => console.error("[subscriber] failed:", err))
       streamer.start()
       console.log("[wanling] streamer started")
