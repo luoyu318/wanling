@@ -60,6 +60,36 @@ void main() {
         isFalse,
       );
     });
+
+    test('set_silent 增量 delta(silent 在 data 内)→ true(回合结束翻转)', () {
+      expect(
+        BackgroundChatService.isAggregateCardSilentFlip({
+          'msg_type': 'aggregate_card',
+          'data': {'op': 'set_silent', 'silent': false},
+        }),
+        isTrue,
+      );
+    });
+
+    test('set_silent 增量 delta silent=true → false', () {
+      expect(
+        BackgroundChatService.isAggregateCardSilentFlip({
+          'msg_type': 'aggregate_card',
+          'data': {'op': 'set_silent', 'silent': true},
+        }),
+        isFalse,
+      );
+    });
+
+    test('非 set_silent 的其他 op(如 set_state)→ false', () {
+      expect(
+        BackgroundChatService.isAggregateCardSilentFlip({
+          'msg_type': 'aggregate_card',
+          'data': {'op': 'set_state', 'state': 'done'},
+        }),
+        isFalse,
+      );
+    });
   });
 
   group('MESSAGE_UPDATE 聚合卡翻转处理', () {
@@ -146,6 +176,49 @@ void main() {
       expect(service.unreadForTest('c1'), 0);
       expect(notified, isEmpty,
           reason: 'generating 阶段的 MESSAGE_UPDATE 不应触发通知');
+    });
+
+    test('set_silent 增量翻转 → 弹通知 + unread +1(body 兜底聚合回复)', () async {
+      // 先收到创建阶段的 silent MESSAGE_CREATE(bg-service 记录会话发送者)
+      await service.handleRawMessageForTest(createRaw());
+
+      await service.handleRawMessageForTest(jsonEncode({
+        'op': 0,
+        't': 'MESSAGE_UPDATE',
+        'd': {
+          'message_id': 'm1',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': false},
+          },
+        },
+      }));
+
+      expect(service.unreadForTest('c1'), 1);
+      expect(notified.length, 1);
+      // delta 无 elements,通知 body 退化兜底 '[聚合回复]'
+      expect(notified.first.body, '[聚合回复]');
+    });
+
+    test('set_silent 增量 silent=true → 不弹通知 + unread 不变', () async {
+      await service.handleRawMessageForTest(createRaw());
+
+      await service.handleRawMessageForTest(jsonEncode({
+        'op': 0,
+        't': 'MESSAGE_UPDATE',
+        'd': {
+          'message_id': 'm1',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': true},
+          },
+        },
+      }));
+
+      expect(service.unreadForTest('c1'), 0);
+      expect(notified, isEmpty);
     });
   });
 }

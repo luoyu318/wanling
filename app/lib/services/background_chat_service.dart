@@ -416,14 +416,21 @@ class BackgroundChatService {
 
   /// 聚合卡回合结束翻转识别(纯函数,便于单测)。
   ///
-  /// MESSAGE_UPDATE 广播的 content 满足 `msg_type==aggregate_card && silent==false`
-  /// 视为回合结束翻转 → 应触发通知/未读。generating 阶段(silent 仍 true)或
-  /// 非聚合卡更新 → false,不打扰(内容渲染由 chatProvider 处理)。
+  /// MESSAGE_UPDATE 广播的 content 满足「聚合卡回合结束翻转」语义时返回 true,
+  /// 应触发通知/未读。两种形态:
+  ///   - 全量替换 PATCH(旧协议):`msg_type==aggregate_card && silent==false`
+  ///   - 增量 set_silent op(新协议):`data.op=="set_silent" && data.silent==false`
+  ///     (增量下 silent 在 data 内而非 content 顶层,见 ai-handbook/websocket-protocol)
+  /// generating 阶段(silent 仍 true)或非聚合卡更新 → false,不打扰。
   @visibleForTesting
   static bool isAggregateCardSilentFlip(Map<String, dynamic>? content) {
     if (content == null) return false;
-    return content['msg_type'] == 'aggregate_card' &&
-        content['silent'] == false;
+    if (content['msg_type'] != 'aggregate_card') return false;
+    final data = content['data'];
+    if (data is Map && data['op'] == 'set_silent') {
+      return data['silent'] == false;
+    }
+    return content['silent'] == false;
   }
 
   /// 聚合卡回合结束 silent 翻转 → 弹通知 + 计未读。

@@ -442,6 +442,69 @@ void main() {
       expect(conv.lastMessagePreview(currentUserId: 'user-1'), 'old',
           reason: 'generating 阶段不应覆盖会话列表预览');
     });
+
+    test('set_silent 增量 op 翻转 → load() 重拉 server 全量(徽章+1 + 预览更新)',
+        () async {
+      final notifier = await boot();
+      // 翻转后 server 返回翻转后的聚合卡全量(含 elements + silent:false)
+      when(() => api.getAgentSessions('agent-1')).thenAnswer((_) async => [
+            _session(unread: 1).copyWith(lastMessageContent: {
+              'msg_type': 'aggregate_card',
+              'data': {
+                'state': 'done',
+                'elements': [
+                  {'type': 'markdown', 'data': {'text': '聚合卡最终回复'}},
+                ],
+              },
+              'silent': false,
+            }),
+          ]);
+
+      // set_silent 增量 delta:silent 在 data 内,顶层无 silent/elements
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        s: 2,
+        d: {
+          'message_id': 'm-agg',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': false},
+          },
+        },
+      ));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final conv = notifier.state!.first;
+      expect(conv.unreadCount, 1,
+          reason: 'set_silent 增量翻转应计 1 未读(server 已在翻转时 IncrUnread)');
+      expect(conv.lastMessagePreview(currentUserId: 'user-1'), '聚合卡最终回复',
+          reason: '预览应经 load() 重拉取 server 全量聚合卡最后 markdown 元素');
+    });
+
+    test('set_silent 增量 op silent=true → 不触发 load()', () async {
+      final notifier = await boot();
+
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        s: 2,
+        d: {
+          'message_id': 'm-agg',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': true},
+          },
+        },
+      ));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final conv = notifier.state!.first;
+      expect(conv.unreadCount, 0);
+      expect(conv.lastMessagePreview(currentUserId: 'user-1'), 'old');
+    });
   });
 
   // ========== lastAgentReplyContent 实时派生 ==========

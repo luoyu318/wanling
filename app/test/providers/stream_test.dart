@@ -589,4 +589,232 @@ void main() {
       expect(msgs.first.isStreaming, isTrue);
     });
   });
+
+  group('聚合卡 MESSAGE_UPDATE 增量 op', () {
+    /// 建一张含 reasoning_1 + markdown_1 的 generating 聚合卡。
+    Future<ProviderContainer> seedCard() async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+      emitAggregateCard('agg-1', state: 'generating', elements: [
+        {
+          'type': 'reasoning',
+          'element_id': 'reasoning_1',
+          'data': {'text': '思考中'},
+        },
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': 'Hi'},
+        },
+      ]);
+      await pump();
+      return container;
+    }
+
+    WSMessage deltaUpdate(Map<String, dynamic> data) => WSMessage(
+          op: 0,
+          t: 'MESSAGE_UPDATE',
+          d: {
+            'message_id': 'agg-1',
+            'conversation_id': 'c1',
+            'content': {'msg_type': 'aggregate_card', 'data': data},
+          },
+        );
+
+    List<Map<String, dynamic>> elementsOf(Map content) =>
+        ((content['data'] as Map)['elements'] as List)
+            .cast<Map<String, dynamic>>();
+
+    test('append:追加 element 到末尾,不改 state/既有元素', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'append',
+        'element': {
+          'type': 'markdown',
+          'element_id': 'markdown_2',
+          'data': {'text': '追加正文'},
+        },
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      expect(msgs.first.id, 'agg-1');
+      final content = msgs.first.content;
+      expect((content['data'] as Map)['state'], 'generating');
+      final elements = elementsOf(content);
+      expect(elements.length, 3);
+      expect(elements[2]['element_id'], 'markdown_2');
+      expect((elements[2]['data'] as Map)['text'], '追加正文');
+      expect(elements[0]['element_id'], 'reasoning_1');
+      expect(elements[1]['element_id'], 'markdown_1');
+    });
+
+    test('update:按 element_id 整体替换元素 data,其他元素不变', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'update',
+        'element_id': 'markdown_1',
+        'data': {'text': '最终回复正文'},
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final elements = elementsOf(msgs.first.content);
+      expect(elements.length, 2);
+      final markdown =
+          elements.firstWhere((e) => e['element_id'] == 'markdown_1');
+      expect((markdown['data'] as Map)['text'], '最终回复正文');
+      // 其他元素未被触碰
+      final reasoning =
+          elements.firstWhere((e) => e['element_id'] == 'reasoning_1');
+      expect((reasoning['data'] as Map)['text'], '思考中');
+    });
+
+    test('update:element_id 不存在 → 幂等跳过,卡片内容不变', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'update',
+        'element_id': 'ghost',
+        'data': {'text': 'x'},
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final elements = elementsOf(msgs.first.content);
+      expect(elements.length, 2);
+      expect(elements[1]['element_id'], 'markdown_1');
+      expect((elements[1]['data'] as Map)['text'], 'Hi');
+    });
+
+    test('remove:按 element_id 删除元素', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'remove',
+        'element_id': 'reasoning_1',
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final elements = elementsOf(msgs.first.content);
+      expect(elements.length, 1);
+      expect(elements.first['element_id'], 'markdown_1');
+    });
+
+    test('remove:element_id 不存在 → 幂等跳过', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'remove',
+        'element_id': 'ghost',
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(elementsOf(msgs.first.content).length, 2);
+    });
+
+    test('reorder:按 order 重排,未列出的元素保序追加尾部', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      // 追加第三个元素再重排(验证 reorder 不丢未列出元素)
+      ws.emitUpdate(deltaUpdate({
+        'op': 'append',
+        'element': {
+          'type': 'footer',
+          'element_id': 'footer_1',
+          'data': {'text': '底'},
+        },
+      }));
+      await pump();
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'reorder',
+        'order': ['markdown_1', 'footer_1'],
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final ids =
+          elementsOf(msgs.first.content).map((e) => e['element_id']).toList();
+      // markdown_1 / footer_1 按 order 前置,reasoning_1 未列出保序追加尾部
+      expect(ids, ['markdown_1', 'footer_1', 'reasoning_1']);
+    });
+
+    test('set_state:改 data.state,元素不变', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'set_state',
+        'state': 'done',
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final content = msgs.first.content;
+      expect((content['data'] as Map)['state'], 'done');
+      expect(elementsOf(content).length, 2);
+    });
+
+    test('set_silent:改顶层 content.silent,data/state/elements 不变', () async {
+      final container = await seedCard();
+      final key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'set_silent',
+        'silent': false,
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      final content = msgs.first.content;
+      expect(content['silent'], isFalse);
+      expect((content['data'] as Map)['state'], 'generating');
+      expect(elementsOf(content).length, 2);
+    });
+
+    test('非聚合卡消息带 data.op → 不误当聚合增量,走全量替换', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      emitAgentCreate('m-1', '旧文本');
+      await pump();
+
+      // 普通 text 消息带 op 字段(异常协议):非聚合卡不应被当作聚合增量合并
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'message_id': 'm-1',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'text',
+            'data': {'op': 'set_state', 'state': 'done'},
+          },
+        },
+      ));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.first.content, {
+        'msg_type': 'text',
+        'data': {'op': 'set_state', 'state': 'done'},
+      });
+    });
+  });
 }

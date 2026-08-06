@@ -182,10 +182,21 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
 
     // 聚合卡回合结束翻转:silent true→false → 徽章+1 + lastMessageContent 更新。
     // generating 阶段(silent 仍 true)只更新渲染(chatProvider),列表不动。
-    if (content != null &&
-        msgType == 'aggregate_card' &&
-        content['silent'] == false) {
-      _onAggregateCardFlip(convId, content);
+    // 增量 set_silent op:silent 在 data 内,delta 无 elements,直接覆盖
+    // lastMessageContent 会让预览退化 → 走 load() 拉 server 全量。
+    if (msgType == 'aggregate_card' && content != null) {
+      final data = content['data'];
+      final isSetSilentDelta = data is Map && data['op'] == 'set_silent';
+      final flipped = isSetSilentDelta
+          ? data['silent'] == false
+          : content['silent'] == false;
+      if (flipped) {
+        if (isSetSilentDelta) {
+          load();
+        } else {
+          _onAggregateCardFlip(convId, content);
+        }
+      }
     }
   }
 

@@ -857,6 +857,106 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
+  /// 聚合卡 MESSAGE_UPDATE 增量 op 应用:delta(广播 content)形如
+  /// `{msg_type:"aggregate_card", data:{op, ...}}`,把 op 合并进本地 content:
+  ///   - append:     data.element 追加到 elements 末尾
+  ///   - update:     data.element_id 命中的元素 data 整体替换(data.data)
+  ///   - remove:     data.element_id 删除元素(不存在幂等跳过,便于网络重试)
+  ///   - reorder:    data.order 重排(未列出的元素保序追加尾部,不丢数据)
+  ///   - set_state:  data.state 改 data.state
+  ///   - set_silent: data.silent 改顶层 content.silent(注意 delta 的 silent
+  ///                 在 data 内,合并结果放 content 顶层,与 server 落库结构一致)
+  ///
+  /// 返回合并后的全量 content;返回 null 表示非增量(delta 无 op / 原消息非
+  /// aggregate_card),调用方走全量替换兼容路径(旧 plugin / 非聚合卡)。
+  /// 增量参数缺失 / 目标元素不存在时幂等跳过(返回原 content):本地状态可能
+  /// 滞后(断线漏 append),此时若用 delta 全量替换会清掉整卡元素。
+  Map<String, dynamic>? _applyAggregateCardDelta(
+      Map<String, dynamic> content, Map<String, dynamic> delta) {
+    if (MsgTypeX.fromString(content['msg_type'] as String?) !=
+        MsgType.aggregateCard) {
+      return null;
+    }
+    final data = delta['data'];
+    if (data is! Map) return null;
+    final op = data['op'] as String?;
+    if (op == null || op.isEmpty) return null;
+
+    final newData =
+        Map<String, dynamic>.from(content['data'] as Map? ?? const {});
+    final newContent = <String, dynamic>{...content, 'data': newData};
+
+    switch (op) {
+      case 'append':
+        final element = data['element'];
+        if (element is! Map) return content;
+        final raw = newData['elements'];
+        final elements = raw is List ? [...raw] : <Object>[];
+        elements.add(Map<String, dynamic>.from(element));
+        newData['elements'] = elements;
+      case 'update':
+        final elementId = data['element_id'] as String?;
+        final patchData = data['data'];
+        if (elementId == null || elementId.isEmpty || patchData is! Map) {
+          return content;
+        }
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        var matched = false;
+        final elements = raw.map((e) {
+          if (e is Map && e['element_id'] == elementId) {
+            matched = true;
+            return <String, dynamic>{...e, 'data': Map<String, dynamic>.from(patchData)};
+          }
+          return e;
+        }).toList();
+        if (!matched) return content;
+        newData['elements'] = elements;
+      case 'remove':
+        final elementId = data['element_id'] as String?;
+        if (elementId == null || elementId.isEmpty) return content;
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        newData['elements'] = raw
+            .where((e) => !(e is Map && e['element_id'] == elementId))
+            .toList();
+      case 'reorder':
+        final order = data['order'];
+        if (order is! List || order.isEmpty) return content;
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        final byId = <Object?, Object>{
+          for (final e in raw)
+            if (e is Map) e['element_id']: e,
+        };
+        final seen = <String>{};
+        final ordered = <Object>[];
+        for (final id in order) {
+          final e = byId[id];
+          if (e == null) continue; // 未知 id 幂等跳过(server 已校验,本地容错)
+          if (seen.contains(id)) continue; // order 重复 id 去重
+          seen.add(id);
+          ordered.add(e);
+        }
+        for (final e in raw) {
+          if (e is Map && seen.contains(e['element_id'])) continue;
+          ordered.add(e);
+        }
+        newData['elements'] = ordered;
+      case 'set_state':
+        final state = data['state'] as String?;
+        if (state == null || state.isEmpty) return content;
+        newData['state'] = state;
+      case 'set_silent':
+        final silent = data['silent'];
+        if (silent is! bool) return content;
+        return <String, dynamic>{...newContent, 'silent': silent};
+      default:
+        return content; // 未知 op:幂等跳过,不覆盖本地
+    }
+    return newContent;
+  }
+
   void _listenUpdates() {
     _updateSubscription = ws.messageUpdates.listen((msg) {
       final payload = msg.d as Map<String, dynamic>?;
@@ -892,7 +992,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
 
-      state = _updateMessageById(msgId, (m) => m.copyWith(content: newContent));
+      // 聚合卡增量 op:合并进本地 content,保持元素/state/silent 增量演进;
+      // 非增量(无 op / 非聚合卡)走全量替换兼容(旧 plugin / 历史消息)。
+      state = _updateMessageById(msgId, (m) {
+        final merged = _applyAggregateCardDelta(m.content, newContent);
+        return m.copyWith(content: merged ?? newContent);
+      });
     });
   }
 
