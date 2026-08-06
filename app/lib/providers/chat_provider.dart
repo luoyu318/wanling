@@ -871,6 +871,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// aggregate_card),调用方走全量替换兼容路径(旧 plugin / 非聚合卡)。
   /// 增量参数缺失 / 目标元素不存在时幂等跳过(返回原 content):本地状态可能
   /// 滞后(断线漏 append),此时若用 delta 全量替换会清掉整卡元素。
+  /// schema_ver 守卫:本地 content.data.schema_ver 缺失视为 1,> 当前支持的
+  /// aggregateCardSchemaVer 时不应用增量(保持现状),防止新协议增量被旧 APP 误合并。
   Map<String, dynamic>? _applyAggregateCardDelta(
       Map<String, dynamic> content, Map<String, dynamic> delta) {
     if (MsgTypeX.fromString(content['msg_type'] as String?) !=
@@ -881,6 +883,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (data is! Map) return null;
     final op = data['op'] as String?;
     if (op == null || op.isEmpty) return null;
+
+    // schema_ver 守卫:本地 content 版本超前(新插件协议)→ 不应用增量,防误合并。
+    final localVer = (content['data'] as Map?)?['schema_ver'];
+    final localVerInt = localVer is int ? localVer : 1;
+    if (localVerInt > aggregateCardSchemaVer) return content;
 
     final newData =
         Map<String, dynamic>.from(content['data'] as Map? ?? const {});

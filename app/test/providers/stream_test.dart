@@ -86,7 +86,9 @@ void main() {
 
   /// 通过 MESSAGE_CREATE 注入聚合卡消息(msg_type=aggregate_card)。
   void emitAggregateCard(String id,
-      {List<Map<String, dynamic>>? elements, String state = 'generating'}) {
+      {List<Map<String, dynamic>>? elements,
+      String state = 'generating',
+      int? schemaVer}) {
     ws.emit(WSMessage(
       op: 0,
       t: 'MESSAGE_CREATE',
@@ -97,7 +99,11 @@ void main() {
         'sender_id': 'a1',
         'content': {
           'msg_type': 'aggregate_card',
-          'data': {'state': state, 'elements': elements ?? []},
+          'data': {
+            if (schemaVer != null) 'schema_ver': schemaVer,
+            'state': state,
+            'elements': elements ?? [],
+          },
         },
         'created_at': '2026-07-24T00:00:00Z',
       },
@@ -815,6 +821,72 @@ void main() {
         'msg_type': 'text',
         'data': {'op': 'set_state', 'state': 'done'},
       });
+    });
+
+    test('schema_ver 守卫:本地 content 版本 > 支持版本 → 不应用增量(保持现状)', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      // 本地已有 schema_ver=2(未来协议)的聚合卡
+      emitAggregateCard('agg-1',
+          state: 'generating',
+          schemaVer: 2,
+          elements: [
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_1',
+              'data': {'text': 'Hi'},
+            },
+          ]);
+      await pump();
+
+      // 收到 append 增量,但本地版本超前 → 不合并,保持原 content
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'message_id': 'agg-1',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {
+              'op': 'append',
+              'element': {
+                'type': 'markdown',
+                'element_id': 'markdown_2',
+                'data': {'text': '不应出现'},
+              },
+            },
+          },
+        },
+      ));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      expect(elementsOf(msgs.first.content).length, 1);
+      expect((elementsOf(msgs.first.content).first['data'] as Map)['text'],
+          'Hi');
+    });
+
+    test('schema_ver 缺失(视为 1)→ 正常应用增量(兼容旧聚合卡)', () async {
+      final container = await seedCard();
+      const key = (convId: 'c1', agentId: 'a1');
+
+      ws.emitUpdate(deltaUpdate({
+        'op': 'append',
+        'element': {
+          'type': 'markdown',
+          'element_id': 'markdown_2',
+          'data': {'text': '追加正文'},
+        },
+      }));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(elementsOf(msgs.first.content).length, 3);
     });
   });
 }

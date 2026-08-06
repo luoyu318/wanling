@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { AggregateCardManager } from "./aggregate_card.js"
+import { AggregateCardManager, AGGREGATE_SCHEMA_VER } from "./aggregate_card.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 
@@ -35,6 +35,7 @@ describe("AggregateCardManager ensureCard", () => {
     const msgId = await manager.ensureCard()
     expect(msgId).toBe("card-1")
     expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
     })
@@ -103,6 +104,7 @@ describe("AggregateCardManager appendElement(增量 op)", () => {
     const element = AggregateCardManager.markdown("hello", 1)
     await manager.appendElement(element)
     expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
     })

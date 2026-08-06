@@ -82,6 +82,12 @@ export type AggregatePatchOp =
 // patchAggregateMessage 的 data 入参:增量 op 或全量替换(兼容,无 op)。
 export type AggregatePatchData = AggregatePatchOp | { state?: string; elements: AggregateElement[] }
 
+// 聚合卡协议 schema 版本(data.schema_ver)。从 1 起,缺失视为 1;破坏性协议变更时递增。
+// 建卡时写 data.schema_ver=1(全量 content 携带);增量 op 是瞬态指令不携带版本。
+// server 合并保留未知字段(schema_ver 天然透传);APP 读本地 content 的 schema_ver,
+// > 支持版本时不应用增量(保持现状防误用),等全量替换兜底。未来跨版本共存无需返工。
+export const AGGREGATE_SCHEMA_VER = 1
+
 // AggregateCardManager:聚合卡发送核心领域模块。
 // 职责:一次问答一张聚合卡 — ensureCard 建卡(幂等,msgId 存 SessionState 跨实例复用),
 // appendElement 增量 append / updateElement 增量 update。silent 翻转(回合结束
@@ -110,6 +116,7 @@ export class AggregateCardManager {
       }
     }
     const promise = this.wanling.sendCardMessage(this.state.convId, "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
     })

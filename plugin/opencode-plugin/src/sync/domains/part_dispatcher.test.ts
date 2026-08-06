@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { EventEmitter } from "events"
 import { PartDispatcher } from "./part_dispatcher.js"
-import { AggregateCardManager } from "./aggregate_card.js"
+import { AggregateCardManager, AGGREGATE_SCHEMA_VER } from "./aggregate_card.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 
@@ -67,6 +67,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       time: 2,
     })
     expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
     })
@@ -282,6 +283,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     expect(wanling.sendCardMessage).toHaveBeenCalledTimes(2)
     expect(wanling.sendCardMessage).toHaveBeenLastCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
     })

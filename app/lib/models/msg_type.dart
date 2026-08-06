@@ -1,3 +1,8 @@
+/// 聚合卡协议 schema 版本(data.schema_ver)。从 1 起,缺失视为 1;
+/// 破坏性协议变更时递增。APP 读本地 content 的 schema_ver,
+/// > 本版本时不应用增量 op(保持现状防误用),等全量替换兜底。
+const int aggregateCardSchemaVer = 1;
+
 /// 消息类型，对应 content JSONB 里的 msg_type 字段。
 /// 集中定义便于 IDE 补全、避免拼写错误。
 enum MsgType {
