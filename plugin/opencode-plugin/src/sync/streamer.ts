@@ -217,6 +217,13 @@ export class Streamer extends EventEmitter {
     this.subscriber.on("session_idle", (payload) => this.lifecycle.onSessionIdle(payload.sessionID))
     this.subscriber.on("session_updated", (payload) => this.metaSync.onSessionUpdated(payload))
     this.subscriber.on("vcs_branch_updated", (payload) => this.metaSync.onVcsBranchUpdated(payload))
+    // 新 assistant 回合开始(opencode 建新 assistant message,parentID 指向新 user
+    // 消息)→ 结束当前聚合卡段落(interrupt footer + reset),下一条回答开新卡。
+    // 时序可靠:opencode 对新回合的 assistant message 在此事件前已将旧回合以
+    // tool-calls/stop 完成,此时旧卡内容已完整,分段不会截断流式输出。
+    this.subscriber.on("assistant_message_started", (payload) => {
+      void this.finishCardForSession(payload.sessionID, "interrupt")
+    })
 
     // 交互事件
     this.subscriber.on("approval_request", (payload) => this.interaction.onPermissionAsked(payload))

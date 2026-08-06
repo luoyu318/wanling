@@ -173,11 +173,11 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `tool_card` | `{name, input, output?, error?, status, sub_session_id?, ...}` | 同独立 tool_card |
 | `markdown` | `{text}` | 同独立 markdown |
 | `compact_divider` | `{phase}` | 压缩分隔线（自绘） |
-| `footer` | `{reason, cost, tokens, duration, finished, stopped?, mode?, model?}` | 同 step_finish（tokens 汇总行）；finished=true 且卡 done 时底部渲染提示条（模式/时长/模型/tokens），mode/model 为回合结束快照；`stopped=true`（abort 主动收尾）时提示条显示「已停止」；`reason` 取值 `stop`（用户停止）/`interrupt`（排队分段新回合） |
+| `footer` | `{reason, cost, tokens, duration, finished, stopped?, mode?, model?}` | 同 step_finish（tokens 汇总行）；finished=true 且卡 done 时底部渲染提示条（模式/时长/模型/tokens），mode/model 为回合结束快照；`stopped=true`（abort 主动收尾）时提示条显示「已停止」；`reason` 取值 `stop`（用户停止）/`interrupt`（消息边界分段新回合） |
 
 **状态呈现（APP 展示层）**：聚合卡不再有顶栏「回复中/完成」条；generating 时卡底部 footer 状态条显示动态阶段词（思考中/执行中/汇总中，按最后元素推导），done 后切换为静态信息条（模式/时长/模型/tokens）；generating 聚合卡存在期间 APP 隐藏消息列表 busy 气泡。mode/model 由 plugin 在 step-finish 时写入 footer data（消息快照，不随 sessionMeta 实时态变动）；时长/tokens 复用 footer 既有字段。footer 无 mode/model（历史消息）时提示条仅显示有时长/tokens 的段。**工具卡折叠**：APP 渲染层把物理连续（中间无其他元素）的 tool_card 元素合并为可展开折叠组（收起「⚡ 工具调用 · N」/展开完整工具卡）；task 子 agent 卡、permission_card、question_card 不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。
 
-**停止收尾**：用户点停止（`GENERATION_ABORT`）后 plugin 主动对当前聚合卡 `finishCard("stop")` 追加 `{reason:"stop", stopped:true, finished:true}` footer + 翻转 `state:"done"`/`silent:false`（APP 提示条显示「已停止」）。幂等：卡 done 时跳过；abort 后 step-finish 仍回推时 isLoopEnd 检测卡已收尾跳过重复 footer。**排队（queued_status）**：plugin 发消息走 opencode v2 `delivery:"queue"`，排队消息在当前回合穿插执行、loop 结束才发 footer。plugin 监听 `prompt.admitted`/`prompted` 事件，按 FIFO（发送序=入队序）关联回 wanling 消息后发轻量状态消息 `msg_type=queued_status`（data `{message_id, queued}`），APP 只更新对应用户气泡「排队中」徽标不插列表；`prompted` 时旧卡 `finishCard("interrupt")` 定格、新回合自动建新卡。APP 用户消息插入时若 live 末尾有聚合卡，插到聚合卡之前（排队语义）。
+**停止收尾**：用户点停止（`GENERATION_ABORT`）后 plugin 主动对当前聚合卡 `finishCard("stop")` 追加 `{reason:"stop", stopped:true, finished:true}` footer + 翻转 `state:"done"`/`silent:false`（APP 提示条显示「已停止」）。幂等：卡 done 时跳过；abort 后 step-finish 仍回推时 isLoopEnd 检测卡已收尾跳过重复 footer。**消息边界分段（interrupt）**：聚合卡按 opencode 消息边界自动分段——plugin 订阅 `message.updated`(role=assistant)，每条 user→assistant 回合建独立 message（带 `parentID` 指向 user 消息）。新 assistant 出现且旧 assistant 以 `tool-calls` 完成（旧回合被新消息打断，未正常 `stop`）时，plugin 对旧卡 `finishCard("interrupt")` 追加 `{reason:"interrupt", stopped:false, finished:true}` footer + 翻转 done/silent，新回合自动建新卡。旧回合正常 `stop`（step-finish 已定稿）时不打断。同回合多 step（工具循环）的 assistant `parentID` 相同，不触发分段。
 
 ### AGENT_MODELS
 

@@ -251,10 +251,9 @@ export class SyncEngine extends EventEmitter {
     throw lastErr ?? new Error("promptWithRetry: unreachable")
   }
 
-  // 发送 prompt:用户消息直接 v1 promptAsync 发送(opencode 自带排队,无需本地队列)。
-  // 打断语义:发送前若该 session 有正在生成的聚合卡(旧回答未结束),先中止旧生成并
-  // 定格旧聚合卡,再发新消息——聚合卡按用户消息拆分(每个用户消息一张卡)。
-  // 经事件让 streamer 处理聚合卡定格(engine 不持有聚合卡状态)。
+  // 发送 prompt:用户消息直接 v1 promptAsync 异步发送(不阻塞,opencode 自带排队)。
+  // 聚合卡分段由消息边界驱动:opencode 对连续消息每条 user→assistant 建独立
+  // message,subscriber 检测新回合(assistant_message_started)→ streamer 收尾旧卡。
   private async sendPromptWithInterrupt(
     sessionId: string,
     wanlingMsgId: string,
@@ -262,10 +261,6 @@ export class SyncEngine extends EventEmitter {
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<void> {
-    // 直接 v1 promptAsync 发送(opencode 自带排队,按序逐条处理)。
-    // 聚合卡分段由 opencode 消息边界驱动:每条 user→assistant 完成后,
-    // opencode 发独立 step-finish(reason=stop)→ isLoopEnd → 当前卡 footer + reset,
-    // 下一条消息回复自动开新卡。不 abort agent(打断由 opencode 排队语义承担)。
     await this.promptWithRetry(sessionId, text, agent, model)
   }
 

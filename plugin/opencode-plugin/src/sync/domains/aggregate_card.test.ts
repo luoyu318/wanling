@@ -364,7 +364,9 @@ describe("AggregateCardManager.finishCard", () => {
       "card-1",
       expect.objectContaining({ op: "append" }),
     )
-    expect(state.aggregateCardState).toBeUndefined() // reset
+    // reset:msgId/序号/累计清空,aggregateCardState 保留 done(标志本卡已收尾,
+    // 幂等守卫靠它区分「活跃卡」与「已收尾」;下一轮 ensureCard 建新卡时置 generating)
+    expect(state.aggregateCardState).toBe("done")
     expect(state.aggregateCardMsgId).toBeUndefined() // reset
   })
 

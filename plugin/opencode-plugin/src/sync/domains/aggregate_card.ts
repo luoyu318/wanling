@@ -132,6 +132,10 @@ export class AggregateCardManager {
     try {
       const msgId = await promise
       this.state.aggregateCardMsgId = msgId
+      // 激活聚合卡:建卡后标记 generating,收尾(reset)后保持 done 直到下次建卡。
+      // 供 finishCard 幂等守卫与 step-finish cardActive 判断区分「可收尾的活跃卡」
+      // 与「已收尾等待开新卡」(避免跨轮残留触发 finishCard 误收尾)。
+      this.state.aggregateCardState = "generating"
       return msgId
     } finally {
       if (this.state.aggregateCardInflight === promise) {
@@ -279,30 +283,44 @@ export class AggregateCardManager {
     return next
   }
 
-  // 聚合卡主动收尾定格:停止(abort)或排队分段(interrupt)时,旧卡无 loop 结束
+  // 聚合卡主动收尾定格:停止(abort)或新回合分段(interrupt)时,旧卡无 loop 结束
   // 的 step-finish footer 数据,由调用方主动补一个简化 footer + set_state done。
-  // reason 区分:stop(用户点停止,APP 显示「已停止」)/ interrupt(排队新回合,无 stopped 标记)。
-  // 幂等:卡已 done 或尚未建卡则跳过;set_silent:false 翻转计未读。
-  // seq 自增与 PartDispatcher.nextSeq 同规则(state.aggregateSeq 全局递增,element_id 唯一)。
-  // 收尾后 reset 聚合卡状态(与 isLoopEnd 的 footer 后 resetAggregateCard 同语义):
-  // 下一轮 ensureCard 建新卡,否则 done 卡会被下一轮复用导致「多轮一卡」。
+  // reason 区分:stop(用户点停止,APP 显示「已停止」)/ interrupt(新回合,无 stopped 标记)。
+  // 幂等:整个收尾(守卫+append+reset)放入 aggregatePatchQueue 串行队列,与
+  // step-finish 的 footer 定稿同队列顺序执行,消除与正常定稿的竞态:
+  // - 正常定稿(step-finish stop)已排在前 → 卡已 done/reset → 此处守卫拦截
+  // - 本收尾先执行 → step-finish 的 cardActive 判断看到 done → 跳过重复 footer
+  // 收尾后 reset 聚合卡状态但保留 aggregateCardState="done":标志「本卡已收尾」,
+  // 下一轮 ensureCard 建新卡时置回 generating("一次问答一张卡"语义)。
   async finishCard(reason: "stop" | "interrupt"): Promise<void> {
-    if (this.state.aggregateCardState === "done") return
-    if (!this.state.aggregateCardMsgId) return
-    const seq = (this.state.aggregateSeq ?? 0) + 1
-    this.state.aggregateSeq = seq
-    await this.appendElement(
-      AggregateCardManager.footer(
+    const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      // 守卫在队列内读最新 state:卡已收尾(done)或尚未建卡 → 幂等跳过。
+      if (this.state.aggregateCardState === "done") return
+      if (!this.state.aggregateCardMsgId) return
+      const seq = (this.state.aggregateSeq ?? 0) + 1
+      this.state.aggregateSeq = seq
+      const footer = AggregateCardManager.footer(
         { reason, stopped: reason === "stop", finished: true },
         seq,
-      ),
-      { silent: false, state: "done" },
-    )
-    // reset:清空建卡 msgId/序号/累计/当前 state,让下一轮新建卡(见 PartDispatcher.resetAggregateCard)
-    this.state.aggregateCardMsgId = undefined
-    this.state.aggregateCardInflight = undefined
-    this.state.aggregateCardState = undefined
-    this.state.aggregateSeq = undefined
-    this.state.aggregateElements = undefined
+      )
+      // 直接 PATCH(不套 appendElement):本任务已排在队列尾部,前面所有元素
+      // append/update 均已完成,直接追加 footer + set_state done,避免嵌套队列死锁。
+      const msgId = this.state.aggregateCardMsgId
+      await this.wanling.patchAggregateMessage(msgId, { op: "append", element: footer })
+      await this.wanling.patchAggregateMessage(msgId, { op: "set_state", state: "done" })
+      await this.wanling.patchAggregateMessage(msgId, { op: "set_silent", silent: false })
+      this.state.aggregateElements = [...(this.state.aggregateElements ?? []), footer]
+      // 收尾完成:标记 done + 清空建卡 msgId/序号/累计,让下一轮新建卡
+      // (aggregateCardState 保留 done 直到 ensureCard 建新卡,供幂等守卫识别)。
+      this.state.aggregateCardState = "done"
+      this.state.aggregateCardMsgId = undefined
+      this.state.aggregateCardInflight = undefined
+      this.state.aggregateSeq = undefined
+      this.state.aggregateElements = undefined
+    })
+    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
+    this.state.aggregatePatchQueue = next.catch(() => {})
+    return next
   }
 }

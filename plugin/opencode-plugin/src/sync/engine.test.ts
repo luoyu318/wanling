@@ -164,8 +164,7 @@ describe("SyncEngine handleIncomingMessage model 透传", () => {
       "sess-model-2",
       "你好",
       undefined,
-      undefined,
-    )
+      undefined)
   })
 
   // 防御:_model 部分字段缺失(如 APP 端 bug 只传 provider_id)时降级为 undefined,
@@ -198,8 +197,7 @@ describe("SyncEngine handleIncomingMessage model 透传", () => {
       "sess-model-3",
       "你好",
       undefined,
-      undefined,
-    )
+      undefined)
   })
 })
 
@@ -817,8 +815,7 @@ describe("SyncEngine handleIncomingMessage image/file/mixed 分支", () => {
 
     expect(downloader.download).not.toHaveBeenCalled()
     expect(opencode.promptAsync).toHaveBeenCalledWith(
-      "sess-reg", "普通消息", undefined, undefined,
-    )
+      "sess-reg", "普通消息", undefined, undefined)
   })
 })
 

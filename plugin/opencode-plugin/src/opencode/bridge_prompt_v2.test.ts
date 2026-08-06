@@ -13,7 +13,7 @@ vi.mock("@opencode-ai/sdk", () => {
   }
 })
 
-// v2 SDK mock:默认空 client(v1 发送不需要 v2)
+// v2 SDK mock:默认空 client(异步发送不需要 v2)
 vi.mock("@opencode-ai/sdk/v2", () => {
   return {
     createOpencodeClient: () => ({}),
@@ -24,7 +24,7 @@ import { OpencodeBridge } from "./bridge.js"
 
 const { __promptAsyncMock: promptAsyncMock } = (await import("@opencode-ai/sdk")) as any
 
-describe("OpencodeBridge.promptAsync (v1 发送,回退自 v2 queue)", () => {
+describe("OpencodeBridge.promptAsync (v1 prompt_async)", () => {
   let bridge: OpencodeBridge
 
   beforeEach(async () => {

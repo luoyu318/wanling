@@ -248,9 +248,11 @@ export class OpencodeBridge extends EventEmitter {
   // async 语义下 OC 收到请求即刻返回,慢的 LLM 生成不阻塞 fetch,
   // retry 窗口缩到几十 ms,重复概率趋零。
   // model?: APP 端选中的模型覆盖,snake→camel 转换由调用方(engine)完成。
-  // 通道选择:v2 prompt(delivery=queue/steer)在 opencode 1.18.12 实测只入队不执行
-  // (agent loop 不启动,消息永久滞留),故回退 v1 session.prompt_async(已验证能执行,
-  // 且 opencode 对 v1 消息自带排队)。agent/model 直接透传 v1 body。
+  // 通道选择:用 v1 prompt_async 异步发送(不阻塞)。聚合卡按用户消息边界分段
+  // 由 subscriber 的 message.updated role=assistant parentID 变化驱动
+  // (assistant_message_started)。
+  // 备注:同步 /session/:id/message 实测会串行但阻塞(agent 任务长时 HTTP 挂起),
+  // 且 messageID 必须 msg_ 前缀(wanling UUID 会被 400 拒绝),故不用同步发送。
   async promptAsync(
     sessionId: string,
     text: string,
