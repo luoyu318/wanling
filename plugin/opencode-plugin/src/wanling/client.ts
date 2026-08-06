@@ -191,6 +191,23 @@ export class WanlingClient extends EventEmitter {
     console.log(`[wanling] sendSessionStatus conv=${convId.slice(0, 8)}… status=${status}`)
   }
 
+  // 排队状态直推(agent → user 不落库,经 server QUEUED_STATUS 透传)。
+  // 与 sendSessionStatus 同通道(WS op=0 Dispatch),APP 更新用户气泡排队徽标。
+  sendQueuedStatus(
+    convId: string,
+    messageId: string,
+    queued: boolean,
+  ): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
+    const payload: WSMessage = {
+      op: OP_DISPATCH,
+      t: "QUEUED_STATUS",
+      d: { conversation_id: convId, message_id: messageId, queued },
+    }
+    this.ws.send(JSON.stringify(payload))
+    console.log(`[wanling] sendQueuedStatus conv=${convId.slice(0, 8)}… msg=${messageId.slice(0, 8)} queued=${queued}`)
+  }
+
   // 上报 agent 可选模型清单(plugin 启动/重连时拉 opencode providers)。
   // server 收到后写 AgentRegistry 内存缓存,APP 通过 GET /api/agents/:id/models 拉取。
   // 与 sendTypedMessage 一致:WS 未连接时 silently drop + console.warn,
@@ -582,6 +599,7 @@ export class WanlingClient extends EventEmitter {
         }
         const t = msg.t
         if (t === EVENT_MESSAGE_CREATE) {
+          console.log(`[wanling] WS 收到 MESSAGE_CREATE sender_type=${(msg.d as unknown as { sender_type?: string })?.sender_type} id=${(msg.d as unknown as { id?: string })?.id?.slice(0, 8)}`)
           const payload = msg.d as unknown as MessageCreatePayload
           this.emit("message", payload)
         } else if (t === EVENT_TYPING_START) {

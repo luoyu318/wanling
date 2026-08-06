@@ -249,9 +249,8 @@ export class OpencodeBridge extends EventEmitter {
   // retry 窗口缩到几十 ms,重复概率趋零。
   // model?: APP 端选中的模型覆盖,snake→camel 转换由调用方(engine)完成。
   // 通道选择:v2 prompt(delivery=queue/steer)在 opencode 1.18.12 实测只入队不执行
-  // (agent loop 不启动,消息永久滞留),故回退 v1 session.prompt_async(已验证能执行)。
-  // 排队由 plugin 本地队列承担(见 queue_state.ts / engine 发送逻辑)。
-  // agent/model 直接透传 v1 body(v1 promptAsync 支持 agent/model 字段)。
+  // (agent loop 不启动,消息永久滞留),故回退 v1 session.prompt_async(已验证能执行,
+  // 且 opencode 对 v1 消息自带排队)。agent/model 直接透传 v1 body。
   async promptAsync(
     sessionId: string,
     text: string,

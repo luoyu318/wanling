@@ -8,16 +8,8 @@ import {
   upsertSessionMap,
   getSessionMap,
   listSessionMaps,
-  findBySessionId,
 } from "./mapper.js"
 import { getCard, deleteCard } from "./card_store.js"
-import {
-  setSessionBusy,
-  isSessionBusy,
-  enqueuePendingMessage,
-  dequeueNextMessage,
-  getPendingCount,
-} from "./queue_state.js"
 import { EventEmitter } from "events"
 
 export class SyncEngine extends EventEmitter {
@@ -172,7 +164,7 @@ export class SyncEngine extends EventEmitter {
         const model = rawModel && rawModel.provider_id && rawModel.model_id
           ? { providerID: rawModel.provider_id, modelID: rawModel.model_id }
           : undefined
-        await this.enqueueOrSend(map.opencodeSessionId, payload.id, String(data.text || ""), agent, model)
+        await this.sendPromptWithInterrupt(map.opencodeSessionId, payload.id, String(data.text || ""), agent, model)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -259,46 +251,30 @@ export class SyncEngine extends EventEmitter {
     throw lastErr ?? new Error("promptWithRetry: unreachable")
   }
 
-  // 本地排队发送:session 忙(busy)时新消息入队 + 发 queued:true 徽标;
-  // 空闲时直接发送并标记 busy。session 空闲后由 processPendingQueue 串行补发。
-  private async enqueueOrSend(
+  // 发送 prompt:用户消息直接 v1 promptAsync 发送(opencode 自带排队,无需本地队列)。
+  // 打断语义:发送前若该 session 有正在生成的聚合卡(旧回答未结束),先中止旧生成并
+  // 定格旧聚合卡,再发新消息——聚合卡按用户消息拆分(每个用户消息一张卡)。
+  // 经事件让 streamer 处理聚合卡定格(engine 不持有聚合卡状态)。
+  private async sendPromptWithInterrupt(
     sessionId: string,
     wanlingMsgId: string,
     text: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<void> {
-    if (isSessionBusy(sessionId)) {
-      enqueuePendingMessage(sessionId, { wanlingMsgId, text, agent, model })
-      this.sendQueuedStatus(sessionId, wanlingMsgId, true)
-      console.log(`[sync] session busy, 消息排队 msgId=${wanlingMsgId.slice(0, 8)} queueLen=${getPendingCount(sessionId)}`)
-      return
+    // 中止旧生成(若有):旧聚合卡正在生成时,abort 后 streamer 定格旧卡,
+    // 新消息立即成为新回合(新聚合卡)。
+    try {
+      await this.opencode.abortSession(sessionId)
+      console.log(`[sync] 新消息到达,中止旧生成 session=${sessionId.slice(0, 12)}…`)
+    } catch (err) {
+      // abort 失败不阻塞发送(可能无活跃生成)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[sync] 中止旧生成失败(继续发送): ${msg}`)
     }
-    setSessionBusy(sessionId, true)
-    this.sendQueuedStatus(sessionId, wanlingMsgId, false)
+    // 通知 streamer 定格旧聚合卡(若正在生成,finishCard("interrupt");否则幂等跳过)
+    this.emit("aggregate_finish", { sessionId, reason: "interrupt" as const })
     await this.promptWithRetry(sessionId, text, agent, model)
-  }
-
-  // session 空闲时推进队列:清 busy 标记,取下一条待发消息发送(串行),发 queued:false 移除徽标。
-  // 由 streamer 的 onSessionIdle(会话结束主路径)经事件触发。
-  async processPendingQueue(sessionId: string): Promise<void> {
-    setSessionBusy(sessionId, false)
-    const next = dequeueNextMessage(sessionId)
-    if (!next) return
-    setSessionBusy(sessionId, true)
-    this.sendQueuedStatus(sessionId, next.wanlingMsgId, false)
-    await this.promptWithRetry(sessionId, next.text, next.agent, next.model)
-  }
-
-  // 发 queued_status 轻量状态消息(APP 更新用户气泡排队徽标,不插列表)。
-  private sendQueuedStatus(sessionId: string, wanlingMsgId: string, queued: boolean): void {
-    if (!wanlingMsgId) return
-    const map = findBySessionId(sessionId)
-    if (!map) return
-    this.wanling.sendTypedMessage(map.wanlingConvId, "queued_status", {
-      message_id: wanlingMsgId,
-      queued,
-    })
   }
 
   // 从 media 消息 data 提取 file_id:mixed 优先 items[0].file_id,否则顶层 file_id。
@@ -335,7 +311,7 @@ export class SyncEngine extends EventEmitter {
     }
     if (!this.downloader) {
       console.warn("[sync] downloader not configured, cannot handle media message")
-      await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
+      await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
 
@@ -349,10 +325,10 @@ export class SyncEngine extends EventEmitter {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[sync] media download failed: ${msg}`)
-      await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
+      await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
-    await this.enqueueOrSend(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
+    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
   }
 
   private mediaPromptText(msgType: string, path: string): string {
