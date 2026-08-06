@@ -198,23 +198,36 @@ export class PartDispatcher {
             // isLoopEnd 时整卡翻转 {silent:false,state:"done"}
             // (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)。
             if (isLoopEnd) {
-              const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
-              // step-finish part 不含 time,回合耗时从 assistant message.time 算(秒)
-              const turnDuration = await this.metaSync.fetchTurnDuration(payload.sessionID)
-              await this.appendElement(state, AggregateCardManager.footer({
-                reason: part.reason || "",
-                cost: part.cost || 0,
-                tokens: part.tokens || {},
-                duration: turnDuration,
-                finished: true,
-                // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
-                ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
-              }, this.nextSeq(state)), { silent: false, state: "done" })
-              // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
-              // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
-              // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
-              // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
-              this.resetAggregateCard(state)
+              // abort/排队分段已通过 finishCard 主动收尾(append stopped/interrupt
+              // footer + set_state done + reset 清空建卡状态)。此时若 step-finish
+              // 仍回来(abort 后 opencode 迟推),卡已 done:
+              // - 跳过重复 footer append,否则 ensureCard 会重建新卡(双卡/错卡)
+              // - resetAggregateCard 已由 finishCard 执行,无需重复
+              // 仅当卡仍在 generating(未被 finishCard 收尾)时才正常定稿。
+              // 注意:不用 aggregateCardMsgId 判(此时 markdown 的 fire-and-forget
+              // append 可能尚未 ensureCard resolve,msgId 未设置,误判「已收尾」)。
+              const cardActive = state.aggregateCardState !== "done"
+              if (cardActive) {
+                const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
+                // step-finish part 不含 time,回合耗时从 assistant message.time 算(秒)
+                const turnDuration = await this.metaSync.fetchTurnDuration(payload.sessionID)
+                await this.appendElement(state, AggregateCardManager.footer({
+                  reason: part.reason || "",
+                  cost: part.cost || 0,
+                  tokens: part.tokens || {},
+                  duration: turnDuration,
+                  finished: true,
+                  // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
+                  ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
+                }, this.nextSeq(state)), { silent: false, state: "done" })
+                // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
+                // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
+                // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
+                // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
+                this.resetAggregateCard(state)
+              } else {
+                console.log(`[streamer] step-finish isLoopEnd 但聚合卡已收尾(done/reset),跳过重复 footer`)
+              }
             }
           } else {
             // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。

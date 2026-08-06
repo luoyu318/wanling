@@ -193,6 +193,10 @@ export class SyncEngine extends EventEmitter {
     try {
       await this.opencode.abortSession(map.opencodeSessionId)
       console.log(`[sync] abort conv=${convId.slice(0, 8)}… session=${map.opencodeSessionId.slice(0, 12)}… 已发送中止信号`)
+      // 聚合卡主动收尾定格:abort 后 opencode 不再推 step-finish footer,
+      // 由 streamer 侧对主 session 聚合卡 finishCard("stop"),APP footer 显示「已停止」。
+      // 经事件解耦(engine 不持有 streamer),index.ts 接线到 streamer.finishCardForSession。
+      this.emit("aggregate_finish", { sessionId: map.opencodeSessionId, reason: "stop" as const })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[sync] abort conv=${convId.slice(0, 8)}… 失败: ${msg}`)

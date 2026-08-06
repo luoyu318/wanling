@@ -108,6 +108,11 @@ async function main(): Promise<void> {
   sync.on("error", (err: Error) => {
     console.error("[sync] error:", err.message)
   })
+  // engine(停止/分段)触发聚合卡收尾 → streamer 对主 session 卡 finishCard。
+  // engine 与 streamer 是分离实例,经此事件解耦(index.ts 是装配点)。
+  sync.on("aggregate_finish", (payload: { sessionId: string; reason: "stop" | "interrupt" }) => {
+    void streamer?.finishCardForSession(payload.sessionId, payload.reason)
+  })
   sync.start()
 
   const control = await startControlApi({
