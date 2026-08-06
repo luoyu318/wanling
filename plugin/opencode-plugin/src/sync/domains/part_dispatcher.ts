@@ -199,11 +199,13 @@ export class PartDispatcher {
             // (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)。
             if (isLoopEnd) {
               const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
+              // step-finish part 不含 time,回合耗时从 assistant message.time 算(秒)
+              const turnDuration = await this.metaSync.fetchTurnDuration(payload.sessionID)
               await this.appendElement(state, AggregateCardManager.footer({
                 reason: part.reason || "",
                 cost: part.cost || 0,
                 tokens: part.tokens || {},
-                duration,
+                duration: turnDuration,
                 finished: true,
                 // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
                 ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),

@@ -134,3 +134,44 @@ describe("OpencodeBridge.createSession", () => {
     expect(args.query).toBeUndefined()
   })
 })
+
+describe("OpencodeBridge.getTurnDuration", () => {
+  it("取最后一条 assistant message 的 completed-created(秒),round 1 位小数", async () => {
+    const messagesMock = vi.fn().mockResolvedValue({
+      data: [
+        { info: { role: "user", time: { created: 1000, completed: 1000 } } },
+        { info: { role: "assistant", time: { created: 1000, completed: 11234 } } },
+      ],
+    })
+    const bridge = new OpencodeBridge({} as never)
+    ;(bridge as unknown as { client: unknown }).client = {
+      session: { messages: messagesMock },
+    }
+
+    const duration = await bridge.getTurnDuration("ses-1")
+    expect(duration).toBe(10.2) // (11234-1000)/1000 = 10.234 → 10.2
+    expect(messagesMock).toHaveBeenCalledWith({ path: { id: "ses-1" } })
+  })
+
+  it("无 assistant message → 返回 0", async () => {
+    const messagesMock = vi.fn().mockResolvedValue({
+      data: [{ info: { role: "user", time: { created: 1 } } }],
+    })
+    const bridge = new OpencodeBridge({} as never)
+    ;(bridge as unknown as { client: unknown }).client = {
+      session: { messages: messagesMock },
+    }
+
+    expect(await bridge.getTurnDuration("ses-1")).toBe(0)
+  })
+
+  it("messages 调用失败 → 返回 0(不抛出)", async () => {
+    const messagesMock = vi.fn().mockRejectedValue(new Error("boom"))
+    const bridge = new OpencodeBridge({} as never)
+    ;(bridge as unknown as { client: unknown }).client = {
+      session: { messages: messagesMock },
+    }
+
+    expect(await bridge.getTurnDuration("ses-1")).toBe(0)
+  })
+})

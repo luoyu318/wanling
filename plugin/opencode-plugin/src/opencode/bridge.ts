@@ -412,6 +412,38 @@ export class OpencodeBridge extends EventEmitter {
     }))
   }
 
+  // 取 opencode 回合(assistant message)耗时(秒)。step-finish part 不含 time 字段,
+  // 回合起止从 message.info.time(created→completed,毫秒)计算。
+  // 无 message / 无 completed → 返回 0(调用方降级为不显示耗时)。
+  async getTurnDuration(sessionId: string): Promise<number> {
+    try {
+      const resp = await this.requireClient().session.messages({
+        path: { id: sessionId },
+      })
+      const msgs = (resp.data || []) as Array<{
+        info?: { role?: string; time?: { created?: number; completed?: number } }
+      }>
+      // 取最后一条 assistant message(回合完成时为最新)
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const info = msgs[i]?.info
+        if (info?.role === "assistant") {
+          const created = info.time?.created
+          const completed = info.time?.completed
+          if (typeof created === "number" && typeof completed === "number") {
+            const ms = completed - created
+            if (ms > 0) {
+              // opencode 时间统一毫秒(与 tool state.time 一致),转秒保留 1 位小数
+              return Math.round(ms / 100) / 10
+            }
+          }
+        }
+      }
+      return 0
+    } catch {
+      return 0
+    }
+  }
+
   // 取 opencode session 的可读标题,用于建群后改名。拿不到返空串(调用方降级用 sessionId 前缀)。
   async getSessionTitle(sessionId: string): Promise<string> {
     if (!this.client) return ""

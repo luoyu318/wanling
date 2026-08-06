@@ -201,6 +201,17 @@ export class MetaSync {
     }
   }
 
+  // 回合结束 footer 耗时读取:step-finish part 不含 time,回合起止从
+  // assistant message.info.time(created→completed)计算(委托 bridge.getTurnDuration)。
+  // 失败/无 completed 返回 0(调用方降级为不显示耗时)。
+  async fetchTurnDuration(sessionID: string): Promise<number> {
+    try {
+      return await this.opencode.getTurnDuration(sessionID)
+    } catch {
+      return 0
+    }
+  }
+
   async onSessionUpdated(payload: SessionUpdatedPayload): Promise<void> {
     const map = findBySessionId(payload.sessionID)
     if (!map) return

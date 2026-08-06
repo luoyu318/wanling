@@ -37,7 +37,7 @@ function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const partDispatcher = new PartDispatcher({
     store: store as any,
     router: router as any,
-    metaSync: { syncAfterLoopEnd: vi.fn(), peekFullMeta: vi.fn(() => undefined) } as any,
+    metaSync: { syncAfterLoopEnd: vi.fn(), peekFullMeta: vi.fn(() => undefined), fetchTurnDuration: vi.fn(async () => 0) } as any,
     compaction: { completePending: vi.fn() } as any,
     emitter: new EventEmitter(),
     wanling: wanling as any,
@@ -141,6 +141,29 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
         data: expect.objectContaining({ mode: "build", model: "DeepSeek-V3", finished: true }),
       }) },
     )
+  })
+
+  it("step-finish isLoopEnd → footer duration 取 metaSync.fetchTurnDuration(回合耗时)", async () => {
+    const { partDispatcher, wanling } = makeFixture()
+    ;(partDispatcher as any).metaSync.fetchTurnDuration = vi.fn(async () => 12.3)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
+      time: 2,
+    })
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
+      time: 3,
+    })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1",
+      { op: "append", element: expect.objectContaining({
+        type: "footer",
+        data: expect.objectContaining({ duration: 12.3, finished: true }),
+      }) },
+    )
+    expect((partDispatcher as any).metaSync.fetchTurnDuration).toHaveBeenCalledWith("sess-1")
   })
 
   it("step-finish metaSync.peekFullMeta 未命中 → footer 不写 mode/model", async () => {
