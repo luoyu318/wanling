@@ -406,19 +406,26 @@ export class OpencodeBridge extends EventEmitter {
         | "user"
         | "assistant",
       text: extractText(m.parts || []),
+      // info.time.created 为毫秒(opencode 时间统一毫秒),直接构造 Date。
       timestamp: m.info?.time?.created
-        ? new Date(m.info.time.created * 1000).toISOString()
+        ? new Date(m.info.time.created).toISOString()
         : new Date().toISOString(),
     }))
   }
 
   // 取 opencode 回合(assistant message)耗时(秒)。step-finish part 不含 time 字段,
   // 回合起止从 message.info.time(created→completed,毫秒)计算。
+  // 用 v2 client + limit:1 只拉最近消息(v1 拉全量历史在长会话易 terminated)。
   // 无 message / 无 completed → 返回 0(调用方降级为不显示耗时)。
   async getTurnDuration(sessionId: string): Promise<number> {
     try {
-      const resp = await this.requireClient().session.messages({
-        path: { id: sessionId },
+      const client = this.clientV2 ?? this.client
+      if (!client) return 0
+      // v2 session.messages 运行时参数平铺 {sessionID, limit}(sdk buildClientParams 提取),
+      // 但 SDK 的 TS 类型错误声明为 {path:{sessionID}},这里按运行时形状断言。
+      const resp = await (client as any).session.messages({
+        sessionID: sessionId,
+        limit: 1,
       })
       const msgs = (resp.data || []) as Array<{
         info?: { role?: string; time?: { created?: number; completed?: number } }

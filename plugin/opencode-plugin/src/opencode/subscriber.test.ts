@@ -35,3 +35,61 @@ describe("EventSubscriber vcs.branch.updated", () => {
     sub.stop()
   })
 })
+
+describe("EventSubscriber 缓存 assistant message time", () => {
+  it("message.updated(assistant) 缓存 time,peekMessageTime 可读", async () => {
+    const mockClient = {
+      global: {
+        event: async () => ({
+          stream: (async function* () {
+            yield {
+              directory: "/home/u/proj",
+              payload: {
+                type: "message.updated",
+                properties: {
+                  sessionID: "sess-1",
+                  info: { role: "assistant", time: { created: 1000, completed: 52000 } },
+                },
+              },
+            }
+          })(),
+        }),
+      },
+    } as any
+
+    const sub = new EventSubscriber(mockClient)
+    void sub.start()
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(sub.peekMessageTime("sess-1")).toEqual({ created: 1000, completed: 52000 })
+    sub.stop()
+  })
+
+  it("message.updated(user) 不缓存 assistant time", async () => {
+    const mockClient = {
+      global: {
+        event: async () => ({
+          stream: (async function* () {
+            yield {
+              directory: "/home/u/proj",
+              payload: {
+                type: "message.updated",
+                properties: {
+                  sessionID: "sess-1",
+                  info: { role: "user", time: { created: 1000 } },
+                },
+              },
+            }
+          })(),
+        }),
+      },
+    } as any
+
+    const sub = new EventSubscriber(mockClient)
+    void sub.start()
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(sub.peekMessageTime("sess-1")).toBeUndefined()
+    sub.stop()
+  })
+})

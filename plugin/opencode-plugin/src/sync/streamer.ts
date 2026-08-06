@@ -92,6 +92,7 @@ export class Streamer extends EventEmitter {
       wanling,
       opencode: this.ensureDeps.opencode,
       dispatcher,
+      subscriber: this.subscriber,
     })
     this.compaction = new CompactionTracker({
       store: this.store,

@@ -144,13 +144,13 @@ describe("OpencodeBridge.getTurnDuration", () => {
       ],
     })
     const bridge = new OpencodeBridge({} as never)
-    ;(bridge as unknown as { client: unknown }).client = {
+    ;(bridge as unknown as { clientV2: unknown }).clientV2 = {
       session: { messages: messagesMock },
     }
 
     const duration = await bridge.getTurnDuration("ses-1")
     expect(duration).toBe(10.2) // (11234-1000)/1000 = 10.234 → 10.2
-    expect(messagesMock).toHaveBeenCalledWith({ path: { id: "ses-1" } })
+    expect(messagesMock).toHaveBeenCalledWith({ sessionID: "ses-1", limit: 1 })
   })
 
   it("无 assistant message → 返回 0", async () => {
@@ -158,7 +158,7 @@ describe("OpencodeBridge.getTurnDuration", () => {
       data: [{ info: { role: "user", time: { created: 1 } } }],
     })
     const bridge = new OpencodeBridge({} as never)
-    ;(bridge as unknown as { client: unknown }).client = {
+    ;(bridge as unknown as { clientV2: unknown }).clientV2 = {
       session: { messages: messagesMock },
     }
 
@@ -168,7 +168,7 @@ describe("OpencodeBridge.getTurnDuration", () => {
   it("messages 调用失败 → 返回 0(不抛出)", async () => {
     const messagesMock = vi.fn().mockRejectedValue(new Error("boom"))
     const bridge = new OpencodeBridge({} as never)
-    ;(bridge as unknown as { client: unknown }).client = {
+    ;(bridge as unknown as { clientV2: unknown }).clientV2 = {
       session: { messages: messagesMock },
     }
 

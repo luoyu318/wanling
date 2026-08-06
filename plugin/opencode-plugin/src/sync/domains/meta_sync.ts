@@ -1,6 +1,7 @@
 import type { WanlingClient } from "../../wanling/client.js"
 import type { RPCDispatcher } from "../../rpc/dispatcher.js"
 import { OpencodeBridge } from "../../opencode/bridge.js"
+import type { EventSubscriber } from "../../opencode/subscriber.js"
 import type {
   SessionUpdatedPayload,
   VcsBranchUpdatedPayload,
@@ -20,6 +21,7 @@ export class MetaSync {
   private readonly wanling: WanlingClient
   private readonly opencode: OpencodeBridge
   private readonly dispatcher: RPCDispatcher
+  private readonly subscriber?: EventSubscriber
 
   private knownTitles: Map<string, string> = new Map()
   private knownMeta: Map<string, string> = new Map()
@@ -53,12 +55,14 @@ export class MetaSync {
     wanling: WanlingClient
     opencode: OpencodeBridge
     dispatcher: RPCDispatcher
+    subscriber?: EventSubscriber
   }) {
     this.store = deps.store
     this.router = deps.router
     this.wanling = deps.wanling
     this.opencode = deps.opencode
     this.dispatcher = deps.dispatcher
+    this.subscriber = deps.subscriber
   }
 
   async loadAll(): Promise<void> {
@@ -202,12 +206,35 @@ export class MetaSync {
   }
 
   // 回合结束 footer 耗时读取:step-finish part 不含 time,回合起止从
-  // assistant message.info.time(created→completed)计算(委托 bridge.getTurnDuration)。
-  // 失败/无 completed 返回 0(调用方降级为不显示耗时)。
+  // assistant message.info.time(created→completed,毫秒)计算。
+  // opencode 时序:finish=true 的 message.updated 先到(completed 未写),step-finish
+  // 紧随其后查询,completed 恒晚一步落库。故缓存无 completed 时轮询等待
+  // (带 completed 的 message.updated 很快到达),超时再降级拉 messages 兜底。
   async fetchTurnDuration(sessionID: string): Promise<number> {
+    const fromTime = (t: { created?: number; completed?: number } | undefined): number => {
+      if (t && typeof t.created === "number" && typeof t.completed === "number") {
+        const ms = t.completed - t.created
+        return ms > 0 ? Math.round(ms / 100) / 10 : 0
+      }
+      return 0
+    }
+    // 1) subscriber 缓存优先,completed 未落库时轮询等待(最多 ~1s)
+    for (let i = 0; i < 5; i++) {
+      const cached = this.subscriber?.peekMessageTime(sessionID)
+      const d = fromTime(cached)
+      if (d > 0) {
+        console.log(`[streamer] fetchTurnDuration session=${sessionID.slice(0, 12)} cache=${d}s`)
+        return d
+      }
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    // 2) 降级拉 messages(缓存持续无 completed)
     try {
-      return await this.opencode.getTurnDuration(sessionID)
-    } catch {
+      const d = await this.opencode.getTurnDuration(sessionID)
+      console.log(`[streamer] fetchTurnDuration session=${sessionID.slice(0, 12)} messages=${d}`)
+      return d
+    } catch (err) {
+      console.error(`[streamer] fetchTurnDuration 失败: ${err instanceof Error ? err.message : err}`)
       return 0
     }
   }

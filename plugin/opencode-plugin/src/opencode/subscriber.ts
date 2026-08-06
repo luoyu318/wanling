@@ -131,10 +131,20 @@ export class EventSubscriber extends EventEmitter {
   private currentIteration: Promise<void> | null = null
   private userMessageIds: Set<string> = new Set()
   private static readonly MAX_USER_MSG_IDS = 5000
+  // 最近 assistant message 的 time 缓存(回合结束耗时来源):message.updated 事件
+  // 携带 info.time(created→completed,毫秒),回合结束时已落库。step-finish part
+  // 不含 time,footer 耗时从这里读(比拉 messages 可靠,避免 completed 未落库竞态)。
+  private messageTimeCache: Map<string, { created?: number; completed?: number }> = new Map()
 
   constructor(client: OpencodeClient) {
     super()
     this.client = client
+  }
+
+  // 回合结束耗时:读最近 assistant message 缓存(毫秒 created→completed)。
+  // 无缓存 / 无 completed → undefined(调用方降级为不显示耗时)。
+  peekMessageTime(sessionID: string): { created?: number; completed?: number } | undefined {
+    return this.messageTimeCache.get(sessionID)
   }
 
   private addUserMessageId(msgId: string): void {
@@ -242,6 +252,20 @@ export class EventSubscriber extends EventEmitter {
         if (info?.role === "user") {
           const msgId = (info as { id?: string }).id
           if (msgId) this.addUserMessageId(msgId)
+        }
+        // 缓存 assistant message 的 time(回合结束耗时来源)。info.time 形如
+        // {created, completed}(毫秒)。message.updated 会推多次:完成前(无 finish,
+        // completed 缺失)与完成后(带 finish,completed 有值)。仅 message 完成时
+        // (finish 字段存在)更新 completed,避免完成前的中间态覆盖掉已完成值。
+        if (info?.role === "assistant") {
+          const t = info.time as { created?: number; completed?: number } | undefined
+          if (t && typeof t === "object") {
+            const prev = this.messageTimeCache.get(sessionID)
+            const next = { created: t.created ?? prev?.created, completed: t.completed ?? prev?.completed }
+            if (info.finish !== undefined || next.completed !== undefined) {
+              this.messageTimeCache.set(sessionID, next)
+            }
+          }
         }
         break
       }
