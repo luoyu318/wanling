@@ -168,16 +168,47 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
         (msgType == 'permission_card' || msgType == 'question_card') &&
             status != null &&
             status != 'pending';
-    if (!isTerminalCard) return;
+    if (isTerminalCard) {
+      final idx = s.indexWhere((c) => c.id == convId);
+      if (idx == -1) return;
+      final item = s[idx];
+      if (item.pendingCount <= 0) return;
 
+      final updated = List<Conversation>.from(s);
+      updated[idx] = item.copyWith(pendingCount: item.pendingCount - 1);
+      state = updated;
+      return;
+    }
+
+    // 聚合卡回合结束翻转:silent true→false → 徽章+1 + lastMessageContent 更新。
+    // generating 阶段(silent 仍 true)只更新渲染(chatProvider),列表不动。
+    if (content != null &&
+        msgType == 'aggregate_card' &&
+        content['silent'] == false) {
+      _onAggregateCardFlip(convId, content);
+    }
+  }
+
+  /// 聚合卡回合结束(silent true→false)翻转:徽章+1 + lastMessageContent 更新为
+  /// 聚合卡 content(预览经 MsgTypeX.preview 取最后 markdown 元素 text)+ 排序。
+  ///
+  /// lastAgentReplyContent 不更新:server ListAgentSessionsForUser 的 SQL 只认
+  /// msg_type IN ('text','markdown') 且非 silent,aggregate_card 不在其列,
+  /// 本地实时派生保持同口径(翻转只影响 lastMessageContent / unread)。
+  void _onAggregateCardFlip(String convId, Map<String, dynamic> content) {
+    final s = state;
+    if (s == null) return;
     final idx = s.indexWhere((c) => c.id == convId);
     if (idx == -1) return;
     final item = s[idx];
-    if (item.pendingCount <= 0) return;
-
+    // 与 _onMessageCreate 同口径:正在看该会话时不 +1(本地徽章 UX 优化)。
+    final isActive = convId == _activeConvId;
     final updated = List<Conversation>.from(s);
-    updated[idx] = item.copyWith(pendingCount: item.pendingCount - 1);
-    state = updated;
+    updated[idx] = item.copyWith(
+      lastMessageContent: content,
+      unreadCount: isActive ? item.unreadCount : item.unreadCount + 1,
+    );
+    state = updated..sort(_compare);
   }
 
   void _onMessageRead(WSMessage m) {

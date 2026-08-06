@@ -391,6 +391,59 @@ void main() {
     });
   });
 
+  // ========== C2: 聚合卡 MESSAGE_UPDATE silent 翻转 → 徽章+1 + 预览更新 ==========
+  group('MESSAGE_UPDATE 聚合卡翻转', () {
+    WSMessage flipUpdate({required bool silent, String state = 'done'}) =>
+        WSMessage(
+          op: 0,
+          t: 'MESSAGE_UPDATE',
+          s: 2,
+          d: {
+            'message_id': 'm-agg',
+            'conversation_id': 'c1',
+            'content': {
+              'msg_type': 'aggregate_card',
+              'data': {
+                'state': state,
+                'elements': [
+                  {'type': 'markdown', 'data': {'text': '聚合卡最终回复'}},
+                ],
+              },
+              'silent': silent,
+            },
+          },
+        );
+
+    test('翻转(silent true→false)→ 徽章+1 + lastMessageContent 更新为最后 markdown 元素',
+        () async {
+      final notifier = await boot();
+
+      // server PATCH 翻转后广播 MESSAGE_UPDATE(content 带 silent:false)
+      ws.emitUpdate(flipUpdate(silent: false));
+      await Future.delayed(Duration.zero);
+
+      final conv = notifier.state!.first;
+      expect(conv.unreadCount, 1,
+          reason: '聚合卡回合结束翻转应计 1 未读(server 已在翻转时 IncrUnread)');
+      expect(conv.lastMessageContent!['msg_type'], 'aggregate_card');
+      expect(conv.lastMessagePreview(currentUserId: 'user-1'), '聚合卡最终回复',
+          reason: '预览应取聚合卡最后 markdown 元素的 text');
+    });
+
+    test('generating 阶段 MESSAGE_UPDATE(silent 仍 true)→ 不更新徽章/预览', () async {
+      final notifier = await boot();
+
+      ws.emitUpdate(flipUpdate(silent: true, state: 'generating'));
+      await Future.delayed(Duration.zero);
+
+      final conv = notifier.state!.first;
+      expect(conv.unreadCount, 0,
+          reason: 'generating 阶段 silent 仍 true,不应计未读');
+      expect(conv.lastMessagePreview(currentUserId: 'user-1'), 'old',
+          reason: 'generating 阶段不应覆盖会话列表预览');
+    });
+  });
+
   // ========== lastAgentReplyContent 实时派生 ==========
   // 二级列表摘要显示「agent 最后一条最终回复」(与 server
   // ListAgentSessionsForUser SQL 的 msg_type IN ('text','markdown')
