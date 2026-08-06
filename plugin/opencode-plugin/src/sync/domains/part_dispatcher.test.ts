@@ -72,7 +72,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1) },
+      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1, true) },
     )
     expect(router.send).not.toHaveBeenCalled()
   })

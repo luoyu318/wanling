@@ -283,4 +283,53 @@ describe("AggregateCardManager updateElement", () => {
     await manager.updateElement("question_card_9", { status: "answered" })
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
   })
+
+  it("竞态:updateElement 早于 append 落地时缓存 pending update,append 后补发 {op:'update'}", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    // registerTaskChildEarly 提前注册后,working PATCH 先到(元素尚未 append)
+    await manager.updateElement("tool_card_1", { status: "working" })
+    // 此时元素未 append,不发 PATCH,只缓存
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+    expect(state.aggregatePendingUpdates?.get("tool_card_1")).toEqual({ status: "working" })
+    // append 落地 → 补发 update op(status 合并进元素 data)
+    await manager.appendElement(AggregateCardManager.toolCard({
+      name: "task", input: { prompt: "x" }, status: "starting", sub_session_id: "sess-child",
+    }, 1))
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
+      1,
+      "card-1",
+      { op: "append", element: AggregateCardManager.toolCard({
+        name: "task", input: { prompt: "x" }, status: "starting", sub_session_id: "sess-child",
+      }, 1) },
+    )
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
+      2,
+      "card-1",
+      { op: "update", element_id: "tool_card_1", data: {
+        name: "task", input: { prompt: "x" }, status: "working", sub_session_id: "sess-child",
+      } },
+    )
+    // 本地累计同步为 working
+    expect(state.aggregateElements?.[0].data.status).toBe("working")
+    // 缓存已消费
+    expect(state.aggregatePendingUpdates?.has("tool_card_1")).toBe(false)
+  })
+
+  it("竞态:append 前多次 update 合并缓存字段,append 后一次补发", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("tool_card_1", { status: "working" })
+    await manager.updateElement("tool_card_1", { duration: 3.2 })
+    await manager.appendElement(AggregateCardManager.toolCard({
+      name: "task", input: {}, status: "starting",
+    }, 1))
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
+      2,
+      "card-1",
+      { op: "update", element_id: "tool_card_1", data: {
+        name: "task", input: {}, status: "working", duration: 3.2,
+      } },
+    )
+  })
 })

@@ -107,7 +107,7 @@ export class PartDispatcher {
               if (text.trim()) {
                 if (this.useAggregate(state)) {
                   // 流式已预留 seq 则复用(终态与流式帧同一 element_id),未流式走 nextSeq
-                  await this.appendElement(state, AggregateCardManager.reasoning(text, state.reasoning?.seq ?? this.nextSeq(state)))
+                  await this.appendElement(state, AggregateCardManager.reasoning(text, state.reasoning?.seq ?? this.nextSeq(state), true))
                 } else {
                   this.router.send(state, "reasoning",
                     sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
@@ -366,7 +366,7 @@ export class PartDispatcher {
     if (!state.aggregateStreamedElementIds) state.aggregateStreamedElementIds = new Set()
     state.aggregateStreamedElementIds.add(elementId)
     const element = prefix === "reasoning"
-      ? AggregateCardManager.reasoning(holder.text, holder.seq)
+      ? AggregateCardManager.reasoning(holder.text, holder.seq, false)
       : AggregateCardManager.markdown(holder.text, holder.seq)
     await this.appendElement(state, element)
   }
@@ -390,7 +390,7 @@ export class PartDispatcher {
     const sid = state.reasoning.streamId
     console.log(`[SSE-DBG] FLUSH(reasoning)兜底 sid=${sid ?? "-"} accLen=${state.reasoning.text.length} head=${JSON.stringify(state.reasoning.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.reasoning(state.reasoning.text, state.reasoning.seq ?? this.nextSeq(state))
+      const element = AggregateCardManager.reasoning(state.reasoning.text, state.reasoning.seq ?? this.nextSeq(state), true)
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -474,6 +474,7 @@ export class PartDispatcher {
     state.aggregatePatchQueue = undefined
     state.aggregateToolElementIds = undefined
     state.aggregateStreamedElementIds = undefined
+    state.aggregatePendingUpdates = undefined
   }
 
   // 追加聚合卡元素并 PATCH 增量 op(append;同 element_id 已存在则 update 原位替换)。

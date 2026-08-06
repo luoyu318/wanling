@@ -11,7 +11,7 @@ void main() {
     registerBuiltinRenderers();
   });
 
-  Widget host({required String text, required bool isStreaming}) {
+  Widget host({required String text, required bool isStreaming, bool? finished}) {
     return MaterialApp(
       home: Scaffold(
         body: Builder(
@@ -19,7 +19,10 @@ void main() {
             MsgType.reasoning,
             {
               'msg_type': MsgType.reasoning.value,
-              'data': {'text': text},
+              'data': {
+                'text': text,
+                'finished': ?finished,
+              },
             },
             ctx,
             MessageRenderContext(
@@ -105,6 +108,23 @@ void main() {
         tester.widget<Opacity>(find.byType(Opacity)).opacity,
         closeTo(0.25, 0.05),
       );
+    });
+  });
+
+  group('ReasoningRenderer 方案 B:元素级 finished 标记', () {
+    testWidgets('isStreaming=true 且 finished=true → 显示真实内容(终态样式)', (tester) async {
+      await tester.pumpWidget(
+          host(text: '已终态的思考内容', isStreaming: true, finished: true));
+      expect(find.text('已终态的思考内容'), findsOneWidget);
+      // 不再显示「正在思考...」动画
+      expect(find.text('正在思考...'), findsNothing);
+    });
+
+    testWidgets('isStreaming=true 且 finished=false → 仍显示「正在思考...」动画', (tester) async {
+      await tester.pumpWidget(
+          host(text: '流式累积', isStreaming: true, finished: false));
+      expect(find.text('正在思考...'), findsOneWidget);
+      expect(find.text('流式累积'), findsNothing);
     });
   });
 

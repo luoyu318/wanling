@@ -18,8 +18,13 @@ final List<SpanNodeGeneratorWithTag> _markdownGenerators = [
 ];
 
 /// AI 思考链渲染器：读 [MessageRenderContext.isStreaming] 分发到两态子 widget。
-/// - 流式态(isStreaming=true)：✨ 闪烁动画 + 「正在思考...」固定文案
-/// - 终态(isStreaming=false)：✨ 淡化 + 真实 text 预览
+/// - 流式态(isStreaming=true 且 data.finished != true)：✨ 闪烁动画 + 「正在思考...」固定文案
+/// - 终态(isStreaming=false 或 data.finished == true)：✨ 淡化 + 真实 text 预览
+///
+/// data.finished(元素级终态标记,方案 B):聚合卡整体 generating 期间(isStreaming=true)
+/// 元素可能已终态(plugin 终态 append 带 finished:true)。此时即使卡片 state 仍是
+/// generating,reasoning 也显示真实内容而非「思考中」动画——否则子 agent 并行阶段
+/// 思考链内容全程不可见,直到整卡 done 才一次性出现。
 ///
 /// 两态共用：白底 + #EEEEEE 边框 + 点击弹底部抽屉看全文。
 class ReasoningRenderer implements MessageContentRenderer {
@@ -36,7 +41,9 @@ class ReasoningRenderer implements MessageContentRenderer {
     final text = (content['data']?['text'] as String?) ?? '';
     if (text.isEmpty) return const SizedBox.shrink();
 
-    if (rc.isStreaming) {
+    // 元素级终态标记:false/缺失 → 按卡片流式态决定;true → 已终态,显示真实内容。
+    final finished = (content['data']?['finished'] as bool?) ?? false;
+    if (rc.isStreaming && !finished) {
       return _StreamingReasoningCard(text: text);
     }
     return _StaticReasoningCard(text: text);

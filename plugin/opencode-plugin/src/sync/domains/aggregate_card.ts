@@ -131,6 +131,9 @@ export class AggregateCardManager {
   // opts.state 显式传 → 单独发 {op:"set_state"} 并维护 state.aggregateCardState;
   // opts.silent !== undefined → 单独发 {op:"set_silent"}。增量下 server 保留原
   // state/silent,不再像全量替换那样每次 PATCH 都带。
+  // 竞态补发:append 落地后检查 state.aggregatePendingUpdates 是否有该元素在 append 前
+  // 缓存的 update(registerTaskChildEarly 提前注册 → working PATCH 早于 append 落地),
+  // 有则合并进本地元素 data 并补发 {op:"update"},避免子 agent 卡片永卡 starting。
   async appendElement(
     element: AggregateElement,
     opts?: { silent?: boolean; state?: "generating" | "done" },
@@ -147,6 +150,21 @@ export class AggregateCardManager {
         msgId,
         existed ? { op: "update", element_id: element.element_id, data: element.data } : { op: "append", element },
       )
+      // 补发 append 前缓存的 pending update(子 agent working 竞态):合并进元素 data,
+      // 更新本地累计并补发 update op,让状态推进不再依赖 updateElement 时的元素已就绪。
+      const pending = this.state.aggregatePendingUpdates?.get(element.element_id)
+      if (pending) {
+        this.state.aggregatePendingUpdates?.delete(element.element_id)
+        const mergedData = { ...element.data, ...pending }
+        this.state.aggregateElements = (this.state.aggregateElements ?? []).map((e) =>
+          e.element_id === element.element_id ? { ...e, data: mergedData } : e,
+        )
+        await this.wanling.patchAggregateMessage(msgId, {
+          op: "update",
+          element_id: element.element_id,
+          data: mergedData,
+        })
+      }
       if (opts?.state) {
         this.state.aggregateCardState = opts.state
         await this.wanling.patchAggregateMessage(msgId, { op: "set_state", state: opts.state })
@@ -160,8 +178,16 @@ export class AggregateCardManager {
     return next
   }
 
-  static reasoning(text: string, seq: number): AggregateElement {
-    return { type: "reasoning", element_id: `reasoning_${seq}`, data: { text } }
+  // reasoning 元素构造器。finished 标记该思考链是否已终态(内容完整)——
+  // 聚合卡元素级 finished(Task 增量修复方案 B):流式占位时 finished=false,
+  // 终态 append 时 finished=true。APP reasoning_renderer 读 finished 决定
+  // 即使卡片整体 generating(isStreaming=true)也显示真实内容,而非「思考中」动画。
+  static reasoning(text: string, seq: number, finished?: boolean): AggregateElement {
+    return {
+      type: "reasoning",
+      element_id: `reasoning_${seq}`,
+      data: { text, ...(finished !== undefined ? { finished } : {}) },
+    }
   }
 
   static toolCard(data: ToolCardData, seq: number): AggregateElement {
@@ -192,7 +218,12 @@ export class AggregateCardManager {
   // 否则 questions/input 等既有字段会丢。
   // silent 语义:显式 {silent:true} 恢复不响铃,{silent:false} 翻转计未读,
   // 经 {op:"set_silent"} 单独发(增量下 server 保留原值,无需每次携带)。
-  // 元素缺失时不 PATCH(本地缓存兜底,避免 server 对不存在元素 update 返回 400)。
+  // 元素缺失竞态(增量修复):registerTaskChildEarly 提前注册 childSessionTree 后,
+  // 子 session 首事件触发的 working PATCH 可能早于聚合卡元素 append 落地(server
+  // append 无 upsert,元素此刻尚未入卡)。此时不静默丢弃,把 patchData 缓存到
+  // state.aggregatePendingUpdates,由 appendElement 落地后补发 update op——
+  // 否则子 agent 卡片永久停在 starting。仅当目标元素从未出现(pending 永不消费)
+  // 时兜底保持不 PATCH(server 对不存在元素 update 会 400,本地缓存兜底)。
   async updateElement(
     elementId: string,
     patchData: Record<string, unknown>,
@@ -201,7 +232,17 @@ export class AggregateCardManager {
     const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
     const next = prev.then(async () => {
       const existed = (this.state.aggregateElements ?? []).some((e) => e.element_id === elementId)
-      if (!existed) return
+      if (!existed) {
+        // 元素未就绪:缓存 pending update,待 append 落地后补发(防 working 竞态丢失)。
+        // 多次 update 合并(每次整体替换 data,合并字段),append 后一次补发。
+        if (!this.state.aggregatePendingUpdates) this.state.aggregatePendingUpdates = new Map()
+        const merged = {
+          ...(this.state.aggregatePendingUpdates.get(elementId) ?? {}),
+          ...patchData,
+        }
+        this.state.aggregatePendingUpdates.set(elementId, merged)
+        return
+      }
       const elements = (this.state.aggregateElements ?? []).map((e) =>
         e.element_id === elementId ? { ...e, data: { ...e.data, ...patchData } } : e,
       )

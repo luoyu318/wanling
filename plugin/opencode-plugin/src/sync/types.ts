@@ -34,6 +34,11 @@ export interface SessionState {
   // 聚合卡 patch 串行队列:同一 session 并发 flush 时(如 reasoning end 与 text end
   // 同时到达),多次 patch 全量替换会互相覆盖丢元素,按序执行避免。
   aggregatePatchQueue?: Promise<unknown>
+  // 聚合卡待补发 update 缓存(增量竞态修复):updateElement 命中元素未就绪
+  // (registerTaskChildEarly 提前注册 → working PATCH 早于 append 落地)时,
+  // 把 patchData 缓存到这里,由 appendElement 落地后合并补发 update op。
+  // 防子 agent 卡片永久停在 starting。Map<element_id, 合并后的 patchData>。
+  aggregatePendingUpdates?: Map<string, Record<string, unknown>>
   // 聚合卡当前 state:server 端 UpdateContent 是全量替换 data,未显式带 state 的 PATCH
   // (如迟到 tool 终态)若不补 state 会丢字段。这里由状态机维护当前值:
   // 建卡 generating → 回合结束显式翻 done;未显式传 state 的 PATCH 沿用此值。
