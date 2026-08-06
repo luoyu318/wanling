@@ -175,7 +175,7 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `compact_divider` | `{phase}` | 压缩分隔线（自绘） |
 | `footer` | `{reason, cost, tokens, duration, finished, mode?, model?}` | 同 step_finish（tokens 汇总行）；finished=true 且卡 done 时底部渲染提示条（模式/时长/模型/tokens），mode/model 为回合结束快照 |
 
-**回合结束提示条**：聚合卡 state=done 且存在 finished=true 的 footer 元素时，APP 在卡底部渲染独立提示条（模式/时长/模型/tokens）。mode/model 由 plugin 在 step-finish 时写入 footer data（消息快照，不随 sessionMeta 实时态变动）；时长/tokens 复用 footer 既有字段。footer 无 mode/model（历史消息）时提示条仅显示有时长/tokens 的段。**工具卡折叠**：APP 渲染层把物理连续（中间无其他元素）的 tool_card 元素合并为可展开折叠组（收起「⚡ 工具调用 · N」/展开完整工具卡）；task 子 agent 卡、permission_card、question_card 不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。
+**状态呈现（APP 展示层）**：聚合卡不再有顶栏「回复中/完成」条；generating 时卡底部 footer 状态条显示动态阶段词（思考中/执行中/汇总中，按最后元素推导），done 后切换为静态信息条（模式/时长/模型/tokens）；generating 聚合卡存在期间 APP 隐藏消息列表 busy 气泡。**回合结束提示条**：聚合卡 state=done 且存在 finished=true 的 footer 元素时，APP 在卡底部渲染独立提示条（模式/时长/模型/tokens）。mode/model 由 plugin 在 step-finish 时写入 footer data（消息快照，不随 sessionMeta 实时态变动）；时长/tokens 复用 footer 既有字段。footer 无 mode/model（历史消息）时提示条仅显示有时长/tokens 的段。**工具卡折叠**：APP 渲染层把物理连续（中间无其他元素）的 tool_card 元素合并为可展开折叠组（收起「⚡ 工具调用 · N」/展开完整工具卡）；task 子 agent 卡、permission_card、question_card 不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。
 
 ### AGENT_MODELS
 
