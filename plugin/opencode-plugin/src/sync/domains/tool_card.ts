@@ -8,6 +8,13 @@ import { buildDiff } from "../utils/diff.js"
 import { extractDuration, extractTaskMetadata } from "../utils/task_meta.js"
 import { AggregateCardManager, type ToolCardData } from "./aggregate_card.js"
 
+// 聚合卡 msgId 占位符:聚合模式 task running 同步注册 childSessionTree 时,
+// 聚合卡可能尚未建卡(首次工具即 task),ensureCard 的建卡 REST 往返未完成,
+// 先用占位 id 作为 parentMsgId/rootMsgId 注册,append PATCH 完成后补真实聚合卡
+// msgId(见 flushAggregateTool)。占位期间子 session 只入 state 缓冲,消息发送
+// 用真实 id 时已补全,不会用占位 id 实际发消息。
+export const AGGREGATE_MSG_PENDING = "pending-aggregate-card"
+
 // ToolCardManager:tool/task 卡片状态机领域模块。
 // 职责:普通 tool 卡片 + task 工具卡片的状态机(running/completed/error),
 // 含 inflight Promise(running 卡片在 sendCardMessage 往返期间的竞态修复) +
@@ -235,6 +242,15 @@ export class ToolCardManager {
       state.pendingToolCard = { toolName: "task", input: input || {}, partId: part.id }
       state.pendingChildSessionId = childSessionId
       state.pendingParentSessionId = sessionID
+      // 2) 提前注册 childSessionTree(task running 同步段,setImmediate 之前):
+      //    子 agent 被 task 工具拉起后 SSE 事件立即涌入,若等 append PATCH 完成
+      //    再注册(旧实现 flushAggregateTool 的 .then),子 session 首事件会在
+      //    注册前到达,getOrCreateState 命中「非主 session 丢弃」→ 思考/工具/
+      //    结果全部丢失。此处同步注册(聚合卡 msgId 未就绪用占位 id,append 后补全),
+      //    消除竞态窗口。
+      if (childSessionId) {
+        this.registerTaskChildEarly(state, part.id, childSessionId, sessionID, input || {})
+      }
       setImmediate(() => this.flushPending(state, childSessionId, sessionID))
 
     } else if (status === "completed") {
@@ -335,6 +351,36 @@ export class ToolCardManager {
     }
   }
 
+  // 聚合模式 task running 的提前注册:在 handleTaskTool 同步段注册 childSessionTree,
+  // 不等 append PATCH 完成(消除子 session 首事件被 getOrCreateState 丢弃的竞态窗口)。
+  // 预分配聚合元素号并暂存到 pendingToolCard.aggregateSeq,flushAggregateTool 复用同一
+  // element_id(不重复取号,entry 的 aggregateElementId 与真正 append 的元素一致)。
+  // 注意:不能提前写 state.aggregateToolElementIds(completed 抢占 setImmediate 时
+  // updateToolElement 的 preempt 判定依赖该映射未建立,过早写入会破坏同步补发逻辑)。
+  // 聚合卡 msgId 未就绪(首次工具即 task)时用占位 id,append 完成(ensureCard resolve)
+  // 后由 flushAggregateTool 补真实聚合卡 msgId 到 parentMsgId/rootMsgId。
+  private registerTaskChildEarly(
+    state: SessionState,
+    partId: string,
+    childSessionId: string,
+    parentSessionId: string,
+    taskInput: Record<string, unknown>,
+  ): void {
+    if (!this.useAggregate(state)) return
+    const seq = this.nextSeq(state)
+    if (state.pendingToolCard) {
+      state.pendingToolCard.aggregateSeq = seq
+    }
+    this.store.registerChild(
+      state,
+      state.aggregateCardMsgId ?? AGGREGATE_MSG_PENDING,
+      childSessionId,
+      parentSessionId,
+      taskInput,
+      { elementId: `tool_card_${seq}` },
+    )
+  }
+
   flushPending(state: SessionState, childSessionId?: string, parentSessionId?: string): void {
     const pending = state.pendingToolCard
     if (!pending) {
@@ -399,11 +445,13 @@ export class ToolCardManager {
   // append 失败 emit error(与独立卡发送失败一致口径,不静默吞)。
   private flushAggregateTool(
     state: SessionState,
-    pending: { toolName: string; input: Record<string, unknown>; partId: string },
+    pending: { toolName: string; input: Record<string, unknown>; partId: string; aggregateSeq?: number },
     childSessionId?: string,
     parentSessionId?: string,
   ): void {
-    const seq = this.nextSeq(state)
+    // 复用 handleTaskTool 提前注册时预分配的元素号(task running 已取号,
+    // 保证 entry.aggregateElementId 与真正 append 的元素一致);普通工具现场取号。
+    const seq = pending.aggregateSeq ?? this.nextSeq(state)
     const elementId = `tool_card_${seq}`
     if (!state.aggregateToolElementIds) state.aggregateToolElementIds = new Map()
     state.aggregateToolElementIds.set(pending.partId, elementId)
@@ -423,15 +471,23 @@ export class ToolCardManager {
     console.log(`[TC-DBG] flushPending 聚合追加 tool_card_${seq} tool=${pending.toolName} part=${pending.partId}`)
     void this.appendToolElement(state, data, seq)
       .then(() => {
-        // task 工具:聚合卡 append 成功后(ensureCard 已建卡,msgId 就绪)注册 childSessionTree,
-        // 子 session 事件才能命中 getOrCreateState 走透传路径。聚合卡 msgId 作为
-        // parentMsgId,子 session 消息经 parent/root 串到聚合卡下。
+        // task 子 session:entry 已在 handleTaskTool running 同步注册(提前注册),
+        // append 完成拿到真实聚合卡 msgId 后,把占位 parentMsgId/rootMsgId 补成真实 id,
+        // 子 session 消息才能正确经 parent/root 串到聚合卡下。
+        // entry 缺失时兜底补注册(等价旧实现,理论上不发生)。
         if (isTask && effectiveChild) {
           const msgId = state.aggregateCardMsgId
-          if (msgId) {
-            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId })
-          } else {
+          if (!msgId) {
             console.error(`[streamer] task 聚合追加后聚合卡 msgId 缺失,childSessionTree 未注册: part=${pending.partId}`)
+            return
+          }
+          const entry = this.store.getChild(effectiveChild)
+          if (entry) {
+            if (entry.parentMsgId === AGGREGATE_MSG_PENDING) entry.parentMsgId = msgId
+            if (entry.rootMsgId === AGGREGATE_MSG_PENDING) entry.rootMsgId = msgId
+          } else {
+            console.error(`[streamer] task 聚合追加后 childSessionTree 未注册(提前注册缺失),补注册: part=${pending.partId}`)
+            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId })
           }
         }
       })

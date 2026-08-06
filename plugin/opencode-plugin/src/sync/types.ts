@@ -17,7 +17,7 @@ export interface SessionState {
   // OC 延迟推来的 part_updated(end) 到达时检查,命中则跳过避免重复发终态(两条消息都入库)。
   textPartsFlushed: Set<string>
   toolCardMsgIds: Map<string, string>
-  pendingToolCard?: { toolName: string; input: Record<string, unknown>; partId: string }
+  pendingToolCard?: { toolName: string; input: Record<string, unknown>; partId: string; aggregateSeq?: number }
   // 聚合卡 msgId(Task 2):AggregateCardManager.ensureCard 建卡后缓存,
   // 幂等复用依赖此字段,跨 manager 实例共享 state 也能拿到同一卡片。
   aggregateCardMsgId?: string

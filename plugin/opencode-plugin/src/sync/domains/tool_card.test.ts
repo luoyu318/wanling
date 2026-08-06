@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest"
 import { EventEmitter } from "events"
 import { ToolCardManager } from "./tool_card.js"
 import { AggregateCardManager } from "./aggregate_card.js"
+import { MessageRouter } from "../messaging.js"
+import { SessionStore } from "../session_store.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 
@@ -22,6 +24,7 @@ function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const store = {
     registerChild: vi.fn(),
     cleanupChild: vi.fn(),
+    getChild: vi.fn(),
   }
   const router = {
     send: vi.fn(),
@@ -59,6 +62,132 @@ function lastPatch(wanling: ReturnType<typeof makeFixture>["wanling"]) {
   const calls = wanling.patchAggregateMessage.mock.calls
   return calls[calls.length - 1]
 }
+
+describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态修复)", () => {
+  it("task running 同步注册 childSessionTree(不等 append PATCH),子 session 事件到达不再被丢弃", async () => {
+    // 真实 SessionStore + 真实 ToolCardManager:验证注册时机早于 append PATCH 完成,
+    // 子 session 首事件在竞态窗口内到达时 getOrCreateState 能命中 childSessionTree。
+    const wanling = {
+      sendCardMessage: vi.fn().mockResolvedValue("card-1"),
+      patchAggregateMessage: vi.fn().mockResolvedValue(undefined),
+      updateMessageContent: vi.fn().mockResolvedValue(undefined),
+      sendTypedMessage: vi.fn(),
+    } as any
+    const router = new MessageRouter(wanling)
+    const store = new SessionStore({
+      mainSessionId: "sess-main",
+      ensureDeps: {} as any,
+      wanling,
+      router,
+      childTimeoutMs: 60_000,
+    })
+    const manager = new ToolCardManager({
+      store,
+      router,
+      wanling,
+      emitter: new EventEmitter(),
+      aggregateCardEnabled: true,
+    })
+    const state: SessionState = {
+      reasoning: null,
+      text: null,
+      convId: "conv-1",
+      toolPartsSent: new Set(),
+      textPartsFlushed: new Set(),
+      toolCardMsgIds: new Map(),
+      toolCardInflight: new Map(),
+    }
+
+    // task running:注册必须在 append PATCH 完成前同步发生
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+
+    // append PATCH 尚未完成(setImmediate 未排空),子 session 已注册
+    const child = store.getChild("sess-child")
+    expect(child).toBeDefined()
+    // 注册时聚合卡 msgId 未就绪(首次工具即 task)→ 先用占位 id
+    expect(child!.parentMsgId).toBe("pending-aggregate-card")
+
+    // 子 session 首事件此刻到达 → getOrCreateState 命中 childSessionTree,不再丢弃
+    const childState = await store.getOrCreateState("sess-child")
+    expect(childState).not.toBeNull()
+    expect(childState?.convId).toBe("conv-1")
+    expect(childState?.isChildSession).toBe(true)
+
+    // append 完成后,占位 parentMsgId/rootMsgId 补成真实聚合卡 msgId
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    expect(child!.parentMsgId).toBe("card-1")
+    expect(child!.rootMsgId).toBe("card-1")
+
+    // 清理兜底 timer,避免测试悬挂
+    store.stop()
+  })
+
+  it("聚合卡已建(aggregateCardMsgId 就绪)时 task running 用真实 msgId 注册,无占位", async () => {
+    const wanling = {
+      sendCardMessage: vi.fn().mockResolvedValue("card-exists"),
+      patchAggregateMessage: vi.fn().mockResolvedValue(undefined),
+      updateMessageContent: vi.fn().mockResolvedValue(undefined),
+      sendTypedMessage: vi.fn(),
+    } as any
+    const router = new MessageRouter(wanling)
+    const store = new SessionStore({
+      mainSessionId: "sess-main",
+      ensureDeps: {} as any,
+      wanling,
+      router,
+      childTimeoutMs: 60_000,
+    })
+    const manager = new ToolCardManager({
+      store,
+      router,
+      wanling,
+      emitter: new EventEmitter(),
+      aggregateCardEnabled: true,
+    })
+    const state: SessionState = {
+      reasoning: null,
+      text: null,
+      convId: "conv-1",
+      toolPartsSent: new Set(),
+      textPartsFlushed: new Set(),
+      toolCardMsgIds: new Map(),
+      toolCardInflight: new Map(),
+      // 思考/正文已先追加 → 聚合卡已建
+      aggregateCardMsgId: "card-exists",
+    }
+
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+
+    const child = store.getChild("sess-child")
+    expect(child).toBeDefined()
+    // 真实 msgId 直接可用,无需占位
+    expect(child!.parentMsgId).toBe("card-exists")
+    expect(child!.rootMsgId).toBe("card-exists")
+
+    // append 完成后不破坏已就绪的 parentMsgId
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    expect(child!.parentMsgId).toBe("card-exists")
+    expect(child!.rootMsgId).toBe("card-exists")
+
+    store.stop()
+  })
+})
 
 describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合卡元素)", () => {
   it("工具 running → 聚合卡追加 tool_card 元素(status:running),不再发独立卡", async () => {
