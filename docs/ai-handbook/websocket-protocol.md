@@ -52,6 +52,8 @@
 
 **审批相关 Dispatch 事件**（opcode 同为 0）：
 - `MESSAGE_UPDATE`（双端，user+agent）— 消息内容更新。审批决策后双写 messages.content，广播此事件让 APP 端切换卡片终态（按钮置灰 + 徽章）。payload：`{message_id, conversation_id, content}`
+  - **silent 翻转语义**（聚合卡模式）:聚合卡创建时 `silent=true`（过程态不响铃/不计未读），回合结束 plugin PATCH 显式带 `silent:false` + `state:"done"` 翻转。server `mergePreservedSilent` 规则：PATCH 显式带 silent 以新值为准，未带则保留原值；原 true→新 false 翻转时对**非 sender 全员 +1 未读**（`IncrUnread`，与发消息口径一致），随后广播 MESSAGE_UPDATE
+  - **APP 三处消费方**（识别 `msg_type==aggregate_card && silent==false` 才响应翻转）:bg-service 弹通知+计未读（广播不带 sender 字段，回查 MESSAGE_CREATE 阶段缓存的会话发送者）;conversation_provider / agent_sessions_provider 徽章+1+预览更新（取最后 markdown 元素 text）+置顶排序。generating 阶段（silent 仍 true）的 PATCH 只刷新渲染不打扰
 - `APPROVAL_DECIDED`（仅 agent）— 推决策结果。payload：`{approval_id, message_id, conversation_id, session_key, confirm_id, decision, reason, decided_by, decided_at}`。agent 拿 session_key + confirm_id 路由到等待协程（exec_approval 用 session_key 调 `resolve_gateway_approval`；slash_confirm 用 confirm_id 调 `slash_confirm.resolve`）
 - `APPROVAL_EXPIRED`（仅 agent）— 超时通知。payload：`{approval_id, message_id, conversation_id, session_key, expired_at}`
 
@@ -71,7 +73,7 @@
 
 plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**(累积全文,非增量碎片),让 APP 逐段渲染。server 纯透传给「正在看该会话」的 user 连接,agent 不消费。
 
-**入站(plugin→server)**:`{op:14, d:{conversation_id, stream_id, msg_type, text}}`。仅 agent 可发,IDOR 校验 `Hub.IsParticipant` fail-closed。server 调 `SendStreamToConvViewers`:查 participants,只推 `client.GetActiveConv()==conversation_id` 的 user 连接(op=3 SetActiveConv 上报的活跃会话)。op≠Dispatch 天然不进 dispatchBuffer,不带 seq,断线不补发。
+**入站(plugin→server)**:`{op:14, d:{conversation_id, stream_id, msg_type, text, aggregate?}}`。`aggregate:{message_id, element_id}`(可选,聚合模式):帧不建独立占位气泡,而是定位 msg_type=aggregate_card 消息、全量替换 element_id 匹配元素的 data.text(终态仍由 plugin PATCH 持久化兜底,此处仅实时刷新观看端)。element_id 用流式预留 seq(与终态 append 同一号,定位连续);首帧前插件先 append 目标元素占位(ensureStreamElement),否则 APP 因元素不存在丢弃帧。缺 `aggregate` 字段 = 非聚合模式,走旧独立占位(兼容)。仅 agent 可发,IDOR 校验 `Hub.IsParticipant` fail-closed。server 调 `SendStreamToConvViewers`:查 participants,只推 `client.GetActiveConv()==conversation_id` 的 user 连接(op=3 SetActiveConv 上报的活跃会话)。op≠Dispatch 天然不进 dispatchBuffer,不带 seq,断线不补发。
 
 **出站(server→APP)**:`{op:14, d:{...}}` 原样转发。APP `websocket_service` 的 `streamEvents` 流接收,不走 `_persistToStore`(不落本地 DB)。`ChatNotifier._listenStream` 按 stream_id 聚合:首块插占位(`id="stream:$streamId"`, `isStreaming=true`, client-only 内存态),后续块 copyWith 替换 text(不新增行)。
 
@@ -163,33 +165,25 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `question_card` | `{oc_request_id, questions: [{question, header, options?, multiple?, custom?}], status}` | streamer `question_asked` → POST /api/conversations/:id/messages | 选择题卡片，APP 渲染 TabBar 横向切换 + radio/checkbox/custom |
 | `question_reply` | `{oc_request_id, answers: [string[]], rejected?: true}` | APP 底部抽屉提交 → PATCH /api/messages/:id | 选择题答案回传，silent（APP 过滤不展示） |
 
+**聚合消息（aggregate_card）**（opencode-plugin，默认开启）— 一次问答一条聚合卡消息，elements[] 按时序承载全部步骤。`data:{state:"generating"|"done", elements:[{type, element_id, data}]}`，创建时 `silent:true`，回合结束 PATCH 翻转 `silent:false`+`state:"done"`（未读/响铃由翻转承接，见 MESSAGE_UPDATE silent 翻转）。`element_id` 按 type_seq 规则生成（如 reasoning_1 / tool_card_2），全卡唯一、字母开头、≤20 字符；reasoning/markdown 流式用预留 seq，与终态 append 同一号。PATCH 全量替换 elements[]（非增量 diff）。**保持独立**：permission_card / question_card（交互需回调）、task 工具（子 agent 需 parent/root 串树，聚合卡无法表达层级）、子 session 所有消息；历史独立消息照常渲染（双轨兼容）。**开关**：`WANLING_AGGREGATE_CARD_ENABLED`（默认 true）置 false 回退旧逐条发送，协议不变。元素类型表：
+
+| 元素 type | data 字段 | 渲染（复用现有 renderer） |
+|---|---|---|
+| `reasoning` | `{text}` | 同独立 reasoning（思考抽屉） |
+| `tool_card` | `{name, input, output?, error?, status, sub_session_id?, ...}` | 同独立 tool_card |
+| `markdown` | `{text}` | 同独立 markdown |
+| `compact_divider` | `{phase}` | 压缩分隔线（自绘） |
+| `footer` | `{reason, cost, tokens, duration, finished}` | 同 step_finish（tokens 汇总行） |
+
 ### AGENT_MODELS
 
-plugin → server 单向事件。plugin 启动/重连时拉取 opencode `config.providers` 后，把可选模型清单上报给 server。
+plugin → server 单向事件。plugin 启动/重连时拉取 opencode `config.providers` 上报可选模型清单。**payload**: `{op:0, t:"AGENT_MODELS", d:{agent_id, models:[{provider_id, provider_name, model_id, model_name}], reported_at}}`。`provider_id`/`model_id` 为 opencode 全局约定标识（拼接为 `providerID/modelID`），`provider_name`/`model_name` 为可读名（plugin fallback 用 id 兜底）。无 status 字段（opencode connected 不可信）；空清单合法（plugin 未就绪）。
 
-**触发时机**: plugin WebSocket 连接成功 + `loadProviderNames()` 完成（在 streamer.start() 中触发）
-
-**payload**: `{op:0, t:"AGENT_MODELS", d:{agent_id, models:[{provider_id, provider_name, model_id, model_name}], reported_at}}`
-
-**字段说明**:
-- `models[].provider_id` / `model_id`: opencode 全局约定的标识（拼接为 `providerID/modelID`）
-- `models[].provider_name` / `model_name`: 可读名（plugin 端 fallback：provider.name 缺失用 id、model.name 缺失用 modelId）。APP 直接消费无需二次查询
-- 无 status 字段（opencode connected 状态目前不可信会断联，故不带）
-- 空清单也合法（plugin OC 未就绪 / provider 未配置），server 不拒绝
-
-**安全守卫**:
-1. `senderType != "agent"` 拒绝（防 user 越权）
-2. `payload.agent_id != senderID` 拒绝（防 plugin A 冒充上报 plugin B 的清单）。空 agent_id 一并拒绝
-
-**server 处理**: 写 `AgentRegistry` 内存缓存，不广播给其他 client（APP 通过 REST 拉取，不走 WS 推送）
-
-**APP 拉取**: `GET /api/agents/:id/models`（见 rest-response.md）
+**安全守卫**: `senderType != "agent"` 拒绝（防 user 越权）；`payload.agent_id != senderID` 拒绝（防 plugin A 冒充上报 plugin B 的清单），空 agent_id 一并拒绝。**server 处理**: 写 `AgentRegistry` 内存缓存不广播（APP 走 REST 拉取）。**APP 拉取**: `GET /api/agents/:id/models`（见 rest-response.md）。
 
 ### AGENT_SLASH_CATALOG
 
-plugin → server 单向事件。plugin 启动/重连时拉取 opencode `command.list` + `skill.list` 后，把命令/技能清单上报给 server（与对称事件 `AGENT_MODELS` 同期，均在 streamer.start() 触发）。
-
-**payload**: `{op:0, t:"AGENT_SLASH_CATALOG", d:{agent_id, commands:[{name, template, description?, source}], reported_at}}`
+plugin → server 单向事件。plugin 启动/重连时拉取 opencode `command.list` + `skill.list` 上报命令/技能清单（与 AGENT_MODELS 同期，均在 streamer.start() 触发）。**payload**: `{op:0, t:"AGENT_SLASH_CATALOG", d:{agent_id, commands:[{name, template, description?, source}], reported_at}}`。`source`: `"command"`（OC 命令）/`"skill"`（OC 技能），APP 据此分组渲染（命令组上、技能组下），plugin 自推的 `/compact` 也归 `source="command"`；`description` 可选（omitempty，APP 防空值）；空清单合法（plugin 未就绪）。
 
 **commands 示例**（一项命令 + 一项技能）:
 ```jsonc
@@ -199,15 +193,4 @@ plugin → server 单向事件。plugin 启动/重连时拉取 opencode `command
 ]
 ```
 
-**字段说明**:
-- `source`: `"command"`（OC 命令） | `"skill"`（OC 技能）。APP 据此分组渲染（命令组在上、技能组在下）；plugin 自推的 `/compact` 也归 `source="command"`
-- `description`: 可选（omitempty，OC 命令/技能无描述时省略，APP 端需防御空值）
-- 空清单也合法（plugin OC 未就绪 / 命令未注册），server 不拒绝
-
-**安全守卫**（对称 `AGENT_MODELS`）:
-1. `senderType != "agent"` 拒绝（防 user 越权）
-2. `payload.agent_id != senderID` 拒绝（防 plugin A 冒充上报 plugin B 的清单）。空 agent_id 一并拒绝
-
-**server 处理**: 写 `SlashCatalogRegistry` 内存缓存，不广播给其他 client（APP 通过 REST 拉取，不走 WS 推送）
-
-**APP 拉取**: `GET /api/agents/:id/slash-catalog`（见 rest-response.md）
+**安全守卫**（对称 AGENT_MODELS）: `senderType != "agent"` 拒绝；`payload.agent_id != senderID` 拒绝，空 agent_id 一并拒绝。**server 处理**: 写 `SlashCatalogRegistry` 内存缓存不广播（APP 走 REST 拉取）。**APP 拉取**: `GET /api/agents/:id/slash-catalog`（见 rest-response.md）。
