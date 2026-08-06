@@ -25,6 +25,7 @@ import '../services/file_download_service.dart';
 import '../services/websocket_service.dart';
 import '../utils/chat/message_preview.dart' show extractMessageText;
 import '../utils/chat/render_box_utils.dart' show globalRectOf;
+import '../utils/aggregate_card_state.dart' show hasGeneratingAggregateCard;
 import '../router_helpers.dart' show openFileBrowser;
 import '../widgets/chat/chat_app_bar.dart';
 import '../widgets/chat/chat_input_bar.dart';
@@ -634,13 +635,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   /// 重算打字态(busy/retry 也视作占位,与 typing 共用同一个 trailing 插槽)。
-  /// 双 sliver 下 typing 走 trailing SliverToBoxAdapter,loadMore 走 leading,
-  /// 不再合并进 itemCount,故只需跟踪 _isTyping。
+  /// generating 聚合卡存在时抑制气泡:聚合卡自身承载生成状态,无需重复 dots。
   void _refreshExtraItems() {
     if (!mounted) return;
     final typing = ref.read(typingProvider)[widget.convId] ?? false;
     final agentStatus = ref.read(agentStatusProvider)[widget.convId];
-    final showBubble = typing || agentStatus != null;
+    final live = ref
+        .read(chatProvider((convId: widget.convId, agentId: widget.agentId)))
+        .liveMessages;
+    final hasGeneratingCard = hasGeneratingAggregateCard(live);
+    final showBubble = (typing || agentStatus != null) && !hasGeneratingCard;
     if (_isTyping != showBubble) {
       _isTyping = showBubble;
       if (mounted) setState(() {});
