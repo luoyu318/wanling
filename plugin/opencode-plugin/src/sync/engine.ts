@@ -10,6 +10,7 @@ import {
   listSessionMaps
 } from "./mapper.js"
 import { getCard, deleteCard } from "./card_store.js"
+import { enqueueSentMessage } from "./queue_state.js"
 import { EventEmitter } from "events"
 
 export class SyncEngine extends EventEmitter {
@@ -95,7 +96,7 @@ export class SyncEngine extends EventEmitter {
         upsertSessionMap(map)
       }
       this.wanling.sendTyping(convId)
-      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename)
+      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename, payload.id)
       upsertSessionMap({ ...map, lastSyncAt: new Date().toISOString() })
       return
     }
@@ -163,7 +164,7 @@ export class SyncEngine extends EventEmitter {
         const model = rawModel && rawModel.provider_id && rawModel.model_id
           ? { providerID: rawModel.provider_id, modelID: rawModel.model_id }
           : undefined
-        await this.promptWithRetry(map.opencodeSessionId, String(data.text || ""), agent, model)
+        await this.promptWithRetry(map.opencodeSessionId, String(data.text || ""), payload.id, agent, model)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -224,6 +225,7 @@ export class SyncEngine extends EventEmitter {
   private async promptWithRetry(
     sessionId: string,
     text: string,
+    wanlingMsgId: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<void> {
@@ -232,6 +234,9 @@ export class SyncEngine extends EventEmitter {
     let lastErr: Error | null = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
+        // 发送前登记 FIFO:opencode 入队后 subscriber 的 admitted/prompted 事件
+        // 按序到达,queue_state 据此关联回 wanling 消息(排队徽标定位)。
+        enqueueSentMessage(sessionId, wanlingMsgId, text)
         await this.opencode.promptAsync(sessionId, text, agent, model)
         return
       } catch (err) {
@@ -272,6 +277,7 @@ export class SyncEngine extends EventEmitter {
     msgType: string,
     fileId: string | undefined,
     filename?: string,
+    wanlingMsgId?: string,
   ): Promise<void> {
     if (!fileId) {
       console.warn("[sync] media message missing file_id, skip")
@@ -279,7 +285,7 @@ export class SyncEngine extends EventEmitter {
     }
     if (!this.downloader) {
       console.warn("[sync] downloader not configured, cannot handle media message")
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType))
+      await this.promptWithRetry(sessionId, this.fallbackText(msgType), wanlingMsgId ?? "")
       return
     }
 
@@ -293,10 +299,10 @@ export class SyncEngine extends EventEmitter {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[sync] media download failed: ${msg}`)
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType))
+      await this.promptWithRetry(sessionId, this.fallbackText(msgType), wanlingMsgId ?? "")
       return
     }
-    await this.promptWithRetry(sessionId, this.mediaPromptText(msgType, result.path))
+    await this.promptWithRetry(sessionId, this.mediaPromptText(msgType, result.path), wanlingMsgId ?? "")
   }
 
   private mediaPromptText(msgType: string, path: string): string {

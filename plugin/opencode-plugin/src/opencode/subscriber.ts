@@ -119,6 +119,10 @@ export interface SubscriberEvents {
   permission_replied: [PermissionRepliedPayload]
   question_replied: [QuestionRepliedPayload]
   question_rejected: [QuestionRejectedPayload]
+  // 排队消息状态:delivery=queue 时 opencode 发入队(admitted)/调度(prompted)事件。
+  // 供 streamer 同步 queued_status 给 APP(气泡排队徽标)与聚合卡分段。
+  queue_admitted: [{ sessionID: string; messageID: string; text: string }]
+  queue_prompted: [{ sessionID: string; messageID: string; text: string }]
   error: [unknown]
 }
 
@@ -383,6 +387,26 @@ export class EventSubscriber extends EventEmitter {
         this.emit("question_rejected", {
           sessionID,
           requestID: (properties.requestID as string) || "",
+        })
+        break
+      }
+
+      case "session.next.prompt.admitted": {
+        const text = (properties.prompt as { text?: string } | undefined)?.text ?? ""
+        this.emit("queue_admitted", {
+          sessionID: sessionID as string,
+          messageID: properties.messageID as string,
+          text,
+        })
+        break
+      }
+
+      case "session.next.prompted": {
+        const text = (properties.prompt as { text?: string } | undefined)?.text ?? ""
+        this.emit("queue_prompted", {
+          sessionID: sessionID as string,
+          messageID: properties.messageID as string,
+          text,
         })
         break
       }
