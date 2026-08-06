@@ -48,7 +48,13 @@ class AggregateCardRenderer implements MessageContentRenderer {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        // 左上角直角(对齐头像起始),其余三角 10px 圆角
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.zero,
+          topRight: Radius.circular(10),
+          bottomLeft: Radius.circular(10),
+          bottomRight: Radius.circular(10),
+        ),
         border: Border.all(color: const Color(0xFFE8E8E8)),
       ),
       clipBehavior: Clip.antiAlias,
@@ -56,6 +62,8 @@ class AggregateCardRenderer implements MessageContentRenderer {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
+          // 顶栏去除后顶部留白:首元素自带上边距 4,补 6 让卡片顶部视觉不挤
+          const SizedBox(height: 6),
           for (final slot in slots)
             switch (slot) {
               ToolGroupSlot(:final cards) => Padding(

@@ -849,7 +849,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // 实现:详见 widgets/chat/chat_state_listener.dart(副作用逻辑封装)。
     ref.listen(
       chatProvider(chatKey),
-      (prev, next) => _stateListener.onChatStateChanged(prev, next),
+      (prev, next) {
+        _stateListener.onChatStateChanged(prev, next);
+        // 消息列表变化(含聚合卡创建)→ 重算 TypingBubble 插槽显隐:
+        // 聚合卡创建后应立刻隐藏 busy 气泡,不等 typing/status 下次触发。
+        _refreshExtraItems();
+      },
     );
 
     // 监听打字态 + hasMore 变化，合并更新偏移量（避免两路 provider 索引抖动）
