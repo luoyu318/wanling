@@ -9,6 +9,10 @@ export interface CardEntry {
   directory?: string
   data?: Record<string, unknown>
   createdAt?: number
+  // 聚合模式:交互卡嵌入聚合卡元素时,记录目标元素 element_id + 所属 sessionId,
+  // 供反向流/孤儿清理在聚合卡 elements 里定位该元素(非聚合模式不设置)。
+  elementId?: string
+  sessionId?: string
 }
 
 const STORE_PATH = path.join(configDir(), "pending-cards.json")

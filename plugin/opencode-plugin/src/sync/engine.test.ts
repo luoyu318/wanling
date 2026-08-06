@@ -840,3 +840,77 @@ describe("SyncEngine syncCliToApp silent 对齐", () => {
     )
   })
 })
+
+describe("SyncEngine 聚合模式反向流(APP 答 → 跳过独立卡 PATCH,交给 OC echo)", () => {
+  it("permission entry 带 elementId → 不 PATCH 独立卡,不 deleteCard(留给 interaction echo 更新聚合元素)", async () => {
+    const SyncEngine = await freshLoad()
+    const { saveCard, getCard } = await import("./card_store.js")
+    const { engine, wanling, opencode } = makeEngine(SyncEngine)
+    opencode.replyPermission = vi.fn().mockResolvedValue(undefined)
+    wanling.updateMessageContent = vi.fn().mockResolvedValue(undefined)
+    saveCard("req-agg-perm", {
+      msgId: "agg-card-1",
+      convId: "conv-A",
+      type: "permission",
+      data: { action: "bash", resources: ["*.sh"] },
+      elementId: "permission_card_1",
+      sessionId: "sess-main",
+    })
+
+    await (engine as any).handlePermissionReply("conv-A", { oc_request_id: "req-agg-perm", reply: "once" })
+
+    // 聚合模式:独立卡 PATCH 不再适用(会把聚合卡整个改写坏),交回声处理
+    expect(wanling.updateMessageContent).not.toHaveBeenCalled()
+    // 不 deleteCard:entry 保留给 permission.replied 回声 → interaction.onPermissionReplied 更新聚合元素
+    expect(getCard("req-agg-perm")).not.toBeNull()
+    // OC 回复仍正常投递
+    expect(opencode.replyPermission).toHaveBeenCalledWith("req-agg-perm", "once", undefined)
+  })
+
+  it("question entry 带 elementId(rejected)→ 不 PATCH 独立卡,不 deleteCard", async () => {
+    const SyncEngine = await freshLoad()
+    const { saveCard, getCard } = await import("./card_store.js")
+    const { engine, wanling, opencode } = makeEngine(SyncEngine)
+    opencode.rejectQuestion = vi.fn().mockResolvedValue(undefined)
+    wanling.updateMessageContent = vi.fn().mockResolvedValue(undefined)
+    saveCard("req-agg-q", {
+      msgId: "agg-card-1",
+      convId: "conv-A",
+      type: "question",
+      data: { questions: [] },
+      elementId: "question_card_2",
+      sessionId: "sess-main",
+    })
+
+    await (engine as any).handleQuestionReply("conv-A", { oc_request_id: "req-agg-q", rejected: true })
+
+    expect(wanling.updateMessageContent).not.toHaveBeenCalled()
+    expect(getCard("req-agg-q")).not.toBeNull()
+    expect(opencode.rejectQuestion).toHaveBeenCalledWith("req-agg-q", undefined)
+  })
+
+  it("非聚合 entry(无 elementId)→ 保持旧逻辑:对独立卡 updateMessageContent PATCH + deleteCard", async () => {
+    const SyncEngine = await freshLoad()
+    const { saveCard, getCard } = await import("./card_store.js")
+    const { engine, wanling, opencode } = makeEngine(SyncEngine)
+    opencode.replyPermission = vi.fn().mockResolvedValue(undefined)
+    wanling.updateMessageContent = vi.fn().mockResolvedValue(undefined)
+    saveCard("req-standalone", {
+      msgId: "perm-msg-1",
+      convId: "conv-A",
+      type: "permission",
+      data: { action: "bash", resources: ["*.sh"] },
+    })
+
+    await (engine as any).handlePermissionReply("conv-A", { oc_request_id: "req-standalone", reply: "once" })
+
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith(
+      "perm-msg-1",
+      expect.objectContaining({
+        msg_type: "permission_card",
+        data: expect.objectContaining({ status: "approved", result: "once", oc_request_id: "req-standalone" }),
+      }),
+    )
+    expect(getCard("req-standalone")).toBeNull()
+  })
+})

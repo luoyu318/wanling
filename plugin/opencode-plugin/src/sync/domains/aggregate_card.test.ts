@@ -156,4 +156,79 @@ describe("AggregateCardManager 静态构造器(element_id 规则 type_seq)", () 
       data,
     })
   })
+
+  it("questionCard 元素透传 QuestionCardData", () => {
+    const data = {
+      oc_request_id: "q-1",
+      questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
+      status: "pending",
+    }
+    expect(AggregateCardManager.questionCard(data, 5)).toEqual({
+      type: "question_card",
+      element_id: "question_card_5",
+      data,
+    })
+  })
+
+  it("permissionCard 元素透传 PermissionCardData", () => {
+    const data = {
+      oc_request_id: "p-1",
+      action: "bash",
+      resources: ["*.sh"],
+      save: [],
+      metadata: {},
+      status: "pending",
+    }
+    expect(AggregateCardManager.permissionCard(data, 6)).toEqual({
+      type: "permission_card",
+      element_id: "permission_card_6",
+      data,
+    })
+  })
+})
+
+describe("AggregateCardManager updateElement", () => {
+  let wanling: ReturnType<typeof makeWanling>["wanling"]
+
+  beforeEach(() => {
+    wanling = makeWanling().wanling
+  })
+
+  it("按 element_id 更新元素 data 并全量替换 PATCH(带 silent opts)", async () => {
+    const state = makeState()
+    state.aggregateElements = [
+      AggregateCardManager.questionCard({
+        oc_request_id: "q-1",
+        questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
+        status: "pending",
+      }, 1),
+      AggregateCardManager.markdown("正文", 2),
+    ]
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("question_card_1", { status: "answered", result: "是" }, { silent: true })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1",
+      {
+        state: "generating",
+        elements: [
+          AggregateCardManager.questionCard({
+            oc_request_id: "q-1",
+            questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
+            status: "answered",
+            result: "是",
+          }, 1),
+          AggregateCardManager.markdown("正文", 2),
+        ],
+      },
+      { silent: true },
+    )
+    expect(state.aggregateElements[0].data.status).toBe("answered")
+  })
+
+  it("element 不存在时不 PATCH(避免用缺失列表全量替换丢元素)", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("question_card_9", { status: "answered" })
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
 })

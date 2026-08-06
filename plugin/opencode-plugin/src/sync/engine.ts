@@ -320,7 +320,11 @@ export class SyncEngine extends EventEmitter {
       const entry = await getCard(ocRequestId)
       await this.opencode.replyPermission(ocRequestId, reply, entry?.directory)
 
-      if (entry) {
+      // 聚合模式(entry.elementId 已存):独立 permission_card PATCH 会把聚合卡整个
+      // 改写坏(聚合卡是 aggregate_card 结构)。card 状态更新交给 OC 的 permission.replied
+      // 回声 → interaction.onPermissionReplied 更新聚合卡内元素;这里不 deleteCard,
+      // 保留 entry 供回声消费(回声幂等:interaction 更新后 deleteCard)。
+      if (entry && !entry.elementId) {
         const status = reply === "reject" ? "denied" : "approved"
         await this.wanling.updateMessageContent(entry.msgId, {
           msg_type: "permission_card",
@@ -361,7 +365,11 @@ export class SyncEngine extends EventEmitter {
         await this.opencode.replyQuestion(ocRequestId, answers || [], directory)
       }
 
-      if (entry) {
+      // 聚合模式(entry.elementId 已存):独立 question_card PATCH 会把聚合卡整个
+      // 改写坏。card 状态更新交给 OC 的 question.replied/question.rejected 回声 →
+      // interaction.onQuestionReplied/onQuestionRejected 更新聚合卡内元素;
+      // 这里不 deleteCard,保留 entry 供回声消费。
+      if (entry && !entry.elementId) {
         const status = rejected ? "rejected" : "answered"
         const result = rejected
           ? "rejected"

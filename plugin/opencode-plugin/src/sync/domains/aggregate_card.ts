@@ -4,8 +4,10 @@ import type { SessionState } from "../types.js"
 // 聚合卡元素:聚合卡 message 的 data.elements[] 结构。
 // element_id 全局唯一、字母开头、≤20 字符(type_seq 规则,如 reasoning_1)。
 // type 由 APP aggregate_card renderer(Task 6)按元素类型分派渲染。
+// question_card / permission_card:交互元素嵌入聚合卡(2026-08-06 变更),
+// 数据对齐现有 question/permission 卡 renderer 消费字段,聚合卡内不丢字段。
 export interface AggregateElement {
-  type: "reasoning" | "tool_card" | "markdown" | "compact_divider" | "footer"
+  type: "reasoning" | "tool_card" | "markdown" | "compact_divider" | "footer" | "question_card" | "permission_card"
   element_id: string
   data: Record<string, unknown>
 }
@@ -31,6 +33,33 @@ export type FooterData = {
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number; cache?: { read?: number; write?: number } }
   duration?: number
   finished?: boolean
+}
+
+// question_card 元素 data:对齐现有 question_card renderer 消费字段
+// (interaction.ts 发送态,status 由反向流切换 answered/rejected/expired)。
+export type QuestionCardData = {
+  oc_request_id: string
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{ label: string; description: string }>
+    multiple?: boolean
+    custom?: boolean
+  }>
+  status?: string
+  result?: string
+}
+
+// permission_card 元素 data:对齐现有 permission_card renderer 消费字段
+// (interaction.ts 发送态,status 由反向流切换 approved/denied/expired)。
+export type PermissionCardData = {
+  oc_request_id: string
+  action: string
+  resources: string[]
+  save?: string[]
+  metadata?: Record<string, unknown>
+  status?: string
+  result?: string
 }
 
 // AggregateCardManager:聚合卡发送核心领域模块。
@@ -109,5 +138,40 @@ export class AggregateCardManager {
 
   static footer(data: FooterData, seq: number): AggregateElement {
     return { type: "footer", element_id: `footer_${seq}`, data }
+  }
+
+  static questionCard(data: QuestionCardData, seq: number): AggregateElement {
+    return { type: "question_card", element_id: `question_card_${seq}`, data }
+  }
+
+  static permissionCard(data: PermissionCardData, seq: number): AggregateElement {
+    return { type: "permission_card", element_id: `permission_card_${seq}`, data }
+  }
+
+  // 定位聚合卡内元素并全量替换更新(按 element_id,合并 patchData 到该元素 data)。
+  // 与 PartDispatcher.appendElement / ToolCardManager.updateToolElement 同一串行队列
+  // (state.aggregatePatchQueue)语义:更新排在其他 append/update 之后执行,
+  // 读到的 state.aggregateElements 已含目标元素;并发更新不互相覆盖。
+  // silent 语义同 patchElements:显式 {silent:true} 恢复不响铃,
+  // {silent:false} 翻转计未读(由 server mergePreservedSilent 尊重显式值)。
+  // 元素缺失时不 PATCH(避免用缺失元素的列表全量替换丢其他元素)。
+  async updateElement(
+    elementId: string,
+    patchData: Record<string, unknown>,
+    opts?: { silent?: boolean },
+  ): Promise<void> {
+    const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const existed = (this.state.aggregateElements ?? []).some((e) => e.element_id === elementId)
+      if (!existed) return
+      const elements = (this.state.aggregateElements ?? []).map((e) =>
+        e.element_id === elementId ? { ...e, data: { ...e.data, ...patchData } } : e,
+      )
+      this.state.aggregateElements = elements
+      await this.patchElements(elements, opts)
+    })
+    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
+    this.state.aggregatePatchQueue = next.catch(() => {})
+    return next
   }
 }

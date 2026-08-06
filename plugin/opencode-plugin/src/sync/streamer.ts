@@ -120,6 +120,7 @@ export class Streamer extends EventEmitter {
       wanling,
       toolCard: this.toolCard,
       emitter: this,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.lifecycle = new SessionLifecycle({
       store: this.store,
