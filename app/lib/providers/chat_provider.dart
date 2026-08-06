@@ -555,6 +555,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// incrementUnread 完成（见 ChatPage build）。
   void _onMessageCreate(Map<String, dynamic> msgData) {
     if (msgData['conversation_id'] != conversationId) return;
+    // queued_status:轻量排队状态消息(plugin 发),不插入消息列表,
+    // 只更新对应用户消息气泡的排队徽标。data:{message_id, queued}。
+    if ((msgData['content'] as Map?)?['msg_type'] == 'queued_status') {
+      final data =
+          (msgData['content'] as Map<String, dynamic>)['data']
+              as Map<String, dynamic>? ??
+          const <String, dynamic>{};
+      final messageId = data['message_id'] as String?;
+      final queued = data['queued'] == true;
+      if (messageId != null) {
+        state = _updateMessageById(messageId, (m) => m.copyWith(queued: queued));
+      }
+      return;
+    }
     // 子 agent 事件(parent_msg_id 非空)不在主聊天列表展示。server HTTP 列表
     // 已用 parent_msg_id IS NULL 过滤,WS 实时路径同样需过滤,否则子 agent 的
     // reasoning/tool_calls 会实时涌入主聊天,刷新后又消失,造成闪烁/不一致。

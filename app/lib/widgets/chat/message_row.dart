@@ -192,14 +192,24 @@ class MessageRow extends ConsumerWidget {
       // bubble 撑到 maxBubbleWidth + status icon 把整体顶到右屏外
       final status = _statusIndicator;
       final double statusWidth = status != null ? 24 : 0;
+      // 排队徽标:用户消息已被 agent 会话排队(queued=true)时,气泡左侧显示「排队中」。
+      // 独立于发送状态(排队是「已送达 server 但 agent 未开始处理」,非 sending)。
+      final bool showQueued = message.queued;
+      final double queuedWidth = showQueued ? 40 : 0;
       final double widthRatio = reserveAvatarSpace ? 0.7 : 0.95;
       final double maxBubbleWidth =
-          MediaQuery.sizeOf(context).width * widthRatio - statusWidth;
+          MediaQuery.sizeOf(context).width * widthRatio - statusWidth - queuedWidth;
       final bubbleWithStatus = Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           if (status != null) status,
+          if (showQueued)
+            const Padding(
+              padding: EdgeInsets.only(right: 4),
+              child: Text('排队中',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF999999))),
+            ),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxBubbleWidth),
             // 方案 B:仅在此处把 bubble 包到 Column 中,引用块条件渲染在 bubble 上方,
