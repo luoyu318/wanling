@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/msg_type.dart';
-import 'footer_info_bar.dart';
+import 'footer_status_bar.dart';
 import 'message_content_renderer.dart';
 import 'tool_group_renderer.dart';
 
@@ -56,7 +56,6 @@ class AggregateCardRenderer implements MessageContentRenderer {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildHeader(generating: generating),
           for (final slot in slots)
             switch (slot) {
               ToolGroupSlot(:final cards) => Padding(
@@ -64,35 +63,24 @@ class AggregateCardRenderer implements MessageContentRenderer {
                   child: ToolGroupCard(cards: cards, rc: rc),
                 ),
               SingleElementSlot(:final element) =>
-                // finished footer 元素由底部提示条代替渲染(不重复走 step_finish)
+                // finished footer 元素由底部状态条代替渲染(不重复走 step_finish)
                 !_isFinishedFooter(element)
                     ? _buildElement(context, element, rc, generating: generating)
                     : const SizedBox.shrink(),
             },
-          // 底部提示条:done + finished footer 才渲染(回合结束信号)
-          if (!generating && _hasFinishedFooter(elements))
-            FooterInfoBar(data: _finishedFooterData(elements)),
-        ],
-      ),
-    );
-  }
-
-  /// 顶部状态条：generating → 绿色「回复中」；done → 深灰「完成」。
-  Widget _buildHeader({required bool generating}) {
-    final color = generating
-        ? const Color(0xFF07C160)
-        : const Color(0xFF666666);
-    return Container(
-      color: const Color(0xFFF7F7F7),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          Icon(Icons.auto_awesome, size: 13, color: color),
-          const SizedBox(width: 5),
-          Text(
-            generating ? '回复中' : '完成',
-            style: TextStyle(fontSize: 12, color: color),
-          ),
+          // footer 状态条:generating→动态阶段词;done+finished footer→静态信息条
+          if (generating)
+            FooterStatusBar(
+              generating: true,
+              elements: elements,
+              footerData: const {},
+            )
+          else if (_hasFinishedFooter(elements))
+            FooterStatusBar(
+              generating: false,
+              elements: elements,
+              footerData: _finishedFooterData(elements),
+            ),
         ],
       ),
     );

@@ -103,25 +103,17 @@ void main() {
     );
   }
 
-  group('header 状态条', () {
-    testWidgets('state=generating 显示「回复中」,不显示「完成」', (tester) async {
+  group('顶栏去除', () {
+    testWidgets('generating 不渲染「回复中」顶栏文案', (tester) async {
       await tester.pumpWidget(host(content(state: 'generating')));
-      expect(find.text('回复中'), findsOneWidget);
+      expect(find.text('回复中'), findsNothing);
       expect(find.text('完成'), findsNothing);
     });
 
-    testWidgets('state=done 显示「完成」,不显示「回复中」', (tester) async {
+    testWidgets('done 不渲染「完成」顶栏文案', (tester) async {
       await tester.pumpWidget(host(content(state: 'done')));
-      expect(find.text('完成'), findsOneWidget);
+      expect(find.text('完成'), findsNothing);
       expect(find.text('回复中'), findsNothing);
-    });
-
-    testWidgets('state 缺失默认 generating', (tester) async {
-      await tester.pumpWidget(host({
-        'msg_type': MsgType.aggregateCard.value,
-        'data': {'elements': const []},
-      }));
-      expect(find.text('回复中'), findsOneWidget);
     });
   });
 
@@ -229,7 +221,7 @@ void main() {
       await tester.tap(find.text('工具调用 · 1'));
       await tester.pump();
       expect(find.text('Read'), findsOneWidget);
-      expect(find.text('完成'), findsNWidgets(2)); // header + 工具卡状态
+      expect(find.text('完成'), findsOneWidget); // 仅工具卡状态(顶栏已去除)
     });
 
     testWidgets('footer 元素 data 对齐 step_finish renderer（cost 字段）', (tester) async {
@@ -416,13 +408,17 @@ void main() {
       expect(find.text('tokens 2.1k'), findsOneWidget);
     });
 
-    testWidgets('state=generating 不渲染提示条(即使有 finished footer)', (tester) async {
+    testWidgets('state=generating → footer 显示动态阶段词(不显示静态信息)', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'generating',
         elements: [
+          element('tool_card', 'tool_card_1', {'name': 'bash', 'status': 'running', 'input': {'command': 'ls'}}),
           element('footer', 'footer_1', {'finished': true, 'mode': 'build', 'model': 'M', 'duration': 1, 'tokens': {'total': 100}}),
         ],
       )));
+      // 动态阶段词(最后元素 tool_card → 执行中)
+      expect(find.text('执'), findsOneWidget);
+      // 静态信息条不渲染
       expect(find.text('build'), findsNothing);
     });
 
@@ -439,9 +435,10 @@ void main() {
   });
 
   group('空守卫', () {
-    testWidgets('无 elements 时仅渲染 header', (tester) async {
+    testWidgets('无 elements 时渲染空卡片(无顶栏文案)', (tester) async {
       await tester.pumpWidget(host(content(state: 'generating')));
-      expect(find.text('回复中'), findsOneWidget);
+      expect(find.text('回复中'), findsNothing);
+      expect(find.text('完成'), findsNothing);
     });
   });
 }
