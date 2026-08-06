@@ -57,11 +57,6 @@ class ChatMessage {
   /// 仅 isRecalled=true 时有意义。
   final String? recalledByName;
 
-  /// 排队标记(client-only,server 不持久化):用户消息已发送但 opencode 会话
-  /// 仍在处理上一条,此消息排队等待执行。由 queued_status 消息维护:
-  /// 入队(queued=true)→ 气泡显示「排队中」徽标;开始执行(queued=false)→ 移除。
-  final bool queued;
-
   /// 引用消息元数据(server 富化后嵌入 content.data.quote)。
   /// null 表示该消息未引用任何消息。
   final Quote? quote;
@@ -94,7 +89,6 @@ class ChatMessage {
     this.isStreaming = false,
     this.isRecalled = false,
     this.recalledByName,
-    this.queued = false,
     this.quote,
     this.parentMsgId,
     this.rootMsgId,
@@ -125,8 +119,6 @@ class ChatMessage {
       // 占位由 _listenStream 显式置 true,终态替换由 _onMessageCreate 重置为 false。
       isStreaming: false,
       isRecalled: isRecalled,
-      // server 不发 queued 字段;client 默认 false,由 queued_status 消息维护。
-      queued: false,
       // quote 从 content.data.quote 解析;缺失或显式 null 都视为无引用。
       quote: parseQuote(content),
       parentMsgId: json['parent_msg_id'] as String?,
@@ -150,7 +142,6 @@ class ChatMessage {
     bool? isStreaming,
     bool? isRecalled,
     String? recalledByName,
-    bool? queued,
     Quote? quote,
     String? parentMsgId,
     String? rootMsgId,
@@ -170,7 +161,6 @@ class ChatMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       isRecalled: isRecalled ?? this.isRecalled,
       recalledByName: recalledByName ?? this.recalledByName,
-      queued: queued ?? this.queued,
       quote: quote ?? this.quote,
       parentMsgId: parentMsgId ?? this.parentMsgId,
       rootMsgId: rootMsgId ?? this.rootMsgId,

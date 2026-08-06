@@ -555,20 +555,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// incrementUnread 完成（见 ChatPage build）。
   void _onMessageCreate(Map<String, dynamic> msgData) {
     if (msgData['conversation_id'] != conversationId) return;
-    // queued_status:轻量排队状态消息(plugin 发),不插入消息列表,
-    // 只更新对应用户消息气泡的排队徽标。data:{message_id, queued}。
-    if ((msgData['content'] as Map?)?['msg_type'] == 'queued_status') {
-      final data =
-          (msgData['content'] as Map<String, dynamic>)['data']
-              as Map<String, dynamic>? ??
-          const <String, dynamic>{};
-      final messageId = data['message_id'] as String?;
-      final queued = data['queued'] == true;
-      if (messageId != null) {
-        state = _updateMessageById(messageId, (m) => m.copyWith(queued: queued));
-      }
-      return;
-    }
     // 子 agent 事件(parent_msg_id 非空)不在主聊天列表展示。server HTTP 列表
     // 已用 parent_msg_id IS NULL 过滤,WS 实时路径同样需过滤,否则子 agent 的
     // reasoning/tool_calls 会实时涌入主聊天,刷新后又消失,造成闪烁/不一致。
@@ -836,26 +822,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 流式占位由 _listenStream append 到末尾(恒在底部);若普通新消息(卡片等)也
   /// append,思考中到达的卡片会排到 busy 占位下方,视觉上「先出现在底部再被校正
   /// 回弹」(闪烁)。正确语义:新消息插到第一个 isStreaming 占位之前(上方)。
-  /// [beforeAggregateCard] 为 true 时(用户自己发送的消息),若 live 末尾有聚合卡
-  /// (agent 对上一轮的回答,isStreaming=false 终态卡),插到该聚合卡之前——
-  /// 用户新消息应排在其上方(排队语义);为 false 时(agent 消息 / 聚合卡建卡)
-  /// 保持原逻辑,只保护 isStreaming 占位。
+  /// 用户消息按实际时序 append(聚合卡下方)——聚合卡按用户消息拆分由 plugin
+  /// 侧负责(用户消息打断旧卡定格),APP 只保证 isStreaming 占位恒在末尾。
   List<ChatMessage> _insertLiveKeepingStreamingLast(
-      List<ChatMessage> live, ChatMessage msg,
-      {bool beforeAggregateCard = false}) {
+      List<ChatMessage> live, ChatMessage msg) {
     final streamIdx = live.indexWhere((m) => m.isStreaming);
-    if (streamIdx >= 0) {
-      return [...live.take(streamIdx), msg, ...live.skip(streamIdx)];
-    }
-    if (beforeAggregateCard) {
-      final lastAggIdx = live.lastIndexWhere((m) =>
-          MsgTypeX.fromString(m.content['msg_type'] as String?) ==
-          MsgType.aggregateCard);
-      if (lastAggIdx >= 0) {
-        return [...live.take(lastAggIdx), msg, ...live.skip(lastAggIdx)];
-      }
-    }
-    return [...live, msg];
+    if (streamIdx < 0) return [...live, msg];
+    return [...live.take(streamIdx), msg, ...live.skip(streamIdx)];
   }
 
   /// 按 id 在双 list(liveMessages + historyMessages)同步更新单条消息。
@@ -1370,9 +1343,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       'hasAvatar=${currentUser?.avatarUrl != null}',
     );
     state = state.copyWith(
-      liveMessages: _insertLiveKeepingStreamingLast(
-          state.liveMessages, tempMsg,
-          beforeAggregateCard: true),
+      liveMessages:
+          _insertLiveKeepingStreamingLast(state.liveMessages, tempMsg),
     );
     if (store != null) {
       // fire-and-forget:避免 sendText/sendFile 链路变长,DB 写失败不影响 UI。
