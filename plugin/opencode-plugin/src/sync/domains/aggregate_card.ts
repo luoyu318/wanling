@@ -62,10 +62,32 @@ export type PermissionCardData = {
   result?: string
 }
 
+// 聚合卡增量 PATCH op(server Task A 已支持):content.data 带 op 字段时,
+// server 按 op 合并到全量存储、广播带增量;无 op 带 elements 仍是全量替换兼容。
+// 增量协议(server applyContentOp):
+//   { op:"append", element }                      → 末尾追加元素(无 upsert)
+//   { op:"update", element_id, data }             → 整体替换目标元素 data(元素不存在 400)
+//   { op:"remove", element_id }                   → 删除元素(不存在幂等跳过)
+//   { op:"reorder", order:[...] }                 → 按 order 重排
+//   { op:"set_state", state }                     → 改 data.state
+//   { op:"set_silent", silent }                   → 改顶层 content.silent(翻转触发未读)
+export type AggregatePatchOp =
+  | { op: "append"; element: AggregateElement }
+  | { op: "update"; element_id: string; data: Record<string, unknown> }
+  | { op: "remove"; element_id: string }
+  | { op: "reorder"; order: string[] }
+  | { op: "set_state"; state: "generating" | "done" }
+  | { op: "set_silent"; silent: boolean }
+
+// patchAggregateMessage 的 data 入参:增量 op 或全量替换(兼容,无 op)。
+export type AggregatePatchData = AggregatePatchOp | { state?: string; elements: AggregateElement[] }
+
 // AggregateCardManager:聚合卡发送核心领域模块。
 // 职责:一次问答一张聚合卡 — ensureCard 建卡(幂等,msgId 存 SessionState 跨实例复用),
-// patchElements 全量替换 elements[](非增量 diff)。silent 翻转(回合结束 {silent:false})
-// 由 server 端 Task 1 的 IncrUnread 承接,这里只是显式透传。
+// appendElement 增量 append / updateElement 增量 update。silent 翻转(回合结束
+// {set_silent:false})由 server 端 Task 1 的 IncrUnread 承接,这里发增量 op。
+// state/silent 不再随 append/update 携带(增量下 server 保留原值),仅在显式翻转时
+// 单独发 set_state / set_silent op,根治全量替换丢 state 的 I3 问题。
 export class AggregateCardManager {
   constructor(
     private readonly wanling: WanlingClient,
@@ -103,25 +125,39 @@ export class AggregateCardManager {
     }
   }
 
-  // 全量替换 elements[](非增量 diff)。
-  // state 语义(I3):server 端 UpdateContent 全量替换 data,未显式带 state 的 PATCH
-  // (如迟到 tool 终态)会丢 state 字段。故这里维护 state.aggregateCardState 当前值:
-  // - opts.state 显式传 → 更新 state.aggregateCardState 并写入 PATCH
-  // - opts.state 未传   → 沿用 state.aggregateCardState(建卡默认 generating),
-  //   保证回合结束(done)后的迟到 PATCH 不把卡片翻回 generating。
-  // silent 翻转时传 {silent:false} → content 显式带 silent:false 触发计未读。
-  async patchElements(
-    elements: AggregateElement[],
+  // 增量 append:维护本地累计 + 串行队列(aggregatePatchQueue)后,发 {op:"append"}。
+  // 同 element_id 已存在(流式占位 / 终态补全)时发 {op:"update"} 原位替换 ——
+  // server append 无 upsert(总是末尾追加),若占位后终态仍 append 会出双元素。
+  // opts.state 显式传 → 单独发 {op:"set_state"} 并维护 state.aggregateCardState;
+  // opts.silent !== undefined → 单独发 {op:"set_silent"}。增量下 server 保留原
+  // state/silent,不再像全量替换那样每次 PATCH 都带。
+  async appendElement(
+    element: AggregateElement,
     opts?: { silent?: boolean; state?: "generating" | "done" },
   ): Promise<void> {
-    const nextState = opts?.state ?? this.state.aggregateCardState ?? "generating"
-    if (opts?.state) this.state.aggregateCardState = opts.state
-    const msgId = await this.ensureCard()
-    await this.wanling.patchAggregateMessage(
-      msgId,
-      { state: nextState, elements },
-      opts?.silent === undefined ? undefined : { silent: opts.silent },
-    )
+    const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const existed = (this.state.aggregateElements ?? []).some((e) => e.element_id === element.element_id)
+      const elements = existed
+        ? (this.state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
+        : [...(this.state.aggregateElements ?? []), element]
+      this.state.aggregateElements = elements
+      const msgId = await this.ensureCard()
+      await this.wanling.patchAggregateMessage(
+        msgId,
+        existed ? { op: "update", element_id: element.element_id, data: element.data } : { op: "append", element },
+      )
+      if (opts?.state) {
+        this.state.aggregateCardState = opts.state
+        await this.wanling.patchAggregateMessage(msgId, { op: "set_state", state: opts.state })
+      }
+      if (opts?.silent !== undefined) {
+        await this.wanling.patchAggregateMessage(msgId, { op: "set_silent", silent: opts.silent })
+      }
+    })
+    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
+    this.state.aggregatePatchQueue = next.catch(() => {})
+    return next
   }
 
   static reasoning(text: string, seq: number): AggregateElement {
@@ -148,13 +184,15 @@ export class AggregateCardManager {
     return { type: "permission_card", element_id: `permission_card_${seq}`, data }
   }
 
-  // 定位聚合卡内元素并全量替换更新(按 element_id,合并 patchData 到该元素 data)。
+  // 定位聚合卡内元素并增量更新(按 element_id 发 {op:"update", data:合并后全量})。
   // 与 PartDispatcher.appendElement / ToolCardManager.updateToolElement 同一串行队列
   // (state.aggregatePatchQueue)语义:更新排在其他 append/update 之后执行,
   // 读到的 state.aggregateElements 已含目标元素;并发更新不互相覆盖。
-  // silent 语义同 patchElements:显式 {silent:true} 恢复不响铃,
-  // {silent:false} 翻转计未读(由 server mergePreservedSilent 尊重显式值)。
-  // 元素缺失时不 PATCH(避免用缺失元素的列表全量替换丢其他元素)。
+  // server update 是整体替换元素 data(非 merge),故 data 传本地合并后全量,
+  // 否则 questions/input 等既有字段会丢。
+  // silent 语义:显式 {silent:true} 恢复不响铃,{silent:false} 翻转计未读,
+  // 经 {op:"set_silent"} 单独发(增量下 server 保留原值,无需每次携带)。
+  // 元素缺失时不 PATCH(本地缓存兜底,避免 server 对不存在元素 update 返回 400)。
   async updateElement(
     elementId: string,
     patchData: Record<string, unknown>,
@@ -168,7 +206,17 @@ export class AggregateCardManager {
         e.element_id === elementId ? { ...e, data: { ...e.data, ...patchData } } : e,
       )
       this.state.aggregateElements = elements
-      await this.patchElements(elements, opts)
+      const target = elements.find((e) => e.element_id === elementId)
+      if (!target) return
+      const msgId = await this.ensureCard()
+      await this.wanling.patchAggregateMessage(msgId, {
+        op: "update",
+        element_id: elementId,
+        data: target.data,
+      })
+      if (opts?.silent !== undefined) {
+        await this.wanling.patchAggregateMessage(msgId, { op: "set_silent", silent: opts.silent })
+      }
     })
     // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
     this.state.aggregatePatchQueue = next.catch(() => {})

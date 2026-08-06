@@ -99,7 +99,7 @@ export class ToolCardManager {
 
     } else if (status === "completed") {
       // 聚合模式:聚合卡内定位目标工具元素并全量替换更新(status/completed + output + file_diff),
-      // 不再 resolveMsgId(无独立卡 msgId,聚合卡 msgId 由 patchElements 内部 ensureCard 拿)。
+      // 不再 resolveMsgId(无独立卡 msgId,聚合卡 msgId 由 updateElement 内部 ensureCard 拿)。
       if (this.useAggregate(state)) {
         const fileDiffData = this.buildFileDiff(toolName, input, output)
         const patchData: Record<string, unknown> = {
@@ -497,26 +497,19 @@ export class ToolCardManager {
       })
   }
 
-  // 追加工具元素并 PATCH(全量替换)。与 PartDispatcher.appendElement 同一实现:
-  // 读回 state.aggregateElements 累计再拼新元素,入 state.aggregatePatchQueue 串行队列
-  // (与 reasoning/markdown/footer 的追加共用同一队列,避免并发全量替换互相覆盖丢元素)。
+  // 追加工具元素并 PATCH 增量 op(append)。队列/累计由 AggregateCardManager.appendElement
+  // 统一维护,与 reasoning/markdown/footer 的追加共用同一串行队列,并发全量不再互相覆盖。
   private appendToolElement(
     state: SessionState,
     data: ToolCardData,
     seq: number,
   ): Promise<void> {
-    const prev = state.aggregatePatchQueue ?? Promise.resolve()
-    const next = prev.then(async () => {
-      const elements = [...(state.aggregateElements ?? []), AggregateCardManager.toolCard(data, seq)]
-      state.aggregateElements = elements
-      await new AggregateCardManager(this.wanling, state).patchElements(elements)
-    })
-    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
-    state.aggregatePatchQueue = next.catch(() => {})
-    return next
+    return new AggregateCardManager(this.wanling, state).appendElement(
+      AggregateCardManager.toolCard(data, seq),
+    )
   }
 
-  // 聚合模式 completed/error:按 partId 定位聚合卡内目标工具元素,更新其 data 后全量替换 PATCH。
+  // 聚合模式 completed/error:按 partId 定位聚合卡内目标工具元素,增量 update(合并 data)。
   // 串行队列:与 running 的 append 共用 state.aggregatePatchQueue,保证「append 先于 update 执行」,
   // update 读到的 state.aggregateElements 已含目标元素。
   // 竞态修复(等效旧逻辑 resolveMsgId 分支 3):completed/error 抢占 setImmediate(running 的
@@ -538,16 +531,7 @@ export class ToolCardManager {
       console.warn(`[streamer] 聚合卡工具元素定位缺失,跳过更新: conv=${state.convId.slice(0, 12)} part=${part.id}`)
       return
     }
-    const prev = state.aggregatePatchQueue ?? Promise.resolve()
-    const next = prev.then(async () => {
-      const elements = (state.aggregateElements ?? []).map((e) =>
-        e.element_id === elementId ? { ...e, data: { ...e.data, ...patchData } } : e,
-      )
-      state.aggregateElements = elements
-      await new AggregateCardManager(this.wanling, state).patchElements(elements)
-    })
-    state.aggregatePatchQueue = next.catch(() => {})
-    await next
+    await new AggregateCardManager(this.wanling, state).updateElement(elementId, patchData)
   }
 
   // 聚合卡是否对本 state 生效:开关开启且非子 session。

@@ -91,34 +91,68 @@ describe("AggregateCardManager ensureCard", () => {
   })
 })
 
-describe("AggregateCardManager patchElements", () => {
+describe("AggregateCardManager appendElement(增量 op)", () => {
   let wanling: ReturnType<typeof makeWanling>["wanling"]
 
   beforeEach(() => {
     wanling = makeWanling().wanling
   })
 
-  it("全量替换:patchAggregateMessage 传 elements,未显式 state 时沿用维护的当前值(generating)", async () => {
+  it("追加元素:patchAggregateMessage 传 {op:'append', element},建卡仍全量(空 elements)", async () => {
     const manager = new AggregateCardManager(wanling, makeState())
-    const elements = [AggregateCardManager.markdown("hello", 1)]
-    await manager.patchElements(elements)
-    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
+    const element = AggregateCardManager.markdown("hello", 1)
+    await manager.appendElement(element)
+    expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      state: "generating",
+      elements: [],
+    })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { state: "generating", elements },
-      undefined,
+      { op: "append", element },
     )
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(1)
   })
 
-  it("silent 翻转:传 {silent:false, state:'done'} 时 content 带 silent:false", async () => {
+  it("state 变更:append 后单独发 {op:'set_state', state:'done'},并维护 aggregateCardState", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    const element = AggregateCardManager.footer({ finished: true, tokens: { total: 1200 } }, 1)
+    await manager.appendElement(element, { state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", { op: "append", element })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_state", state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(2)
+    expect(state.aggregateCardState).toBe("done")
+  })
+
+  it("silent 翻转:append 后单独发 {op:'set_silent', silent:false}", async () => {
     const manager = new AggregateCardManager(wanling, makeState())
-    const elements = [AggregateCardManager.footer({ finished: true, tokens: { total: 1200 } }, 1)]
-    await manager.patchElements(elements, { silent: false, state: "done" })
+    const element = AggregateCardManager.markdown("hello", 1)
+    await manager.appendElement(element, { silent: false })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", { op: "append", element })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_silent", silent: false })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it("回合结束组合:append + set_state + set_silent 三步 op", async () => {
+    const manager = new AggregateCardManager(wanling, makeState())
+    const element = AggregateCardManager.footer({ finished: true }, 1)
+    await manager.appendElement(element, { silent: false, state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", { op: "append", element })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_state", state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(3, "card-1", { op: "set_silent", silent: false })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(3)
+  })
+
+  it("upsert:同一 element_id 已存在(流式占位)发 update 原位替换,server 无 append upsert", async () => {
+    const state = makeState()
+    state.aggregateElements = [AggregateCardManager.markdown("打", 1)]
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.appendElement(AggregateCardManager.markdown("打完整", 1))
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { state: "done", elements },
-      { silent: false },
+      { op: "update", element_id: "markdown_1", data: { text: "打完整" } },
     )
+    expect(state.aggregateElements).toEqual([AggregateCardManager.markdown("打完整", 1)])
   })
 })
 
@@ -194,7 +228,7 @@ describe("AggregateCardManager updateElement", () => {
     wanling = makeWanling().wanling
   })
 
-  it("按 element_id 更新元素 data 并全量替换 PATCH(带 silent opts)", async () => {
+  it("按 element_id 更新元素:patchAggregateMessage 传 {op:'update', element_id, data}(data 为合并后全量)", async () => {
     const state = makeState()
     state.aggregateElements = [
       AggregateCardManager.questionCard({
@@ -205,27 +239,45 @@ describe("AggregateCardManager updateElement", () => {
       AggregateCardManager.markdown("正文", 2),
     ]
     const manager = new AggregateCardManager(wanling, state)
-    await manager.updateElement("question_card_1", { status: "answered", result: "是" }, { silent: true })
+    await manager.updateElement("question_card_1", { status: "answered", result: "是" })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
       {
-        state: "generating",
-        elements: [
-          AggregateCardManager.questionCard({
-            oc_request_id: "q-1",
-            questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
-            status: "answered",
-            result: "是",
-          }, 1),
-          AggregateCardManager.markdown("正文", 2),
-        ],
+        op: "update",
+        element_id: "question_card_1",
+        data: {
+          oc_request_id: "q-1",
+          questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
+          status: "answered",
+          result: "是",
+        },
       },
-      { silent: true },
     )
     expect(state.aggregateElements[0].data.status).toBe("answered")
+    expect(state.aggregateElements[0].data.result).toBe("是")
   })
 
-  it("element 不存在时不 PATCH(避免用缺失列表全量替换丢元素)", async () => {
+  it("silent 翻转:update 后单独发 {op:'set_silent', silent:true}", async () => {
+    const state = makeState()
+    state.aggregateElements = [
+      AggregateCardManager.questionCard({
+        oc_request_id: "q-1",
+        questions: [{ question: "继续?", header: "确认", options: [{ label: "是", description: "" }] }],
+        status: "pending",
+      }, 1),
+    ]
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("question_card_1", { status: "answered" }, { silent: true })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
+      1,
+      "card-1",
+      expect.objectContaining({ op: "update", element_id: "question_card_1" }),
+    )
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_silent", silent: true })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it("element 不存在时不 PATCH(server update 会 400,本地缓存兜底)", async () => {
     const state = makeState()
     const manager = new AggregateCardManager(wanling, state)
     await manager.updateElement("question_card_9", { status: "answered" })

@@ -202,14 +202,15 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     })
     const [msgId, body] = lastPatch(wanling)
     expect(msgId).toBe("card-1")
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
-    ])
+    expect(body).toEqual({
+      op: "append",
+      element: AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
+    })
     // 不再发独立 tool_card(sendCard 不被调)
     expect(router.sendCard).not.toHaveBeenCalled()
   })
 
-  it("工具 completed → 更新聚合卡内目标元素 status:completed + output(全量替换,PATCH 非独立卡)", async () => {
+  it("工具 completed → 更新聚合卡内目标元素 status:completed + output(增量 update,非独立卡 PATCH)", async () => {
     const { manager, state, wanling } = makeFixture()
     await manager.onPartUpdated(
       toolPart("p-bash-1", "bash", "running", { input: { command: "ls" } }),
@@ -226,12 +227,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "bash", input: { command: "ls" }, output: "done", status: "completed" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "bash", input: { command: "ls" }, output: "done", status: "completed" },
+    })
     // 不再对独立 tool 卡发 updateMessageContent PATCH
     expect(wanling.updateMessageContent).not.toHaveBeenCalled()
   })
@@ -253,9 +253,10 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements[0].data.status).toBe("completed")
-    expect(body.elements[0].data.output).toBe("ok")
-    expect(body.elements[0].data.file_diff).toEqual(
+    expect(body.op).toBe("update")
+    expect(body.data.status).toBe("completed")
+    expect(body.data.output).toBe("ok")
+    expect(body.data.file_diff).toEqual(
       expect.objectContaining({ file: "a.txt" }),
     )
   })
@@ -279,9 +280,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
     const [, body] = lastPatch(wanling)
-    // 未显式传 state 的 PATCH 必须保留当前 done,不得被 client 兜底成 generating
-    expect(body.state).toBe("done")
-    expect(body.elements[0].data.status).toBe("completed")
+    // 迟到 completed 发 update op,无 set_state —— 增量下 server 保留 done,不翻回 generating
+    expect(body.op).toBe("update")
+    expect(body.element_id).toBe("tool_card_1")
+    expect(body.data.status).toBe("completed")
+    expect(wanling.patchAggregateMessage.mock.calls.every(([, b]) => b.op !== "set_state")).toBe(true)
   })
 
   it("工具 error → 更新目标元素 status:error + error 字段", async () => {
@@ -301,12 +304,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "bash", input: { command: "ls" }, error: "boom", status: "error" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "bash", input: { command: "ls" }, error: "boom", status: "error" },
+    })
   })
 
   it("tool element_id 与 reasoning/markdown 共用序号计数器(全卡唯一)", async () => {
@@ -321,11 +323,10 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements.map((e: { element_id: string }) => e.element_id)).toEqual([
-      "reasoning_1",
-      "markdown_2",
-      "tool_card_3",
-    ])
+    expect(body).toEqual({
+      op: "append",
+      element: AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 3),
+    })
     expect(state.aggregateSeq).toBe(3)
   })
 
@@ -347,12 +348,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     await new Promise((r) => setImmediate(r))
     expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "bash", input: { command: "ls" }, output: "done", status: "completed" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "bash", input: { command: "ls" }, output: "done", status: "completed" },
+    })
   })
 
   it("聚合模式下 task running → 追加 tool_card 元素(status:starting + sub_session_id),注册 childSessionTree", async () => {
@@ -370,12 +370,13 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     })
     const [msgId, body] = lastPatch(wanling)
     expect(msgId).toBe("card-1")
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
+    expect(body).toEqual({
+      op: "append",
+      element: AggregateCardManager.toolCard(
         { name: "task", input: { description: "子任务", prompt: "..." }, status: "starting", sub_session_id: "sess-child" },
         1,
       ),
-    ])
+    })
     // 不再发独立 task 卡(sendCard 不被调)
     expect(router.sendCard).not.toHaveBeenCalled()
     // registerChild 以聚合卡 msgId 为 parentMsgId(子 session 消息串到聚合卡下)
@@ -413,12 +414,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
+    })
     // 不对独立 task 卡发 updateMessageContent PATCH
     expect(wanling.updateMessageContent).not.toHaveBeenCalled()
     expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
@@ -451,12 +451,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
       expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     })
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "task", input: { description: "子任务", prompt: "..." }, error: "boom", status: "error", sub_session_id: "sess-child" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "task", input: { description: "子任务", prompt: "..." }, error: "boom", status: "error", sub_session_id: "sess-child" },
+    })
     expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
   })
 
@@ -484,12 +483,11 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     await new Promise((r) => setImmediate(r))
     expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     const [, body] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.toolCard(
-        { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
-        1,
-      ),
-    ])
+    expect(body).toEqual({
+      op: "update",
+      element_id: "tool_card_1",
+      data: { name: "task", input: { description: "子任务", prompt: "..." }, output: "任务完成", status: "completed", sub_session_id: "sess-child" },
+    })
     expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
   })
 })

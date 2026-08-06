@@ -22,9 +22,9 @@ type StreamHolder = NonNullable<SessionState["reasoning"]>
 // tool/compaction case 不在此处:ToolCardManager 和 CompactionTracker 各自订阅 part_updated
 // 事件按 part.type 自行过滤处理,本模块的 onPartUpdated switch 只保留 reasoning/text/step-finish。
 // 聚合卡改造(Task 3):AGGREGATE_CARD_ENABLED=true(默认)时 reasoning/markdown/step_finish
-// 不再发独立消息,而是追加到聚合卡(AggregateCardManager.patchElements 全量替换):
+// 不再发独立消息,而是追加到聚合卡(AggregateCardManager.appendElement 增量 append):
 // reasoning 终态 → reasoning 元素;markdown 终态 → markdown 元素(缓存 pendingText 等
-// step-finish 判定 silent);step_finish → footer 元素 + 整卡翻转 {silent:false,state:"done"}。
+// step-finish 判定 silent);step_finish → footer 元素 + 整卡翻转 {set_silent:false,set_state:"done"}。
 // 子 session 恒走旧独立消息(保持 parent/root 串树语义);流式 maybeFlushStream/forceFlushStream
 // 保留 op=14(正文打字机体验,终态才上聚合卡),聚合模式下帧带 aggregate:{message_id, element_id}
 // 指向聚合卡内正在流式的元素(避免 APP 建独立流式占位)。开关 false 时完全回退旧逻辑。
@@ -476,28 +476,16 @@ export class PartDispatcher {
     state.aggregateStreamedElementIds = undefined
   }
 
-  // 追加聚合卡元素并 PATCH(全量替换)。patchElements 读回 state.aggregateElements 累计
-  // 再拼新元素。串行队列(aggregatePatchQueue)保证同一 session 并发 flush(reasoning end
-  // 与 text end 同时到达)时按序执行,避免全量替换互相覆盖丢元素。
-  // upsert 语义(I1):同一 element_id 已存在(流式首帧 append 的占位元素)则原位替换,
-  // 终态 append 同 element_id 时把占位更新为完整文本,避免占位 + 终态两个同名元素并存。
+  // 追加聚合卡元素并 PATCH 增量 op(append;同 element_id 已存在则 update 原位替换)。
+  // 队列(aggregatePatchQueue)/累计(aggregateElements)由 AggregateCardManager.appendElement
+  // 统一维护,与 tool_card / interaction 共用同一串行队列,并发 flush 按序执行不覆盖。
+  // opts 透传:opts.state → 单独 set_state op;opts.silent → 单独 set_silent op。
   // 返回 Promise 不吞错误:调用方 await 走外层 try/catch,fire-and-forget 处自行 catch emit。
   private appendElement(
     state: SessionState,
     element: AggregateElement,
     opts?: { silent?: boolean; state?: "generating" | "done" },
   ): Promise<void> {
-    const prev = state.aggregatePatchQueue ?? Promise.resolve()
-    const next = prev.then(async () => {
-      const existed = (state.aggregateElements ?? []).some((e) => e.element_id === element.element_id)
-      const elements = existed
-        ? (state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
-        : [...(state.aggregateElements ?? []), element]
-      state.aggregateElements = elements
-      await new AggregateCardManager(this.wanling, state).patchElements(elements, opts)
-    })
-    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
-    state.aggregatePatchQueue = next.catch(() => {})
-    return next
+    return new AggregateCardManager(this.wanling, state).appendElement(element, opts)
   }
 }

@@ -320,26 +320,15 @@ export class InteractionCards {
     return seq
   }
 
-  // 追加聚合卡元素并 PATCH(全量替换)。与 PartDispatcher.appendElement /
-  // ToolCardManager.appendToolElement 同一实现与同一串行队列(state.aggregatePatchQueue),
-  // 保证并发 flush 时按序执行,不互相覆盖丢元素。
-  // opts.silent 透传:pending 交互元素传 {silent:false} 整卡翻转响铃。
+  // 追加聚合卡元素并 PATCH 增量 op(append)。队列/累计由 AggregateCardManager.appendElement
+  // 统一维护,与 part_dispatcher / tool_card 共用同一串行队列(state.aggregatePatchQueue),
+  // 并发 flush 时按序执行,不互相覆盖丢元素。
+  // opts.silent 透传:pending 交互元素传 {silent:false} 单独发 set_silent op 整卡翻转响铃。
   private appendElement(
     state: SessionState,
     element: AggregateElement,
     opts?: { silent?: boolean },
   ): Promise<void> {
-    const prev = state.aggregatePatchQueue ?? Promise.resolve()
-    const next = prev.then(async () => {
-      const existed = (state.aggregateElements ?? []).some((e) => e.element_id === element.element_id)
-      const elements = existed
-        ? (state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
-        : [...(state.aggregateElements ?? []), element]
-      state.aggregateElements = elements
-      await new AggregateCardManager(this.wanling, state).patchElements(elements, opts)
-    })
-    // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
-    state.aggregatePatchQueue = next.catch(() => {})
-    return next
+    return new AggregateCardManager(this.wanling, state).appendElement(element, opts)
   }
 }

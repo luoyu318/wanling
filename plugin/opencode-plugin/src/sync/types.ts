@@ -27,8 +27,9 @@ export interface SessionState {
   // 聚合卡元素序号计数器:element_id 按 type_seq 命名,reasoning/markdown/footer
   // 共用同一计数全局递增,保证 element_id 全卡唯一。
   aggregateSeq?: number
-  // 聚合卡已追加元素累计:patchElements 是全量替换语义,追加需「读回累计 + 新元素」。
-  // 放 state 而非 manager 实例,保证跨 manager 实例(每次 flush 新建)累计不丢。
+  // 聚合卡已追加元素累计:增量 op 本地镜像(append/update 后同步更新,供 updateElement
+  // 定位元素、interaction 判定 pending 等)。放 state 而非 manager 实例,
+  // 保证跨 manager 实例(每次 flush 新建)累计不丢。
   aggregateElements?: AggregateElement[]
   // 聚合卡 patch 串行队列:同一 session 并发 flush 时(如 reasoning end 与 text end
   // 同时到达),多次 patch 全量替换会互相覆盖丢元素,按序执行避免。

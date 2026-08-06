@@ -47,6 +47,18 @@ function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
 }
 
 describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", () => {
+  // 按 PATCH 顺序提取聚合卡元素 element_id(append 取 element_id,update 取目标 element_id),
+  // 用于断言终态/占位复用同一 element_id、序号全卡唯一递增。
+  function orderedElementIds(wanling: ReturnType<typeof makeFixture>["wanling"]): string[] {
+    return wanling.patchAggregateMessage.mock.calls
+      .map(([, body]) => {
+        if (body.op === "append") return [body.element.element_id]
+        if (body.op === "update") return [body.element_id]
+        return []
+      })
+      .flat()
+  }
+
   it("reasoning time.end → 建聚合卡并追加 reasoning 元素,不再发独立 reasoning 消息", async () => {
     const { partDispatcher, router, wanling } = makeFixture()
     await partDispatcher.onPartUpdated({
@@ -60,8 +72,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { state: "generating", elements: [AggregateCardManager.reasoning("思考过程", 1)] },
-      undefined,
+      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1) },
     )
     expect(router.send).not.toHaveBeenCalled()
   })
@@ -77,7 +88,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
   })
 
-  it("step-finish isLoopEnd → 追加 markdown + footer 元素,patch({silent:false,state:'done'})", async () => {
+  it("step-finish isLoopEnd → 追加 markdown + footer 元素,set_state:done + set_silent:false 单独发 op", async () => {
     const { partDispatcher, router, wanling } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
@@ -89,31 +100,27 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
       time: 3,
     })
-    // 第一次 PATCH:markdown 元素(等 step-finish 判定后才追加),silent 不翻转
+    // 第一次 PATCH:markdown 元素(等 step-finish 判定后才追加)
     expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
       1,
       "card-1",
-      { state: "generating", elements: [AggregateCardManager.markdown("最终回复", 1)] },
-      undefined,
+      { op: "append", element: AggregateCardManager.markdown("最终回复", 1) },
     )
-    // 第二次 PATCH:footer 元素 + 整卡翻转 silent:false + state:done
+    // 第二次 PATCH:footer 元素
     expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
       2,
       "card-1",
-      {
-        state: "done",
-        elements: [
-          AggregateCardManager.markdown("最终回复", 1),
-          AggregateCardManager.footer({ reason: "stop", cost: 0.01, tokens: { total: 100 }, duration: 0, finished: true }, 2),
-        ],
-      },
-      { silent: false },
+      { op: "append", element: AggregateCardManager.footer({ reason: "stop", cost: 0.01, tokens: { total: 100 }, duration: 0, finished: true }, 2) },
     )
+    // 第三/四次 PATCH:state 翻 done + silent 翻 false(不再随 append 全量携带)
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(3, "card-1", { op: "set_state", state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(4, "card-1", { op: "set_silent", silent: false })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(4)
     // 不再发独立 step_finish 消息
     expect(router.send).not.toHaveBeenCalled()
   })
 
-  it("step-finish 非 isLoopEnd(中间步骤)→ 追加 footer 元素但 silent 不翻转、state 保持 generating", async () => {
+  it("step-finish 非 isLoopEnd(中间步骤)→ 追加 footer 元素但 silent 不翻转、state 不翻 done", async () => {
     const { partDispatcher, wanling } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
@@ -126,14 +133,13 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       time: 3,
     })
     const calls = wanling.patchAggregateMessage.mock.calls
+    expect(calls).toHaveLength(2)
     const last = calls[calls.length - 1]
     expect(last[0]).toBe("card-1")
-    expect(last[1].state).toBe("generating")
-    expect(last[2]).toBeUndefined()
-    expect(last[1].elements).toEqual([
-      AggregateCardManager.markdown("中间小结", 1),
-      AggregateCardManager.footer({ reason: "tool", cost: 0.005, tokens: { total: 60 }, duration: 0, finished: false }, 2),
-    ])
+    expect(last[1]).toEqual({
+      op: "append",
+      element: AggregateCardManager.footer({ reason: "tool", cost: 0.005, tokens: { total: 60 }, duration: 0, finished: false }, 2),
+    })
   })
 
   it("seq 递增:reasoning + markdown + footer 共用计数器,element_id 全局唯一", async () => {
@@ -156,9 +162,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop" },
       time: 4,
     })
-    const calls = wanling.patchAggregateMessage.mock.calls
-    const last = calls[calls.length - 1]
-    expect(last[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
+    expect(orderedElementIds(wanling)).toEqual([
       "reasoning_1",
       "markdown_2",
       "footer_3",
@@ -182,7 +186,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     const [msgId, body] = wanling.patchAggregateMessage.mock.calls[0]
     expect(msgId).toBe("card-1")
-    expect(body.elements).toEqual([AggregateCardManager.markdown("打", 1)])
+    expect(body).toEqual({ op: "append", element: AggregateCardManager.markdown("打", 1) })
     // 占位 PATCH 落地后才发流式帧(帧能命中已存在的 markdown_1)
     await vi.waitFor(() => {
       expect(wanling.sendStream).toHaveBeenCalledWith(
@@ -283,13 +287,13 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     // 第二轮 markdown PATCH 用 card-2,新卡 elements 从空开始(不带旧卡元素)
     const calls = wanling.patchAggregateMessage.mock.calls
-    const round2FirstPatch = calls[2]
-    expect(round2FirstPatch[0]).toBe("card-2")
-    expect(round2FirstPatch[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
-      "markdown_1",
-    ])
+    const round2FirstPatch = calls.filter(([mid]) => mid === "card-2")[0]
+    expect(round2FirstPatch[1]).toEqual({
+      op: "append",
+      element: AggregateCardManager.markdown("第二轮回复", 1),
+    })
     // 第二轮 footer 同样落在 card-2
-    expect(calls[3][0]).toBe("card-2")
+    expect(calls.filter(([mid]) => mid === "card-2")[1][0]).toBe("card-2")
   })
 
   it("终态 append 用流式预留的同一 element_id(APP 端定位连续)", async () => {
@@ -308,7 +312,8 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
         expect.objectContaining({ aggregate: { message_id: "card-1", element_id: "markdown_1" } }),
       )
     })
-    // text 终态 → pendingText → step-finish → 终态 markdown 元素与流式帧同一 element_id
+    // text 终态 → pendingText → step-finish → 终态 markdown 与流式帧同一 element_id
+    // (占位已存在 → upsert 发 update 原位替换,避免 server 出双元素)
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "打", time: { start: 1, end: 2 } },
@@ -319,12 +324,12 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
       time: 3,
     })
-    const calls = wanling.patchAggregateMessage.mock.calls
-    const last = calls[calls.length - 1]
-    expect(last[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
-      "markdown_1",
-      "footer_2",
-    ])
+    const updateCalls = wanling.patchAggregateMessage.mock.calls.filter(([, b]) => b.op === "update")
+    // 终态 markdown 发 update 定位 markdown_1(与流式占位同一 element_id)
+    expect(updateCalls[0][1].element_id).toBe("markdown_1")
+    expect(updateCalls[0][1].data).toEqual({ text: "打" })
+    const footerAppend = wanling.patchAggregateMessage.mock.calls.find(([, b]) => b.op === "append" && b.element.type === "footer")
+    expect(footerAppend![1].element.element_id).toBe("footer_2")
   })
 
   it("流式中途其他元素 append 不挤占预留 seq(终态 markdown 仍用流式 element_id)", async () => {
@@ -361,14 +366,17 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       time: 5,
     })
     const calls = wanling.patchAggregateMessage.mock.calls
-    const last = calls[calls.length - 1]
     // 流式首帧已 append markdown_1 占位(text delta 先于 reasoning 终态到达),
-    // 终态 markdown 同 element_id upsert 原位替换,footer 取 seq 3
-    expect(last[1].elements.map((e: { element_id: string }) => e.element_id)).toEqual([
+    // 终态 markdown 同 element_id upsert 更新,footer 取 seq 3
+    expect(orderedElementIds(wanling)).toEqual([
       "markdown_1",
       "reasoning_2",
+      "markdown_1",
       "footer_3",
     ])
+    // footer 的 element_id 确认 seq 未被流式占位挤占
+    const footerAppend = calls.find(([, b]) => b.op === "append" && b.element.type === "footer")
+    expect(footerAppend![1].element.element_id).toBe("footer_3")
   })
 
   it("子 session 不聚合:reasoning/text 仍走独立消息(保持 parent/root 串树语义)", async () => {

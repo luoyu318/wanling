@@ -86,16 +86,15 @@ describe("InteractionCards 聚合模式 — 正向流(pending 元素嵌入聚合
     for (const id of Object.keys(getAllCards())) deleteCard(id)
   })
 
-  it("onPermissionAsked → 聚合卡追加 permission 元素 + 整卡翻转 silent=false 响铃,不再发独立卡", async () => {
+  it("onPermissionAsked → 聚合卡追加 permission 元素(append op) + 单独 set_silent:false 响铃,不再发独立卡", async () => {
     const { interaction, state, router, wanling, toolCard } = makeFixture()
     await interaction.onPermissionAsked(permissionPayload)
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    const [msgId, body, opts] = lastPatch(wanling)
-    expect(msgId).toBe("card-1")
-    expect(body.elements).toEqual([
-      AggregateCardManager.permissionCard({
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", {
+      op: "append",
+      element: AggregateCardManager.permissionCard({
         oc_request_id: "req-perm-1",
         action: "bash",
         resources: ["*.sh"],
@@ -103,9 +102,10 @@ describe("InteractionCards 聚合模式 — 正向流(pending 元素嵌入聚合
         metadata: {},
         status: "pending",
       }, 1),
-    ])
-    // pending 交互 → 整卡翻转 silent=false(需要用户介入 → 响铃)
-    expect(opts).toEqual({ silent: false })
+    })
+    // pending 交互 → 单独 set_silent:false(需要用户介入 → 响铃)
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_silent", silent: false })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(2)
     // 不再发独立 permission_card
     expect(router.sendCard).not.toHaveBeenCalled()
     // card_store 存聚合卡 msgId + element_id + sessionId(供反向流定位)
@@ -118,21 +118,21 @@ describe("InteractionCards 聚合模式 — 正向流(pending 元素嵌入聚合
     expect(toolCard.flushPending).toHaveBeenCalledWith(state)
   })
 
-  it("onQuestionAsked → 聚合卡追加 question 元素 + silent=false 响铃 + card_store 存 element_id", async () => {
+  it("onQuestionAsked → 聚合卡追加 question 元素(append op) + set_silent:false 响铃 + card_store 存 element_id", async () => {
     const { interaction, router, wanling } = makeFixture()
     await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.questionCard({
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", {
+      op: "append",
+      element: AggregateCardManager.questionCard({
         oc_request_id: "req-q-1",
         questions: questionPayload.questions,
         status: "pending",
       }, 1),
-    ])
-    expect(opts).toEqual({ silent: false })
+    })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_silent", silent: false })
     expect(router.sendCard).not.toHaveBeenCalled()
     const entry = getCard("req-q-1")!
     expect(entry.elementId).toBe("question_card_1")
@@ -151,12 +151,8 @@ describe("InteractionCards 聚合模式 — 正向流(pending 元素嵌入聚合
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    const [, body] = lastPatch(wanling)
-    expect(body.elements.map((e: { element_id: string }) => e.element_id)).toEqual([
-      "reasoning_1",
-      "markdown_2",
-      "permission_card_3",
-    ])
+    const appendCall = wanling.patchAggregateMessage.mock.calls.find(([, b]) => b.op === "append")
+    expect(appendCall[1].element.element_id).toBe("permission_card_3")
     expect(state.aggregateSeq).toBe(3)
   })
 
@@ -179,7 +175,7 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     for (const id of Object.keys(getAllCards())) deleteCard(id)
   })
 
-  it("onQuestionReplied → 更新聚合卡内元素 status=answered + silent 恢复 true + deleteCard", async () => {
+  it("onQuestionReplied → 元素 status=answered(update op,data 合并全量) + 单独 set_silent:true + deleteCard", async () => {
     const { interaction, wanling } = makeFixture()
     await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
@@ -187,26 +183,38 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     })
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements).toEqual([
-      AggregateCardManager.questionCard({
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    // asked:append + set_silent false
+    expect(ops[0]).toEqual({
+      op: "append",
+      element: AggregateCardManager.questionCard({
+        oc_request_id: "req-q-1",
+        questions: questionPayload.questions,
+        status: "pending",
+      }, 1),
+    })
+    expect(ops[1]).toEqual({ op: "set_silent", silent: false })
+    // replied:update(合并保留 questions) + set_silent true(用户回答后回合继续 → 不再响铃)
+    expect(ops[2]).toEqual({
+      op: "update",
+      element_id: "question_card_1",
+      data: {
         oc_request_id: "req-q-1",
         questions: questionPayload.questions,
         status: "answered",
         result: "是",
-      }, 1),
-    ])
-    // 用户回答后回合继续 → silent 恢复 true(不再响铃),回合结束 footer 再翻 false 计未读
-    expect(opts).toEqual({ silent: true })
+      },
+    })
+    expect(ops[3]).toEqual({ op: "set_silent", silent: true })
     // 不再对独立 question_card 发 updateMessageContent PATCH
     expect(wanling.updateMessageContent).not.toHaveBeenCalled()
     // 请求已处理 → deleteCard
     expect(getCard("req-q-1")).toBeNull()
   })
 
-  it("onPermissionReplied(approve) → 元素 status=approved + silent 恢复 true + deleteCard", async () => {
+  it("onPermissionReplied(approve) → 元素 status=approved(update op) + set_silent:true + deleteCard", async () => {
     const { interaction, wanling } = makeFixture()
     await interaction.onPermissionAsked(permissionPayload)
     await vi.waitFor(() => {
@@ -214,13 +222,18 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     })
     await interaction.onPermissionReplied({ sessionID: "sess-1", requestID: "req-perm-1", reply: "once" })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements[0].type).toBe("permission_card")
-    expect(body.elements[0].data.status).toBe("approved")
-    expect(body.elements[0].data.result).toBe("once")
-    expect(opts).toEqual({ silent: true })
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    const update = ops[2]
+    expect(update.op).toBe("update")
+    expect(update.element_id).toBe("permission_card_1")
+    expect(update.data.status).toBe("approved")
+    expect(update.data.result).toBe("once")
+    // 合并保留 action/resources/save/metadata(update 整体替换 data,不能丢既有字段)
+    expect(update.data.action).toBe("bash")
+    expect(update.data.resources).toEqual(["*.sh"])
+    expect(ops[3]).toEqual({ op: "set_silent", silent: true })
     expect(wanling.updateMessageContent).not.toHaveBeenCalled()
     expect(getCard("req-perm-1")).toBeNull()
   })
@@ -233,14 +246,15 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     })
     await interaction.onPermissionReplied({ sessionID: "sess-1", requestID: "req-perm-1", reply: "reject" })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
     })
-    const [, body] = lastPatch(wanling)
-    expect(body.elements[0].data.status).toBe("denied")
-    expect(body.elements[0].data.result).toBe("reject")
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    expect(ops[2].op).toBe("update")
+    expect(ops[2].data.status).toBe("denied")
+    expect(ops[2].data.result).toBe("reject")
   })
 
-  it("onQuestionRejected → 元素 status=rejected + silent 恢复 true", async () => {
+  it("onQuestionRejected → 元素 status=rejected + set_silent:true", async () => {
     const { interaction, wanling } = makeFixture()
     await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
@@ -248,12 +262,13 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     })
     await interaction.onQuestionRejected({ sessionID: "sess-1", requestID: "req-q-1" })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements[0].data.status).toBe("rejected")
-    expect(body.elements[0].data.result).toBe("rejected")
-    expect(opts).toEqual({ silent: true })
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    expect(ops[2].op).toBe("update")
+    expect(ops[2].data.status).toBe("rejected")
+    expect(ops[2].data.result).toBe("rejected")
+    expect(ops[3]).toEqual({ op: "set_silent", silent: true })
     expect(getCard("req-q-1")).toBeNull()
   })
 
@@ -263,17 +278,17 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     await interaction.onPermissionAsked(permissionPayload)
     await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
     })
-    // 回答 question,但 permission 仍 pending → 不恢复 silent
+    // 回答 question,但 permission 仍 pending → 不恢复 silent(只发 update,无 set_silent)
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(3)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(5)
     })
-    const [, body, opts] = lastPatch(wanling)
-    const qEl = body.elements.find((e: { element_id: string }) => e.element_id === "question_card_2")
-    expect(qEl.data.status).toBe("answered")
-    expect(opts).toBeUndefined()
+    const [, body] = lastPatch(wanling)
+    expect(body.op).toBe("update")
+    expect(body.element_id).toBe("question_card_2")
+    expect(body.data.status).toBe("answered")
   })
 
   it("回合已结束(state=done)回答时不恢复 silent(回合结束翻转 false 已计未读)", async () => {
@@ -286,11 +301,11 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     state.aggregateCardState = "done"
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(3)
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements[0].data.status).toBe("answered")
-    expect(opts).toBeUndefined()
+    const [, body] = lastPatch(wanling)
+    expect(body.op).toBe("update")
+    expect(body.data.status).toBe("answered")
   })
 
   it("session 状态不可用(peekState miss)时跳过元素更新但仍 deleteCard(回声兜底清理)", async () => {
@@ -301,8 +316,8 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     })
     store.peekState.mockReturnValue(undefined)
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
-    // 不追加 PATCH(状态不可用无法全量替换),仍 deleteCard
-    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(1)
+    // 不追加 PATCH(状态不可用无法定位元素),仍 deleteCard
+    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     expect(getCard("req-q-1")).toBeNull()
   })
 
@@ -321,7 +336,7 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     }, 1)]
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
     // 不追加 PATCH(不能拿旧 entry 的元素 id 误更新新卡),仍 deleteCard
-    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(1)
+    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     expect(state.aggregateElements[0].data.status).toBe("pending")
     expect(getCard("req-q-1")).toBeNull()
   })
@@ -418,11 +433,11 @@ describe("InteractionCards 聚合模式 — cleanupOrphans(孤儿元素更新 ex
 
     await interaction.cleanupOrphans()
     await vi.waitFor(() => {
-      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(3)
     })
-    const [, body, opts] = lastPatch(wanling)
-    expect(body.elements[0].data.status).toBe("expired")
-    expect(opts).toBeUndefined()
+    const [, body] = lastPatch(wanling)
+    expect(body.op).toBe("update")
+    expect(body.data.status).toBe("expired")
     expect(getCard("req-q-1")).toBeNull()
   })
 
@@ -437,8 +452,8 @@ describe("InteractionCards 聚合模式 — cleanupOrphans(孤儿元素更新 ex
     store.peekState.mockReturnValue(undefined)
 
     await interaction.cleanupOrphans()
-    // 状态不可用:不追加 PATCH(全量替换会丢元素),仅丢弃本地记账
-    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(1)
+    // 状态不可用:不追加 PATCH(无法定位元素),仅丢弃本地记账
+    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     expect(wanling.updateMessageContent).not.toHaveBeenCalled()
     expect(getCard("req-q-1")).toBeNull()
   })

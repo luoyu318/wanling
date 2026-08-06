@@ -15,7 +15,7 @@ import type {
 } from "./types.js"
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
-import type { AggregateElement } from "../sync/domains/aggregate_card.js"
+import type { AggregatePatchData } from "../sync/domains/aggregate_card.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -360,21 +360,20 @@ export class WanlingClient extends EventEmitter {
     return json.data.message_id as string
   }
 
-  // 聚合卡 PATCH:复用 updateMessageContent 的 REST PATCH 通道,全量替换 elements[]。
-  // data.state 缺省 generating(聚合卡创建后持续增量,回合结束由调用方显式翻 done)。
-  // silent 语义:undefined 不写字段 → server mergePreservedSilent 保留原值;
-  // 显式 silent:false 时翻转计未读(silent 翻转计数由 server Task 1 支持)。
+  // 聚合卡 PATCH:复用 updateMessageContent 的 REST PATCH 通道。
+  // data 带 op(append/update/remove/reorder/set_state/set_silent)→ 增量 op,
+  // server 合并到全量存储、广播带增量(长任务不再全量替换,解决 content 超限 + O(n²))。
+  // data 无 op 带 elements → 全量替换兼容路径(旧 plugin / 建卡兜底)。
+  // silent 翻转走 data {op:"set_silent"}(不再放 content 顶层)。
   async patchAggregateMessage(
     msgId: string,
-    data: { state?: string; elements: AggregateElement[] },
-    opts?: { silent?: boolean },
+    data: AggregatePatchData,
   ): Promise<void> {
     const content: Record<string, unknown> = {
       msg_type: "aggregate_card",
-      data: { state: data.state ?? "generating", elements: data.elements },
+      data,
     }
-    if (opts?.silent !== undefined) content.silent = opts.silent
-    await this.updateMessageContent(msgId, content as { msg_type: string; data: Record<string, unknown>; silent?: boolean })
+    await this.updateMessageContent(msgId, content as { msg_type: string; data: Record<string, unknown> })
   }
 
   async updateMessageContent(
