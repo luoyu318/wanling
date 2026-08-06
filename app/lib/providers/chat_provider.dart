@@ -836,11 +836,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 流式占位由 _listenStream append 到末尾(恒在底部);若普通新消息(卡片等)也
   /// append,思考中到达的卡片会排到 busy 占位下方,视觉上「先出现在底部再被校正
   /// 回弹」(闪烁)。正确语义:新消息插到第一个 isStreaming 占位之前(上方)。
+  /// [beforeAggregateCard] 为 true 时(用户自己发送的消息),若 live 末尾有聚合卡
+  /// (agent 对上一轮的回答,isStreaming=false 终态卡),插到该聚合卡之前——
+  /// 用户新消息应排在其上方(排队语义);为 false 时(agent 消息 / 聚合卡建卡)
+  /// 保持原逻辑,只保护 isStreaming 占位。
   List<ChatMessage> _insertLiveKeepingStreamingLast(
-      List<ChatMessage> live, ChatMessage msg) {
+      List<ChatMessage> live, ChatMessage msg,
+      {bool beforeAggregateCard = false}) {
     final streamIdx = live.indexWhere((m) => m.isStreaming);
-    if (streamIdx < 0) return [...live, msg];
-    return [...live.take(streamIdx), msg, ...live.skip(streamIdx)];
+    if (streamIdx >= 0) {
+      return [...live.take(streamIdx), msg, ...live.skip(streamIdx)];
+    }
+    if (beforeAggregateCard) {
+      final lastAggIdx = live.lastIndexWhere((m) =>
+          MsgTypeX.fromString(m.content['msg_type'] as String?) ==
+          MsgType.aggregateCard);
+      if (lastAggIdx >= 0) {
+        return [...live.take(lastAggIdx), msg, ...live.skip(lastAggIdx)];
+      }
+    }
+    return [...live, msg];
   }
 
   /// 按 id 在双 list(liveMessages + historyMessages)同步更新单条消息。
@@ -1355,8 +1370,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       'hasAvatar=${currentUser?.avatarUrl != null}',
     );
     state = state.copyWith(
-      liveMessages:
-          _insertLiveKeepingStreamingLast(state.liveMessages, tempMsg),
+      liveMessages: _insertLiveKeepingStreamingLast(
+          state.liveMessages, tempMsg,
+          beforeAggregateCard: true),
     );
     if (store != null) {
       // fire-and-forget:避免 sendText/sendFile 链路变长,DB 写失败不影响 UI。

@@ -28,6 +28,8 @@ void main() {
     when(() => api.getMessages(any(),
             limit: any(named: 'limit'), offset: any(named: 'offset')))
         .thenAnswer((_) async => <ChatMessage>[]);
+    when(() => api.sendMessage(any(), any())).thenAnswer((_) async =>
+        (messageId: 'srv_1', createdAt: DateTime.utc(2026, 7, 7)));
   });
 
   ProviderContainer makeContainer() {
@@ -102,5 +104,47 @@ void main() {
     final live = container.read(chatProvider((convId: 'c1', agentId: 'a1'))).liveMessages;
     final msg = live.firstWhere((m) => m.id == 'msg-1');
     expect(msg.queued, isFalse);
+  });
+
+  test('用户乐观消息插到聚合卡之前', () async {
+    final container = makeContainer();
+    // 先注入聚合卡(agent 对上一轮的回答,isStreaming=false 终态卡)
+    ws.emit(WSMessage(
+      op: 0,
+      t: 'MESSAGE_CREATE',
+      d: {
+        'id': 'agg-1',
+        'conversation_id': 'c1',
+        'sender_type': 'agent',
+        'sender_id': 'a1',
+        'content': {
+          'msg_type': 'aggregate_card',
+          'data': {
+            'schema_ver': 1,
+            'state': 'generating',
+            'elements': <Map<String, dynamic>>[],
+          },
+        },
+        'created_at': DateTime.now().toIso8601String(),
+      },
+    ));
+    await pump();
+
+    // 用户发新消息(排队语义:插到聚合卡上方)
+    final notifier =
+        container.read(chatProvider((convId: 'c1', agentId: 'a1')).notifier);
+    await notifier.sendText('新消息');
+    await pump();
+
+    final live =
+        container.read(chatProvider((convId: 'c1', agentId: 'a1'))).liveMessages;
+    expect(live.length, greaterThanOrEqualTo(2));
+    final userIdx = live.indexWhere((m) =>
+        m.content['msg_type'] == 'text' &&
+        (m.content['data'] as Map?)?['text'] == '新消息');
+    final aggIdx = live.indexWhere((m) => m.id == 'agg-1');
+    expect(userIdx, greaterThanOrEqualTo(0));
+    expect(aggIdx, greaterThanOrEqualTo(0));
+    expect(userIdx, lessThan(aggIdx), reason: '用户消息应排在聚合卡之前');
   });
 }
