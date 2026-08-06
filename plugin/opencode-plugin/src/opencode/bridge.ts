@@ -279,37 +279,45 @@ export class OpencodeBridge extends EventEmitter {
     return result?.data?.id ?? null
   }
 
-  // 切换 session agent(v2 POST /api/session/{id}/agent)。与 model 同理:v2 prompt
+  // 切换 session agent(POST /api/session/{id}/agent)。与 model 同理:v2 prompt
   // 无法透传 agent,用 switchAgent 让排队消息使用 APP 选中的 mode。
+  // 注意:SDK 1.18.3 的 v2 client 运行时不暴露 switchAgent(类型有但对象没有,
+  // 真机实测 undefined),故用 fetch 直接调 API,不依赖 SDK 方法。
   async switchSessionAgent(
     sessionId: string,
     agent: string,
   ): Promise<void> {
-    if (!this.clientV2) throw new Error("opencode v2 client not ready")
-    const session = this.clientV2.session as unknown as {
-      switchAgent: (params: Record<string, unknown>) => Promise<unknown>
+    const resp = await fetch(`http://localhost:${this.port}/api/session/${encodeURIComponent(sessionId)}/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent }),
+    })
+    if (!resp.ok) {
+      throw new Error(`switchAgent failed: ${resp.status} ${await resp.text().catch(() => "")}`)
     }
-    await session.switchAgent({ sessionID: sessionId, agent })
   }
 
-  // 切换 session 模型(v2 POST /api/session/{id}/model)。v2 prompt 无法透传 model,
+  // 切换 session 模型(POST /api/session/{id}/model)。v2 prompt 无法透传 model,
   // 用 switchModel 让排队消息使用 APP 选中的模型。影响该 session 后续消息
   // (同会话队列消息共用此模型,语义可接受)。幂等:切换失败抛错由调用方重试。
+  // 同 switchAgent:SDK 1.18.3 运行时无 switchModel 方法,用 fetch 直接调。
   async switchSessionModel(
     sessionId: string,
     model: { providerID: string; modelID: string },
   ): Promise<void> {
-    if (!this.clientV2) throw new Error("opencode v2 client not ready")
-    const session = this.clientV2.session as unknown as {
-      switchModel: (params: Record<string, unknown>) => Promise<unknown>
-    }
-    await session.switchModel({
-      sessionID: sessionId,
-      model: {
-        providerID: model.providerID,
-        id: model.modelID,
-      },
+    const resp = await fetch(`http://localhost:${this.port}/api/session/${encodeURIComponent(sessionId)}/model`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: {
+          providerID: model.providerID,
+          id: model.modelID,
+        },
+      }),
     })
+    if (!resp.ok) {
+      throw new Error(`switchModel failed: ${resp.status} ${await resp.text().catch(() => "")}`)
+    }
   }
 
   // 调用 opencode session.command API 执行斜杠命令。

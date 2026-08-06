@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 
 // v1 SDK mock:参照 bridge.test.ts —— session.list resolve 空数组跳过 spawn
 vi.mock("@opencode-ai/sdk", () => {
@@ -9,39 +9,35 @@ vi.mock("@opencode-ai/sdk", () => {
 // v2 SDK mock:session.prompt / switchModel / switchAgent
 vi.mock("@opencode-ai/sdk/v2", () => {
   const promptMock = vi.fn()
-  const switchModelMock = vi.fn()
-  const switchAgentMock = vi.fn()
-  const sessionMock = {
-    prompt: promptMock,
-    switchModel: switchModelMock,
-    switchAgent: switchAgentMock,
-  }
+  const sessionMock = { prompt: promptMock }
   return {
     createOpencodeClient: () => ({ session: sessionMock }),
     __promptMock: promptMock,
-    __switchModelMock: switchModelMock,
-    __switchAgentMock: switchAgentMock,
   }
 })
 
 import { OpencodeBridge } from "./bridge.js"
 
-const { __promptMock: promptMock, __switchModelMock: switchModelMock, __switchAgentMock: switchAgentMock } =
-  (await import("@opencode-ai/sdk/v2")) as any
+const { __promptMock: promptMock } = (await import("@opencode-ai/sdk/v2")) as any
 
 describe("OpencodeBridge.promptAsync (v2 queue)", () => {
   let bridge: OpencodeBridge
 
   beforeEach(async () => {
     promptMock.mockReset()
-    switchModelMock.mockReset()
-    switchAgentMock.mockReset()
     promptMock.mockResolvedValue({ error: undefined, data: { id: "oc-msg-1" } })
-    switchModelMock.mockResolvedValue({ error: undefined })
-    switchAgentMock.mockResolvedValue({ error: undefined })
+    // fetch 直接调 switchModel/switchAgent 端点
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => "",
+    }))
     bridge = new OpencodeBridge(4096)
     // ensureServer 路径走 mock,跳过真实 spawn
     await bridge.ensureServer()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it("calls v2 session.prompt with delivery queue and returns messageID", async () => {
@@ -58,21 +54,26 @@ describe("OpencodeBridge.promptAsync (v2 queue)", () => {
     expect(result).toBe("oc-msg-1")
   })
 
-  it("switchModel/switchAgent called before prompt when model/agent provided", async () => {
+  it("switchModel/switchAgent 经 fetch 调用且 prompt 不带 model/agent", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
     await bridge.promptAsync("sess-1", "hello", "build", {
       providerID: "opencode-go",
       modelID: "deepseek-v4-flash",
     })
 
-    expect(switchAgentMock).toHaveBeenCalledWith({
-      sessionID: "sess-1",
-      agent: "build",
-    })
-    expect(switchModelMock).toHaveBeenCalledWith({
-      sessionID: "sess-1",
+    // switchAgent → POST /api/session/{id}/agent
+    const agentCall = fetchMock.mock.calls[0]
+    expect(agentCall[0]).toContain("/api/session/sess-1/agent")
+    expect(JSON.parse(agentCall[1].body as string)).toEqual({ agent: "build" })
+
+    // switchModel → POST /api/session/{id}/model
+    const modelCall = fetchMock.mock.calls[1]
+    expect(modelCall[0]).toContain("/api/session/sess-1/model")
+    expect(JSON.parse(modelCall[1].body as string)).toEqual({
       model: { providerID: "opencode-go", id: "deepseek-v4-flash" },
     })
-    // prompt 不再带 model/agent(已丢弃,只发 text)
+
+    // prompt 不带 model/agent(已丢弃,只发 text)
     expect(promptMock).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: { text: "hello" },
