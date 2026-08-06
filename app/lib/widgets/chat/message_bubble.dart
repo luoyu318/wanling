@@ -109,6 +109,7 @@ class MessageBubble extends StatelessWidget {
       isDark: isDark,
       convId: message.conversationId,
       messageId: message.id,
+      rootMessageId: message.id,
       conversationMessages: conversationMessages,
       openGallery: openGallery,
       onFileTap: onFileTap,

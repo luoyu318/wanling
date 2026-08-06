@@ -92,6 +92,8 @@ class AggregateCardRenderer implements MessageContentRenderer {
 
     // 子元素渲染上下文：messageId 用 element_id（保证卡片内各元素唯一，
     // 避免 markdown 流式 StreamingText 的 ValueKey(rc.messageId) 兄弟节点冲突）；
+    // rootMessageId 用外层 rc.messageId（= 聚合卡真实消息 id）：task 元素跳转
+    // 子 Agent 详情页时需用 root_msg_id = 聚合卡真实 id 拉子树，element_id 查不到；
     // isStreaming 派生自卡片 state（generating 期间元素仍在流式输出），但交互元素
     // （question_card / permission_card）固定 false：只读字段本身不消费该值，
     // 且交互卡不应受卡片流式态影响（generating 期间也保持可点击终态语义）。
@@ -104,6 +106,7 @@ class AggregateCardRenderer implements MessageContentRenderer {
       isDark: rc.isDark,
       convId: rc.convId,
       messageId: elementId,
+      rootMessageId: rc.messageId,
       conversationMessages: rc.conversationMessages,
       openGallery: rc.openGallery,
       onFileTap: rc.onFileTap,

@@ -60,6 +60,16 @@ class MessageRenderContext {
   /// 由 MessageBubble 从 message.id 注入。
   final String messageId;
 
+  /// 当前渲染单位的「根消息 id」：task 卡片跳转子 Agent 详情页时用它作为
+  /// root_msg_id 查询子事件流（API getSubagentMessages(convId, rootMsgId)）。
+  ///
+  /// 非聚合场景根就是消息自身（MessageBubble 注入时默认等于 messageId）；
+  /// 聚合卡内嵌元素由 AggregateCardRenderer 注入为聚合卡真实消息 id（此时
+  /// messageId 是 element_id，子会话消息的 root 指向聚合卡真实 id，用 element_id
+  /// 查不到子树 → 详情页空白）。空串表示未注入，消费方（task 卡）应 fallback
+  /// 到 [messageId]。
+  final String rootMessageId;
+
   /// 当前会话的全部消息（用于画廊收集会话级图片）。仅点击图片时使用。
   /// 默认空列表，保证 renderer 在测试/无画廊场景下也能正常构造。
   final List<ChatMessage> conversationMessages;
@@ -91,6 +101,7 @@ class MessageRenderContext {
     required this.isDark,
     this.convId = '',
     this.messageId = '',
+    this.rootMessageId = '',
     this.conversationMessages = const [],
     this.openGallery,
     this.onFileTap,

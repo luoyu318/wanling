@@ -5,11 +5,28 @@ import 'package:app/rendering/message_content_renderer.dart' show ContentRendere
 import 'package:app/rendering/truncatable_text_block.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 void main() {
   setUpAll(() {
     registerBuiltinRenderers();
   });
+
+  Map<String, dynamic> makeTaskContent({
+    required String status,
+    String subSessionId = 'ses-child-1',
+    double? duration,
+  }) {
+    return {
+      'data': {
+        'name': 'task',
+        'status': status,
+        'input': {'description': '调研一下', 'subagent_type': 'general'},
+        if (subSessionId.isNotEmpty) 'sub_session_id': subSessionId,
+        if (duration != null) 'duration': duration,
+      },
+    };
+  }
 
   group('ToolCardRenderer', () {
     Map<String, dynamic> makeContent({
@@ -243,22 +260,6 @@ void main() {
   });
 
   group('ToolCardRenderer task 三态', () {
-    Map<String, dynamic> makeTaskContent({
-      required String status,
-      String subSessionId = 'ses-child-1',
-      double? duration,
-    }) {
-      return {
-        'data': {
-          'name': 'task',
-          'status': status,
-          'input': {'description': '调研一下', 'subagent_type': 'general'},
-          if (subSessionId.isNotEmpty) 'sub_session_id': subSessionId,
-          if (duration != null) 'duration': duration,
-        },
-      };
-    }
-
     testWidgets('starting 态显示已启动文案 + 子 Agent 徽章', (tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -615,6 +616,74 @@ void main() {
       expect(find.text('选择题'), findsOneWidget);
       // 题干
       expect(find.text('用哪个分支?'), findsOneWidget);
+    });
+  });
+
+  group('task 卡跳转子 Agent 详情页用 rootMessageId', () {
+    Widget hostWithRouter({
+      required String messageId,
+      String rootMessageId = '',
+      required void Function(String taskCardId) onSubagentRoute,
+    }) {
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => Scaffold(
+              body: Builder(
+                builder: (ctx) => ContentRendererRegistry.render(
+                  MsgType.toolCard,
+                  makeTaskContent(status: 'working'),
+                  ctx,
+                  MessageRenderContext(
+                    isMe: false, baseUrl: '', token: '', isDark: false,
+                    convId: 'conv-1',
+                    messageId: messageId,
+                    rootMessageId: rootMessageId,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/chat/subagent/:taskCardId',
+            builder: (_, state) {
+              onSubagentRoute(state.pathParameters['taskCardId']!);
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      );
+      return MaterialApp.router(routerConfig: router);
+    }
+
+    testWidgets('rootMessageId 非空时跳转用它而非 messageId（聚合卡场景）', (tester) async {
+      String? jumpedTo;
+      await tester.pumpWidget(hostWithRouter(
+        messageId: 'tool_card_5',
+        rootMessageId: 'agg-msg-real-1',
+        onSubagentRoute: (id) => jumpedTo = id,
+      ));
+
+      await tester.tap(find.text('general'));
+      await tester.pumpAndSettle();
+
+      expect(jumpedTo, 'agg-msg-real-1');
+    });
+
+    testWidgets('rootMessageId 缺省时 fallback 到 messageId（非聚合场景）', (tester) async {
+      String? jumpedTo;
+      await tester.pumpWidget(hostWithRouter(
+        messageId: 'task-msg-1',
+        rootMessageId: '',
+        onSubagentRoute: (id) => jumpedTo = id,
+      ));
+
+      await tester.tap(find.text('general'));
+      await tester.pumpAndSettle();
+
+      expect(jumpedTo, 'task-msg-1');
     });
   });
 

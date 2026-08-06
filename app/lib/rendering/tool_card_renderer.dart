@@ -151,6 +151,14 @@ Widget _wrapAnimated(Widget child) {
   );
 }
 
+/// task 卡跳转子 Agent 详情页用的 root_msg_id。
+///
+/// 聚合卡内元素优先取 rc.rootMessageId（= 聚合卡真实消息 id），子会话消息的
+/// root 指向该 id，用它才能拉到子树；非聚合场景 rootMessageId 为空时 fallback
+/// 到 rc.messageId（= task 消息自身，即根）。
+String _taskRootId(MessageRenderContext rc) =>
+    rc.rootMessageId.isNotEmpty ? rc.rootMessageId : rc.messageId;
+
 /// 从输入中提取当前操作的文件/目录上下文标签。
 (String, String) _toolContext(Map<String, dynamic> input) {
   for (final field in ['filePath', 'path', 'workdir']) {
@@ -640,7 +648,7 @@ class _StartingTaskCard extends StatelessWidget {
       statusText: '已启动',
       statusColor: const Color(0xFF5B8BF7),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: true,
@@ -662,7 +670,7 @@ class _WorkingTaskCard extends StatelessWidget {
       statusText: '正在执行',
       statusColor: const Color(0xFFFA8C16),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: true,
@@ -686,7 +694,7 @@ class _CompletedTaskCard extends StatelessWidget {
       statusText: statusText,
       statusColor: const Color(0xFF07C160),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: false,
@@ -718,7 +726,7 @@ class _ErrorTaskCard extends StatelessWidget {
       statusText: statusText,
       statusColor: const Color(0xFFFA5151),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: false,
@@ -737,7 +745,9 @@ class _ErrorTaskCard extends StatelessWidget {
 /// sub_session_id 只是 plugin 的子会话标识，server 不暴露按它查消息的接口。
 /// [subSessionId] 保留作为「是否可点击」的开关（仅 sub-session 已建立才允许跳转）。
 /// [convId] 来自 [MessageRenderContext.convId]，由 MessageBubble 从
-/// message.conversationId 注入；[taskCardId] 来自 [MessageRenderContext.messageId]。
+/// message.conversationId 注入；[taskCardId] 来自 [MessageRenderContext] 的
+/// rootMessageId（聚合卡内 = 聚合卡真实消息 id，非聚合场景 fallback messageId），
+/// 见 [_taskRootId]。
 class _TaskCardShell extends StatelessWidget {
   final String agentType;
   final String description;

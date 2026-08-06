@@ -82,7 +82,7 @@ void main() {
     };
   }
 
-  Widget host(Map<String, dynamic> c) {
+  Widget host(Map<String, dynamic> c, {String outerMessageId = ''}) {
     return MaterialApp(
       home: Scaffold(
         body: Builder(
@@ -90,11 +90,12 @@ void main() {
             MsgType.aggregateCard,
             c,
             ctx,
-            const MessageRenderContext(
+            MessageRenderContext(
               isMe: false,
               baseUrl: 'http://localhost',
               token: 'test',
               isDark: false,
+              messageId: outerMessageId,
             ),
           ),
         ),
@@ -328,6 +329,35 @@ void main() {
         ],
       )));
       expect(captured, isFalse);
+    });
+  });
+
+  group('内嵌元素 rc 注入（rootMessageId）', () {
+    testWidgets('tool_card 元素 rc.messageId = element_id, rc.rootMessageId = 聚合卡真实消息 id',
+        (tester) async {
+      MessageRenderContext? captured;
+      ContentRendererRegistry.register(
+        MsgType.toolCard,
+        _CapturingRenderer((rc) => captured = rc),
+      );
+      await tester.pumpWidget(host(
+        content(
+          state: 'done',
+          elements: [
+            element('tool_card', 'tool_card_5', {
+              'name': 'task',
+              'status': 'completed',
+              'input': {'description': '调研', 'subagent_type': 'general'},
+              'sub_session_id': 'ses-child-1',
+            }),
+          ],
+        ),
+        outerMessageId: 'agg-msg-real-1',
+      ));
+
+      expect(captured, isNotNull);
+      expect(captured!.messageId, 'tool_card_5');
+      expect(captured!.rootMessageId, 'agg-msg-real-1');
     });
   });
 
