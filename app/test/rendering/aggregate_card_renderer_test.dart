@@ -4,6 +4,60 @@ import 'package:app/rendering/message_content_renderer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+Map<String, dynamic> questionCardData({String status = 'pending'}) {
+  return {
+    'status': status,
+    'oc_request_id': 'req-1',
+    if (status == 'answered') 'result': 'main',
+    'questions': [
+      {
+        'header': '选择分支',
+        'question': '用哪个分支?',
+        'options': [
+          {'label': 'main', 'description': ''},
+          {'label': 'dev', 'description': ''},
+        ],
+        'multiple': false,
+        'custom': false,
+      },
+    ],
+  };
+}
+
+Map<String, dynamic> permissionCardData({String status = 'pending'}) {
+  return {
+    'status': status,
+    'oc_request_id': 'req-1',
+    'action': 'bash',
+    'resources': ['/tmp'],
+    'metadata': {'command': 'ls'},
+    'save': ['/tmp/*'],
+    if (status == 'approved') 'result': 'always',
+  };
+}
+
+/// 捕获子 renderer 收到的 MessageRenderContext（验证 isStreaming 派生）。
+class _CapturingRenderer implements MessageContentRenderer {
+  final void Function(MessageRenderContext) onBuild;
+  const _CapturingRenderer(this.onBuild);
+
+  @override
+  bool get selectable => false;
+
+  @override
+  bool get wrapInBubble => false;
+
+  @override
+  Widget build(
+    BuildContext context,
+    Map<String, dynamic> content,
+    MessageRenderContext rc,
+  ) {
+    onBuild(rc);
+    return const SizedBox.shrink();
+  }
+}
+
 void main() {
   setUp(() {
     ContentRendererRegistry.reset();
@@ -182,6 +236,98 @@ void main() {
       expect(find.text('⏱ 1.5s'), findsOneWidget);
       expect(find.text(r'$0.123'), findsOneWidget);
       expect(find.text('tokens 0.8k'), findsOneWidget);
+    });
+  });
+
+  group('question_card / permission_card 交互元素', () {
+    testWidgets('question_card 元素渲染 pending 选择题卡', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('question_card', 'question_card_1', questionCardData()),
+        ],
+      )));
+      expect(find.text('选择题'), findsOneWidget);
+      expect(find.text('选择分支'), findsOneWidget);
+      expect(find.text('点击回答 →'), findsOneWidget);
+    });
+
+    testWidgets('question_card 元素点击弹选择题抽屉', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('question_card', 'question_card_1', questionCardData()),
+        ],
+      )));
+      await tester.tap(find.text('点击回答 →'));
+      await tester.pumpAndSettle();
+      // 题干只在抽屉内出现
+      expect(find.text('用哪个分支?'), findsOneWidget);
+    });
+
+    testWidgets('permission_card 元素渲染 pending 审批卡', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('permission_card', 'permission_card_1', permissionCardData()),
+        ],
+      )));
+      expect(find.text('权限审批 · 执行命令'), findsOneWidget);
+      expect(find.text('ls'), findsOneWidget);
+      expect(find.text('点击处理 →'), findsOneWidget);
+    });
+
+    testWidgets('permission_card 元素点击弹权限审批抽屉', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('permission_card', 'permission_card_1', permissionCardData()),
+        ],
+      )));
+      await tester.tap(find.text('点击处理 →'));
+      await tester.pumpAndSettle();
+      // 抽屉头部「权限审批」+ 动作「执行命令」可见
+      expect(find.text('权限审批'), findsOneWidget);
+      expect(find.text('执行命令'), findsOneWidget);
+    });
+
+    testWidgets('question_card 元素终态(answered)渲染结果摘要,不可操作', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('question_card', 'question_card_1',
+              questionCardData(status: 'answered')),
+        ],
+      )));
+      expect(find.textContaining('已回答'), findsOneWidget);
+      expect(find.text('点击回答 →'), findsNothing);
+    });
+
+    testWidgets('permission_card 元素终态(approved)渲染结果摘要,不可操作', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('permission_card', 'permission_card_1',
+              permissionCardData(status: 'approved')),
+        ],
+      )));
+      expect(find.text('已批准（始终）'), findsOneWidget);
+      expect(find.text('点击处理 →'), findsNothing);
+    });
+
+    testWidgets('交互元素不派生 isStreaming（generating 期间仍可交互）', (tester) async {
+      bool? captured;
+      ContentRendererRegistry.register(
+        MsgType.questionCard,
+        _CapturingRenderer((rc) => captured = rc.isStreaming),
+      );
+      await tester.pumpWidget(host(content(
+        state: 'generating',
+        elements: [
+          element('question_card', 'question_card_1', questionCardData()),
+        ],
+      )));
+      expect(captured, isFalse);
     });
   });
 

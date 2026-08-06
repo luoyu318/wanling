@@ -92,7 +92,11 @@ class AggregateCardRenderer implements MessageContentRenderer {
 
     // 子元素渲染上下文：messageId 用 element_id（保证卡片内各元素唯一，
     // 避免 markdown 流式 StreamingText 的 ValueKey(rc.messageId) 兄弟节点冲突）；
-    // isStreaming 派生自卡片 state（generating 期间元素仍在流式输出）。
+    // isStreaming 派生自卡片 state（generating 期间元素仍在流式输出），但交互元素
+    // （question_card / permission_card）固定 false：只读字段本身不消费该值，
+    // 且交互卡不应受卡片流式态影响（generating 期间也保持可点击终态语义）。
+    final interactive =
+        type == 'question_card' || type == 'permission_card';
     final elementRc = MessageRenderContext(
       isMe: rc.isMe,
       baseUrl: rc.baseUrl,
@@ -104,7 +108,7 @@ class AggregateCardRenderer implements MessageContentRenderer {
       openGallery: rc.openGallery,
       onFileTap: rc.onFileTap,
       fileDownloadSnapshots: rc.fileDownloadSnapshots,
-      isStreaming: generating,
+      isStreaming: interactive ? false : generating,
     );
 
     final elementContent = <String, dynamic>{'msg_type': type, 'data': data};
@@ -119,6 +123,10 @@ class AggregateCardRenderer implements MessageContentRenderer {
       'compact_divider' => _buildCompactDivider(),
       'footer' => ContentRendererRegistry.render(
           MsgType.stepFinish, elementContent, context, elementRc),
+      'question_card' => ContentRendererRegistry.render(
+          MsgType.questionCard, elementContent, context, elementRc),
+      'permission_card' => ContentRendererRegistry.render(
+          MsgType.permissionCard, elementContent, context, elementRc),
       _ => const SizedBox.shrink(),
     };
 
