@@ -1,5 +1,4 @@
 import 'package:app/models/msg_type.dart';
-import 'package:app/rendering/aggregate_card_renderer.dart';
 import 'package:app/rendering/builtin_renderers.dart';
 import 'package:app/rendering/message_content_renderer.dart';
 import 'package:flutter/material.dart';
@@ -9,10 +8,6 @@ void main() {
   setUp(() {
     ContentRendererRegistry.reset();
     registerBuiltinRenderers();
-    // Task 7 才把 aggregateCard 注册进 registerBuiltinRenderers,
-    // 此处按 Task 6 范围单独注册以驱动测试。
-    ContentRendererRegistry.register(
-        MsgType.aggregateCard, const AggregateCardRenderer());
   });
 
   Map<String, dynamic> element(String type, String id, Map<String, dynamic> data) {

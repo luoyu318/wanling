@@ -15,6 +15,7 @@ import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_strong.dart';
 import '../widgets/markdown_view.dart';
 import '../widgets/streaming_text.dart';
+import 'aggregate_card_renderer.dart';
 import 'card_renderer.dart';
 import 'file_diff_renderer.dart';
 import 'message_content_renderer.dart';
@@ -441,4 +442,6 @@ void registerBuiltinRenderers() {
   ContentRendererRegistry.register(
       MsgType.questionCard, const QuestionCardRenderer());
   ContentRendererRegistry.register(MsgType.slashEcho, const SlashEchoRenderer());
+  ContentRendererRegistry.register(
+      MsgType.aggregateCard, const AggregateCardRenderer());
 }

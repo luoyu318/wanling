@@ -364,6 +364,106 @@ void main() {
     expect(container.read(chatProvider(key)).isServerInitialized, isTrue);
   });
 
+  group('聚合卡 MESSAGE_UPDATE 全量替换 content', () {
+    test('PATCH 按 message_id 替换聚合卡 content(state+elements),不新增不删除',
+        () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      // 先有 generating 态的聚合卡(plugin ensureCard 建的 MESSAGE_CREATE)
+      emitAggregateCard('agg-1', state: 'generating', elements: [
+        {
+          'type': 'reasoning',
+          'element_id': 'reasoning_1',
+          'data': {'text': '思考中'},
+        },
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': 'Hi'},
+        },
+      ]);
+      await pump();
+      expect(container.read(chatProvider(key)).displayMessages.length, 1);
+
+      // plugin patchElements 后 server 推 MESSAGE_UPDATE 兜底终态
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'message_id': 'agg-1',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {
+              'state': 'done',
+              'elements': [
+                {
+                  'type': 'markdown',
+                  'element_id': 'markdown_1',
+                  'data': {'text': '最终回复正文'},
+                },
+              ],
+            },
+          },
+        },
+      ));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      // 同一条消息被原地替换,不新增不删除
+      expect(msgs.length, 1);
+      expect(msgs.first.id, 'agg-1');
+      final data = msgs.first.content['data'] as Map;
+      expect(data['state'], 'done');
+      final elements = data['elements'] as List;
+      expect(elements.length, 1);
+      final element = elements.first as Map;
+      expect(element['element_id'], 'markdown_1');
+      expect((element['data'] as Map)['text'], '最终回复正文');
+    });
+
+    test('其他会话的聚合卡 MESSAGE_UPDATE 忽略', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      emitAggregateCard('agg-1', elements: [
+        {
+          'type': 'markdown',
+          'element_id': 'markdown_1',
+          'data': {'text': '原文'},
+        },
+      ]);
+      await pump();
+
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'message_id': 'agg-1',
+          'conversation_id': 'c2', // 别的会话
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'state': 'done', 'elements': const []},
+          },
+        },
+      ));
+      await pump();
+
+      final msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.length, 1);
+      final data = msgs.first.content['data'] as Map;
+      expect(data['state'], 'generating'); // 未被替换
+      final elements = data['elements'] as List;
+      final element = elements.first as Map;
+      expect((element['data'] as Map)['text'], '原文');
+    });
+  });
+
   group('聚合卡 op=14 元素级流式(带 aggregate 字段)', () {
     test('带 aggregate 的 delta 更新聚合卡元素 data.text,不建独立占位', () async {
       final container = makeContainer();
