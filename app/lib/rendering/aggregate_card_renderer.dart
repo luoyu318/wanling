@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/msg_type.dart';
+import 'footer_info_bar.dart';
 import 'message_content_renderer.dart';
+import 'tool_group_renderer.dart';
 
 /// 聚合卡片渲染器：把一次问答的全部时序内容（思考 / 工具 / 正文 / 分隔 / 信息行）
 /// 渲染成一张卡片。
@@ -39,6 +41,9 @@ class AggregateCardRenderer implements MessageContentRenderer {
     final elements = (data['elements'] as List?)?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
 
+    // 分组:连续 tool_card 折叠合并(纯渲染层),task/交互卡平铺
+    final slots = groupAggregateElements(elements);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -52,8 +57,21 @@ class AggregateCardRenderer implements MessageContentRenderer {
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildHeader(generating: generating),
-          for (final e in elements)
-            _buildElement(context, e, rc, generating: generating),
+          for (final slot in slots)
+            switch (slot) {
+              ToolGroupSlot(:final cards) => Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                  child: ToolGroupCard(cards: cards, rc: rc),
+                ),
+              SingleElementSlot(:final element) =>
+                // finished footer 元素由底部提示条代替渲染(不重复走 step_finish)
+                !_isFinishedFooter(element)
+                    ? _buildElement(context, element, rc, generating: generating)
+                    : const SizedBox.shrink(),
+            },
+          // 底部提示条:done + finished footer 才渲染(回合结束信号)
+          if (!generating && _hasFinishedFooter(elements))
+            FooterInfoBar(data: _finishedFooterData(elements)),
         ],
       ),
     );
@@ -148,5 +166,37 @@ class AggregateCardRenderer implements MessageContentRenderer {
         color: const Color(0xFFEEEEEE),
       ),
     );
+  }
+
+  /// 是否存在 finished==true 的 footer 元素(回合结束信号)。
+  bool _hasFinishedFooter(List<Map<String, dynamic>> elements) {
+    for (final e in elements) {
+      if (e['type'] == 'footer') {
+        final d = e['data'] as Map?;
+        if (d?['finished'] == true) return true;
+      }
+    }
+    return false;
+  }
+
+  /// 单个元素是否为 finished footer(由提示条代替渲染,不再走 step_finish)。
+  bool _isFinishedFooter(Map<String, dynamic> element) {
+    if (element['type'] != 'footer') return false;
+    final d = element['data'] as Map?;
+    return d?['finished'] == true;
+  }
+
+  /// 取 finished footer 的 data(供提示条读 mode/model/duration/tokens)。
+  Map<String, dynamic> _finishedFooterData(
+      List<Map<String, dynamic>> elements) {
+    for (final e in elements) {
+      if (e['type'] == 'footer') {
+        final d = e['data'] as Map?;
+        if (d?['finished'] == true) {
+          return Map<String, dynamic>.from(d as Map);
+        }
+      }
+    }
+    return const {};
   }
 }

@@ -156,7 +156,7 @@ void main() {
       expect(find.text('分析需求并设计方案'), findsOneWidget);
     });
 
-    testWidgets('tool_card 元素渲染工具列表项', (tester) async {
+    testWidgets('tool_card 元素折叠为「工具调用 · 1」,点击展开显示工具列表项', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
@@ -168,8 +168,14 @@ void main() {
           }),
         ],
       )));
+      // 收起态:折叠行,不显示工具详情
+      expect(find.text('工具调用 · 1'), findsOneWidget);
+      expect(find.text('Bash'), findsNothing);
+      // 点击展开后显示工具卡详情
+      await tester.tap(find.text('工具调用 · 1'));
+      await tester.pump();
       expect(find.text('Bash'), findsOneWidget);
-      expect(find.text('失败'), findsOneWidget);
+      expect(find.text('命令失败'), findsOneWidget);
     });
 
     testWidgets('compact_divider 元素渲染分隔线', (tester) async {
@@ -219,6 +225,9 @@ void main() {
           }),
         ],
       )));
+      // 收起态先展开
+      await tester.tap(find.text('工具调用 · 1'));
+      await tester.pump();
       expect(find.text('Read'), findsOneWidget);
       expect(find.text('完成'), findsNWidgets(2)); // header + 工具卡状态
     });
@@ -358,6 +367,74 @@ void main() {
       expect(captured, isNotNull);
       expect(captured!.messageId, 'tool_card_5');
       expect(captured!.rootMessageId, 'agg-msg-real-1');
+    });
+  });
+
+  group('工具卡折叠 + 底部提示条', () {
+    testWidgets('连续 tool_card 折叠成一组(收起态显示 ⚡ 工具调用 · 2)', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('tool_card', 'tool_card_1', {'name': 'bash', 'status': 'completed', 'input': {'command': 'ls'}}),
+          element('tool_card', 'tool_card_2', {'name': 'read', 'status': 'completed', 'input': {'path': 'x.dart'}}),
+        ],
+      )));
+      expect(find.text('工具调用 · 2'), findsOneWidget);
+      // 收起态不展开工具详情
+      expect(find.text('Bash'), findsNothing);
+    });
+
+    testWidgets('点击折叠卡展开显示工具卡详情', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('tool_card', 'tool_card_1', {'name': 'bash', 'status': 'error', 'input': {'command': 'ls'}, 'error': '命令失败'}),
+        ],
+      )));
+      await tester.tap(find.text('工具调用 · 1'));
+      await tester.pump();
+      expect(find.text('Bash'), findsOneWidget);
+      expect(find.text('命令失败'), findsOneWidget);
+    });
+
+    testWidgets('state=done + finished footer → 渲染底部提示条', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('footer', 'footer_1', {
+            'finished': true,
+            'mode': 'build',
+            'model': 'DeepSeek-V3',
+            'duration': 12.3,
+            'tokens': {'total': 2100},
+          }),
+        ],
+      )));
+      expect(find.text('build'), findsOneWidget);
+      expect(find.text('12.3s'), findsOneWidget);
+      expect(find.text('DeepSeek-V3'), findsOneWidget);
+      expect(find.text('tokens 2.1k'), findsOneWidget);
+    });
+
+    testWidgets('state=generating 不渲染提示条(即使有 finished footer)', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'generating',
+        elements: [
+          element('footer', 'footer_1', {'finished': true, 'mode': 'build', 'model': 'M', 'duration': 1, 'tokens': {'total': 100}}),
+        ],
+      )));
+      expect(find.text('build'), findsNothing);
+    });
+
+    testWidgets('task 子 agent 卡不折叠(平铺可点击)', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        elements: [
+          element('tool_card', 'tool_card_1', {'name': 'task', 'status': 'completed', 'input': {'description': '调研'}, 'sub_session_id': 's1'}),
+        ],
+      )));
+      expect(find.text('工具调用 · 1'), findsNothing);
+      expect(find.text('调研'), findsOneWidget);
     });
   });
 
