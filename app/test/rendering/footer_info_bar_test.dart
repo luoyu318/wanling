@@ -41,4 +41,25 @@ void main() {
       expect(find.textContaining('tokens'), findsNothing);
     });
   });
+
+  group('FooterInfoBar 停止态', () {
+    testWidgets('stopped=true 显示已停止,不显示 tokens', (tester) async {
+      await tester.pumpWidget(host({
+        'stopped': true,
+        'reason': 'stop',
+        'tokens': {'total': 2100},
+      }));
+      expect(find.text('已停止'), findsOneWidget);
+      expect(find.textContaining('tokens'), findsNothing);
+    });
+
+    testWidgets('非 stopped 正常显示 tokens 汇总', (tester) async {
+      await tester.pumpWidget(host({
+        'stopped': false,
+        'tokens': {'total': 1500},
+      }));
+      expect(find.text('已停止'), findsNothing);
+      expect(find.text('tokens 1.5k'), findsOneWidget);
+    });
+  });
 }
