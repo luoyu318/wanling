@@ -262,18 +262,10 @@ export class SyncEngine extends EventEmitter {
     agent?: string,
     model?: { providerID: string; modelID: string },
   ): Promise<void> {
-    // 中止旧生成(若有):旧聚合卡正在生成时,abort 后 streamer 定格旧卡,
-    // 新消息立即成为新回合(新聚合卡)。
-    try {
-      await this.opencode.abortSession(sessionId)
-      console.log(`[sync] 新消息到达,中止旧生成 session=${sessionId.slice(0, 12)}…`)
-    } catch (err) {
-      // abort 失败不阻塞发送(可能无活跃生成)
-      const msg = err instanceof Error ? err.message : String(err)
-      console.warn(`[sync] 中止旧生成失败(继续发送): ${msg}`)
-    }
-    // 通知 streamer 定格旧聚合卡(若正在生成,finishCard("interrupt");否则幂等跳过)
-    this.emit("aggregate_finish", { sessionId, reason: "interrupt" as const })
+    // 直接 v1 promptAsync 发送(opencode 自带排队,按序逐条处理)。
+    // 聚合卡分段由 opencode 消息边界驱动:每条 user→assistant 完成后,
+    // opencode 发独立 step-finish(reason=stop)→ isLoopEnd → 当前卡 footer + reset,
+    // 下一条消息回复自动开新卡。不 abort agent(打断由 opencode 排队语义承担)。
     await this.promptWithRetry(sessionId, text, agent, model)
   }
 
