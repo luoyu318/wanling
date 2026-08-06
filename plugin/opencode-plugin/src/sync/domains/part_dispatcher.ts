@@ -192,24 +192,26 @@ export class PartDispatcher {
           this.flushPendingText(state, isLoopEnd ? false : true)
           if (this.useAggregate(state)) {
             // step-finish 转 footer 元素:不再发独立 step_finish 消息。
-            // - isLoopEnd → 最后一个 footer + 整卡翻转 {silent:false,state:"done"}
-            //   (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)
-            // - 中间步骤 → footer 追加但 silent 不翻转,state 保持 generating
-            const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
-            await this.appendElement(state, AggregateCardManager.footer({
-              reason: part.reason || "",
-              cost: part.cost || 0,
-              tokens: part.tokens || {},
-              duration,
-              finished: isLoopEnd,
-              // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
-              ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
-            }, this.nextSeq(state)), isLoopEnd ? { silent: false, state: "done" } : undefined)
-            // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
-            // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
-            // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
-            // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
+            // 仅 isLoopEnd 追加 footer(回合结束):中途工具轮次结束不追加——
+            // 过程性 duration/tokens/cost 无意义且隔断连续 tool_card 合并
+            // (footer 是独立元素,插中间物理切断「连续 tool_card」分组)。
+            // isLoopEnd 时整卡翻转 {silent:false,state:"done"}
+            // (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)。
             if (isLoopEnd) {
+              const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
+              await this.appendElement(state, AggregateCardManager.footer({
+                reason: part.reason || "",
+                cost: part.cost || 0,
+                tokens: part.tokens || {},
+                duration,
+                finished: true,
+                // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
+                ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
+              }, this.nextSeq(state)), { silent: false, state: "done" })
+              // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
+              // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
+              // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
+              // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
               this.resetAggregateCard(state)
             }
           } else {
