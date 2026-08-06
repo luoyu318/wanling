@@ -17,6 +17,8 @@ import { ToolCardManager } from "./domains/tool_card.js"
 import { PartDispatcher } from "./domains/part_dispatcher.js"
 import { InteractionCards } from "./domains/interaction.js"
 import { SessionLifecycle } from "./domains/session_lifecycle.js"
+import { AggregateCardManager } from "./domains/aggregate_card.js"
+import { dequeueByText } from "./queue_state.js"
 
 export class Streamer extends EventEmitter {
   // 子 session 兜底超时默认值:task 崩溃或漏发 completed/error SSE 时强制清理。
@@ -61,6 +63,10 @@ export class Streamer extends EventEmitter {
   private readonly lifecycle: SessionLifecycle
   private started = false
   private readonly router: MessageRouter
+  // 聚合卡开关(构造时存储,与 PartDispatcher/ToolCardManager 的 useAggregate 同语义)。
+  private readonly aggregateCardEnabled: boolean
+  // 入队事件已关联的「opencode messageID → wanling 消息 id」(prompted 复用)。
+  private readonly pendingQueuedMsgIds = new Map<string, string>()
 
   constructor(
     subscriber: EventSubscriber,
@@ -75,6 +81,7 @@ export class Streamer extends EventEmitter {
     this.subscriber = subscriber
     this.wanling = wanling
     this.mainSessionId = mainSessionId
+    this.aggregateCardEnabled = aggregateCardEnabled ?? true
     // wanling 以构造参数为准(单一实例来源),调用方传入的 deps 不含 wanling,这里统一补齐。
     this.ensureDeps = { ...ensureDeps, wanling }
     this.dispatcher = dispatcher
@@ -220,6 +227,50 @@ export class Streamer extends EventEmitter {
     this.subscriber.on("permission_replied", (payload) => this.interaction.onPermissionReplied(payload))
     this.subscriber.on("question_replied", (payload) => this.interaction.onQuestionReplied(payload))
     this.subscriber.on("question_rejected", (payload) => this.interaction.onQuestionRejected(payload))
+
+    // 排队消息状态同步:admitted(入队)→ 气泡「排队中」徽标;prompted(调度)→
+    // 移除徽标 + 旧聚合卡 finishCard("interrupt") 定格(排队消息分段新开卡)。
+    // dequeueByText 在 admitted 消费 FIFO 拿 wanlingMsgId,记入 pendingQueuedMsgIds;
+    // prompted 时从该映射取 wanlingMsgId(同文本)发 queued:false。
+    this.subscriber.on("queue_admitted", async (payload) => {
+      const state = await this.store.getOrCreateState(payload.sessionID)
+      if (!state) return
+      const sent = dequeueByText(payload.sessionID, payload.text)
+      if (!sent) return
+      this.pendingQueuedMsgIds.set(payload.messageID, sent.wanlingMsgId)
+      this.wanling.sendTypedMessage(state.convId, "queued_status", {
+        message_id: sent.wanlingMsgId,
+        queued: true,
+      })
+    })
+    this.subscriber.on("queue_prompted", async (payload) => {
+      const state = await this.store.getOrCreateState(payload.sessionID)
+      if (!state) return
+      const wanlingMsgId =
+        this.pendingQueuedMsgIds.get(payload.messageID) ??
+        dequeueByText(payload.sessionID, payload.text)?.wanlingMsgId
+      if (!wanlingMsgId) return
+      this.pendingQueuedMsgIds.delete(payload.messageID)
+      this.wanling.sendTypedMessage(state.convId, "queued_status", {
+        message_id: wanlingMsgId,
+        queued: false,
+      })
+      // 排队消息开始执行 → 旧聚合卡定格,新回合自动建新卡
+      await this.finishCardForSession(payload.sessionID, "interrupt")
+    })
+  }
+
+  // 供 engine(停止/分段)触发的聚合卡主动收尾:查 session 对应 state 的聚合卡。
+  // 停止(abort)→ finishCard("stop")(APP 显示「已停止」);排队分段 → finishCard("interrupt")。
+  async finishCardForSession(sessionId: string, reason: "stop" | "interrupt"): Promise<void> {
+    const state = await this.store.getOrCreateState(sessionId)
+    if (!state) return
+    if (!this.aggregateCardEnabled || state.isChildSession) return
+    await new AggregateCardManager(this.wanling, state)
+      .finishCard(reason)
+      .catch((err) => {
+        console.error(`[streamer] finishCard(${reason}) 失败: ${err instanceof Error ? err.message : String(err)}`)
+      })
   }
 
   // 兼容委托(供 streamer.test.ts 直接调 (streamer as any).onPartUpdated):

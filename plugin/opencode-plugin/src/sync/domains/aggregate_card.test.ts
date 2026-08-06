@@ -344,3 +344,63 @@ describe("AggregateCardManager updateElement", () => {
     )
   })
 })
+
+describe("AggregateCardManager.finishCard", () => {
+  let wanling: ReturnType<typeof makeWanling>["wanling"]
+
+  beforeEach(() => {
+    wanling = makeWanling().wanling
+  })
+
+  it("stop:追加 stopped footer + set_state done + reset", async () => {
+    const state = makeState()
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "generating"
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finishCard("stop")
+
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1",
+      expect.objectContaining({ op: "append" }),
+    )
+    expect(state.aggregateCardState).toBeUndefined() // reset
+    expect(state.aggregateCardMsgId).toBeUndefined() // reset
+  })
+
+  it("interrupt:footer 不带 stopped 标记", async () => {
+    const state = makeState()
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "generating"
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finishCard("interrupt")
+
+    const appendCall = wanling.patchAggregateMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { op?: string })?.op === "append",
+    )
+    const element = (appendCall![1] as { element: { data: Record<string, unknown> } }).element
+    expect(element.data.stopped).toBe(false)
+    expect(element.data.reason).toBe("interrupt")
+  })
+
+  it("已 done 幂等:不重复 append", async () => {
+    const state = makeState()
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "done"
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finishCard("stop")
+
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+
+  it("无卡:静默跳过", async () => {
+    const state = makeState() // 无 aggregateCardMsgId
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finishCard("stop")
+
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+})

@@ -33,6 +33,10 @@ export type FooterData = {
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number; cache?: { read?: number; write?: number } }
   duration?: number
   finished?: boolean
+  // 主动收尾标记(abort 停止):true 时 APP footer 显示「已停止」而非 tokens 汇总。
+  // 仅 finishCard("stop") 置 true;finishCard("interrupt")(排队分段)与正常
+  // step-finish 定稿不带此标记。
+  stopped?: boolean
   // 回合结束快照:mode(model 模式)/model(模型显示名,modelName ?? modelId)。
   // 消息快照语义:回合结束时的值固化进 footer,不随 sessionMeta 实时态变动。
   mode?: string
@@ -273,5 +277,32 @@ export class AggregateCardManager {
     // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
     this.state.aggregatePatchQueue = next.catch(() => {})
     return next
+  }
+
+  // 聚合卡主动收尾定格:停止(abort)或排队分段(interrupt)时,旧卡无 loop 结束
+  // 的 step-finish footer 数据,由调用方主动补一个简化 footer + set_state done。
+  // reason 区分:stop(用户点停止,APP 显示「已停止」)/ interrupt(排队新回合,无 stopped 标记)。
+  // 幂等:卡已 done 或尚未建卡则跳过;set_silent:false 翻转计未读。
+  // seq 自增与 PartDispatcher.nextSeq 同规则(state.aggregateSeq 全局递增,element_id 唯一)。
+  // 收尾后 reset 聚合卡状态(与 isLoopEnd 的 footer 后 resetAggregateCard 同语义):
+  // 下一轮 ensureCard 建新卡,否则 done 卡会被下一轮复用导致「多轮一卡」。
+  async finishCard(reason: "stop" | "interrupt"): Promise<void> {
+    if (this.state.aggregateCardState === "done") return
+    if (!this.state.aggregateCardMsgId) return
+    const seq = (this.state.aggregateSeq ?? 0) + 1
+    this.state.aggregateSeq = seq
+    await this.appendElement(
+      AggregateCardManager.footer(
+        { reason, stopped: reason === "stop", finished: true },
+        seq,
+      ),
+      { silent: false, state: "done" },
+    )
+    // reset:清空建卡 msgId/序号/累计/当前 state,让下一轮新建卡(见 PartDispatcher.resetAggregateCard)
+    this.state.aggregateCardMsgId = undefined
+    this.state.aggregateCardInflight = undefined
+    this.state.aggregateCardState = undefined
+    this.state.aggregateSeq = undefined
+    this.state.aggregateElements = undefined
   }
 }
