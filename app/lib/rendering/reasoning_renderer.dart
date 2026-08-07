@@ -7,6 +7,7 @@ import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_strong.dart';
 import '../widgets/markdown_view.dart';
+import '../utils/duration_format.dart';
 import 'message_content_renderer.dart';
 
 /// MarkdownView 共用的 generators（与 builtin_renderers.dart 一致，改时同步）。
@@ -38,22 +39,29 @@ class ReasoningRenderer implements MessageContentRenderer {
 
   @override
   Widget build(BuildContext context, Map<String, dynamic> content, MessageRenderContext rc) {
-    final text = (content['data']?['text'] as String?) ?? '';
+    final data = content['data'];
+    final text = (data is Map ? data['text'] : null) as String? ?? '';
     if (text.isEmpty) return const SizedBox.shrink();
 
     // 元素级终态标记:false/缺失 → 按卡片流式态决定;true → 已终态,显示真实内容。
-    final finished = (content['data']?['finished'] as bool?) ?? false;
+    final finished = (data is Map ? data['finished'] : null) as bool? ?? false;
+    // 思考耗时(秒):plugin reasoning 元素终态携带(part.time.end - start,对齐 TUI)。
+    final duration = (data is Map ? data['duration'] : null) as num?;
     if (rc.isStreaming && !finished) {
       return _StreamingReasoningCard(text: text);
     }
-    return _StaticReasoningCard(text: text);
+    return _StaticReasoningCard(text: text, duration: duration);
   }
 }
 
-/// 终态卡：✨ 淡化(opacity 0.6)+ 真实 text 预览。
+/// 终态卡：✨ Thought + 耗时(可选)+ 真实 text 预览(单行截断)。
+/// 对齐 TUI reasoning header:`Thought: {duration}`(如 `Thought: 6.7s`)。
+/// duration 来自 reasoning 元素 data.duration(plugin 终态时由 part.time 计算,秒)。
+/// 点击展开全文。
 class _StaticReasoningCard extends StatelessWidget {
   final String text;
-  const _StaticReasoningCard({required this.text});
+  final num? duration;
+  const _StaticReasoningCard({required this.text, this.duration});
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +82,7 @@ class _StaticReasoningCard extends StatelessWidget {
             ),
             Expanded(
               child: Text(
-                text,
+                _foldedText(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
@@ -85,6 +93,17 @@ class _StaticReasoningCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _foldedText() {
+    // 折叠态对齐 TUI:`Thought` 固定文案,耗时可选。
+    // 有耗时(终态元素带 duration,毫秒)显示「Thought: 22ms / Thought: 1.6s」;
+    // 无耗时(兜底路径)只显示「Thought」。不再展示全文首行(与 TUI 折叠一致,
+    // 布局不随思考内容跳动)。
+    if (duration is num && duration! > 0) {
+      return 'Thought: ${formatDurationMs(duration!.toInt())}';
+    }
+    return 'Thought';
   }
 }
 

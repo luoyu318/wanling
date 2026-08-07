@@ -11,7 +11,7 @@ void main() {
     registerBuiltinRenderers();
   });
 
-  Widget host({required String text, required bool isStreaming, bool? finished}) {
+  Widget host({required String text, required bool isStreaming, bool? finished, num? duration}) {
     return MaterialApp(
       home: Scaffold(
         body: Builder(
@@ -22,6 +22,7 @@ void main() {
               'data': {
                 'text': text,
                 'finished': ?finished,
+                if (duration != null) 'duration': duration,
               },
             },
             ctx,
@@ -39,9 +40,23 @@ void main() {
   }
 
   group('ReasoningRenderer 终态 (isStreaming=false)', () {
-    testWidgets('显示真实 text 预览', (tester) async {
+    testWidgets('折叠态显示 Thought(无耗时,不展示全文首行)', (tester) async {
       await tester.pumpWidget(host(text: '一段思考内容', isStreaming: false));
-      expect(find.text('一段思考内容'), findsOneWidget);
+      expect(find.text('Thought'), findsOneWidget);
+      // 不再展示全文首行(对齐 TUI 折叠:布局不随思考内容跳动)
+      expect(find.text('一段思考内容'), findsNothing);
+    });
+
+    testWidgets('有 duration(毫秒<1s)时折叠态显示 Thought: 22ms', (tester) async {
+      await tester.pumpWidget(
+          host(text: '思考内容', isStreaming: false, duration: 22));
+      expect(find.text('Thought: 22ms'), findsOneWidget);
+    });
+
+    testWidgets('有 duration(毫秒≥1s)时折叠态显示 Thought: 2.2s', (tester) async {
+      await tester.pumpWidget(
+          host(text: '思考内容', isStreaming: false, duration: 2200));
+      expect(find.text('Thought: 2.2s'), findsOneWidget);
     });
 
     testWidgets('✨ icon opacity 0.6 淡化', (tester) async {
@@ -112,10 +127,10 @@ void main() {
   });
 
   group('ReasoningRenderer 方案 B:元素级 finished 标记', () {
-    testWidgets('isStreaming=true 且 finished=true → 显示真实内容(终态样式)', (tester) async {
+    testWidgets('isStreaming=true 且 finished=true → 显示终态(Thought,非思考中动画)', (tester) async {
       await tester.pumpWidget(
           host(text: '已终态的思考内容', isStreaming: true, finished: true));
-      expect(find.text('已终态的思考内容'), findsOneWidget);
+      expect(find.text('Thought'), findsOneWidget);
       // 不再显示「正在思考...」动画
       expect(find.text('正在思考...'), findsNothing);
     });

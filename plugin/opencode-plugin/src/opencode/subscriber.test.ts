@@ -36,8 +36,8 @@ describe("EventSubscriber vcs.branch.updated", () => {
   })
 })
 
-describe("EventSubscriber 缓存 assistant message time", () => {
-  it("message.updated(assistant) 缓存 time,peekMessageTime 可读", async () => {
+describe("EventSubscriber 回合耗时数据(user created 缓存 + completed 事件)", () => {
+  it("message.updated(user) 缓存 created,peekUserCreated 可读", async () => {
     const mockClient = {
       global: {
         event: async () => ({
@@ -48,7 +48,7 @@ describe("EventSubscriber 缓存 assistant message time", () => {
                 type: "message.updated",
                 properties: {
                   sessionID: "sess-1",
-                  info: { role: "assistant", time: { created: 1000, completed: 52000 } },
+                  info: { id: "user-1", role: "user", time: { created: 5000 } },
                 },
               },
             }
@@ -61,11 +61,11 @@ describe("EventSubscriber 缓存 assistant message time", () => {
     void sub.start()
     await new Promise((r) => setTimeout(r, 10))
 
-    expect(sub.peekMessageTime("sess-1")).toEqual({ created: 1000, completed: 52000 })
+    expect(sub.peekUserCreated("user-1")).toBe(5000)
     sub.stop()
   })
 
-  it("message.updated(user) 不缓存 assistant time", async () => {
+  it("message.updated(assistant) completed + finish 非 tool-calls → emit assistant_message_completed", async () => {
     const mockClient = {
       global: {
         event: async () => ({
@@ -76,7 +76,7 @@ describe("EventSubscriber 缓存 assistant message time", () => {
                 type: "message.updated",
                 properties: {
                   sessionID: "sess-1",
-                  info: { role: "user", time: { created: 1000 } },
+                  info: { id: "asst-1", role: "assistant", parentID: "user-1", time: { created: 5100, completed: 52000 }, finish: "stop" },
                 },
               },
             }
@@ -86,10 +86,79 @@ describe("EventSubscriber 缓存 assistant message time", () => {
     } as any
 
     const sub = new EventSubscriber(mockClient)
+    const received: any[] = []
+    sub.on("assistant_message_completed", (p) => received.push(p))
     void sub.start()
     await new Promise((r) => setTimeout(r, 10))
 
-    expect(sub.peekMessageTime("sess-1")).toBeUndefined()
+    expect(received).toHaveLength(1)
+    expect(received[0]).toEqual({
+      sessionID: "sess-1",
+      messageID: "asst-1",
+      parentID: "user-1",
+      created: 5100,
+      completed: 52000,
+    })
+    sub.stop()
+  })
+
+  it("message.updated(assistant) finish=tool-calls → 不 emit completed(回合未结束)", async () => {
+    const mockClient = {
+      global: {
+        event: async () => ({
+          stream: (async function* () {
+            yield {
+              directory: "/home/u/proj",
+              payload: {
+                type: "message.updated",
+                properties: {
+                  sessionID: "sess-1",
+                  info: { id: "asst-1", role: "assistant", parentID: "user-1", time: { created: 5100, completed: 52000 }, finish: "tool-calls" },
+                },
+              },
+            }
+          })(),
+        }),
+      },
+    } as any
+
+    const sub = new EventSubscriber(mockClient)
+    const received: any[] = []
+    sub.on("assistant_message_completed", (p) => received.push(p))
+    void sub.start()
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(received).toHaveLength(0)
+    sub.stop()
+  })
+
+  it("message.updated(assistant) 无 completed → 不 emit", async () => {
+    const mockClient = {
+      global: {
+        event: async () => ({
+          stream: (async function* () {
+            yield {
+              directory: "/home/u/proj",
+              payload: {
+                type: "message.updated",
+                properties: {
+                  sessionID: "sess-1",
+                  info: { id: "asst-1", role: "assistant", parentID: "user-1", time: { created: 5100 }, finish: "stop" },
+                },
+              },
+            }
+          })(),
+        }),
+      },
+    } as any
+
+    const sub = new EventSubscriber(mockClient)
+    const received: any[] = []
+    sub.on("assistant_message_completed", (p) => received.push(p))
+    void sub.start()
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(received).toHaveLength(0)
     sub.stop()
   })
 })

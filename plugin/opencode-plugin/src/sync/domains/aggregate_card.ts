@@ -201,11 +201,19 @@ export class AggregateCardManager {
   // 聚合卡元素级 finished(Task 增量修复方案 B):流式占位时 finished=false,
   // 终态 append 时 finished=true。APP reasoning_renderer 读 finished 决定
   // 即使卡片整体 generating(isStreaming=true)也显示真实内容,而非「思考中」动画。
-  static reasoning(text: string, seq: number, finished?: boolean): AggregateElement {
+  // duration 毫秒:思考耗时(part.time.end - part.time.start,对齐 TUI reasoning header
+  // 的 `Thought: 22ms`;TUI 用 Locale.duration 格式化,<1000ms 显示 ms)。
+  // 仅终态(finished=true)携带,流式占位无耗时。
+  static reasoning(text: string, seq: number, finished?: boolean, duration?: number): AggregateElement {
     return {
       type: "reasoning",
       element_id: `reasoning_${seq}`,
-      data: { text, ...(finished !== undefined ? { finished } : {}) },
+      data: {
+        text,
+        ...(finished !== undefined ? { finished } : {}),
+        // 仅终态且有实际耗时(>0)时携带 duration,避免 0/负值(测试或异常)污染 data
+        ...(finished && typeof duration === "number" && duration > 0 ? { duration } : {}),
+      },
     }
   }
 
@@ -287,12 +295,46 @@ export class AggregateCardManager {
   // 的 step-finish footer 数据,由调用方主动补一个简化 footer + set_state done。
   // reason 区分:stop(用户点停止,APP 显示「已停止」)/ interrupt(新回合,无 stopped 标记)。
   // 幂等:整个收尾(守卫+append+reset)放入 aggregatePatchQueue 串行队列,与
-  // step-finish 的 footer 定稿同队列顺序执行,消除与正常定稿的竞态:
-  // - 正常定稿(step-finish stop)已排在前 → 卡已 done/reset → 此处守卫拦截
-  // - 本收尾先执行 → step-finish 的 cardActive 判断看到 done → 跳过重复 footer
+  // finalizeCard 的 footer 定稿同队列顺序执行,消除并发竞态。
   // 收尾后 reset 聚合卡状态但保留 aggregateCardState="done":标志「本卡已收尾」,
   // 下一轮 ensureCard 建新卡时置回 generating("一次问答一张卡"语义)。
   async finishCard(reason: "stop" | "interrupt"): Promise<void> {
+    await this._sealCard({
+      reason,
+      stopped: reason === "stop",
+      finished: true,
+    })
+  }
+
+  // 回合正常结束的完整收尾(assistant_message_completed 事件驱动,对齐 TUI):
+  // 追加带完整数据的 footer(duration/cost/tokens/mode/model)+ set_state done +
+  // set_silent false + reset。与 finishCard 共用串行队列与幂等守卫——
+  // 若已被 finishCard(abort/分段)先收尾,此处幂等跳过。
+  // duration 毫秒:completed - user.created(parentID 归属,对齐 TUI;APP 用
+  // Locale.duration 格式化为 ms/s/m s)。
+  async finalizeCard(data: {
+    reason: string
+    duration: number
+    cost?: number
+    tokens?: Record<string, unknown>
+    mode?: string
+    model?: string
+  }): Promise<void> {
+    await this._sealCard({
+      reason: data.reason,
+      cost: data.cost || 0,
+      tokens: data.tokens || {},
+      duration: data.duration,
+      finished: true,
+      ...(data.mode ? { mode: data.mode } : {}),
+      ...(data.model ? { model: data.model } : {}),
+    })
+  }
+
+  // 收尾共用实现:守卫(卡已 done / 未建卡 → 跳过)→ append footer → set_state done
+  // → set_silent false → reset。全部在 aggregatePatchQueue 串行队列内执行,与
+  // appendElement/updateElement 同队列,顺序确定无竞态。
+  private async _sealCard(footerData: Record<string, unknown>): Promise<void> {
     const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
     const next = prev.then(async () => {
       // 守卫在队列内读最新 state:卡已收尾(done)或尚未建卡 → 幂等跳过。
@@ -300,10 +342,7 @@ export class AggregateCardManager {
       if (!this.state.aggregateCardMsgId) return
       const seq = (this.state.aggregateSeq ?? 0) + 1
       this.state.aggregateSeq = seq
-      const footer = AggregateCardManager.footer(
-        { reason, stopped: reason === "stop", finished: true },
-        seq,
-      )
+      const footer = AggregateCardManager.footer(footerData, seq)
       // 直接 PATCH(不套 appendElement):本任务已排在队列尾部,前面所有元素
       // append/update 均已完成,直接追加 footer + set_state done,避免嵌套队列死锁。
       const msgId = this.state.aggregateCardMsgId

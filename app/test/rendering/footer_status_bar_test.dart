@@ -57,7 +57,7 @@ void main() {
           body: FooterStatusBar(
             generating: false,
             elements: [el('tool_card', 't1')],
-            footerData: const {'mode': 'build', 'duration': 12.3},
+            footerData: const {'mode': 'build', 'duration': 12300},
           ),
         ),
       ));

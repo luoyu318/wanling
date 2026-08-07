@@ -107,7 +107,23 @@ export class PartDispatcher {
               if (text.trim()) {
                 if (this.useAggregate(state)) {
                   // 流式已预留 seq 则复用(终态与流式帧同一 element_id),未流式走 nextSeq
-                  await this.appendElement(state, AggregateCardManager.reasoning(text, state.reasoning?.seq ?? this.nextSeq(state), true))
+                  // duration:思考耗时(part.time.end - start,**毫秒**,对齐 TUI reasoning
+                  // header;TUI 用 Locale.duration 把 <1000ms 格式化为「22ms」,故不转秒,
+                  // 否则 <100ms 的思考(如纯文本摘要)会被 round 成 0 丢失)。
+                  const reasoningDuration = (() => {
+                    const start = part.time?.start
+                    const end = part.time?.end
+                    if (typeof start === "number" && typeof end === "number" && end > start) {
+                      return end - start
+                    }
+                    return undefined
+                  })()
+                  await this.appendElement(state, AggregateCardManager.reasoning(
+                    text,
+                    state.reasoning?.seq ?? this.nextSeq(state),
+                    true,
+                    reasoningDuration,
+                  ))
                 } else {
                   this.router.send(state, "reasoning",
                     sid && !state.isChildSession ? { text, _stream_id: sid } : { text }, true)
@@ -116,7 +132,8 @@ export class PartDispatcher {
               state.reasoning = null
             }
           } else {
-            state.reasoning = { text: part.text || "", partID: part.id }
+            // 记录 time.start 供 idle 兜底 flushReasoning 估算耗时(part.end 未到)
+            state.reasoning = { text: part.text || "", partID: part.id, ...(typeof part.time?.start === "number" ? { timeStart: part.time.start } : {}) }
             this.store.indexPart(part.id, state)
           }
           break
@@ -190,47 +207,8 @@ export class PartDispatcher {
             }
           }
           this.flushPendingText(state, isLoopEnd ? false : true)
-          if (this.useAggregate(state)) {
-            // step-finish 转 footer 元素:不再发独立 step_finish 消息。
-            // 仅 isLoopEnd 追加 footer(回合结束):中途工具轮次结束不追加——
-            // 过程性 duration/tokens/cost 无意义且隔断连续 tool_card 合并
-            // (footer 是独立元素,插中间物理切断「连续 tool_card」分组)。
-            // isLoopEnd 时整卡翻转 {silent:false,state:"done"}
-            // (silent:false 由 server 计未读 + 响铃;state:done 让 APP 停止生成动画)。
-            if (isLoopEnd) {
-              // abort/排队分段已通过 finishCard 主动收尾(append stopped/interrupt
-              // footer + set_state done + reset 清空建卡状态)。此时若 step-finish
-              // 仍回来(abort 后 opencode 迟推),卡已 done:
-              // - 跳过重复 footer append,否则 ensureCard 会重建新卡(双卡/错卡)
-              // - resetAggregateCard 已由 finishCard 执行,无需重复
-              // 仅当卡仍在 generating(未被 finishCard 收尾)时才正常定稿。
-              // 注意:不用 aggregateCardMsgId 判(此时 markdown 的 fire-and-forget
-              // append 可能尚未 ensureCard resolve,msgId 未设置,误判「已收尾」)。
-              const cardActive = state.aggregateCardState !== "done"
-              if (cardActive) {
-                const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
-                // step-finish part 不含 time,回合耗时从 assistant message.time 算(秒)
-                const turnDuration = await this.metaSync.fetchTurnDuration(payload.sessionID)
-                await this.appendElement(state, AggregateCardManager.footer({
-                  reason: part.reason || "",
-                  cost: part.cost || 0,
-                  tokens: part.tokens || {},
-                  duration: turnDuration,
-                  finished: true,
-                  // 回合结束快照:mode/model 固化进 footer(消息快照,不随 sessionMeta 变动)
-                  ...(footerMeta ? { mode: footerMeta.mode, model: footerMeta.modelName ?? footerMeta.modelId } : {}),
-                }, this.nextSeq(state)), { silent: false, state: "done" })
-                // C1 多轮重置:footer PATCH resolve 后本轮元素已全部落卡,重置聚合卡状态
-                // 让下一轮 ensureCard 建新卡("一次问答一张卡"语义,否则跨轮无限累积)。
-                // 必须等 footer 的 await 完成——appendElement 走串行队列,队列内本轮的
-                // markdown/工具等元素都在 footer 之前排空,此时重置不丢历史元素。
-                this.resetAggregateCard(state)
-              } else {
-                console.log(`[streamer] step-finish isLoopEnd 但聚合卡已收尾(done/reset),跳过重复 footer`)
-              }
-            }
-          } else {
-            // step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
+          if (!this.useAggregate(state)) {
+            // 非聚合模式 step_finish 恒 silent=true:结束标记不响铃、不计未读、不作未读锚点。
             // 响铃/未读职责由最终文本(flushPendingText isLoopEnd → silent=false)承担,
             // 避免循环结束时两条消息各计一次未读、通知 body 被覆盖成「[完成]」。
             // finished=isLoopEnd 仍保留,APP 照常渲染 tokens 汇总行。
@@ -241,7 +219,22 @@ export class PartDispatcher {
               duration,
               finished: isLoopEnd,
             }, true)
+          } else if (isLoopEnd) {
+            // 聚合模式:step-finish part 带 cost/tokens/reason 但无 time,暂存到
+            // state.footerDraft,等 assistant_message_completed(带 completed)到达后由
+            // streamer.finalizeCardForSession 合并成完整 footer(耗时 = completed - user.created)。
+            // 幂等:同回合可能重推,覆盖为最新值即可。
+            state.footerDraft = {
+              reason: part.reason || "",
+              cost: part.cost || 0,
+              tokens: part.tokens || {},
+            }
           }
+          // 聚合模式:footer 不再在此追加——回合耗时要等 assistant message 的
+          // completed 落库(subscriber 的 assistant_message_completed 事件,对齐 TUI
+          // final() 判定),由 streamer.finalizeCardForSession 统一收尾(append footer +
+          // set_state done + set_silent false + reset)。这里只负责内容/未读/meta。
+          // 注意:若 completed 事件缺失(极端异常),onSessionIdle 兜底收尾。
           // 循环结束时主动同步 session_meta:agent 在跑期间 / 跑之前用户可能在 shell
           // 切了 git 分支(OC 不发 vcs.branch.updated),EnvMetaStrip 不刷新。
           // 读 knownFullMeta 缓存 cwd → vcs.get 拉最新 branch → updateSessionMeta。
@@ -410,7 +403,22 @@ export class PartDispatcher {
     const sid = state.reasoning.streamId
     console.log(`[SSE-DBG] FLUSH(reasoning)兜底 sid=${sid ?? "-"} accLen=${state.reasoning.text.length} head=${JSON.stringify(state.reasoning.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.reasoning(state.reasoning.text, state.reasoning.seq ?? this.nextSeq(state), true)
+      // 思考耗时:flush 时 part.end 未到(LLM 已切走,reasoning 已完整),用 now - timeStart
+      // 近似(误差 < 数百 ms,对齐 TUI reasoning duration,**毫秒**)。timeStart 缺失则省略。
+      const flushDuration = (() => {
+        const start = state.reasoning.timeStart
+        if (typeof start === "number") {
+          const ms = Date.now() - start
+          if (ms > 0) return ms
+        }
+        return undefined
+      })()
+      const element = AggregateCardManager.reasoning(
+        state.reasoning.text,
+        state.reasoning.seq ?? this.nextSeq(state),
+        true,
+        flushDuration,
+      )
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -480,21 +488,6 @@ export class PartDispatcher {
     const seq = (state.aggregateSeq ?? 0) + 1
     state.aggregateSeq = seq
     return seq
-  }
-
-  // C1 多轮重置:step-finish isLoopEnd 的 footer PATCH 排空后调用,清空本轮聚合卡
-  // 状态(建卡 msgId/序号/累计/串行队列/工具元素映射/当前 state/流式占位)。
-  // 下一轮 ensureCard 会重新建卡,element 序号从 1 重新计数("一次问答一张卡")。
-  private resetAggregateCard(state: SessionState): void {
-    state.aggregateCardMsgId = undefined
-    state.aggregateCardInflight = undefined
-    state.aggregateCardState = undefined
-    state.aggregateSeq = undefined
-    state.aggregateElements = undefined
-    state.aggregatePatchQueue = undefined
-    state.aggregateToolElementIds = undefined
-    state.aggregateStreamedElementIds = undefined
-    state.aggregatePendingUpdates = undefined
   }
 
   // 追加聚合卡元素并 PATCH 增量 op(append;同 element_id 已存在则 update 原位替换)。

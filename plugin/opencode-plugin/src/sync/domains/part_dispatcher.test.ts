@@ -59,11 +59,11 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       .flat()
   }
 
-  it("reasoning time.end → 建聚合卡并追加 reasoning 元素,不再发独立 reasoning 消息", async () => {
+  it("reasoning time.end → 建聚合卡并追加 reasoning 元素(带毫秒 duration),不再发独立 reasoning 消息", async () => {
     const { partDispatcher, router, wanling } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
-      part: { type: "reasoning", id: "p-r1", text: "思考过程", time: { start: 1, end: 2 } },
+      part: { type: "reasoning", id: "p-r1", text: "思考过程", time: { start: 1000, end: 5000 } },
       time: 2,
     })
     expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
@@ -73,7 +73,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1, true) },
+      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1, true, 4000) },
     )
     expect(router.send).not.toHaveBeenCalled()
   })
@@ -89,8 +89,8 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
   })
 
-  it("step-finish isLoopEnd → 追加 markdown + footer 元素,set_state:done + set_silent:false 单独发 op", async () => {
-    const { partDispatcher, router, wanling } = makeFixture()
+  it("step-finish isLoopEnd → 追加 markdown + 暂存 footerDraft(不再在此 append footer)", async () => {
+    const { partDispatcher, router, wanling, state } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
@@ -101,29 +101,22 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
       time: 3,
     })
-    // 第一次 PATCH:markdown 元素(等 step-finish 判定后才追加)
+    // 只 PATCH markdown 元素(step-finish 判定后追加最终回复)
     expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
       1,
       "card-1",
       { op: "append", element: AggregateCardManager.markdown("最终回复", 1) },
     )
-    // 第二次 PATCH:footer 元素
-    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
-      2,
-      "card-1",
-      { op: "append", element: AggregateCardManager.footer({ reason: "stop", cost: 0.01, tokens: { total: 100 }, duration: 0, finished: true }, 2) },
-    )
-    // 第三/四次 PATCH:state 翻 done + silent 翻 false(不再随 append 全量携带)
-    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(3, "card-1", { op: "set_state", state: "done" })
-    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(4, "card-1", { op: "set_silent", silent: false })
-    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(4)
+    // footer 不再在此 append(改由 assistant_message_completed → finalizeCard 收尾)。
+    // step-finish 只把 cost/tokens/reason 暂存到 state.footerDraft,供 completed 事件合并。
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledTimes(1)
+    expect(state.footerDraft).toEqual({ reason: "stop", cost: 0.01, tokens: { total: 100 } })
     // 不再发独立 step_finish 消息
     expect(router.send).not.toHaveBeenCalled()
   })
 
-  it("step-finish isLoopEnd → footer 带 mode/model 快照(读 metaSync.peekFullMeta)", async () => {
-    const { partDispatcher, wanling } = makeFixture()
-    ;(partDispatcher as any).metaSync.peekFullMeta = vi.fn(() => ({ mode: "build", modelId: "deepseek-v3", modelName: "DeepSeek-V3" }))
+  it("step-finish isLoopEnd → 暂存 footerDraft(cost/tokens/reason),不依赖 fetchTurnDuration", async () => {
+    const { partDispatcher, wanling, state } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
@@ -134,60 +127,17 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
       time: 3,
     })
-    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
-      "card-1",
-      { op: "append", element: expect.objectContaining({
-        type: "footer",
-        data: expect.objectContaining({ mode: "build", model: "DeepSeek-V3", finished: true }),
-      }) },
-    )
-  })
-
-  it("step-finish isLoopEnd → footer duration 取 metaSync.fetchTurnDuration(回合耗时)", async () => {
-    const { partDispatcher, wanling } = makeFixture()
-    ;(partDispatcher as any).metaSync.fetchTurnDuration = vi.fn(async () => 12.3)
-    await partDispatcher.onPartUpdated({
-      sessionID: "sess-1",
-      part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
-      time: 2,
-    })
-    await partDispatcher.onPartUpdated({
-      sessionID: "sess-1",
-      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
-      time: 3,
-    })
-    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
-      "card-1",
-      { op: "append", element: expect.objectContaining({
-        type: "footer",
-        data: expect.objectContaining({ duration: 12.3, finished: true }),
-      }) },
-    )
-    expect((partDispatcher as any).metaSync.fetchTurnDuration).toHaveBeenCalledWith("sess-1")
-  })
-
-  it("step-finish metaSync.peekFullMeta 未命中 → footer 不写 mode/model", async () => {
-    const { partDispatcher, wanling } = makeFixture()
-    ;(partDispatcher as any).metaSync.peekFullMeta = vi.fn(() => undefined)
-    await partDispatcher.onPartUpdated({
-      sessionID: "sess-1",
-      part: { type: "text", id: "p-t1", text: "最终回复", time: { start: 1, end: 2 } },
-      time: 2,
-    })
-    await partDispatcher.onPartUpdated({
-      sessionID: "sess-1",
-      part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
-      time: 3,
-    })
-    const footerCall = wanling.patchAggregateMessage.mock.calls
+    // step-finish 只暂存 cost/tokens/reason;耗时不在此算(completed 事件驱动,finalizeCard 里算)
+    expect(state.footerDraft).toEqual({ reason: "stop", cost: 0.01, tokens: { total: 100 } })
+    // footer 不在 part_dispatcher 追加
+    const footerAppends = wanling.patchAggregateMessage.mock.calls
       .map(([, b]: [string, any]) => b)
-      .find((b: any) => b.op === "append" && b.element.type === "footer")
-    expect(footerCall.element.data.mode).toBeUndefined()
-    expect(footerCall.element.data.model).toBeUndefined()
+      .filter((b: any) => b.op === "append" && b.element.type === "footer")
+    expect(footerAppends).toHaveLength(0)
   })
 
-  it("step-finish 非 isLoopEnd(中间步骤)→ 不追加 footer(过程性 footer 无意义且隔断工具卡合并)", async () => {
-    const { partDispatcher, wanling } = makeFixture()
+  it("step-finish 非 isLoopEnd(中间步骤)→ 不暂存 footerDraft", async () => {
+    const { partDispatcher, wanling, state } = makeFixture()
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "中间小结", time: { start: 1, end: 2 } },
@@ -206,6 +156,8 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     // 只 append markdown,不追加 footer(无任何 footer 元素)
     const footerAppends = appended.filter((b: any) => b.op === "append" && b.element.type === "footer")
     expect(footerAppends).toHaveLength(0)
+    // 中间步骤不暂存 footerDraft(仅回合结束 isLoopEnd 才暂存)
+    expect(state.footerDraft).toBeUndefined()
     // state 不翻 done(中间步骤整卡保持 generating)
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalledWith(
       "card-1",
@@ -213,7 +165,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     )
   })
 
-  it("seq 递增:reasoning + markdown + footer 共用计数器,element_id 全局唯一", async () => {
+  it("seq 递增:reasoning + markdown 共用计数器,footer 不在此产生", async () => {
     const { partDispatcher, wanling } = makeFixture()
     // reasoning end → reasoning_1
     await partDispatcher.onPartUpdated({
@@ -227,7 +179,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "text", id: "p-t1", text: "回复", time: { start: 1, end: 2 } },
       time: 3,
     })
-    // step-finish → markdown_2 + footer_3
+    // step-finish → markdown_2(不再产生 footer_3,footer 由 finalizeCard 在 completed 事件时追加)
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "step-finish", id: "p-f1", reason: "stop" },
@@ -236,7 +188,6 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     expect(orderedElementIds(wanling)).toEqual([
       "reasoning_1",
       "markdown_2",
-      "footer_3",
     ])
   })
 
@@ -323,12 +274,10 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     )
   })
 
-  it("C1 多轮重置:第二次 step-finish isLoopEnd 建新卡,新卡 elements 从空开始", async () => {
-    const { partDispatcher, wanling } = makeFixture()
-    wanling.sendCardMessage
-      .mockResolvedValueOnce("card-1")
-      .mockResolvedValueOnce("card-2")
-    // 第一轮:text end → pendingText;step-finish isLoopEnd → markdown + footer 上 card-1
+  it("两轮 step-finish 不触发建新卡(建卡/reset 由 finalizeCard 在 completed 事件驱动)", async () => {
+    const { partDispatcher, wanling, state } = makeFixture()
+    wanling.sendCardMessage.mockResolvedValue("card-1")
+    // 第一轮:text end → pendingText;step-finish isLoopEnd → markdown + 暂存 footerDraft
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t1", text: "第一轮回复", time: { start: 1, end: 2 } },
@@ -340,7 +289,8 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       time: 3,
     })
     expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
-    // 第二轮:text end → pendingText;step-finish isLoopEnd → 应建新卡 card-2
+    expect(state.footerDraft).toEqual({ reason: "stop", cost: 0.01, tokens: { total: 100 } })
+    // 第二轮:text end → pendingText;step-finish isLoopEnd → 仍用同一卡,暂存更新
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "text", id: "p-t2", text: "第二轮回复", time: { start: 4, end: 5 } },
@@ -351,21 +301,12 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f2", reason: "stop", cost: 0.02, tokens: { total: 200 } },
       time: 6,
     })
-    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(2)
-    expect(wanling.sendCardMessage).toHaveBeenLastCalledWith("conv-1", "aggregate_card", {
-      schema_ver: AGGREGATE_SCHEMA_VER,
-      state: "generating",
-      elements: [],
-    })
-    // 第二轮 markdown PATCH 用 card-2,新卡 elements 从空开始(不带旧卡元素)
+    // part_dispatcher 不 reset/建新卡(仍 1 次建卡),footerDraft 覆盖为第二轮
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
+    expect(state.footerDraft).toEqual({ reason: "stop", cost: 0.02, tokens: { total: 200 } })
+    // 第二轮 markdown 仍 append 到 card-1(建卡/reset 由 completed 事件的 finalizeCard 负责)
     const calls = wanling.patchAggregateMessage.mock.calls
-    const round2FirstPatch = calls.filter(([mid]) => mid === "card-2")[0]
-    expect(round2FirstPatch[1]).toEqual({
-      op: "append",
-      element: AggregateCardManager.markdown("第二轮回复", 1),
-    })
-    // 第二轮 footer 同样落在 card-2
-    expect(calls.filter(([mid]) => mid === "card-2")[1][0]).toBe("card-2")
+    expect(calls.some(([mid]) => mid === "card-1")).toBe(true)
   })
 
   it("终态 append 用流式预留的同一 element_id(APP 端定位连续)", async () => {
@@ -400,8 +341,9 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     // 终态 markdown 发 update 定位 markdown_1(与流式占位同一 element_id)
     expect(updateCalls[0][1].element_id).toBe("markdown_1")
     expect(updateCalls[0][1].data).toEqual({ text: "打" })
+    // footer 不在此追加(由 finalizeCard 在 completed 事件时追加)
     const footerAppend = wanling.patchAggregateMessage.mock.calls.find(([, b]) => b.op === "append" && b.element.type === "footer")
-    expect(footerAppend![1].element.element_id).toBe("footer_2")
+    expect(footerAppend).toBeUndefined()
   })
 
   it("流式中途其他元素 append 不挤占预留 seq(终态 markdown 仍用流式 element_id)", async () => {
@@ -439,16 +381,15 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     const calls = wanling.patchAggregateMessage.mock.calls
     // 流式首帧已 append markdown_1 占位(text delta 先于 reasoning 终态到达),
-    // 终态 markdown 同 element_id upsert 更新,footer 取 seq 3
+    // 终态 markdown 同 element_id upsert 更新,footer 不在此追加(completed 事件驱动)
     expect(orderedElementIds(wanling)).toEqual([
       "markdown_1",
       "reasoning_2",
       "markdown_1",
-      "footer_3",
     ])
-    // footer 的 element_id 确认 seq 未被流式占位挤占
+    // 无 footer 元素(footer 由 finalizeCard 在 completed 事件时追加)
     const footerAppend = calls.find(([, b]) => b.op === "append" && b.element.type === "footer")
-    expect(footerAppend![1].element.element_id).toBe("footer_3")
+    expect(footerAppend).toBeUndefined()
   })
 
   it("子 session 不聚合:reasoning/text 仍走独立消息(保持 parent/root 串树语义)", async () => {

@@ -422,44 +422,6 @@ export class OpencodeBridge extends EventEmitter {
     }))
   }
 
-  // 取 opencode 回合(assistant message)耗时(秒)。step-finish part 不含 time 字段,
-  // 回合起止从 message.info.time(created→completed,毫秒)计算。
-  // 用 v2 client + limit:1 只拉最近消息(v1 拉全量历史在长会话易 terminated)。
-  // 无 message / 无 completed → 返回 0(调用方降级为不显示耗时)。
-  async getTurnDuration(sessionId: string): Promise<number> {
-    try {
-      const client = this.clientV2 ?? this.client
-      if (!client) return 0
-      // v2 session.messages 运行时参数平铺 {sessionID, limit}(sdk buildClientParams 提取),
-      // 但 SDK 的 TS 类型错误声明为 {path:{sessionID}},这里按运行时形状断言。
-      const resp = await (client as any).session.messages({
-        sessionID: sessionId,
-        limit: 1,
-      })
-      const msgs = (resp.data || []) as Array<{
-        info?: { role?: string; time?: { created?: number; completed?: number } }
-      }>
-      // 取最后一条 assistant message(回合完成时为最新)
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const info = msgs[i]?.info
-        if (info?.role === "assistant") {
-          const created = info.time?.created
-          const completed = info.time?.completed
-          if (typeof created === "number" && typeof completed === "number") {
-            const ms = completed - created
-            if (ms > 0) {
-              // opencode 时间统一毫秒(与 tool state.time 一致),转秒保留 1 位小数
-              return Math.round(ms / 100) / 10
-            }
-          }
-        }
-      }
-      return 0
-    } catch {
-      return 0
-    }
-  }
-
   // 取 opencode session 的可读标题,用于建群后改名。拿不到返空串(调用方降级用 sessionId 前缀)。
   async getSessionTitle(sessionId: string): Promise<string> {
     if (!this.client) return ""

@@ -107,6 +107,14 @@ export interface VcsBranchUpdatedPayload {
   branch: string
 }
 
+export interface AssistantMessageCompletedPayload {
+  sessionID: string
+  messageID: string
+  parentID: string
+  created: number
+  completed: number
+}
+
 export interface SubscriberEvents {
   part_updated: [PartUpdatedPayload]
   part_delta: [PartDeltaPayload]
@@ -119,13 +127,16 @@ export interface SubscriberEvents {
   permission_replied: [PermissionRepliedPayload]
   question_replied: [QuestionRepliedPayload]
   question_rejected: [QuestionRejectedPayload]
-  // 排队消息状态:delivery=queue 时 opencode 发入队(admitted)/调度(prompted)事件。
-  // 供 streamer 同步 queued_status 给 APP(气泡排队徽标)与聚合卡分段。
   // 新 assistant 回合开始(message.updated role=assistant 的 parentID 变化)。
   // 聚合卡分段信号:opencode 对连续消息每条 user→assistant 建独立 message,
   // 新 assistant 的 parentID 指向新 user 消息即新回合 → 结束旧聚合卡开新卡。
   // 同回合多 step(工具循环)的 assistant parentID 相同,不触发分段。
   assistant_message_started: [{ sessionID: string; messageID: string; parentID: string }]
+  // assistant 回合完成(message.updated role=assistant 带 completed 且 finish 非
+  // tool-calls/unknown,对齐 TUI final() 判定)。聚合卡 footer 收尾信号:此时
+  // completed 已落库,回合耗时 = completed - user.created(parentID 归属)可直接计算,
+  // 无需轮询等待。created 为完成时 message 的 time.created。
+  assistant_message_completed: [AssistantMessageCompletedPayload]
   error: [unknown]
 }
 
@@ -147,20 +158,29 @@ export class EventSubscriber extends EventEmitter {
   // tool-calls(旧回合被新消息打断,未正常 stop)→ 需 interrupt 收尾旧卡;
   // 若旧 finish 是 stop(旧回合正常结束,step-finish 已定稿)→ 不 emit 不打断。
   private lastAssistantFinish: Map<string, string> = new Map()
-  // 最近 assistant message 的 time 缓存(回合结束耗时来源):message.updated 事件
-  // 携带 info.time(created→completed,毫秒),回合结束时已落库。step-finish part
-  // 不含 time,footer 耗时从这里读(比拉 messages 可靠,避免 completed 未落库竞态)。
-  private messageTimeCache: Map<string, { created?: number; completed?: number }> = new Map()
+  // user 消息创建时间缓存(messageID → created):回合耗时起点。assistant_message_completed
+  // 事件携带 parentID,需要 parent user 消息的 created 计算完整回合耗时
+  // (completed - user.created,对齐 TUI)。上限保护避免长会话无限增长。
+  private userCreatedByParent: Map<string, number> = new Map()
+  private static readonly MAX_USER_CREATED = 5000
 
   constructor(client: OpencodeClient) {
     super()
     this.client = client
   }
 
-  // 回合结束耗时:读最近 assistant message 缓存(毫秒 created→completed)。
-  // 无缓存 / 无 completed → undefined(调用方降级为不显示耗时)。
-  peekMessageTime(sessionID: string): { created?: number; completed?: number } | undefined {
-    return this.messageTimeCache.get(sessionID)
+  // 回合耗时起点:读 parent user 消息的 created(毫秒)。
+  // 无缓存 → undefined(调用方降级为不显示耗时)。
+  peekUserCreated(parentID: string): number | undefined {
+    return this.userCreatedByParent.get(parentID)
+  }
+
+  private rememberUserCreated(parentID: string, created: number): void {
+    if (this.userCreatedByParent.size >= EventSubscriber.MAX_USER_CREATED) {
+      const oldest = this.userCreatedByParent.keys().next().value
+      if (oldest !== undefined) this.userCreatedByParent.delete(oldest)
+    }
+    this.userCreatedByParent.set(parentID, created)
   }
 
   private addUserMessageId(msgId: string): void {
@@ -272,6 +292,13 @@ export class EventSubscriber extends EventEmitter {
         )
         if (info?.role === "user") {
           const msgId = (info as { id?: string }).id
+          const created = (info?.time as { created?: number } | undefined)?.created
+          if (msgId && created) {
+            // 记录 user 消息创建时间:回合耗时起点(assistant_message_completed 时
+            // 按 parentID 查 user.created 算完整回合耗时)。message.updated 会推多次,
+            // 幂等覆盖同 id。
+            this.rememberUserCreated(msgId, created)
+          }
           if (msgId && !this.userMessageIds.has(msgId)) {
             const isFirstUser = this.userMessageIds.size === 0
             this.addUserMessageId(msgId)
@@ -305,18 +332,22 @@ export class EventSubscriber extends EventEmitter {
           if (typeof finish === "string") {
             this.lastAssistantFinish.set(sessionID, finish)
           }
-        }
-        // 缓存 assistant message 的 time(回合结束耗时来源)。info.time 形如
-        // {created, completed}(毫秒)。message.updated 会推多次:完成前(无 finish,
-        // completed 缺失)与完成后(带 finish,completed 有值)。仅 message 完成时
-        // (finish 字段存在)更新 completed,避免完成前的中间态覆盖掉已完成值。
-        if (info?.role === "assistant") {
+          // assistant 回合完成(聚合卡 footer 收尾信号):completed 已落库且 finish 非
+          // tool-calls/unknown(对齐 TUI final() 判定 = 回合真正结束)。此时回合耗时
+          // completed - user.created 可直接计算,无需轮询等待落库。
+          // message.updated 会推多次,仅首次(带 completed 且 final)emit。
           const t = info.time as { created?: number; completed?: number } | undefined
-          if (t && typeof t === "object") {
-            const prev = this.messageTimeCache.get(sessionID)
-            const next = { created: t.created ?? prev?.created, completed: t.completed ?? prev?.completed }
-            if (info.finish !== undefined || next.completed !== undefined) {
-              this.messageTimeCache.set(sessionID, next)
+          const isFinal = finish !== undefined && typeof finish === "string" && !["tool-calls", "unknown"].includes(finish)
+          if (isFinal && t && typeof t.created === "number" && typeof t.completed === "number") {
+            console.log(`[subscriber] assistant round completed id=${msgId?.slice(0, 12)} parent=${parentID?.slice(0, 12)} finish=${finish} dur=${((t.completed - t.created) / 1000).toFixed(1)}s`)
+            if (parentID && msgId) {
+              this.emit("assistant_message_completed", {
+                sessionID: sessionID as string,
+                messageID: msgId,
+                parentID,
+                created: t.created,
+                completed: t.completed,
+              })
             }
           }
         }

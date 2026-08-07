@@ -13,7 +13,7 @@ void main() {
     testWidgets('完整四要素渲染:模式+时长 | 模型+tokens', (tester) async {
       await tester.pumpWidget(host({
         'mode': 'build',
-        'duration': 12.3,
+        'duration': 12300,
         'model': 'DeepSeek-V3',
         'tokens': {'total': 2100},
       }));
@@ -25,7 +25,7 @@ void main() {
 
     testWidgets('缺 mode/model 时只显示时长/tokens 段', (tester) async {
       await tester.pumpWidget(host({
-        'duration': 5.0,
+        'duration': 5000,
         'tokens': {'total': 800},
       }));
       expect(find.text('5.0s'), findsOneWidget);

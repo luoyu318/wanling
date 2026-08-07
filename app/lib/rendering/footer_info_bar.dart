@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/duration_format.dart';
+
 /// 聚合卡底部提示条:回合结束(卡 state=done + finished footer)时渲染。
 /// 独立组件,浅灰底通栏,左侧 模式+时长,右侧 模型+tokens。
 /// 数据全部来自 footer 元素 data(消息快照,非 sessionMeta 实时态)。
@@ -26,8 +28,10 @@ class FooterInfoBar extends StatelessWidget {
     final mode = (data['mode'] as String?) ?? '';
     final model = (data['model'] as String?) ?? '';
     final duration = data['duration'];
+    // duration 毫秒(plugin finalizeCard 传 completed - user.created,对齐 TUI)。
+    // 用 Locale.duration 格式化:<1000ms →「22ms」,<60s →「1.6s」,更长为「1m 30s」。
     final durationText = duration is num && duration > 0
-        ? '${duration.toStringAsFixed(1)}s'
+        ? formatDurationMs(duration.toInt())
         : '';
     final tokens = data['tokens'];
     final total = tokens is Map ? tokens['total'] : null;

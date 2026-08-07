@@ -1,7 +1,10 @@
 import type { AggregateElement } from "./domains/aggregate_card.js"
 
 export interface SessionState {
-  reasoning: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout>; seq?: number } | null
+  // reasoning holder:timeStart 为 reasoning part 的 time.start(毫秒),供 idle 兜底
+  // flushReasoning 估算思考耗时(此时 part.end 未到,用 now - start 近似,对齐 TUI
+  // reasoning header 的 duration)。正常路径(part_updated end)用精确 end - start。
+  reasoning: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout>; seq?: number; timeStart?: number } | null
   text: { text: string; partID: string; streamId?: string; lastFlushAt?: number; lastFlushedLen?: number; flushTimer?: ReturnType<typeof setTimeout>; seq?: number } | null
   // 最终回复 text 终态的缓存(根治:未读锚点 = 真实内容)。
   // text part 终态先于 step-finish 到达,此时不知道是否"回合最终回复"。
@@ -67,6 +70,14 @@ export interface SessionState {
   // 是否为主 session(用户直接对话的 agent 循环),区别于子 agent(Task 工具派生)。
   // idle 时仅主 session 发 step_finish finished=true(响铃 + 计未读),子 session idle 只通知主 agent。
   isMainSession?: boolean
+  // 回合结束 footer 暂存(completed 事件驱动收尾):step-finish part 带 cost/tokens/reason
+  // 但无 time;assistant_message_completed 带 time 但无 cost/tokens。两个事件互补,
+  // step-finish 时暂存到这里,completed 时读取合并算 duration。仅主 session 聚合模式写入。
+  footerDraft?: {
+    reason: string
+    cost: number
+    tokens: Record<string, unknown>
+  }
 }
 
 // 子 session 注册项。Task 7 在 task/running 事件命中时塞入 childSessionTree。

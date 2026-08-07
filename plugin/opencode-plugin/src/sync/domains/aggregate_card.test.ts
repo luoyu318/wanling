@@ -406,3 +406,75 @@ describe("AggregateCardManager.finishCard", () => {
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
   })
 })
+
+describe("AggregateCardManager.finalizeCard(completed 事件驱动收尾)", () => {
+  let wanling: ReturnType<typeof makeWanling>["wanling"]
+
+  beforeEach(() => {
+    wanling = makeWanling().wanling
+  })
+
+  it("finalizeCard:追加带完整数据 footer(duration/cost/tokens/mode/model) + done + silent", async () => {
+    const state = makeState()
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "generating"
+    state.aggregateSeq = 3
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finalizeCard({
+      reason: "stop",
+      duration: 13.4,
+      cost: 0.01,
+      tokens: { total: 100 },
+      mode: "build",
+      model: "DeepSeek-V3",
+    })
+
+    // append footer + set_state done + set_silent false
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
+      1,
+      "card-1",
+      { op: "append", element: AggregateCardManager.footer({ reason: "stop", cost: 0.01, tokens: { total: 100 }, duration: 13.4, finished: true, mode: "build", model: "DeepSeek-V3" }, 4) },
+    )
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_state", state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(3, "card-1", { op: "set_silent", silent: false })
+    // reset:msgId 清空,卡状态保留 done(供幂等守卫),下一轮 ensureCard 建新卡
+    expect(state.aggregateCardState).toBe("done")
+    expect(state.aggregateCardMsgId).toBeUndefined()
+  })
+
+  it("finalizeCard 后 reset:下一轮 ensureCard 建新卡(一次问答一张卡)", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    // 第一轮:ensureCard 建卡(第 1 次 sendCardMessage)→ finalizeCard 收尾 reset
+    await manager.ensureCard()
+    await manager.finalizeCard({ reason: "stop", duration: 3.2 })
+    expect(state.aggregateCardMsgId).toBeUndefined()
+
+    // 第二轮:ensureCard 重新建卡(第 2 次 sendCardMessage)
+    await manager.ensureCard()
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(2)
+    expect(state.aggregateCardState).toBe("generating")
+    expect(state.aggregateCardMsgId).toBe("card-1")
+  })
+
+  it("幂等:卡已 done 时跳过(不重复 append footer)", async () => {
+    const state = makeState()
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "done"
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finalizeCard({ reason: "stop", duration: 1.2 })
+
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+
+  it("无卡:静默跳过", async () => {
+    const state = makeState() // 无 aggregateCardMsgId
+    const manager = new AggregateCardManager(wanling, state)
+
+    await manager.finalizeCard({ reason: "stop", duration: 1.2 })
+
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+})

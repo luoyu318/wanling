@@ -2,6 +2,7 @@ import type { WanlingClient } from "../wanling/client.js"
 import type { EventSubscriber } from "../opencode/subscriber.js"
 import type { RPCDispatcher } from "../rpc/dispatcher.js"
 import type {
+  AssistantMessageCompletedPayload,
   PartUpdatedPayload,
   SessionUpdatedPayload,
   VcsBranchUpdatedPayload,
@@ -96,7 +97,6 @@ export class Streamer extends EventEmitter {
       wanling,
       opencode: this.ensureDeps.opencode,
       dispatcher,
-      subscriber: this.subscriber,
     })
     this.compaction = new CompactionTracker({
       store: this.store,
@@ -224,6 +224,13 @@ export class Streamer extends EventEmitter {
     this.subscriber.on("assistant_message_started", (payload) => {
       void this.finishCardForSession(payload.sessionID, "interrupt")
     })
+    // assistant 回合完成(completed + finish 非 tool-calls/unknown,对齐 TUI final()):
+    // 回合正常结束,聚合卡收尾(footer 带完整 duration/cost/tokens/mode/model + reset)。
+    // 此时 completed 已落库,duration = completed - user.created 可直接计算,零轮询。
+    // 时序:旧回合 completed 先于新回合创建到达(已验证),footer 追加正确卡片。
+    this.subscriber.on("assistant_message_completed", (payload) => {
+      void this.finalizeCardForSession(payload)
+    })
 
     // 交互事件
     this.subscriber.on("approval_request", (payload) => this.interaction.onPermissionAsked(payload))
@@ -244,6 +251,40 @@ export class Streamer extends EventEmitter {
       .finishCard(reason)
       .catch((err) => {
         console.error(`[streamer] finishCard(${reason}) 失败: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+
+  // assistant 回合完成的聚合卡收尾(assistant_message_completed 事件驱动,对齐 TUI final()):
+  // 此时 completed 已落库,duration = completed - user.created(parentID 归属)可直接计算。
+  // footerDraft 由 step-finish 暂存(cost/tokens/reason),这里合并;meta 快照取 knownFullMeta。
+  // 幂等:finalizeCard 内部守卫(卡已 done / 未建卡跳过);若被 finishCard(abort/分段)
+  // 先收尾,此处静默跳过。
+  private async finalizeCardForSession(
+    payload: AssistantMessageCompletedPayload,
+  ): Promise<void> {
+    const state = await this.store.getOrCreateState(payload.sessionID)
+    if (!state) return
+    if (!this.aggregateCardEnabled || state.isChildSession) return
+    // 回合耗时起点:parent user 消息的 created(subscriber 缓存)。缺失则降级不显示耗时。
+    const userCreated = this.subscriber.peekUserCreated(payload.parentID)
+    // 回合耗时(毫秒,对齐 TUI:`message.time.completed - user.time.created` 原始毫秒,
+    // APP 端用 Locale.duration 格式化;不转秒否则 <100ms 变 0)。
+    const duration = userCreated
+      ? Math.max(0, payload.completed - userCreated)
+      : 0
+    const draft = state.footerDraft
+    const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
+    await new AggregateCardManager(this.wanling, state)
+      .finalizeCard({
+        reason: draft?.reason ?? "stop",
+        duration,
+        cost: draft?.cost,
+        tokens: draft?.tokens,
+        mode: footerMeta?.mode,
+        model: footerMeta ? (footerMeta.modelName ?? footerMeta.modelId) : undefined,
+      })
+      .catch((err) => {
+        console.error(`[streamer] finalizeCard 失败: ${err instanceof Error ? err.message : String(err)}`)
       })
   }
 
