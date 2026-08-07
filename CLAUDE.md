@@ -53,7 +53,7 @@ APP（Flutter, Android）  ↔WebSocket+REST↔  Server（Go/Gin, :18008）  ↔
 | 新增 / 改插件 install 模式 / adapter 协议 | plugin/CLAUDE.md |
 | 新增 / 改 SDK 协议或方法 | sdk/CLAUDE.md + docs/architecture/sdk.md |
 | 新增 migration | server/CLAUDE.md + docs/ai-handbook/migrations.md（被 server/CLAUDE.md @import） |
-| 跨子系统协议变更（WS opcode / 审批卡片 / 扫码配对） | docs/ai-handbook/<对应>.md（物理单文件,各子 CLAUDE.md @import 引用同一份） |
+| 跨子系统协议变更（WS opcode / 聚合卡 / 审批卡片 / 扫码配对） | docs/ai-handbook/<对应>.md（物理单文件,各子 CLAUDE.md @import 引用同一份） |
 | **新增 / 改子系统模块依赖**（新增 internal/ 包 / 改数据流） | **docs/architecture/<子系统>.md 的 Mermaid 图 + 组件清单** |
 | **新增 / 改子系统的具体组件实现**（新增 handler / 改 repo 方法 / 加 page / 改 widget / 调整组件目录） | **`docs/architecture/<子系统>/<分组>.md` 对应详情文件**（不再是子系统 .md 本身） |
 | **新增跨系统数据流**（新协议 / 新通道） | **docs/architecture/overview.md 的 Mermaid 图 + 数据流描述** |

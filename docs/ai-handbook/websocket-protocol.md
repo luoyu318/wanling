@@ -73,7 +73,7 @@
 
 plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**(累积全文,非增量碎片),让 APP 逐段渲染。server 纯透传给「正在看该会话」的 user 连接,agent 不消费。
 
-**入站(plugin→server)**:`{op:14, d:{conversation_id, stream_id, msg_type, text, aggregate?}}`。`aggregate:{message_id, element_id}`(可选,聚合模式):帧不建独立占位气泡,而是定位 msg_type=aggregate_card 消息、全量替换 element_id 匹配元素的 data.text(终态仍由 plugin PATCH 持久化兜底,此处仅实时刷新观看端)。element_id 用流式预留 seq(与终态 append 同一号,定位连续);首帧前插件先 append 目标元素占位(ensureStreamElement),否则 APP 因元素不存在丢弃帧。缺 `aggregate` 字段 = 非聚合模式,走旧独立占位(兼容)。仅 agent 可发,IDOR 校验 `Hub.IsParticipant` fail-closed。server 调 `SendStreamToConvViewers`:查 participants,只推 `client.GetActiveConv()==conversation_id` 的 user 连接(op=3 SetActiveConv 上报的活跃会话)。op≠Dispatch 天然不进 dispatchBuffer,不带 seq,断线不补发。
+**入站(plugin→server)**:`{op:14, d:{conversation_id, stream_id, msg_type, text, aggregate?}}`。`aggregate:{message_id, element_id}`(可选,聚合模式):帧不建独立占位气泡,而是定位 msg_type=aggregate_card 消息、全量替换 element_id 匹配元素的 data.text(终态仍由 plugin PATCH 持久化兜底,此处仅实时刷新观看端)。聚合模式流式定位细节(预留 seq / ensureStreamElement 占位)见 [aggregate-card.md](./aggregate-card.md)「流式定位」。缺 `aggregate` 字段 = 非聚合模式,走旧独立占位(兼容)。仅 agent 可发,IDOR 校验 `Hub.IsParticipant` fail-closed。server 调 `SendStreamToConvViewers`:查 participants,只推 `client.GetActiveConv()==conversation_id` 的 user 连接(op=3 SetActiveConv 上报的活跃会话)。op≠Dispatch 天然不进 dispatchBuffer,不带 seq,断线不补发。
 
 **出站(server→APP)**:`{op:14, d:{...}}` 原样转发。APP `websocket_service` 的 `streamEvents` 流接收,不走 `_persistToStore`(不落本地 DB)。`ChatNotifier._listenStream` 按 stream_id 聚合:首块插占位(`id="stream:$streamId"`, `isStreaming=true`, client-only 内存态),后续块 copyWith 替换 text(不新增行)。
 
@@ -165,19 +165,7 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `question_card` | `{oc_request_id, questions: [{question, header, options?, multiple?, custom?}], status}` | streamer `question_asked` → POST /api/conversations/:id/messages | 选择题卡片，APP 渲染 TabBar 横向切换 + radio/checkbox/custom |
 | `question_reply` | `{oc_request_id, answers: [string[]], rejected?: true}` | APP 底部抽屉提交 → PATCH /api/messages/:id | 选择题答案回传，silent（APP 过滤不展示） |
 
-**聚合消息（aggregate_card）**（opencode-plugin，默认开启）— 一次问答一条聚合卡消息，elements[] 按时序承载全部步骤。`data:{schema_ver, state:"generating"|"done", elements:[{type, element_id, data}]}`，创建时 `silent:true`，回合结束 PATCH 翻转 `silent:false`+`state:"done"`（未读/响铃由翻转承接，见 MESSAGE_UPDATE silent 翻转）。**schema_ver 协议版本**：建卡写 `1`，缺失视为 1，破坏性协议变更时递增；server 合并保留未知字段天然透传；APP 读本地 content 的 schema_ver，`> 支持版本` 时不应用增量 op（保持现状防误用），等全量替换兜底。`element_id` 按 type_seq 规则生成（如 reasoning_1 / tool_card_2），全卡唯一、字母开头、≤20 字符；reasoning/markdown 流式用预留 seq，与终态 append 同一号。**增量 PATCH（非全量）**：plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并（`append`/`update`/`remove`/`reorder`/`set_state`/`set_silent`），server 合并到全量存储、广播**带增量**的 MESSAGE_UPDATE；无 `op` 带 `elements` 仍全量替换兼容旧 plugin。server 广播的 MESSAGE_UPDATE content 即增量 delta，APP `_applyAggregateCardDelta` 按 op 合并本地元素。**元素级 finished 标记**：reasoning 元素 `data.finished`（流式占位 false / 终态 append true），APP 据此在卡片整体 generating 期间也显示真实思考内容（否则子 agent 并行阶段思考链不可见）。**working 补发语义**：子 agent task 卡 `updateElement` 早于元素 append 落地时不静默丢弃，缓存待 append 完成后补发 `{op:"update"}`，避免卡片永卡 starting。**保持独立**：permission_card / question_card（交互需回调）、task 工具（子 agent 需 parent/root 串树）、子 session 所有消息；历史独立消息照常渲染（双轨兼容）。**开关**：`WANLING_AGGREGATE_CARD_ENABLED`（默认 true）置 false 回退旧逐条发送，协议不变。元素类型表：
-
-| 元素 type | data 字段 | 渲染（复用现有 renderer） |
-|---|---|---|
-| `reasoning` | `{text, finished?}` | 同独立 reasoning（思考抽屉） |
-| `tool_card` | `{name, input, output?, error?, status, sub_session_id?, ...}` | 同独立 tool_card |
-| `markdown` | `{text}` | 同独立 markdown |
-| `compact_divider` | `{phase}` | 压缩分隔线（自绘） |
-| `footer` | `{reason, cost, tokens, duration, finished, stopped?, mode?, model?}` | 同 step_finish（tokens 汇总行）；finished=true 且卡 done 时底部渲染提示条（模式/时长/模型/tokens），mode/model 为回合结束快照；`stopped=true`（abort 主动收尾）时提示条显示「已停止」；`reason` 取值 `stop`（用户停止）/`interrupt`（消息边界分段新回合） |
-
-**状态呈现（APP 展示层）**：聚合卡不再有顶栏「回复中/完成」条；generating 时卡底部 footer 状态条显示动态阶段词（思考中/执行中/汇总中，按最后元素推导），done 后切换为静态信息条（模式/时长/模型/tokens）；generating 聚合卡存在期间 APP 隐藏消息列表 busy 气泡。mode/model 由 plugin 在 step-finish 时写入 footer data（消息快照，不随 sessionMeta 实时态变动）；时长/tokens 复用 footer 既有字段。footer 无 mode/model（历史消息）时提示条仅显示有时长/tokens 的段。**工具卡折叠**：APP 渲染层按「折叠类别 + 连续性」合并 tool_card 元素为可展开折叠组（对齐 opencode groupParts）：探索组（read/glob/grep）、命令组（bash）、编辑组（edit/write）同类物理连续合并成组，类别切换即拆组，单条也折叠；收起标题语义化（进行中「正在探索/正在执行/正在编辑」、完成「已探索/已执行/已编辑」+ X次读取/搜索/命令/编辑，类别间 `,` 分隔）；todowrite 隐藏；webfetch、task 子 agent 卡、permission_card、question_card 不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。**聚合卡样式**：外壳无边框改阴影浮起（0 2px 8px rgba(0,0,0,0.10)）、圆角 12px；思考块琥珀左条 2px + 浅黄底 #FFFBEF；工具组折叠块浅灰底 #F8F8F8；展开工具卡浅灰底 #F7F7F7 + 语义色左条；正文无边框直排；footer 静态条顶部分隔线 #F0F0F0。
-
-**停止收尾**：用户点停止（`GENERATION_ABORT`）后 plugin 主动对当前聚合卡 `finishCard("stop")` 追加 `{reason:"stop", stopped:true, finished:true}` footer + 翻转 `state:"done"`/`silent:false`（APP 提示条显示「已停止」）。幂等：卡 done 时跳过；abort 后 step-finish 仍回推时 isLoopEnd 检测卡已收尾跳过重复 footer。**消息边界分段（interrupt）**：聚合卡按 opencode 消息边界自动分段——plugin 订阅 `message.updated`(role=assistant)，每条 user→assistant 回合建独立 message（带 `parentID` 指向 user 消息）。新 assistant 出现且旧 assistant 以 `tool-calls` 完成（旧回合被新消息打断，未正常 `stop`）时，plugin 对旧卡 `finishCard("interrupt")` 追加 `{reason:"interrupt", stopped:false, finished:true}` footer + 翻转 done/silent，新回合自动建新卡。旧回合正常 `stop`（step-finish 已定稿）时不打断。同回合多 step（工具循环）的 assistant `parentID` 相同，不触发分段。
+**聚合消息（aggregate_card）**（opencode-plugin，默认开启）— 一次问答一条聚合卡消息，elements[] 按时序承载全部步骤。协议结构、增量 PATCH、元素类型表、finished 标记、流式定位、跨轮瞬态清理、停止收尾、消息边界分段、状态呈现、工具卡折叠、样式、滚动补偿全部见 **[aggregate-card.md](./aggregate-card.md)**。
 
 ### AGENT_MODELS
 
