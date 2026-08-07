@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/msg_type.dart';
+import '../widgets/chat/shimmer_text.dart';
 import 'message_content_renderer.dart';
 
 /// 聚合卡元素分派槽位:单个非折叠元素(平铺)或一组同类工具(折叠)。
@@ -94,9 +95,36 @@ List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
   return slots;
 }
 
-/// 折叠工具卡:收起一行「⚡ 工具调用 · N」,点击展开组内每个 tool_card(复用现有渲染)。
+/// 折叠组标题:类别前缀(进行中/完成) + 按类别计数(跳过 0 值类别)。
+/// 对齐 opencode ToolStatusTitle + AnimatedCountList:探索组「正在探索/已探索」,
+/// 命令组「正在执行/已执行」,编辑组「正在编辑/已编辑」。
+String groupTitle(ToolGroupSlot slot, bool streaming) {
+  var read = 0, search = 0, command = 0, edit = 0;
+  for (final c in slot.cards) {
+    final name = ((c['data'] as Map?)?['name'] as String?) ?? '';
+    if (name == 'read') read++;
+    if (name == 'glob' || name == 'grep') search++;
+    if (name == 'bash') command++;
+    if (name == 'edit' || name == 'write') edit++;
+  }
+  final prefix = switch (categoryOfTool(slot.cards.first)) {
+    ToolCategory.command => streaming ? '正在执行' : '已执行',
+    ToolCategory.edit => streaming ? '正在编辑' : '已编辑',
+    _ => streaming ? '正在探索' : '已探索',
+  };
+  final parts = <String>[
+    if (read > 0) '$read次读取',
+    if (search > 0) '$search次搜索',
+    if (command > 0) '$command次命令',
+    if (edit > 0) '$edit次编辑',
+  ];
+  final counts = parts.join(', ');
+  return counts.isEmpty ? prefix : '$prefix $counts';
+}
+
+/// 折叠工具卡:收起一行类别标题,点击展开组内每个 tool_card(复用现有渲染)。
 /// [rc] 为外层聚合卡的 MessageRenderContext,展开渲染时透传(isStreaming/baseUrl/
-/// rootMessageId 等保持一致)。
+/// rootMessageId 等保持一致)。标题前缀(正在/已)由 rc.isStreaming 决定。
 class ToolGroupCard extends StatefulWidget {
   final List<Map<String, dynamic>> cards;
   final MessageRenderContext rc;
@@ -111,27 +139,34 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
 
   @override
   Widget build(BuildContext context) {
+    final streaming = widget.rc.isStreaming;
+    final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFEEEEEE)),
+        color: const Color(0xFFF8F8F8),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             child: Row(
               children: [
                 const Text('⚡ ', style: TextStyle(fontSize: 12)),
                 Expanded(
-                  child: Text(
-                    '工具调用 · ${widget.cards.length}',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
-                  ),
+                  child: streaming
+                      ? ShimmerText(
+                          text: title,
+                          baseColor: const Color(0xFF666666),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                        )
+                      : Text(
+                          title,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                        ),
                 ),
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
