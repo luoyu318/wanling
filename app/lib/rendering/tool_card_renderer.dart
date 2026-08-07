@@ -505,7 +505,9 @@ class _WebFetchRow extends StatelessWidget {
       context,
       title: const Row(
         children: [
-          Icon(Icons.public, size: 18, color: Color(0xFFB388FF)),
+          Text(IconFont.explore,
+              style: TextStyle(
+                  fontFamily: 'iconfont', fontSize: 18, color: Color(0xFFB388FF), height: 1)),
           SizedBox(width: 6),
           Text('WebFetch',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),

@@ -156,7 +156,7 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
                     final opacity = 0.25 + 0.75 * (math.sin(math.pi * 2 * t) * 0.5 + 0.5);
                     return Opacity(
                       opacity: opacity,
-                      child: IconFont.icon(IconFont.deepThink, size: 15),
+                      child: IconFont.icon(IconFont.deepThink, size: 15, color: const Color(0xFF5B8BF7)),
                     );
                   },
                 ),
