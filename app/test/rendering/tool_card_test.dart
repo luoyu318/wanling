@@ -276,6 +276,55 @@ void main() {
       // webfetch 走纯文字行,不产生灰底工具卡 Container
       expect(find.text('\u{e600}'), findsOneWidget); // iconfont explore 图标
     });
+
+    testWidgets('webfetch 显示 url 单行截断 + 状态', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'webfetch',
+                input: {'url': 'https://very-long-domain.example.com/path/to/resource'},
+                output: '搜索到的内容',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('WebFetch'), findsOneWidget);
+      expect(find.text('https://very-long-domain.example.com/path/to/resource'), findsOneWidget);
+      expect(find.text('完成'), findsOneWidget);
+    });
+
+    testWidgets('webfetch 点击弹抽屉展示 url/output', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'webfetch',
+                input: {'url': 'https://example.com'},
+                output: '搜索到的完整结果内容',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('WebFetch'));
+      await tester.pumpAndSettle();
+      expect(find.text('搜索结果'), findsOneWidget);
+      expect(find.text('搜索到的完整结果内容'), findsOneWidget);
+    });
   });
 
   group('ToolCardRenderer task 三态', () {

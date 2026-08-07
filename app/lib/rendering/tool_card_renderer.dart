@@ -435,6 +435,7 @@ class _FileDiffRow extends StatelessWidget {
 // ── webfetch 行 ──
 /// webfetch 网络探索:无边框无背景的纯文字行(不折叠,独立平铺)。
 /// 对齐「思考块/折叠组」极简风格,与有容器的普通工具卡区分。
+/// 网址过长单行截断(ellipsis),点击弹抽屉展示完整 url / output / error。
 class _WebFetchRow extends StatelessWidget {
   final Map<String, dynamic> data;
   const _WebFetchRow({required this.data});
@@ -452,17 +453,89 @@ class _WebFetchRow extends StatelessWidget {
       'error' => const Color(0xFFFA5151),
       _ => const Color(0xFF999999),
     };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(children: [
-        IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
-        const SizedBox(width: 6),
-        const Text('WebFetch',
-            style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
-        const SizedBox(width: 8),
-        Text(statusText,
-            style: TextStyle(fontSize: 12, color: statusColor)),
-      ]),
+    final input = data['input'] as Map<String, dynamic>? ?? const {};
+    final url = (input['url'] as String?) ?? '';
+    return GestureDetector(
+      onTap: url.isNotEmpty || _hasDetail() ? () => _showDetail(context) : null,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
+          const SizedBox(width: 6),
+          const Text('WebFetch',
+              style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
+          if (url.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF999999),
+                  decoration: TextDecoration.underline,
+                  decorationColor: Color(0xFFBBBBBB),
+                ),
+              ),
+            ),
+          ],
+          if (statusText.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  bool _hasDetail() {
+    final output = data['output'] as String?;
+    final error = data['error'] as String?;
+    return (output != null && output.isNotEmpty) || (error != null && error.isNotEmpty);
+  }
+
+  void _showDetail(BuildContext context) {
+    final input = data['input'] as Map<String, dynamic>? ?? const {};
+    final url = (input['url'] as String?) ?? '';
+    final output = data['output'] as String? ?? '';
+    final error = data['error'] as String? ?? '';
+    showDetailSheet(
+      context,
+      title: const Row(
+        children: [
+          Icon(Icons.public, size: 18, color: Color(0xFFB388FF)),
+          SizedBox(width: 6),
+          Text('WebFetch',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (url.isNotEmpty) ...[
+            const Text('网址', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(url,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF5B8BF7))),
+            const SizedBox(height: 12),
+          ],
+          if (error.isNotEmpty) ...[
+            const Text('错误', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(error,
+                style: const TextStyle(fontSize: 13, height: 1.5, color: Color(0xFFFA5151))),
+            const SizedBox(height: 12),
+          ],
+          if (output.isNotEmpty) ...[
+            const Text('搜索结果', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(output,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF555555))),
+          ],
+        ],
+      ),
     );
   }
 }
