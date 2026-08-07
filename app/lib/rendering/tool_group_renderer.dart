@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/msg_type.dart';
 import 'message_content_renderer.dart';
 
-/// 聚合卡元素分派槽位:单个非 tool_card 元素(平铺)或一组连续 tool_card(折叠)。
+/// 聚合卡元素分派槽位:单个非折叠元素(平铺)或一组同类工具(折叠)。
 /// 公开类型:renderer + 单测跨文件访问需要。
 sealed class ElementSlot {
   const ElementSlot();
@@ -15,22 +15,49 @@ class SingleElementSlot extends ElementSlot {
   const SingleElementSlot(this.element);
 }
 
-/// 一组连续 tool_card(折叠)。
+/// 一组同类工具(折叠)。
 class ToolGroupSlot extends ElementSlot {
   final List<Map<String, dynamic>> cards;
   const ToolGroupSlot(this.cards);
 }
 
-/// 分组器(纯函数):把聚合卡平铺 elements 按「连续 tool_card」切组。
+/// 折叠类别:探索(read/grep/glob)/命令(bash)/编辑(edit/write)。
+/// 对齐 opencode `CONTEXT_GROUP_TOOLS` 扩展:官方折叠 read/glob/grep/list,
+/// 我们扩展 bash(命令)与 edit/write(编辑)也按同类折叠。
+enum ToolCategory { explore, command, edit }
+
+/// tool_card.data.name → 折叠类别;不折叠的返回 null。
+ToolCategory? categoryOfTool(Map<String, dynamic> card) {
+  final name = ((card['data'] as Map?)?['name'] as String?) ?? '';
+  switch (name) {
+    case 'read':
+    case 'glob':
+    case 'grep':
+      return ToolCategory.explore;
+    case 'bash':
+      return ToolCategory.command;
+    case 'edit':
+    case 'write':
+      return ToolCategory.edit;
+    default:
+      return null; // webfetch/task/todowrite 及未知工具不折叠
+  }
+}
+
+/// 是否隐藏(对齐官方 HIDDEN_TOOLS,只隐藏 todowrite)。
+bool isHiddenTool(Map<String, dynamic> card) =>
+    ((card['data'] as Map?)?['name'] as String?) == 'todowrite';
+
+/// 分组器(纯函数):把聚合卡平铺 elements 按「折叠类别 + 连续性」切组。
 ///
-/// 规则:
-/// - 物理连续(中间无任何其他元素)的 tool_card 合并为一组
-/// - task 子 agent 卡(name=='task')不参与折叠,单独成 Slot
-/// - permission_card / question_card 不折叠,单独成 Slot
-/// - 单个 tool_card 也成 ToolGroupSlot(N=1),用同一折叠组件
+/// 对齐 opencode `groupParts`:同一折叠类别的工具物理连续(中间无任何
+/// 其他元素)合并成同一折叠组;类别切换即拆组;单条也折叠(N=1)。
+/// 隐藏工具(todowrite)直接跳过;平铺元素(reasoning/markdown/footer/
+/// compact_divider/交互卡/task/webfetch)单独成 SingleElementSlot。
 List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
   final slots = <ElementSlot>[];
   var group = <Map<String, dynamic>>[];
+  var groupCategory = ToolCategory.explore;
   void flush() {
     if (group.isNotEmpty) {
       slots.add(ToolGroupSlot(group));
@@ -39,14 +66,28 @@ List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
   }
 
   for (final e in elements) {
-    final type = e['type'] as String?;
-    final isTool = type == 'tool_card';
-    final isTaskTool = isTool && (e['data'] as Map?)?['name'] == 'task';
-    if (isTool && !isTaskTool) {
+    if (e['type'] != 'tool_card') {
+      flush();
+      slots.add(SingleElementSlot(e));
+      continue;
+    }
+    if (isHiddenTool(e)) continue; // todowrite 隐藏
+    final category = categoryOfTool(e);
+    if (category == null) {
+      flush();
+      slots.add(SingleElementSlot(e)); // webfetch/task/未知 平铺
+      continue;
+    }
+    // 新组:以当前工具类别为组类别;否则若类别不同则拆组
+    if (group.isEmpty) {
+      group = [e];
+      groupCategory = category;
+    } else if (category == groupCategory) {
       group.add(e);
     } else {
       flush();
-      slots.add(SingleElementSlot(e));
+      group = [e];
+      groupCategory = category;
     }
   }
   flush();
