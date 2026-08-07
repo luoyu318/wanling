@@ -257,6 +257,25 @@ void main() {
         findsOneWidget,
       );
     });
+    testWidgets('webfetch 渲染纯文字行(无工具卡容器)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(status: 'completed', name: 'webfetch'),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('WebFetch'), findsOneWidget);
+      expect(find.text('完成'), findsOneWidget);
+      // webfetch 走纯文字行,不产生灰底工具卡 Container
+      expect(find.text('\u{e600}'), findsOneWidget); // iconfont explore 图标
+    });
   });
 
   group('ToolCardRenderer task 三态', () {

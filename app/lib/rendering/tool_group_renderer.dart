@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/msg_type.dart';
+import '../utils/icon_font.dart';
 import '../widgets/chat/shimmer_text.dart';
 import 'message_content_renderer.dart';
 
@@ -141,21 +142,18 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
   Widget build(BuildContext context) {
     final streaming = widget.rc.isStreaming;
     final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F8F8),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    final (icon, iconColor) = _categoryVisual(widget.cards);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(8),
             child: Row(
               children: [
-                const Text('⚡ ', style: TextStyle(fontSize: 12)),
+                IconFont.icon(icon, size: 13, color: iconColor),
+                const SizedBox(width: 6),
                 Expanded(
                   child: streaming
                       ? ShimmerText(
@@ -165,7 +163,7 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
                         )
                       : Text(
                           title,
-                          style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF555555)),
                         ),
                 ),
                 Icon(
@@ -177,21 +175,44 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
             ),
           ),
           if (_expanded)
-            for (final e in widget.cards)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: ContentRendererRegistry.render(
-                  MsgType.toolCard,
-                  <String, dynamic>{
-                    'msg_type': MsgType.toolCard.value,
-                    'data': e['data'],
-                  },
-                  context,
-                  widget.rc,
-                ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final e in widget.cards)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: ContentRendererRegistry.render(
+                        MsgType.toolCard,
+                        <String, dynamic>{
+                          'msg_type': MsgType.toolCard.value,
+                          'data': e['data'],
+                        },
+                        context,
+                        widget.rc,
+                      ),
+                    ),
+                ],
               ),
+            ),
         ],
       ),
     );
   }
+}
+
+/// 折叠组标题图标 + 颜色(按类别,对齐 mockup 配色)。
+(String, Color) _categoryVisual(List<Map<String, dynamic>> cards) {
+  final iconColor = switch (categoryOfTool(cards.first)) {
+    ToolCategory.command => const Color(0xFF5B8BF7), // 命令组:蓝 shell
+    ToolCategory.edit => const Color(0xFF07C160), // 编辑组:绿 编辑
+    _ => const Color(0xFFB388FF), // 探索组:紫 搜索
+  };
+  final icon = switch (categoryOfTool(cards.first)) {
+    ToolCategory.command => IconFont.shell,
+    ToolCategory.edit => IconFont.edit,
+    _ => IconFont.search,
+  };
+  return (icon, iconColor);
 }

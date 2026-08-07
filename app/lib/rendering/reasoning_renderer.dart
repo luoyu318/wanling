@@ -8,6 +8,7 @@ import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_strong.dart';
 import '../widgets/markdown_view.dart';
 import '../utils/duration_format.dart';
+import '../utils/icon_font.dart';
 import 'message_content_renderer.dart';
 
 /// MarkdownView 共用的 generators（与 builtin_renderers.dart 一致，改时同步）。
@@ -67,30 +68,21 @@ class _StaticReasoningCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => _showDetail(context, text),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFFBEF), // 浅黄底(思考态)
-          borderRadius: BorderRadius.circular(4),
-          border: const Border(
-            left: BorderSide(color: Color(0xFFFFC940), width: 2), // 琥珀左条
-          ),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            const Opacity(
-              opacity: 0.6,
-              child: Text('✨ ', style: TextStyle(fontSize: 14)),
-            ),
+            IconFont.icon(IconFont.deepThink, size: 13),
+            const SizedBox(width: 6),
             Expanded(
               child: Text(
                 _foldedText(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF8A6D00)),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF999999)),
               ),
             ),
-            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF888888))),
+            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),
           ],
         ),
       ),
@@ -143,23 +135,16 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => _showDetail(context, widget.text),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFFBEF), // 浅黄底(思考态)
-          borderRadius: BorderRadius.circular(4),
-          border: const Border(
-            left: BorderSide(color: Color(0xFFFFC940), width: 2), // 琥珀左条
-          ),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            // ✨ 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 平滑往返。
+            // 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 平滑往返。
             // SizedBox 固定尺寸外壳必要:终态切换(本 Stateful → _StaticReasoningCard)
             // 时 element 重建,若 RenderOpacity 直接作为 Row 子节点会引发 SliverList
             // 位置错位(实测:思考完成后卡片跑到下一条消息下方)。
             // SizedBox(RenderConstrainedBox) 把动画 layer 变化隔离在子树内,
-            // 不波及 Row 的 child list,与光环版结构一致。
+            // 不波及 Row 的 child list。
             SizedBox(
               width: 24,
               height: 24,
@@ -171,20 +156,20 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
                     final opacity = 0.25 + 0.75 * (math.sin(math.pi * 2 * t) * 0.5 + 0.5);
                     return Opacity(
                       opacity: opacity,
-                      child: const Text('✨ ', style: TextStyle(fontSize: 14)),
+                      child: IconFont.icon(IconFont.deepThink, size: 13),
                     );
                   },
                 ),
               ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
             const Expanded(
               child: Text(
                 '正在思考...',
-                style: TextStyle(fontSize: 12, color: Color(0xFF8A6D00)),
+                style: TextStyle(fontSize: 12, color: Color(0xFF999999)),
               ),
             ),
-            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF8A6D00))),
+            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),
           ],
         ),
       ),

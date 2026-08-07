@@ -5,6 +5,7 @@ import 'package:highlight/highlight.dart' show highlight;
 
 import '../models/message.dart';
 import '../utils/code_highlight.dart' show languageFromPath, highlightNodesToSpans;
+import '../utils/icon_font.dart';
 import 'message_content_renderer.dart';
 import 'permission_card_renderer.dart' show showPermissionReplySheet;
 import 'question_card_renderer.dart' show showQuestionReplySheet;
@@ -123,6 +124,11 @@ class ToolCardRenderer implements MessageContentRenderer {
         default:
           return _wrapAnimated(_WorkingTaskCard(data: data, rc: rc));
       }
+    }
+
+    // webfetch 特殊：无边框无背景的纯文字行(网络探索,不折叠不进工具卡容器)
+    if (name == 'webfetch') {
+      return _WebFetchRow(data: data);
     }
 
     // 普通 tool_card：原三态
@@ -422,6 +428,41 @@ class _FileDiffRow extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+// ── webfetch 行 ──
+/// webfetch 网络探索:无边框无背景的纯文字行(不折叠,独立平铺)。
+/// 对齐「思考块/折叠组」极简风格,与有容器的普通工具卡区分。
+class _WebFetchRow extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _WebFetchRow({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = data['status'] as String? ?? 'running';
+    final statusText = switch (status) {
+      'completed' => '完成',
+      'error' => '失败',
+      _ => '访问中...',
+    };
+    final statusColor = switch (status) {
+      'completed' => const Color(0xFF07C160),
+      'error' => const Color(0xFFFA5151),
+      _ => const Color(0xFF999999),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        IconFont.icon(IconFont.explore, size: 13, color: const Color(0xFFB388FF)),
+        const SizedBox(width: 6),
+        const Text('WebFetch',
+            style: TextStyle(fontSize: 12, color: Color(0xFF555555))),
+        const SizedBox(width: 8),
+        Text(statusText,
+            style: TextStyle(fontSize: 11, color: statusColor)),
+      ]),
     );
   }
 }

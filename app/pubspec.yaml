@@ -144,6 +144,12 @@ flutter:
       fonts:
         - asset: fonts/NotoColorEmoji.ttf
 
+    # iconfont（iconfont.cn,项目 Wanling）：聚合卡工具类别图标
+    # 思考/搜索/shell/编辑/WebFetch,unicode 见 lib/utils/icon_font.dart
+    - family: iconfont
+      fonts:
+        - asset: fonts/iconfont.ttf
+
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
