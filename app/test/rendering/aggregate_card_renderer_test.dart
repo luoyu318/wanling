@@ -149,26 +149,26 @@ void main() {
       expect(find.text('正在输出的正文'), findsOneWidget);
     });
 
-    testWidgets('reasoning 元素渲染思考折叠摘要（Thought 文案）', (tester) async {
+    testWidgets('reasoning 元素渲染思考折叠摘要（思考完成 文案）', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
           element('reasoning', 'reasoning_1', {'text': '分析需求并设计方案'}),
         ],
       )));
-      // 折叠态显示 Thought(对齐 TUI),不展示全文首行
-      expect(find.text('Thought'), findsOneWidget);
+      // 折叠态显示 思考完成,不展示全文首行
+      expect(find.text('思考完成'), findsOneWidget);
       expect(find.text('分析需求并设计方案'), findsNothing);
     });
 
-    testWidgets('reasoning 元素带 duration → 折叠显示 Thought: X.Xs', (tester) async {
+    testWidgets('reasoning 元素带 duration → 折叠显示 思考完成 · 3.5s', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
           element('reasoning', 'reasoning_1', {'text': '思考', 'duration': 3500}),
         ],
       )));
-      expect(find.text('Thought: 3.5s'), findsOneWidget);
+      expect(find.text('思考完成 · 3.5s'), findsOneWidget);
     });
 
     testWidgets('tool_card 元素折叠为「已执行 1次命令」,点击展开显示工具列表项', (tester) async {

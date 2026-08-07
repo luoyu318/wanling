@@ -50,21 +50,21 @@ class FooterInfoBar extends StatelessWidget {
         children: [
           if (mode.isNotEmpty) ...[
             Text(mode,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF666666))),
           ],
           if (durationText.isNotEmpty) ...[
             if (mode.isNotEmpty) const SizedBox(width: 10),
             Text(durationText,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF07C160))),
           ],
           const Spacer(),
           if (model.isNotEmpty)
             Text(model,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF5B8BF7))),
           if (tokensText.isNotEmpty) ...[
             if (model.isNotEmpty) const SizedBox(width: 10),
             Text('tokens $tokensText',
-                style: const TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),
+                style: const TextStyle(fontSize: 11, color: Color(0xFFFA8C16))),
           ],
         ],
       ),
