@@ -138,18 +138,45 @@ class ToolGroupCard extends StatefulWidget {
 class _ToolGroupCardState extends State<ToolGroupCard> {
   bool _expanded = false;
 
+  /// 折叠组自身 GlobalKey：展开/收起时上报 ChatPage 做滚动补偿
+  /// （history sliver 反向列表下展开内容向上顶，需测高度差校正）。
+  /// 挂在外层 Padding 上。
+  final GlobalKey _key = GlobalKey();
+
+  /// 展开内容测量 key：内容**始终渲染**（收起时用 Align(heightFactor:0)
+  /// 视觉高度为 0 但仍参与布局），同步读取真实高度做滚动补偿，
+  /// 避免 postFrame 测新 top 造成的「先渲染再补偿」一帧跳变。
+  final GlobalKey _contentKey = GlobalKey();
+
+  /// 展开状态切换并通知外部（ChatPage 做滚动补偿）。
+  ///
+  /// 同步方案：先读展开内容真实高度（始终渲染可测），算 delta = ±contentHeight
+  /// （history 反向：展开 top 上移 contentHeight，收起下移 contentHeight），
+  /// setState 与回调同步执行，ChatPage 在同一帧 jumpTo 补偿 → 内容渲染时
+  /// offset 已就位，视觉锚点不动、无补间动画、无 postFrame 一帧跳变。
+  void _toggle() {
+    final contentHeight = _contentKey.currentContext?.size?.height ?? 0;
+    // history 反向:展开内容向上长,折叠框 top 上移 contentHeight(delta 负);
+    // 收起则下移 contentHeight(delta 正)。
+    final delta = _expanded ? contentHeight : -contentHeight;
+    setState(() => _expanded = !_expanded);
+    widget.rc.onToolGroupToggle
+        ?.call(_key, _expanded, delta, widget.rc.isHistorySliver);
+  }
+
   @override
   Widget build(BuildContext context) {
     final streaming = widget.rc.isStreaming;
     final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
     final (icon, iconColor) = _categoryVisual(widget.cards);
     return Padding(
+      key: _key,
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: _toggle,
             child: Row(
               children: [
                 IconFont.icon(icon, size: 15, color: iconColor),
@@ -174,28 +201,36 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
               ],
             ),
           ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final e in widget.cards)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: ContentRendererRegistry.render(
-                        MsgType.toolCard,
-                        <String, dynamic>{
-                          'msg_type': MsgType.toolCard.value,
-                          'data': e['data'],
-                        },
-                        context,
-                        widget.rc,
+          // 展开内容始终渲染:Align(heightFactor) 收起时视觉高度 0(不占位)但内容
+          // 仍参与布局(_contentKey 可测真实高度),配合同步 jumpTo 补偿零跳变。
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _expanded ? 1.0 : 0.0,
+              child: Padding(
+                key: _contentKey,
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final e in widget.cards)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: ContentRendererRegistry.render(
+                          MsgType.toolCard,
+                          <String, dynamic>{
+                            'msg_type': MsgType.toolCard.value,
+                            'data': e['data'],
+                          },
+                          context,
+                          widget.rc,
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
+          ),
         ],
       ),
     );

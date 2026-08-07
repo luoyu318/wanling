@@ -39,6 +39,14 @@ class FooterInfoBar extends StatelessWidget {
         ? '${(total / 1000).toStringAsFixed(1)}k'
         : '';
 
+    // 四要素全空(历史消息 footer 无 mode/duration/model/tokens 快照):不渲染空通栏。
+    if (mode.isEmpty &&
+        durationText.isEmpty &&
+        model.isEmpty &&
+        tokensText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       // 顶部细线分隔,与正文区分离(替代整圈边框)

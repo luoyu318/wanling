@@ -72,6 +72,12 @@ void main() {
       expect(deco.border, isNotNull);
       expect(deco.border!.top, const BorderSide(color: Color(0xFFF0F0F0)));
     });
+
+    testWidgets('四要素全空时渲染空(不显示空通栏)', (tester) async {
+      await tester.pumpWidget(host(const {}));
+      // 无 mode/duration/model/tokens → SizedBox.shrink,不渲染 Container 通栏
+      expect(find.byType(Container), findsNothing);
+    });
   });
 
   group('FooterInfoBar 停止态', () {

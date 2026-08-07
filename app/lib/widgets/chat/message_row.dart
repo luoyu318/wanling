@@ -63,6 +63,13 @@ class MessageRow extends ConsumerWidget {
   /// true 时引用块 preview 显示「原消息已撤回」。
   final bool isQuoteRevoked;
 
+  /// 聚合卡工具折叠组展开/收起回调(ChatPage 滚动补偿用)。透传给 MessageBubble。
+  final void Function(GlobalKey key, bool expanded, double topDelta,
+      bool isHistory)? onToolGroupToggle;
+
+  /// 当前消息所属 sliver 是否 history(反向列表,折叠展开需滚动补偿)。
+  final bool isHistorySliver;
+
   const MessageRow({
     super.key,
     required this.message,
@@ -84,6 +91,8 @@ class MessageRow extends ConsumerWidget {
     this.reserveAvatarSpace = true,
     this.onJumpToMessage,
     this.isQuoteRevoked = false,
+    this.onToolGroupToggle,
+    this.isHistorySliver = false,
   });
 
   static const double _avatarSize = 40;
@@ -104,6 +113,8 @@ class MessageRow extends ConsumerWidget {
       selected: selected,
       onLongPressStart: onLongPressStart,
       onTapSelect: onTapSelect,
+      onToolGroupToggle: onToolGroupToggle,
+      isHistorySliver: isHistorySliver,
       // bubble 自身 outerPadding=zero(所有场景):
       // 行间距/左右 padding 由外层 Padding 控制(包整个 Row)。
       // 这样 status icon 跟 bubble 中心对齐时,跟气泡主体(BubbleWithTail)精确居中,

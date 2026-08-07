@@ -342,6 +342,25 @@ class ChatStateListener {
       _startCardHeightFollow();
     }
 
+    // (2.7) 聚合卡 silent 翻转(回合结束 true→false)补 markRead:
+    // 聚合卡创建时 silent=true(server 不计未读),回合结束 plugin PATCH 翻转
+    // silent=false,server 此时才 IncrUnread +1。但 ChatPage 内的 chatProvider
+    // 对该翻转零感知(只 _applyAggregateCardDelta 合并 content,不动未读),
+    // 本地 unreadCount/firstUnread 恒干净,导致所有兜底同步路径(checkUnreadSeen/
+    // markReadAtBottom)被「本地清白」守卫短路,server 未读清不掉(列表徽章残留,
+    // 重进分隔线残留)。
+    // 这里检测「同 id 聚合卡 silent true→false」,用户实时贴底观看
+    // (未滚动离开 + 非定位中)时补 markRead 对齐 server;已滚动离开时保持
+    // 未读浮标不动(用户主动上滑阅读进度,由 checkUnreadSeen 本地递减)。
+    if (_hasAggregateSilentFlip(prev, next) &&
+        !_ctx.getUserScrolledAway() &&
+        !_ctx.getUnreadLocator().isLocating) {
+      debugPrint(
+        '[listen] (2.7) aggregate card silent flip, markRead convId=${_ctx.convId}',
+      );
+      _ctx.getConvSync().markRead();
+    }
+
     // 流式跟随：仅用户未主动离开底部时贴住实时底部。
     // 不能用 getIsAtBottom：卡片插入后 scrollToBottom 动画窗口内 isAtBottom 为
     // false,会导致流式文本刚展开就停止跟随(永久失效)。
@@ -419,6 +438,24 @@ class ChatStateListener {
     final terminalAdded = next.displayMessages
         .any((m) => !m.id.startsWith('stream:') && !prevIds.contains(m.id));
     return placeholderGone && terminalAdded;
+  }
+
+  /// 是否发生聚合卡 silent 翻转(回合结束 true→false)。
+  /// 比较 prev/next 中同 id 消息:类型为 aggregate_card 且 content['silent']
+  /// 从 true → false。聚合卡回合结束 PATCH set_silent 翻转,server 此时才
+  /// IncrUnread +1(见 (2.7) 分支注释)。
+  bool _hasAggregateSilentFlip(ChatState? prev, ChatState next) {
+    if (prev == null) return false;
+    final prevById = {for (final m in prev.displayMessages) m.id: m};
+    for (final m in next.displayMessages) {
+      if (m.content['msg_type'] != 'aggregate_card') continue;
+      final pm = prevById[m.id];
+      if (pm == null) continue;
+      final prevSilent = pm.content['silent'] == true;
+      final nextSilent = m.content['silent'] == true;
+      if (prevSilent && !nextSilent) return true;
+    }
+    return false;
   }
 
   /// 是否发生非流式消息的 content 更新(如卡片 PATCH 增高)。

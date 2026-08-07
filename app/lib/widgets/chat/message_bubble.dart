@@ -80,6 +80,13 @@ class MessageBubble extends StatelessWidget {
   /// 让 MessageRow 全权控制头像/昵称/气泡间距(气泡整体左上移)。
   final EdgeInsets outerPadding;
 
+  /// 聚合卡工具折叠组展开/收起回调(ChatPage 滚动补偿用)。透传给 renderer。
+  final void Function(GlobalKey key, bool expanded, double topDelta,
+      bool isHistory)? onToolGroupToggle;
+
+  /// 当前消息所属 sliver 是否 history(反向列表,折叠展开需滚动补偿)。
+  final bool isHistorySliver;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -95,6 +102,8 @@ class MessageBubble extends StatelessWidget {
     this.onLongPressStart,
     this.onTapSelect,
     this.outerPadding = const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+    this.onToolGroupToggle,
+    this.isHistorySliver = false,
   });
 
   @override
@@ -115,6 +124,8 @@ class MessageBubble extends StatelessWidget {
       onFileTap: onFileTap,
       fileDownloadSnapshots: fileDownloadSnapshots,
       isStreaming: message.isStreaming,
+      onToolGroupToggle: onToolGroupToggle,
+      isHistorySliver: isHistorySliver,
     );
 
     // 由 renderer 渲染纯内容

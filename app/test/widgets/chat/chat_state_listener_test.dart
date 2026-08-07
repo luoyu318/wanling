@@ -75,6 +75,22 @@ ChatMessage _card(String id, String preview) {
   );
 }
 
+/// 聚合卡消息(含 silent 标记,回合结束翻转 true→false)。
+ChatMessage _aggregateCard(String id, {bool silent = false}) {
+  return ChatMessage(
+    id: id,
+    conversationId: 'c1',
+    senderType: 'agent',
+    senderId: 'agent-1',
+    content: {
+      'msg_type': 'aggregate_card',
+      'data': {'state': silent ? 'generating' : 'done', 'elements': const []},
+      if (silent) 'silent': true,
+    },
+    createdAt: DateTime.utc(2026, 7, 15),
+  );
+}
+
 Map<String, dynamic> _streamContent(String text) =>
     {'msg_type': 'markdown', 'data': {'text': text}};
 
@@ -616,6 +632,117 @@ void main() {
       );
       final next = ChatState(
         liveMessages: [_msg('msg-real-1')],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+      WidgetsBinding.instance.scheduleFrame();
+      await tester.pump();
+
+      verifyNever(() => convSync.markRead());
+    });
+  });
+
+  group('聚合卡 silent 翻转补 markRead(server 未读归零)', () {
+    // 聚合卡翻转同时是 content 变化,会触发 (2.5) 卡片跟随 timer(320ms 自停)。
+    // 需提供 scrollController mock 让 timer 内 getScrollCtrl 不 throw,并 pump 走完。
+    _MockScrollController scrollMock() {
+      final scrollCtrl = _MockScrollController();
+      final pos = _MockScrollPosition();
+      when(() => scrollCtrl.hasClients).thenReturn(true);
+      when(() => scrollCtrl.position).thenReturn(pos);
+      when(() => pos.minScrollExtent).thenReturn(0.0);
+      when(() => pos.maxScrollExtent).thenReturn(0.0);
+      when(() => pos.viewportDimension).thenReturn(600.0);
+      return scrollCtrl;
+    }
+
+    testWidgets('贴底 + 聚合卡 silent true→false → 补 markRead', (tester) async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final scrollCtrl = scrollMock();
+      when(() => ref.read(chatProvider((convId: 'c1', agentId: 'agent-1'))))
+          .thenReturn(ChatState(
+            liveMessages: [_aggregateCard('agg-1')],
+            isInitialLoading: false,
+          ));
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: false,
+        convSync: convSync,
+        scrollController: scrollCtrl,
+      ));
+
+      // 聚合卡生成中(silent=true,server 不计未读)
+      final prev = ChatState(
+        liveMessages: [_aggregateCard('agg-1', silent: true)],
+        isInitialLoading: false,
+      );
+      // 回合结束翻转(silent:false,server IncrUnread +1)
+      final next = ChatState(
+        liveMessages: [_aggregateCard('agg-1')],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+      WidgetsBinding.instance.scheduleFrame();
+      await tester.pump();
+      // 走完 (2.5) 卡片跟随 timer(320ms),避免 timersPending 断言失败
+      await tester.pump(const Duration(milliseconds: 400));
+
+      verify(() => convSync.markRead()).called(1);
+    });
+
+    testWidgets('用户已滚动离开 + 聚合卡 silent 翻转 → 不 markRead(保持未读)', (tester) async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: true,
+        convSync: convSync,
+      ));
+
+      final prev = ChatState(
+        liveMessages: [_aggregateCard('agg-1', silent: true)],
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        liveMessages: [_aggregateCard('agg-1')],
+        isInitialLoading: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+      WidgetsBinding.instance.scheduleFrame();
+      await tester.pump();
+
+      verifyNever(() => convSync.markRead());
+    });
+
+    testWidgets('聚合卡无翻转(都 silent 或都 done)→ 不 markRead', (tester) async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final convSync = _MockConvSync();
+      when(() => convSync.markRead()).thenAnswer((_) async {});
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: false,
+        convSync: convSync,
+      ));
+
+      // 生成中→生成中(无翻转)
+      final prev = ChatState(
+        liveMessages: [_aggregateCard('agg-1', silent: true)],
+        isInitialLoading: false,
+      );
+      final next = ChatState(
+        liveMessages: [_aggregateCard('agg-1', silent: true)],
         isInitialLoading: false,
       );
 

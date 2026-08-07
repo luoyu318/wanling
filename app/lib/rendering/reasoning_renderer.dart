@@ -42,15 +42,19 @@ class ReasoningRenderer implements MessageContentRenderer {
   Widget build(BuildContext context, Map<String, dynamic> content, MessageRenderContext rc) {
     final data = content['data'];
     final text = (data is Map ? data['text'] : null) as String? ?? '';
-    if (text.isEmpty) return const SizedBox.shrink();
 
     // 元素级终态标记:false/缺失 → 按卡片流式态决定;true → 已终态,显示真实内容。
     final finished = (data is Map ? data['finished'] : null) as bool? ?? false;
     // 思考耗时(秒):plugin reasoning 元素终态携带(part.time.end - start,对齐 TUI)。
     final duration = (data is Map ? data['duration'] : null) as num?;
+
+    // 流式思考中:text 可能为空(流式占位无文本),但必须渲染「正在思考...」流式卡,
+    // 否则聚合卡首元素(思考块)空白 → 整卡内容空直到思考完成才显示。
     if (rc.isStreaming && !finished) {
       return _StreamingReasoningCard(text: text);
     }
+    // 非流式 + 空文本:无内容可展示(异常/历史占位),返回空。
+    if (text.isEmpty) return const SizedBox.shrink();
     return _StaticReasoningCard(text: text, duration: duration);
   }
 }

@@ -12,8 +12,18 @@ Map<String, dynamic> tool(String id, String name, {String status = 'completed'})
   };
 }
 
-MessageRenderContext rc({bool streaming = false}) => MessageRenderContext(
-      isMe: false, baseUrl: '', token: '', isDark: false, isStreaming: streaming,
+MessageRenderContext rc({
+  bool streaming = false,
+  void Function(GlobalKey key, bool expanded, double topDelta, bool isHistory)?
+      onToolGroupToggle,
+}) =>
+    MessageRenderContext(
+      isMe: false,
+      baseUrl: '',
+      token: '',
+      isDark: false,
+      isStreaming: streaming,
+      onToolGroupToggle: onToolGroupToggle,
     );
 
 Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -130,6 +140,29 @@ void main() {
       final cards = [tool('r1', 'read')];
       await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
       expect(find.byType(ShimmerText), findsNothing);
+    });
+
+    testWidgets('点击展开触发 onToolGroupToggle(带 key/expanded/topDelta/isHistory)', (tester) async {
+      final cards = [tool('r1', 'read')];
+      GlobalKey? cbKey;
+      bool? cbExpanded;
+      double? cbTopDelta;
+      bool? cbIsHistory;
+      final ctx = rc(onToolGroupToggle: (k, e, delta, isHistory) {
+        cbKey = k;
+        cbExpanded = e;
+        cbTopDelta = delta;
+        cbIsHistory = isHistory;
+      });
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: ctx)));
+      await tester.tap(find.text('已探索 1次读取'));
+      await tester.pump();
+      expect(cbKey, isNotNull);
+      expect(cbExpanded, isTrue);
+      // 展开:topDelta = -内容高度(history 反向向上长),为负
+      expect(cbTopDelta, isA<double>());
+      expect(cbTopDelta!, lessThan(0));
+      expect(cbIsHistory, isFalse); // 默认 live/非 history
     });
   });
 }

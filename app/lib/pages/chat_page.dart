@@ -634,6 +634,31 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return _loadMoreController.onScrollNotification(n);
   }
 
+  /// 聚合卡工具折叠组展开/收起时的滚动补偿。
+  ///
+  /// 同步方案:ToolGroupCard 展开内容始终渲染(heightFactor 控制视觉高度),
+  /// 点击时同步测出展开内容真实高度,回调传 [topDelta](= ±高度)。
+  /// history sliver 反向列表下,展开内容向上长 → 折叠框 top 上移 topDelta,
+  /// 要让视觉锚点不动,offset 需补偿 pixels + topDelta(展开 topDelta<0 往上滚,
+  /// 收起 topDelta>0 往下滚)。
+  ///
+  /// 在同一帧 jumpTo(瞬时):ToolGroupCard 的 setState 与本次 jumpTo 同步排队,
+  /// 下一帧 build 时 offset 已就位 + 内容已展开 → 视觉锚点不动、无补间动画、
+  /// 无 postFrame 一帧跳变。
+  ///
+  /// 仅 history sliver 需要补偿:live sliver 正向展开/收起内容自然,补偿会破坏
+  /// 原有锚定。由 [isHistory] 区分。
+  void _onToolGroupToggle(
+      GlobalKey key, bool _, double topDelta, bool isHistory) {
+    if (!isHistory || !_scrollCtrl.hasClients) return;
+    if (topDelta.abs() < 0.5) return; // 无高度变化,无需补偿
+    final pos = _scrollCtrl.position;
+    final target =
+        (pos.pixels + topDelta)
+            .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    _scrollCtrl.jumpTo(target);
+  }
+
   /// 重算打字态(busy/retry 也视作占位,与 typing 共用同一个 trailing 插槽)。
   /// generating 聚合卡存在时抑制气泡:聚合卡自身承载生成状态,无需重复 dots。
   void _refreshExtraItems() {
@@ -1028,7 +1053,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       fileController: _fileController,
       jumpController: _jumpController,
       ref: ref,
+      onToolGroupToggle: _onToolGroupToggle,
     );
+    // history sliver(反向列表):折叠展开需滚动补偿,isHistorySliver=true。
+    // live sliver(正向):展开自然向下,无需补偿,用默认 false。
+    final historyItemCtx = itemCtx.copyWith(isHistorySliver: true);
 
     // PopScope:多选模式拦截返回键(优先退出多选,而非离开页面)。
     return PopScope(
@@ -1095,7 +1124,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   (ctx, i) => ChatMessageItemBuilder.buildMessage(
                                     ctx,
                                     chatState.historyMessages[i],
-                                    itemCtx,
+                                    historyItemCtx,
                                     olderNeighbor:
                                         (i + 1 <
                                                 chatState

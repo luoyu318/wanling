@@ -4,6 +4,15 @@ import 'package:app/rendering/message_content_renderer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// 判断文本是否可命中(高度被裁剪为 0 时不可点,但 widget 仍在树里)。
+/// 聚合卡折叠组收起时内容用 Align(heightFactor:0)+ClipRect 裁剪(用于同步补偿
+/// 测量),文本节点存在但渲染面积 0,不能靠 findsNothing 断言。
+bool _isTextTappable(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  if (finder.evaluate().isEmpty) return false;
+  return finder.hitTestable().evaluate().isNotEmpty;
+}
+
 Map<String, dynamic> questionCardData({String status = 'pending'}) {
   return {
     'status': status,
@@ -183,13 +192,14 @@ void main() {
           }),
         ],
       )));
-      // 收起态:折叠行,不显示工具详情
+      // 收起态:折叠行,工具详情被高度裁剪不可见(仍布局用于同步补偿测量)
       expect(find.text('已执行 1次命令'), findsOneWidget);
-      expect(find.text('Bash'), findsNothing);
+      expect(_isTextTappable(tester, 'Bash'), isFalse);
       // 点击展开后显示工具卡详情
       await tester.tap(find.text('已执行 1次命令'));
       await tester.pump();
       expect(find.text('Bash'), findsOneWidget);
+      expect(_isTextTappable(tester, 'Bash'), isTrue);
       expect(find.text('命令失败'), findsOneWidget);
     });
 
@@ -398,8 +408,8 @@ void main() {
         ],
       )));
       expect(find.text('已执行 2次命令'), findsOneWidget);
-      // 收起态不展开工具详情
-      expect(find.text('Bash'), findsNothing);
+      // 收起态工具详情被高度裁剪不可见(仍布局用于同步补偿测量)
+      expect(_isTextTappable(tester, 'Bash'), isFalse);
     });
 
     testWidgets('点击折叠卡展开显示工具卡详情', (tester) async {

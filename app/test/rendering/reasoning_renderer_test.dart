@@ -84,6 +84,19 @@ void main() {
       expect(find.byType(SizedBox), findsOneWidget);
       expect(find.byType(Container), findsNothing);
     });
+
+    testWidgets('流式空文本渲染「正在思考...」(首元素思考块不空白)', (tester) async {
+      await tester.pumpWidget(host(text: '', isStreaming: true));
+      // 流式思考中 text 可能为空(流式占位无文本),仍渲染流式卡而非 SizedBox.shrink,
+      // 否则聚合卡首元素思考块空白 → 整卡内容空直到思考完成才显示。
+      expect(find.text('正在思考...'), findsOneWidget);
+      // 无 SizedBox.shrink(空守卫占位);流式卡内部有固定尺寸 SizedBox(图标/间距)是正常的
+      expect(
+        tester.widgetList<SizedBox>(find.byType(SizedBox)).any((s) =>
+            s.width == null && s.height == null),
+        isFalse,
+      );
+    });
   });
 
   group('ReasoningRenderer 流式态 (isStreaming=true)', () {
