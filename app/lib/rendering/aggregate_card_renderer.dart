@@ -139,6 +139,10 @@ class AggregateCardRenderer implements MessageContentRenderer {
       openGallery: rc.openGallery,
       onFileTap: rc.onFileTap,
       fileDownloadSnapshots: rc.fileDownloadSnapshots,
+      // 折叠展开滚动补偿:透传给聚合卡内可折叠元素(todowrite/权限卡终态等),
+      // 让它们展开/收起时同帧上报 ChatPage jumpTo 补偿(history 反向列表)。
+      onToolGroupToggle: rc.onToolGroupToggle,
+      isHistorySliver: rc.isHistorySliver,
       isStreaming: interactive ? false : generating,
     );
 

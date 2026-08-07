@@ -7,6 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
+/// 判断文本是否可命中(高度被裁剪为 0 时不可点,但 widget 仍在树里)。
+/// 折叠卡收起时内容用 Align(heightFactor:0)+ClipRect 裁剪,文本节点存在但
+/// 渲染面积 0,不能靠 findsNothing 断言。
+bool _isTextTappable(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  if (finder.evaluate().isEmpty) return false;
+  return finder.hitTestable().evaluate().isNotEmpty;
+}
+
 void main() {
   setUpAll(() {
     registerBuiltinRenderers();
@@ -170,6 +179,95 @@ void main() {
 
       expect(find.text('Read'), findsOneWidget);
       expect(find.text('完成'), findsOneWidget);
+    });
+
+    testWidgets('todowrite 渲染任务清单折叠卡(不隐藏)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'todowrite',
+                input: {
+                  'todos': [
+                    {'content': '任务A', 'status': 'completed'},
+                    {'content': '任务B', 'status': 'pending'},
+                  ],
+                },
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      // 无工具卡外壳,直接折叠行:已完成 x/y 项
+      expect(find.text('Todowrite'), findsNothing);
+      expect(find.text('已完成 1/2 项'), findsOneWidget);
+      // 折叠态:任务行被高度裁剪不可点
+      expect(_isTextTappable(tester, '任务A'), isFalse);
+      // 点击标题展开 → 任务列表可见(等 AnimatedSize 动画结束)
+      await tester.tap(find.text('已完成 1/2 项'));
+      await tester.pumpAndSettle();
+      expect(_isTextTappable(tester, '任务A'), isTrue);
+      expect(_isTextTappable(tester, '任务B'), isTrue);
+    });
+
+    testWidgets('edit input 拆上下两框:改前/改后各一容器且单行预览', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'edit',
+                input: {
+                  'filePath': 'main.go',
+                  'oldString': 'line1\nline2\nline3\nline4',
+                  'newString': 'new1\nnew2\nnew3\nnew4',
+                },
+                output: 'edited',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      // 改前框:单行 Text 含 - 前缀(红),改后框:单行 Text 含 + 前缀(绿)
+      final oldText = tester.widget<Text>(find.textContaining('- line1'));
+      final newText = tester.widget<Text>(find.textContaining('+ new1'));
+      expect(oldText.maxLines, 1);
+      expect(newText.maxLines, 1);
+      expect(oldText.overflow, TextOverflow.ellipsis);
+      expect(newText.overflow, TextOverflow.ellipsis);
+      // 两个框都存在(改前红 / 改后绿)
+      expect(find.textContaining('- line1'), findsOneWidget);
+      expect(find.textContaining('+ new1'), findsOneWidget);
+    });
+
+    testWidgets('completed output 短文本单行 + 长文本走截断', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(status: 'completed', name: 'bash', input: {'command': 'ls'}, output: 'total 100'),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      final outputText = tester.widget<Text>(find.text('total 100'));
+      expect(outputText.maxLines, 1);
+      expect(outputText.overflow, TextOverflow.ellipsis);
     });
 
     testWidgets('未识别工具名 + 非空 input 走 TruncatableTextBlock fallback', (tester) async {

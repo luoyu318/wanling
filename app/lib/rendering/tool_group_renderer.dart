@@ -46,16 +46,12 @@ ToolCategory? categoryOfTool(Map<String, dynamic> card) {
   }
 }
 
-/// 是否隐藏(对齐官方 HIDDEN_TOOLS,只隐藏 todowrite)。
-bool isHiddenTool(Map<String, dynamic> card) =>
-    ((card['data'] as Map?)?['name'] as String?) == 'todowrite';
-
 /// 分组器(纯函数):把聚合卡平铺 elements 按「折叠类别 + 连续性」切组。
 ///
 /// 对齐 opencode `groupParts`:同一折叠类别的工具物理连续(中间无任何
 /// 其他元素)合并成同一折叠组;类别切换即拆组;单条也折叠(N=1)。
-/// 隐藏工具(todowrite)直接跳过;平铺元素(reasoning/markdown/footer/
-/// compact_divider/交互卡/task/webfetch)单独成 SingleElementSlot。
+/// 平铺元素(reasoning/markdown/footer/compact_divider/交互卡/task/webfetch/
+/// todowrite)单独成 SingleElementSlot。
 List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
   final slots = <ElementSlot>[];
   var group = <Map<String, dynamic>>[];
@@ -73,7 +69,6 @@ List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
       slots.add(SingleElementSlot(e));
       continue;
     }
-    if (isHiddenTool(e)) continue; // todowrite 隐藏
     final category = categoryOfTool(e);
     if (category == null) {
       flush();

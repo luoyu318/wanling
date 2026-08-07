@@ -46,12 +46,14 @@ class ToolResultRenderer implements MessageContentRenderer {
           if (output.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
             if (output.length <= 80)
-              Text(output, style: const TextStyle(fontSize: 12, color: Color(0xFF07C160)))
+              Text(output, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF07C160)))
             else
               TruncatableTextBlock(
                 text: output,
                 sheetTitle: Text(capitalize(name), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
                 textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+                maxLines: 1,
               ),
           ],
         ],

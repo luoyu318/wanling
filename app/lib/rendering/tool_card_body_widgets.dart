@@ -21,8 +21,7 @@ class BashBody extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(4)),
-            constraints: const BoxConstraints(maxHeight: 56),
-            child: Text('\$ $command', maxLines: 3, overflow: TextOverflow.ellipsis,
+            child: Text('\$ $command', maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF4FC3F7))),
           ),
           if (workdir.isNotEmpty)
@@ -66,13 +65,6 @@ class EditBody extends StatelessWidget {
     final newStr = (input['newString'] as String?) ?? '';
     if (oldStr.isEmpty && newStr.isEmpty) return const SizedBox.shrink();
     final filePath = (input['filePath'] as String?) ?? '';
-    final lines = <String>[];
-    for (final l in oldStr.split('\n').take(3)) {
-      lines.add('- $l');
-    }
-    for (final l in newStr.split('\n').take(3)) {
-      lines.add('+ $l');
-    }
     return GestureDetector(
       onTap: () => _showDetail(context, oldStr, newStr, filePath),
       child: Column(
@@ -81,26 +73,36 @@ class EditBody extends StatelessWidget {
         children: [
           if (filePath.isNotEmpty)
             Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(basename(filePath), style: const TextStyle(fontSize: 11, color: Color(0xFF999999)))),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: lines.map((l) {
-                final isAdd = l.startsWith('+ ');
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 1),
-                  child: Text(l, style: TextStyle(
-                    fontFamily: 'monospace', fontSize: 11,
-                    color: isAdd ? const Color(0xFF07C160) : const Color(0xFFFA5151),
-                  )),
-                );
-              }).toList(),
+          // 改前框:旧内容单行预览(红字 - 前缀)
+          if (oldStr.isNotEmpty)
+            _editPreviewBox(
+              lines: oldStr.split('\n').map((l) => '- $l').toList(),
+              color: const Color(0xFFFA5151),
             ),
-          ),
+          if (newStr.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            // 改后框:新内容单行预览(绿字 + 前缀)
+            _editPreviewBox(
+              lines: newStr.split('\n').map((l) => '+ $l').toList(),
+              color: const Color(0xFF07C160),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  /// 编辑单行预览框:灰底容器,内容限一行(换行压平 + 超长 ellipsis),点击弹抽屉看全 diff。
+  Widget _editPreviewBox({required List<String> lines, required Color color}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+      child: Text(
+        lines.join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: color),
       ),
     );
   }
@@ -175,19 +177,15 @@ class GrepBody extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text.rich(TextSpan(children: [
-              const TextSpan(text: 'pattern: ', style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF333333))),
-              TextSpan(text: pattern, style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFFFA8C16))),
-            ])),
-            if (path.isNotEmpty)
-              Text('scope: ${basename(path)}', style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666))),
-            if (include.isNotEmpty)
-              Text('include: $include', style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF999999))),
-          ],
+        child: Text(
+          [
+            if (pattern.isNotEmpty) 'pattern: $pattern',
+            if (path.isNotEmpty) 'scope: ${basename(path)}',
+            if (include.isNotEmpty) 'include: $include',
+          ].join(' · '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFFFA8C16)),
         ),
       ),
     );
@@ -243,73 +241,69 @@ class GlobBody extends StatelessWidget {
 }
 
 // ─── todowrite ────────────────────────────────────
-class TodoBody extends StatelessWidget {
+/// todowrite 任务清单:折叠组风格。
+/// 标题行 = 图标 + 「已完成 x/y 项」+ 箭头;点击展开/收起任务列表。
+/// 展开内容始终渲染(Align heightFactor 收起时视觉高度 0),与聚合卡折叠组交互一致。
+class TodoBody extends StatefulWidget {
   final Map<String, dynamic> input;
   const TodoBody({super.key, required this.input});
 
   @override
+  State<TodoBody> createState() => _TodoBodyState();
+}
+
+class _TodoBodyState extends State<TodoBody> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final todos = input['todos'] as List<dynamic>? ?? [];
+    final todos = widget.input['todos'] as List<dynamic>? ?? [];
     if (todos.isEmpty) return const SizedBox.shrink();
     final completed = todos.where((t) {
       final todo = t as Map<String, dynamic>?;
       return todo?['status'] == 'completed';
     }).length;
-    return GestureDetector(
-      onTap: () => _showDetail(context, todos),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text('$completed/${todos.length} 完成', style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Row(
+            children: [
+              const Icon(Icons.checklist_rounded, size: 16, color: Color(0xFF07C160)),
+              const SizedBox(width: 6),
+              Text(
+                '已完成 $completed/${todos.length} 项',
+                style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+              ),
+              const Spacer(),
+              Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 16,
+                color: const Color(0xFFBBBBBB),
+              ),
+            ],
           ),
-          ...todos.take(3).map((t) => _todoRow(t as Map<String, dynamic>?)),
-          if (todos.length > 3)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('共 ${todos.length} 项 · 点击查看全部', style: const TextStyle(fontSize: 11, color: Color(0xFF5B8BF7))),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _todoRow(Map<String, dynamic>? todo) {
-    if (todo == null) return const SizedBox.shrink();
-    final status = (todo['status'] as String?) ?? 'pending';
-    final content = (todo['content'] as String?) ?? '';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _todoIcon(status, size: 13),
-          Expanded(
-            child: Text(content, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13,
-                color: status == 'completed' ? const Color(0xFF999999) : (status == 'in_progress' ? const Color(0xFF333333) : const Color(0xFFAAAAAA)),
-                decoration: status == 'completed' ? TextDecoration.lineThrough : null,
+        ),
+        // 展开内容始终渲染:Align(heightFactor) 收起时视觉高度 0(不占位)。
+        ClipRect(
+          child: Align(
+            alignment: Alignment.topCenter,
+            heightFactor: _expanded ? 1.0 : 0.0,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final t in todos)
+                    _todoRowFull(t as Map<String, dynamic>?),
+                ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  void _showDetail(BuildContext context, List<dynamic> todos) {
-    showDetailSheet(context,
-      title: const Row(children: [
-        Text('📋 ', style: TextStyle(fontSize: 16)),
-        Text('任务清单', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
-      ]),
-      body: ListView.builder(
-        shrinkWrap: true, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: todos.length,
-        itemBuilder: (_, i) => _todoRowFull(todos[i] as Map<String, dynamic>?),
-      ),
+        ),
+      ],
     );
   }
 
@@ -373,7 +367,7 @@ class WriteBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final filePath = (input['filePath'] as String?) ?? '';
     final content = (input['content'] as String?) ?? '';
-    final preview = content.split('\n').take(3).join('\n');
+    final preview = content.split('\n').join(' ');
     return GestureDetector(
       onTap: () => _showDetail(context, filePath, content),
       child: Column(
@@ -387,7 +381,7 @@ class WriteBody extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
-            child: Text(preview, maxLines: 3, overflow: TextOverflow.ellipsis,
+            child: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666))),
           ),
         ],

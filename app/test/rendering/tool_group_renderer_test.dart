@@ -62,10 +62,12 @@ void main() {
       expect((groups.first as ToolGroupSlot).cards.length, 1);
     });
 
-    test('todowrite 隐藏不产出 Slot', () {
+    test('todowrite 平铺不折叠(不再隐藏)', () {
       final groups = groupAggregateElements([tool('t1', 'todowrite'), tool('t2', 'read')]);
-      expect(groups.length, 1);
-      expect(((groups[0] as ToolGroupSlot).cards.single['data'] as Map)['name'], 'read');
+      expect(groups.length, 2);
+      expect(groups[0], isA<SingleElementSlot>());
+      expect(((groups[0] as SingleElementSlot).element['data'] as Map)['name'], 'todowrite');
+      expect(groups[1], isA<ToolGroupSlot>());
     });
 
     test('webfetch/task 平铺不折叠', () {

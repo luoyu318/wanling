@@ -91,7 +91,12 @@ void main() {
     };
   }
 
-  Widget host(Map<String, dynamic> c, {String outerMessageId = ''}) {
+  Widget host(
+    Map<String, dynamic> c, {
+    String outerMessageId = '',
+    void Function(GlobalKey key, bool expanded, double topDelta, bool isHistory)?
+        onToolGroupToggle,
+  }) {
     return MaterialApp(
       home: Scaffold(
         body: Builder(
@@ -105,6 +110,7 @@ void main() {
               token: 'test',
               isDark: false,
               messageId: outerMessageId,
+              onToolGroupToggle: onToolGroupToggle,
             ),
           ),
         ),
@@ -341,7 +347,7 @@ void main() {
       expect(find.text('点击回答 →'), findsNothing);
     });
 
-    testWidgets('permission_card 元素终态(approved)渲染结果摘要,不可操作', (tester) async {
+    testWidgets('permission_card 元素终态(approved)渲染折叠外壳+结果,不可操作', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
@@ -349,8 +355,16 @@ void main() {
               permissionCardData(status: 'approved')),
         ],
       )));
-      expect(find.text('已批准（始终）'), findsOneWidget);
+      // 折叠外壳标题行存在:权限审批 · 执行命令(标题行 + 原卡展开区各一份)
+      expect(find.text('权限审批 · 执行命令'), findsWidgets);
+      // 终态不可操作
       expect(find.text('点击处理 →'), findsNothing);
+      // 折叠态:展开区(原卡 command 详情)高度裁剪不可点
+      expect(_isTextTappable(tester, 'ls'), isFalse);
+      // 点击标题展开 → 原卡 command 详情可见
+      await tester.tap(find.text('权限审批 · 执行命令').first);
+      await tester.pumpAndSettle();
+      expect(_isTextTappable(tester, 'ls'), isTrue);
     });
 
     testWidgets('交互元素不派生 isStreaming（generating 期间仍可交互）', (tester) async {
@@ -469,6 +483,45 @@ void main() {
       expect(find.textContaining('次命令'), findsNothing);
       expect(find.textContaining('次读取'), findsNothing);
       expect(find.text('调研'), findsOneWidget);
+    });
+
+    testWidgets('聚合卡内嵌 todowrite 展开触发 onToolGroupToggle(滚动补偿透传)', (tester) async {
+      GlobalKey? cbKey;
+      bool? cbExpanded;
+      double? cbTopDelta;
+      bool? cbIsHistory;
+      await tester.pumpWidget(host(
+        content(
+          state: 'done',
+          elements: [
+            element('tool_card', 'tool_card_1', {
+              'name': 'todowrite',
+              'status': 'completed',
+              'input': {
+                'todos': [
+                  {'content': '任务A', 'status': 'completed'},
+                  {'content': '任务B', 'status': 'pending'},
+                ],
+              },
+            }),
+          ],
+        ),
+        onToolGroupToggle: (k, e, delta, isHistory) {
+          cbKey = k;
+          cbExpanded = e;
+          cbTopDelta = delta;
+          cbIsHistory = isHistory;
+        },
+      ));
+      // 折叠标题行可见
+      expect(find.text('已完成 1/2 项'), findsOneWidget);
+      // 点击展开 → 触发回调(展开 delta 为负,history 反向向上顶)
+      await tester.tap(find.text('已完成 1/2 项'));
+      await tester.pump();
+      expect(cbKey, isNotNull);
+      expect(cbExpanded, isTrue);
+      expect(cbTopDelta, isA<double>());
+      expect(cbTopDelta!, lessThanOrEqualTo(0));
     });
   });
 
