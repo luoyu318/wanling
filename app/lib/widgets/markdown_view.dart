@@ -35,13 +35,22 @@ class MarkdownView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 修复系统字体调大时块级元素(列表/引用/代码/表格)双重缩放:
+    // markdown_widget 的块级节点用 WidgetSpan 内嵌 ProxyRichText,若外层 Text.rich
+    // 与内层 ProxyRichText 都继承 MediaQuery textScaler,会 2×2 叠加(实测列表
+    // 在 textScaler=2 时高度 439px vs 正常 66px)。
+    // 方案:整体 withNoTextScaling(内嵌 WidgetSpan 块节点不再缩放),外层
+    // Text.rich 手动传回系统 textScaler(纯段落 TextSpan 单次跟随系统字体)。
+    final scaler = MediaQuery.textScalerOf(context);
     final spans = _buildSpans();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final span in spans) Text.rich(span),
-      ],
+    return MediaQuery.withNoTextScaling(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final span in spans) Text.rich(span, textScaler: scaler),
+        ],
+      ),
     );
   }
 

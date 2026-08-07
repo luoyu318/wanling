@@ -186,4 +186,33 @@ void main() {
       expect(find.byType(Image), findsNothing);
     });
   });
+
+  group('textScaler 单次缩放(防双重缩放)', () {
+    testWidgets('系统字体 2x 时列表不双倍放大(仅单次跟随)', (tester) async {
+      final listKey = GlobalKey();
+      await tester.pumpWidget(MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: Scaffold(
+            body: SizedBox(
+              width: 300,
+              child: Builder(
+                builder: (ctx) => MarkdownView(
+                  key: listKey,
+                  data: '- 列表项一\n- 列表项二',
+                  config: markdownStyle(isDark: false, isMe: false, context: ctx),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+      // 2 行列表单次 2x 期望 < 150px;双倍缩放 bug 是 439px
+      final h = tester.getSize(find.byKey(listKey)).height;
+      expect(h, lessThan(150), reason: '列表不应双重缩放,实际 $h');
+    });
+  });
 }
