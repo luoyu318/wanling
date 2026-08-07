@@ -117,6 +117,17 @@ void main() {
     });
   });
 
+  group('外壳样式', () {
+    testWidgets('外壳:无整圈边框,带阴影', (tester) async {
+      await tester.pumpWidget(host(content(elements: [])));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      expect(deco.border, isNull); // 无边框
+      expect(deco.boxShadow, isNotNull); // 有阴影
+      expect(deco.boxShadow!.single.blurRadius, 8);
+    });
+  });
+
   group('元素分派（复用 ContentRendererRegistry）', () {
     testWidgets('markdown 元素渲染正文', (tester) async {
       await tester.pumpWidget(host(content(

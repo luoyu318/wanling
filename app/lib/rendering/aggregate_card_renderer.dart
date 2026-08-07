@@ -46,50 +46,64 @@ class AggregateCardRenderer implements MessageContentRenderer {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
+      // 左上角直角(对齐头像起始),其余三角 12px 圆角;无边框,阴影浮起(0x1A = 10% 黑)
+      decoration: const BoxDecoration(
         color: Colors.white,
-        // 左上角直角(对齐头像起始),其余三角 10px 圆角
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.zero,
+          topRight: Radius.circular(12),
+          bottomLeft: Radius.circular(12),
+          bottomRight: Radius.circular(12),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x1A000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
         borderRadius: const BorderRadius.only(
           topLeft: Radius.zero,
-          topRight: Radius.circular(10),
-          bottomLeft: Radius.circular(10),
-          bottomRight: Radius.circular(10),
+          topRight: Radius.circular(12),
+          bottomLeft: Radius.circular(12),
+          bottomRight: Radius.circular(12),
         ),
-        border: Border.all(color: const Color(0xFFE8E8E8)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 顶栏去除后顶部留白:首元素自带上边距 4,补 6 让卡片顶部视觉不挤
-          const SizedBox(height: 6),
-          for (final slot in slots)
-            switch (slot) {
-              ToolGroupSlot(:final cards) => Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                  child: ToolGroupCard(cards: cards, rc: rc),
-                ),
-              SingleElementSlot(:final element) =>
-                // finished footer 元素由底部状态条代替渲染(不重复走 step_finish)
-                !_isFinishedFooter(element)
-                    ? _buildElement(context, element, rc, generating: generating)
-                    : const SizedBox.shrink(),
-            },
-          // footer 状态条:generating→动态阶段词;done+finished footer→静态信息条
-          if (generating)
-            FooterStatusBar(
-              generating: true,
-              elements: elements,
-              footerData: const {},
-            )
-          else if (_hasFinishedFooter(elements))
-            FooterStatusBar(
-              generating: false,
-              elements: elements,
-              footerData: _finishedFooterData(elements),
-            ),
-        ],
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 顶栏去除后顶部留白:首元素自带上边距 4,补 6 让卡片顶部视觉不挤
+            const SizedBox(height: 6),
+            for (final slot in slots)
+              switch (slot) {
+                ToolGroupSlot(:final cards) => Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                    child: ToolGroupCard(cards: cards, rc: rc),
+                  ),
+                SingleElementSlot(:final element) =>
+                  // finished footer 元素由底部状态条代替渲染(不重复走 step_finish)
+                  !_isFinishedFooter(element)
+                      ? _buildElement(context, element, rc, generating: generating)
+                      : const SizedBox.shrink(),
+              },
+            // footer 状态条:generating→动态阶段词;done+finished footer→静态信息条
+            if (generating)
+              FooterStatusBar(
+                generating: true,
+                elements: elements,
+                footerData: const {},
+              )
+            else if (_hasFinishedFooter(elements))
+              FooterStatusBar(
+                generating: false,
+                elements: elements,
+                footerData: _finishedFooterData(elements),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -153,13 +167,13 @@ class AggregateCardRenderer implements MessageContentRenderer {
     );
   }
 
-  /// 压缩分隔线：元素间视觉分段（自绘细线，不引入 Divider 默认上下间距）。
+  /// 压缩分隔线:元素间视觉分段(自绘细线,不引入 Divider 默认上下间距)。
   Widget _buildCompactDivider() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Container(
         height: 1,
-        color: const Color(0xFFEEEEEE),
+        color: const Color(0xFFF5F5F5),
       ),
     );
   }
