@@ -470,3 +470,53 @@ describe("PartDispatcher 聚合卡开关回退(AGGREGATE_CARD_ENABLED=false)", (
     expect(router.send).not.toHaveBeenCalled()
   })
 })
+
+describe("PartDispatcher 两轮对话跨轮残留(首条 thinking 占位)", () => {
+  it("第二轮 reasoning 流式占位应重新 append(aggregateStreamedElementIds 已随收尾清空)", async () => {
+    const { partDispatcher, wanling, state } = makeFixture()
+    wanling.sendCardMessage.mockResolvedValue("card-1")
+    wanling.patchAggregateMessage.mockResolvedValue(undefined)
+
+    // 第一轮:reasoning 流式首帧 → 占位 append reasoning_1
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "reasoning", id: "p-r1", text: "", time: { start: 1 } },
+      time: 1,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-1", partID: "p-r1", field: "text", delta: "想",
+    })
+    await vi.waitFor(() => {
+      expect(wanling.sendStream).toHaveBeenCalled()
+    })
+    // reasoning 终态 + 收尾(finalizeCard 模拟)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "reasoning", id: "p-r1", text: "第一轮思考", time: { start: 1, end: 2 } },
+      time: 2,
+    })
+    // 模拟 finalizeCard 收尾(footer + set_state done + set_silent false + reset)
+    const manager = new AggregateCardManager(wanling as any, state)
+    await manager.finalizeCard({ reason: "stop", duration: 1000 })
+    // 验证收尾后 aggregateStreamedElementIds 已清空(防跨轮残留)
+    expect(state.aggregateStreamedElementIds).toBeUndefined()
+
+    // 第二轮:reasoning 流式首帧(seq 归零后仍为 reasoning_1)
+    await partDispatcher.onPartUpdated({
+      sessionID: "sess-1",
+      part: { type: "reasoning", id: "p-r2", text: "", time: { start: 10 } },
+      time: 10,
+    })
+    partDispatcher.onPartDelta({
+      sessionID: "sess-1", messageID: "m-2", partID: "p-r2", field: "text", delta: "再",
+    })
+    // 第二轮占位 append 应存在(说明 Set 未残留阻塞):等调用次数达到 2
+    // (第一轮占位 + 第二轮占位各一次),而非等「任一匹配调用」(会被第一轮立即满足)。
+    await vi.waitFor(() => {
+      const appendCalls = wanling.patchAggregateMessage.mock.calls.filter(
+        ([, b]) => b.op === "append" && b.element?.element_id === "reasoning_1",
+      )
+      expect(appendCalls.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+})

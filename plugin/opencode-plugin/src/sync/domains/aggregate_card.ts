@@ -357,6 +357,12 @@ export class AggregateCardManager {
       this.state.aggregateCardInflight = undefined
       this.state.aggregateSeq = undefined
       this.state.aggregateElements = undefined
+      // 流式占位去重 Set 一并清空:aggregateSeq 归零后下一轮 element_id 会复用
+      // (reasoning_1 / markdown_1),若残留会阻塞新卡首元素占位 append(ensureStreamElement
+      // 命中 Set 直接 return),导致跨轮首条 thinking 空白直到终态才显示。
+      this.state.aggregateStreamedElementIds = undefined
+      this.state.aggregatePendingUpdates = undefined
+      this.state.aggregateToolElementIds = undefined
     })
     // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
     this.state.aggregatePatchQueue = next.catch(() => {})
