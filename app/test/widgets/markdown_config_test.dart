@@ -17,7 +17,7 @@ void main() {
       );
 
   group('markdownStyle 标题规格（亮色）', () {
-    testWidgets('H1 = 14/w500/#1A365D', (tester) async {
+    testWidgets('H1 = 16/w500/#1A365D', (tester) async {
       late final MarkdownConfig style;
       await tester.pumpWidget(
         MaterialApp(
@@ -30,12 +30,12 @@ void main() {
         ),
       );
       final h1 = style.h1;
-      expect(h1.style.fontSize, 14);
+      expect(h1.style.fontSize, 16);
       expect(h1.style.fontWeight, FontWeight.w500);
       expect(h1.style.color, const Color(0xFF1A365D));
     });
 
-    testWidgets('H2 = 14/w500/#2C5282', (tester) async {
+    testWidgets('H2 = 16/w500/#2C5282', (tester) async {
       late final MarkdownConfig style;
       await tester.pumpWidget(
         MaterialApp(
@@ -48,12 +48,12 @@ void main() {
         ),
       );
       final h2 = style.h2;
-      expect(h2.style.fontSize, 14);
+      expect(h2.style.fontSize, 16);
       expect(h2.style.fontWeight, FontWeight.w500);
       expect(h2.style.color, const Color(0xFF2C5282));
     });
 
-    testWidgets('H3 = 14/w500/#2B6CB0', (tester) async {
+    testWidgets('H3 = 16/w500/#2B6CB0', (tester) async {
       late final MarkdownConfig style;
       await tester.pumpWidget(
         MaterialApp(
@@ -66,7 +66,7 @@ void main() {
         ),
       );
       final h3 = style.h3;
-      expect(h3.style.fontSize, 14);
+      expect(h3.style.fontSize, 16);
       expect(h3.style.fontWeight, FontWeight.w500);
       expect(h3.style.color, const Color(0xFF2B6CB0));
     });

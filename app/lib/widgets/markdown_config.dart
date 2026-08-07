@@ -34,7 +34,7 @@ bool _isInternalFileUrl(String url, String baseUrl) {
 /// 聊天气泡用的 markdown 渲染样式（极简墨白风格）。
 ///
 /// 特征:
-/// - 正文 14px、行高 1.2(全元素统一字号,标题靠颜色区分层级)
+/// - 正文 16px、行高 1.5(全元素统一字号,标题靠颜色区分层级)
 /// - 标题墨黑/粗体,层级靠颜色区分,**不带底部分割横线**
 /// - 代码块:浅灰底圆角 6 + flutter_highlight 高亮 + 右上角复制按钮(无语言标签)
 /// - 引用块灰条
@@ -70,7 +70,7 @@ MarkdownConfig markdownStyle({
   final preBase = isDark ? PreConfig.darkConfig : const PreConfig();
   final base = isDark ? MarkdownConfig.darkConfig : MarkdownConfig.defaultConfig;
   return base.copy(configs: [
-    PConfig(textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w400, height: 1.2, color: ink)),
+    PConfig(textStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.w400, height: 1.5, color: ink)),
     // 行内代码:绿色 #00B176 + 无背景(透明覆盖默认灰底) + 等宽
     const CodeConfig(style: TextStyle(
       color: AppColors.mdLink,
@@ -82,32 +82,32 @@ MarkdownConfig markdownStyle({
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h1,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH1, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH1, height: 1.5),
     ),
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h2,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH2, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH2, height: 1.5),
     ),
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h3,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH3, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH3, height: 1.5),
     ),
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h4,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH3, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH3, height: 1.5),
     ),
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h5,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH5, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH5, height: 1.5),
     ),
     const _NoDividerHeadingConfig(
       tag: MarkdownTag.h6,
       style: TextStyle(
-          fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.mdH5, height: 1.2),
+          fontSize: 16, fontWeight: FontWeight.w500, color: AppColors.mdH5, height: 1.5),
     ),
     // 分割线:height 1,用比 sub 更淡的灰(亮色 #CCCCCC / 暗色 #444444)
     HrConfig(height: 1, color: hrColor),
@@ -140,10 +140,10 @@ MarkdownConfig markdownStyle({
       // headerStyle 而非 bodyStyle,所以表头表内容共用 headerStyle。
       // 字色跟随 ink(发送方气泡紫色背景时白字,接收方按 isDark 切换)。
       headerStyle: TextStyle(
-          color: ink, fontSize: 14, fontWeight: FontWeight.w400),
+          color: ink, fontSize: 16, fontWeight: FontWeight.w400),
       // bodyStyle 在当前版本不生效(被上述 bug 绕过),保留与 headerStyle 一致作记录
       bodyStyle: TextStyle(
-          color: ink, fontSize: 14, fontWeight: FontWeight.w400),
+          color: ink, fontSize: 16, fontWeight: FontWeight.w400),
       // 表格包横向滚动:宽表格可横向滑动,避免溢出气泡
       wrapper: _tableScrollWrapper,
     ),
@@ -279,7 +279,7 @@ Widget _markdownImagePlaceholder(Map<String, String> attributes) {
         TextSpan(text: label),
       ],
       style: const TextStyle(
-        fontSize: 14,
+        fontSize: 16,
         fontStyle: FontStyle.italic,
         color: Color(0xFF888888),
       ),

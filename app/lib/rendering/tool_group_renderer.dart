@@ -152,18 +152,18 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
             onTap: () => setState(() => _expanded = !_expanded),
             child: Row(
               children: [
-                IconFont.icon(icon, size: 13, color: iconColor),
+                IconFont.icon(icon, size: 15, color: iconColor),
                 const SizedBox(width: 6),
                 Expanded(
                   child: streaming
                       ? ShimmerText(
                           text: title,
                           baseColor: const Color(0xFF666666),
-                          style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                          style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
                         )
                       : Text(
                           title,
-                          style: const TextStyle(fontSize: 12, color: Color(0xFF555555)),
+                          style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
                         ),
                 ),
                 Icon(

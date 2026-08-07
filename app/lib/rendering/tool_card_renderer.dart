@@ -455,13 +455,13 @@ class _WebFetchRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
-        IconFont.icon(IconFont.explore, size: 13, color: const Color(0xFFB388FF)),
+        IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
         const SizedBox(width: 6),
         const Text('WebFetch',
-            style: TextStyle(fontSize: 12, color: Color(0xFF555555))),
+            style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
         const SizedBox(width: 8),
         Text(statusText,
-            style: TextStyle(fontSize: 11, color: statusColor)),
+            style: TextStyle(fontSize: 12, color: statusColor)),
       ]),
     );
   }

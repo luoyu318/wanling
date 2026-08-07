@@ -40,23 +40,23 @@ void main() {
   }
 
   group('ReasoningRenderer 终态 (isStreaming=false)', () {
-    testWidgets('折叠态显示 Thought(无耗时,不展示全文首行)', (tester) async {
+    testWidgets('折叠态显示 思考完成(无耗时,不展示全文首行)', (tester) async {
       await tester.pumpWidget(host(text: '一段思考内容', isStreaming: false));
-      expect(find.text('Thought'), findsOneWidget);
+      expect(find.text('思考完成'), findsOneWidget);
       // 不再展示全文首行(对齐 TUI 折叠:布局不随思考内容跳动)
       expect(find.text('一段思考内容'), findsNothing);
     });
 
-    testWidgets('有 duration(毫秒<1s)时折叠态显示 Thought: 22ms', (tester) async {
+    testWidgets('有 duration(毫秒<1s)时折叠态显示 思考完成 · 22ms', (tester) async {
       await tester.pumpWidget(
           host(text: '思考内容', isStreaming: false, duration: 22));
-      expect(find.text('Thought: 22ms'), findsOneWidget);
+      expect(find.text('思考完成 · 22ms'), findsOneWidget);
     });
 
-    testWidgets('有 duration(毫秒≥1s)时折叠态显示 Thought: 2.2s', (tester) async {
+    testWidgets('有 duration(毫秒≥1s)时折叠态显示 思考完成 · 2.2s', (tester) async {
       await tester.pumpWidget(
           host(text: '思考内容', isStreaming: false, duration: 2200));
-      expect(find.text('Thought: 2.2s'), findsOneWidget);
+      expect(find.text('思考完成 · 2.2s'), findsOneWidget);
     });
 
     testWidgets('iconfont 深度思考图标存在', (tester) async {
@@ -133,10 +133,10 @@ void main() {
   });
 
   group('ReasoningRenderer 方案 B:元素级 finished 标记', () {
-    testWidgets('isStreaming=true 且 finished=true → 显示终态(Thought,非思考中动画)', (tester) async {
+    testWidgets('isStreaming=true 且 finished=true → 显示终态(思考完成,非思考中动画)', (tester) async {
       await tester.pumpWidget(
           host(text: '已终态的思考内容', isStreaming: true, finished: true));
-      expect(find.text('Thought'), findsOneWidget);
+      expect(find.text('思考完成'), findsOneWidget);
       // 不再显示「正在思考...」动画
       expect(find.text('正在思考...'), findsNothing);
     });
@@ -155,7 +155,7 @@ void main() {
       await tester.tap(find.byType(GestureDetector));
       await tester.pumpAndSettle();
       expect(find.byType(MarkdownView), findsOneWidget);
-      expect(find.text('思考链'), findsOneWidget);
+      expect(find.text('思考'), findsOneWidget);
     });
 
     testWidgets('流式态点击弹抽屉看全文', (tester) async {

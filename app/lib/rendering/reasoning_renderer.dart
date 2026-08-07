@@ -72,14 +72,14 @@ class _StaticReasoningCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            IconFont.icon(IconFont.deepThink, size: 13),
+            IconFont.icon(IconFont.deepThink, size: 15, color: const Color(0xFFD4A017)),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
                 _foldedText(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF999999)),
+                style: const TextStyle(fontSize: 14, color: Color(0xFF999999)),
               ),
             ),
             const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),
@@ -90,14 +90,14 @@ class _StaticReasoningCard extends StatelessWidget {
   }
 
   String _foldedText() {
-    // 折叠态对齐 TUI:`Thought` 固定文案,耗时可选。
-    // 有耗时(终态元素带 duration,毫秒)显示「Thought: 22ms / Thought: 1.6s」;
-    // 无耗时(兜底路径)只显示「Thought」。不再展示全文首行(与 TUI 折叠一致,
+    // 折叠态:中文「思考完成」固定文案,耗时可选。
+    // 有耗时(终态元素带 duration,毫秒)显示「思考完成 · 22ms / 思考完成 · 1.6s」;
+    // 无耗时(兜底路径)只显示「思考完成」。不再展示全文首行(与 TUI 折叠一致,
     // 布局不随思考内容跳动)。
     if (duration is num && duration! > 0) {
-      return 'Thought: ${formatDurationMs(duration!.toInt())}';
+      return '思考完成 · ${formatDurationMs(duration!.toInt())}';
     }
-    return 'Thought';
+    return '思考完成';
   }
 }
 
@@ -156,7 +156,7 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
                     final opacity = 0.25 + 0.75 * (math.sin(math.pi * 2 * t) * 0.5 + 0.5);
                     return Opacity(
                       opacity: opacity,
-                      child: IconFont.icon(IconFont.deepThink, size: 13),
+                      child: IconFont.icon(IconFont.deepThink, size: 15),
                     );
                   },
                 ),
@@ -166,7 +166,7 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
             const Expanded(
               child: Text(
                 '正在思考...',
-                style: TextStyle(fontSize: 12, color: Color(0xFF999999)),
+                style: TextStyle(fontSize: 14, color: Color(0xFF999999)),
               ),
             ),
             const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),
@@ -195,11 +195,12 @@ void _showDetail(BuildContext context, String text) {
               margin: const EdgeInsets.only(top: 8, bottom: 4),
               decoration: BoxDecoration(color: const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2)),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(children: [
-                Text('💭 ', style: TextStyle(fontSize: 16)),
-                Text('思考链', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+                IconFont.icon(IconFont.deepThink, size: 18, color: const Color(0xFFD4A017)),
+                const SizedBox(width: 6),
+                const Text('思考', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
               ]),
             ),
             const Divider(height: 1, color: Color(0xFFEEEEEE)),
