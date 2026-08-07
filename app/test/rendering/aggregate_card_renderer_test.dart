@@ -171,7 +171,7 @@ void main() {
       expect(find.text('Thought: 3.5s'), findsOneWidget);
     });
 
-    testWidgets('tool_card 元素折叠为「工具调用 · 1」,点击展开显示工具列表项', (tester) async {
+    testWidgets('tool_card 元素折叠为「已执行 1次命令」,点击展开显示工具列表项', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
@@ -184,10 +184,10 @@ void main() {
         ],
       )));
       // 收起态:折叠行,不显示工具详情
-      expect(find.text('工具调用 · 1'), findsOneWidget);
+      expect(find.text('已执行 1次命令'), findsOneWidget);
       expect(find.text('Bash'), findsNothing);
       // 点击展开后显示工具卡详情
-      await tester.tap(find.text('工具调用 · 1'));
+      await tester.tap(find.text('已执行 1次命令'));
       await tester.pump();
       expect(find.text('Bash'), findsOneWidget);
       expect(find.text('命令失败'), findsOneWidget);
@@ -201,12 +201,12 @@ void main() {
         ],
       )));
       expect(find.byType(Divider), findsNothing);
-      // 压缩分隔用自绘细线(Container color → ColoredBox 1px #EEEEEE,
+      // 压缩分隔用自绘细线(Container color → ColoredBox 1px #F5F5F5,
       // 不引入 Divider 默认缩进/上下间距)
       expect(
         tester
             .widgetList<ColoredBox>(find.byType(ColoredBox))
-            .any((c) => c.color == const Color(0xFFEEEEEE)),
+            .any((c) => c.color == const Color(0xFFF5F5F5)),
         isTrue,
       );
     });
@@ -216,12 +216,13 @@ void main() {
         state: 'done',
         elements: [
           element('footer', 'footer_1', {
-            'duration': 12.3,
+            'finished': true,
+            'duration': 12300,
             'tokens': {'total': 2100},
           }),
         ],
       )));
-      expect(find.text('⏱ 12.3s'), findsOneWidget);
+      expect(find.text('12.3s'), findsOneWidget);
       expect(find.text('tokens 2.1k'), findsOneWidget);
     });
   });
@@ -241,26 +242,28 @@ void main() {
         ],
       )));
       // 收起态先展开
-      await tester.tap(find.text('工具调用 · 1'));
+      await tester.tap(find.text('已探索 1次读取'));
       await tester.pump();
       expect(find.text('Read'), findsOneWidget);
       expect(find.text('完成'), findsOneWidget); // 仅工具卡状态(顶栏已去除)
     });
 
-    testWidgets('footer 元素 data 对齐 step_finish renderer（cost 字段）', (tester) async {
+    testWidgets('footer 元素由 FooterInfoBar 渲染(cost 字段不进条)', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
           element('footer', 'footer_1', {
-            'duration': 1.5,
+            'finished': true,
+            'duration': 1500,
             'cost': 0.123,
             'tokens': {'total': 800},
           }),
         ],
       )));
-      expect(find.text('⏱ 1.5s'), findsOneWidget);
-      expect(find.text(r'$0.123'), findsOneWidget);
+      expect(find.text('1.5s'), findsOneWidget);
       expect(find.text('tokens 0.8k'), findsOneWidget);
+      // FooterInfoBar 不展示 cost(仅 mode/duration/model/tokens)
+      expect(find.text(r'$0.123'), findsNothing);
     });
   });
 
@@ -386,15 +389,15 @@ void main() {
   });
 
   group('工具卡折叠 + 底部提示条', () {
-    testWidgets('连续 tool_card 折叠成一组(收起态显示 ⚡ 工具调用 · 2)', (tester) async {
+    testWidgets('连续 tool_card 折叠成一组(收起态显示 ⚡ 已执行 2次命令)', (tester) async {
       await tester.pumpWidget(host(content(
         state: 'done',
         elements: [
           element('tool_card', 'tool_card_1', {'name': 'bash', 'status': 'completed', 'input': {'command': 'ls'}}),
-          element('tool_card', 'tool_card_2', {'name': 'read', 'status': 'completed', 'input': {'path': 'x.dart'}}),
+          element('tool_card', 'tool_card_2', {'name': 'bash', 'status': 'completed', 'input': {'command': 'pwd'}}),
         ],
       )));
-      expect(find.text('工具调用 · 2'), findsOneWidget);
+      expect(find.text('已执行 2次命令'), findsOneWidget);
       // 收起态不展开工具详情
       expect(find.text('Bash'), findsNothing);
     });
@@ -406,7 +409,7 @@ void main() {
           element('tool_card', 'tool_card_1', {'name': 'bash', 'status': 'error', 'input': {'command': 'ls'}, 'error': '命令失败'}),
         ],
       )));
-      await tester.tap(find.text('工具调用 · 1'));
+      await tester.tap(find.text('已执行 1次命令'));
       await tester.pump();
       expect(find.text('Bash'), findsOneWidget);
       expect(find.text('命令失败'), findsOneWidget);
@@ -452,7 +455,9 @@ void main() {
           element('tool_card', 'tool_card_1', {'name': 'task', 'status': 'completed', 'input': {'description': '调研'}, 'sub_session_id': 's1'}),
         ],
       )));
-      expect(find.text('工具调用 · 1'), findsNothing);
+      // task 卡平铺,无折叠组标题
+      expect(find.textContaining('次命令'), findsNothing);
+      expect(find.textContaining('次读取'), findsNothing);
       expect(find.text('调研'), findsOneWidget);
     });
   });
