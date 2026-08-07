@@ -49,6 +49,10 @@ export interface SessionState {
   // 聚合卡流式已占位元素:流式首帧前把目标 markdown/reasoning 元素 append 进卡,
   // 之后帧才能命中。Set 记录已 append 的 element_id,防并发帧重复占位。
   aggregateStreamedElementIds?: Set<string>
+  // 聚合卡分卡元素归属:element_id → 所在聚合卡 msgId。
+  // 分卡后(满 MAX_AGGREGATE_ELEMENTS_PER_CARD 自动开新卡)旧卡元素仍会被
+  // 工具终态 / 交互应答 update,updateElement 据此定位目标卡,不误打当前卡。
+  aggregateElementCardIds?: Map<string, string>
   // 聚合模式下工具元素定位:partId → 聚合卡内 tool_card element_id。
   // 工具 running 时同步写入(append 前),completed/error 时按 partId 找到目标元素
   // 做全量替换更新 status/output/error/file_diff。非聚合模式不写入。

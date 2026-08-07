@@ -90,6 +90,12 @@ export type AggregatePatchOp =
 // patchAggregateMessage 的 data 入参:增量 op 或全量替换(兼容,无 op)。
 export type AggregatePatchData = AggregatePatchOp | { state?: string; elements: AggregateElement[] }
 
+// 分卡上限:单张聚合卡元素数超过此值自动开新卡(中间卡收尾不写 footer,
+// 只有最后一张卡 finalizeCard 写 footer + silent 翻转计未读)。硬性约束单卡
+// content 体积,Server/APP 渲染与存储按卡分段,不影响 Agent 执行(执行只关心
+// 往当前卡发增量,切卡后 ensureCard 自动指向新卡)。
+export const MAX_AGGREGATE_ELEMENTS_PER_CARD = 20
+
 // 聚合卡协议 schema 版本(data.schema_ver)。从 1 起,缺失视为 1;破坏性协议变更时递增。
 // 建卡时写 data.schema_ver=1(全量 content 携带);增量 op 是瞬态指令不携带版本。
 // server 合并保留未知字段(schema_ver 天然透传);APP 读本地 content 的 schema_ver,
@@ -160,11 +166,24 @@ export class AggregateCardManager {
     const prev = this.state.aggregatePatchQueue ?? Promise.resolve()
     const next = prev.then(async () => {
       const existed = (this.state.aggregateElements ?? []).some((e) => e.element_id === element.element_id)
+      // 分卡:追加新元素(非原位替换)且当前卡元素数已达上限 → 先收尾旧卡再建新卡。
+      // 收尾旧卡只 set_state done(不写 footer、不翻 silent,中间卡空态),回合
+      // 级收尾(finalizeCard)仍由最后一张卡承接。切卡在串行队列内,与元素追加
+      // 同序执行,不会并发开卡。
+      if (!existed && (this.state.aggregateElements?.length ?? 0) >= MAX_AGGREGATE_ELEMENTS_PER_CARD) {
+        await this._sealIntermediateCard()
+      }
       const elements = existed
         ? (this.state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
         : [...(this.state.aggregateElements ?? []), element]
       this.state.aggregateElements = elements
       const msgId = await this.ensureCard()
+      // 记录元素归属卡:分卡后旧卡元素 update 仍能定位(工具终态/交互应答)。
+      // 仅新 append 元素记录(existed 走 update 不换卡)。
+      if (!existed) {
+        if (!this.state.aggregateElementCardIds) this.state.aggregateElementCardIds = new Map()
+        this.state.aggregateElementCardIds.set(element.element_id, msgId)
+      }
       await this.wanling.patchAggregateMessage(
         msgId,
         existed ? { op: "update", element_id: element.element_id, data: element.data } : { op: "append", element },
@@ -331,6 +350,25 @@ export class AggregateCardManager {
     })
   }
 
+  // 中间卡收尾(分卡用):把当前卡 set_state done(不写 footer、不翻 silent,
+  // 保持 generating 语义),重置本卡累计,让下一元素 append 建新卡。
+  // 与 _sealCard 的区别:不清 aggregateCardState(回合仍进行,最后一张卡
+  // finalizeCard 仍能写 footer),只清本卡元素累计/流式占位,保留元素归属映射
+  // (旧卡元素 update 仍定位旧卡)。分卡触发后新卡元素追加走 appendElement,
+  // 同一串行队列内按序执行,不会并发开卡。
+  private async _sealIntermediateCard(): Promise<void> {
+    if (!this.state.aggregateCardMsgId) return
+    const msgId = this.state.aggregateCardMsgId
+    await this.wanling.patchAggregateMessage(msgId, { op: "set_state", state: "done" })
+    // 清本卡 msgId/inflight/累计/流式占位,让后续 ensureCard 重开新卡。
+    // 保留 aggregateCardState(仍 generating,回合未结束)与 aggregateElementCardIds
+    // (旧卡元素 update 定位);aggregateSeq 跨卡继续递增(element_id 不复用)。
+    this.state.aggregateCardMsgId = undefined
+    this.state.aggregateCardInflight = undefined
+    this.state.aggregateElements = undefined
+    this.state.aggregateStreamedElementIds = undefined
+  }
+
   // 收尾共用实现:守卫(卡已 done / 未建卡 → 跳过)→ append footer → set_state done
   // → set_silent false → reset。全部在 aggregatePatchQueue 串行队列内执行,与
   // appendElement/updateElement 同队列,顺序确定无竞态。
@@ -363,6 +401,7 @@ export class AggregateCardManager {
       this.state.aggregateStreamedElementIds = undefined
       this.state.aggregatePendingUpdates = undefined
       this.state.aggregateToolElementIds = undefined
+      this.state.aggregateElementCardIds = undefined
     })
     // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
     this.state.aggregatePatchQueue = next.catch(() => {})

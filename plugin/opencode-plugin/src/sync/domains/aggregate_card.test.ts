@@ -158,6 +158,54 @@ describe("AggregateCardManager appendElement(增量 op)", () => {
   })
 })
 
+describe("AggregateCardManager 分卡(满 20 自动开新卡)", () => {
+  let wanling: ReturnType<typeof makeWanling>["wanling"]
+
+  beforeEach(() => {
+    wanling = makeWanling().wanling
+  })
+
+  it("第 20 个元素仍在当前卡(未达上限不切)", async () => {
+    const state = makeState()
+    // 先铺 19 个元素(模拟流式占位等已追加,无需真实 PATCH)
+    state.aggregateElements = Array.from({ length: 19 }, (_, i) =>
+      AggregateCardManager.markdown(`m${i + 1}`, i + 1),
+    )
+    state.aggregateCardMsgId = "card-1"
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.appendElement(AggregateCardManager.markdown("m20", 20))
+    expect(wanling.sendCardMessage).not.toHaveBeenCalled() // aggregateCardMsgId 已缓存,复用不建卡
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1", { op: "append", element: AggregateCardManager.markdown("m20", 20) },
+    )
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalledWith("card-1", { op: "set_state", state: "done" })
+  })
+
+  it("第 21 个元素触发切卡:旧卡 set_state done(不写 footer/silent),元素 append 到新卡", async () => {
+    const state = makeState()
+    state.aggregateElements = Array.from({ length: 20 }, (_, i) =>
+      AggregateCardManager.markdown(`m${i + 1}`, i + 1),
+    )
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "generating"
+    wanling.sendCardMessage.mockResolvedValueOnce("card-2") // 切卡后建新卡返回 card-2
+    const manager = new AggregateCardManager(wanling, state)
+    const el = AggregateCardManager.markdown("m21", 21)
+    await manager.appendElement(el)
+    // 旧卡收尾:只 set_state done
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith("card-1", { op: "set_state", state: "done" })
+    // 元素归属映射:新元素指向 card-2
+    expect(state.aggregateElementCardIds?.get("markdown_21")).toBe("card-2")
+    expect(state.aggregateElements).toEqual([el])
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1) // 仅切卡后的建卡
+    expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
+      state: "generating",
+      elements: [],
+    })
+  })
+})
+
 describe("AggregateCardManager 静态构造器(element_id 规则 type_seq)", () => {
   it("reasoning 元素", () => {
     expect(AggregateCardManager.reasoning("思考中", 1)).toEqual({
