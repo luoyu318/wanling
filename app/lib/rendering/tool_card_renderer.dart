@@ -444,7 +444,7 @@ class _RunningToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF5B8BF7), width: 3)),
       ),
@@ -545,7 +545,7 @@ class _CompletedToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF07C160), width: 3)),
       ),
@@ -599,7 +599,7 @@ class _ErrorToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF5F5),
+        color: const Color(0xFFFFF1F1),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFFFA5151), width: 3)),
       ),
@@ -782,7 +782,7 @@ class _TaskCardShell extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: Border(left: BorderSide(color: statusColor, width: 3)),
       ),

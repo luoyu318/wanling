@@ -40,8 +40,12 @@ class FooterInfoBar extends StatelessWidget {
         : '';
 
     return Container(
-      color: const Color(0xFFF7F7F7),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      // 顶部细线分隔,与正文区分离(替代整圈边框)
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F7F7),
+        border: Border(top: BorderSide(color: Color(0xFFF0F0F0))),
+      ),
       child: Row(
         children: [
           if (mode.isNotEmpty) ...[

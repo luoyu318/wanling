@@ -40,6 +40,20 @@ void main() {
       expect(find.textContaining('s'), findsNothing);
       expect(find.textContaining('tokens'), findsNothing);
     });
+
+    testWidgets('静态信息条顶部有分隔线', (tester) async {
+      await tester.pumpWidget(host({
+        'mode': 'build', 'duration': 12300, 'model': 'DeepSeek-V3', 'tokens': {'total': 2100},
+      }));
+      final container = tester.widget<Container>(
+        find.byWidgetPredicate((w) =>
+            w is Container &&
+            (w.decoration as BoxDecoration?)?.color == const Color(0xFFF7F7F7)),
+      );
+      final deco = container.decoration! as BoxDecoration;
+      expect(deco.border, isNotNull);
+      expect(deco.border!.top, BorderSide(color: const Color(0xFFF0F0F0)));
+    });
   });
 
   group('FooterInfoBar 停止态', () {
