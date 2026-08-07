@@ -279,6 +279,20 @@ export class AggregateCardManager {
     const next = prev.then(async () => {
       const existed = (this.state.aggregateElements ?? []).some((e) => e.element_id === elementId)
       if (!existed) {
+        // 分卡跨卡定位:元素不在当前卡累计,可能已随分卡落在旧卡。查归属映射,
+        // 命中且指向非当前卡 → 直接 PATCH 旧卡(工具终态/交互应答不误打新卡)。
+        const ownerCardId = this.state.aggregateElementCardIds?.get(elementId)
+        if (ownerCardId && ownerCardId !== this.state.aggregateCardMsgId) {
+          await this.wanling.patchAggregateMessage(ownerCardId, {
+            op: "update",
+            element_id: elementId,
+            data: patchData,
+          })
+          if (opts?.silent !== undefined) {
+            await this.wanling.patchAggregateMessage(ownerCardId, { op: "set_silent", silent: opts.silent })
+          }
+          return
+        }
         // 元素未就绪:缓存 pending update,待 append 落地后补发(防 working 竞态丢失)。
         // 多次 update 合并(每次整体替换 data,合并字段),append 后一次补发。
         if (!this.state.aggregatePendingUpdates) this.state.aggregatePendingUpdates = new Map()

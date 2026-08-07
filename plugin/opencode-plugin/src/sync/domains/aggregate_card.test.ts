@@ -204,6 +204,31 @@ describe("AggregateCardManager 分卡(满 20 自动开新卡)", () => {
       elements: [],
     })
   })
+
+  it("切卡后旧卡元素 update 仍定位旧卡(aggregateElementCardIds)", async () => {
+    const state = makeState()
+    // 模拟:markdown_1 曾 append 到 card-1(旧卡),切卡后 card-2 为新卡
+    state.aggregateElements = [AggregateCardManager.markdown("新卡正文", 21)]
+    state.aggregateCardMsgId = "card-2"
+    state.aggregateElementCardIds = new Map([["markdown_1", "card-1"]])
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("markdown_1", { text: "旧卡终态" })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
+      "card-1",
+      { op: "update", element_id: "markdown_1", data: { text: "旧卡终态" } },
+    )
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalledWith("card-2", expect.objectContaining({ op: "update" }))
+  })
+
+  it("元素不在当前卡且无映射时不 PATCH(缓存 pending,维持原语义)", async () => {
+    const state = makeState()
+    state.aggregateElements = [AggregateCardManager.markdown("新卡正文", 21)]
+    state.aggregateCardMsgId = "card-2"
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.updateElement("tool_card_5", { status: "working" })
+    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+    expect(state.aggregatePendingUpdates?.get("tool_card_5")).toEqual({ status: "working" })
+  })
 })
 
 describe("AggregateCardManager 静态构造器(element_id 规则 type_seq)", () => {
