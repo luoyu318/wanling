@@ -70,9 +70,11 @@ class _StaticReasoningCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFEEEEEE)),
+          color: const Color(0xFFFFFBEF), // 浅黄底(思考态)
+          borderRadius: BorderRadius.circular(4),
+          border: const Border(
+            left: BorderSide(color: Color(0xFFFFC940), width: 2), // 琥珀左条
+          ),
         ),
         child: Row(
           children: [
@@ -85,7 +87,7 @@ class _StaticReasoningCard extends StatelessWidget {
                 _foldedText(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF8A6D00)),
               ),
             ),
             const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF888888))),
@@ -144,9 +146,11 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFEEEEEE)),
+          color: const Color(0xFFFFFBEF), // 浅黄底(思考态)
+          borderRadius: BorderRadius.circular(4),
+          border: const Border(
+            left: BorderSide(color: Color(0xFFFFC940), width: 2), // 琥珀左条
+          ),
         ),
         child: Row(
           children: [
@@ -177,10 +181,10 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
             const Expanded(
               child: Text(
                 '正在思考...',
-                style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                style: TextStyle(fontSize: 12, color: Color(0xFF8A6D00)),
               ),
             ),
-            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF888888))),
+            const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFF8A6D00))),
           ],
         ),
       ),

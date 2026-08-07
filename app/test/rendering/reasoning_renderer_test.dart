@@ -65,14 +65,15 @@ void main() {
       expect(opacity.opacity, 0.6);
     });
 
-    testWidgets('白底 + #EEEEEE 边框', (tester) async {
+    testWidgets('浅黄底 + 琥珀左条(无整圈边框)', (tester) async {
       await tester.pumpWidget(host(text: 'x', isStreaming: false));
       final container = tester.widget<Container>(find.byType(Container));
       final deco = container.decoration as BoxDecoration;
-      expect(deco.color, Colors.white);
-      final border = deco.border as BoxBorder;
-      // Border.all 上下左右同色
-      expect(border.top.color, const Color(0xFFEEEEEE));
+      expect(deco.color, const Color(0xFFFFFBEF)); // 浅黄底
+      final border = deco.border as Border;
+      expect(border.top, BorderSide.none); // 无顶边(非整圈)
+      expect(border.left.color, const Color(0xFFFFC940)); // 琥珀左条
+      expect(border.left.width, 2);
     });
   });
 
@@ -97,14 +98,16 @@ void main() {
       expect(find.text('✨ '), findsOneWidget);
     });
 
-    testWidgets('白底 + #EEEEEE 边框', (tester) async {
+    testWidgets('浅黄底 + 琥珀左条(无整圈边框)', (tester) async {
       await tester.pumpWidget(host(text: 'x', isStreaming: true));
-      // 流式卡外层白底 Container,取树序首个
+      // 流式卡外层浅黄底 Container,取树序首个
       final container = tester.widgetList<Container>(find.byType(Container)).first;
       final deco = container.decoration as BoxDecoration;
-      expect(deco.color, Colors.white);
-      final border = deco.border as BoxBorder;
-      expect(border.top.color, const Color(0xFFEEEEEE));
+      expect(deco.color, const Color(0xFFFFFBEF));
+      final border = deco.border as Border;
+      expect(border.top, BorderSide.none); // 无顶边(非整圈)
+      expect(border.left.color, const Color(0xFFFFC940)); // 琥珀左条
+      expect(border.left.width, 2);
     });
 
     testWidgets('✨ 闪烁动画:opacity 随时间正弦变化', (tester) async {
