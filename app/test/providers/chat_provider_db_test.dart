@@ -104,16 +104,16 @@ void main() {
   });
 
   test('上滑加载(DB 命中):即时呈现 DB + server 校正', () async {
-    // 当前会话窗口的 100 条(7月5日 9:00~10:39)
+    // 当前会话窗口的 10 条(7月5日 9:00~9:09)— 对齐 ChatNotifier._pageSize=10
     final currentBatch = <ChatMessage>[];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 10; i++) {
       final m = mkMsg('msg$i',
           createdAt: DateTime(2026, 7, 5, 9).add(Duration(minutes: i)));
       currentBatch.add(m);
       await store.putMessage(m);
     }
-    // 更老的 100 条(7月4日)— loadMore DB 应命中这部分
-    for (var i = 0; i < 100; i++) {
+    // 更老的 10 条(7月4日)— loadMore DB 应命中这部分
+    for (var i = 0; i < 10; i++) {
       await store.putMessage(mkMsg('old$i',
           createdAt: DateTime(2026, 7, 4).add(Duration(minutes: i))));
     }
@@ -124,7 +124,7 @@ void main() {
             limit: any(named: 'limit'), before: any(named: 'before')))
         .thenAnswer((inv) {
       serverBeforeCalls++;
-      // _initialize 期间 before=null,返当前批 100 条(让 hasMore=true);
+      // _initialize 期间 before=null,返当前批 10 条(让 hasMore=true);
       // loadMore 期间 before!=null,server 返空(模拟校正无新增)。
       final before = inv.namedArguments[#before] as DateTime?;
       if (before == null) {
@@ -140,9 +140,9 @@ void main() {
     final initCalls = serverBeforeCalls;
     expect(initCalls, 1, reason: '_initialize 调一次 getMessagesBefore(before=null)');
 
-    // 初始 state:DB 优先 100 条(server 返同批,_mergeHistory 去重保持 100)
-    expect(notifier.state.displayMessages.length, 100,
-        reason: 'DB 优先应即时呈现 100 条');
+    // 初始 state:DB 优先 10 条(server 返同批,_mergeHistory 去重保持 10)
+    expect(notifier.state.displayMessages.length, 10,
+        reason: 'DB 优先应即时呈现 10 条');
     expect(notifier.state.hasMore, isTrue,
         reason: 'server 返整页,hasMore=true 才能触发 loadMore');
 
@@ -152,9 +152,9 @@ void main() {
     expect(serverBeforeCalls, initCalls + 1,
         reason: 'C3 修复:DB 命中仍然 server 校正,loadMore 调一次 getMessagesBefore(before!=null)');
 
-    // state 应有 200 条(DB 初始 100 + DB 上滑追加 100 条更老消息,server 返空被去重)
-    expect(notifier.state.displayMessages.length, 200,
-        reason: 'loadMore 应从 DB 追加 100 条更老消息');
+    // state 应有 20 条(DB 初始 10 + DB 上滑追加 10 条更老消息,server 返空被去重)
+    expect(notifier.state.displayMessages.length, 20,
+        reason: 'loadMore 应从 DB 追加 10 条更老消息');
     expect(notifier.state.displayMessages.any((m) => m.id == 'old0'), isTrue,
         reason: '应包含 DB 命中的 old0');
   });
