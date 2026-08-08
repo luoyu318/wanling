@@ -187,11 +187,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
         final local = await store!.getMessages(
             conversationId: conversationId, limit: _pageSize);
         if (local.isNotEmpty) {
-          // 过滤 DB 缓存的空聚合卡快照:生成中(为空)被 putMessages 写入的中间态,
-          // 重进读到会显示空白且 server 拉取范围(hasUnread 分支)可能覆盖不到。
-          // 生成中的聚合卡由 WS 实时建卡/填充,不依赖 DB 缓存,过滤掉是安全的。
-          final validLocal =
-              local.where((m) => !_isEmptyAggregateCard(m)).toList();
+          // 过滤 DB 缓存的空聚合卡快照:生成中(为空)被旧版本 putMessages 写入的
+          // 脏中间态,重进读到会显示空白且 server 拉取范围(hasUnread 分支)可能
+          // 覆盖不到 → 整条缺失。空卡由 WS 实时建卡/填充,DB 不需缓存空态。
+          // 过滤的同时从 DB 删除脏记录(server 有完整版,loadMore/重进可恢复),
+          // 避免每次进入都读到同一批空卡。
+          final validLocal = <ChatMessage>[];
+          for (final m in local) {
+            if (_isEmptyAggregateCard(m)) {
+              store!.deleteMessage(m.id).catchError((e) {
+                debugPrint('[localdb] _initialize delete empty agg fail: $e');
+              });
+            } else {
+              validLocal.add(m);
+            }
+          }
           state = _mergeHistory(validLocal).copyWith(
             hasMore: true,
             isInitialLoading: false,
