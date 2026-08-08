@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/message.dart';
+import '../../models/msg_type.dart';
 import '../../providers/agent_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;
@@ -127,6 +128,15 @@ class MessageRow extends ConsumerWidget {
       return bubble;
     }
 
+    // 聚合卡消息:外层底部间距归零,间距完全由聚合卡 renderer 的 segment 逻辑控制
+    // (分段序列内 2px 缝 / 末卡与单卡 8px),避免此处固定 8px padding 覆盖 segment
+    // 的收窄效果(否则分段卡缝永远是 8px,视觉无变化)。
+    final isAggregateCard =
+        message.content['msg_type'] == MsgType.aggregateCard.value;
+
+    // 外层底部间距:聚合卡 0(交给 renderer),其余消息 8px。
+    final double rowBottom = isAggregateCard ? 0 : 8;
+
     // 是否真渲染昵称(空串保护:server COALESCE 兜底空串时不画;发送方永不渲染昵称)
     final bool nicknameShown = !isMe &&
         showNickname &&
@@ -250,8 +260,8 @@ class MessageRow extends ConsumerWidget {
       );
       return Padding(
         padding: reserveAvatarSpace
-            ? const EdgeInsets.only(bottom: 8)
-            : const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+            ? EdgeInsets.only(bottom: rowBottom)
+            : EdgeInsets.only(left: 12, right: 12, bottom: rowBottom),
         child: sendRow,
       );
     }
@@ -305,8 +315,8 @@ class MessageRow extends ConsumerWidget {
     );
     return Padding(
       padding: reserveAvatarSpace
-          ? const EdgeInsets.only(bottom: 8)
-          : const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+          ? EdgeInsets.only(bottom: rowBottom)
+          : EdgeInsets.only(left: 12, right: 12, bottom: rowBottom),
       child: recvRow,
     );
   }

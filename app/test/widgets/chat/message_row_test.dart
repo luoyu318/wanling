@@ -268,4 +268,55 @@ void main() {
       expect(find.text('hello'), findsOneWidget);
     });
   });
+
+  group('MessageRow 聚合卡消息间距', () {
+    testWidgets('聚合卡消息外层底部 padding 归零(间距交给 renderer)', (tester) async {
+      final msg = ChatMessage(
+        id: 'm-agg',
+        conversationId: 'c1',
+        senderType: 'user',
+        senderId: 'u1',
+        content: const {
+          'msg_type': 'aggregate_card',
+          'data': {'state': 'done', 'elements': []}
+        },
+        createdAt: DateTime.parse('2026-07-06T10:00:00Z'),
+      );
+      await tester.pumpWidget(wrap(MessageRow(
+        message: msg,
+        isMe: false,
+        isGroup: false,
+        showAvatar: false,
+        showNickname: false,
+        reserveAvatarSpace: false,
+        baseUrl: '',
+        token: '',
+      )));
+      // MessageRow 外层 Padding bottom 应为 0(聚合卡间距由 renderer segment 控制)
+      final paddings = tester.widgetList<Padding>(find.byType(Padding)).toList();
+      final hasZeroBottom = paddings.any(
+        (p) => (p.padding as EdgeInsets?)?.bottom == 0,
+      );
+      expect(hasZeroBottom, isTrue);
+    });
+
+    testWidgets('普通消息外层底部 padding 保持 8px', (tester) async {
+      final msg = mkMessage(senderName: '李四');
+      await tester.pumpWidget(wrap(MessageRow(
+        message: msg,
+        isMe: false,
+        isGroup: false,
+        showAvatar: true,
+        showNickname: false,
+        reserveAvatarSpace: true,
+        baseUrl: '',
+        token: '',
+      )));
+      final paddings = tester.widgetList<Padding>(find.byType(Padding)).toList();
+      expect(
+        paddings.any((p) => (p.padding as EdgeInsets?)?.bottom == 8),
+        isTrue,
+      );
+    });
+  });
 }
