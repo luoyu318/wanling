@@ -925,6 +925,40 @@ func TestUpdateContent_SetState(t *testing.T) {
 	}
 }
 
+// TestUpdateContent_SetSegment 聚合卡 set_segment:写 data.segment 三态标记。
+func TestUpdateContent_SetSegment(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_segment","segment":"middle"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	if st := msgContentData(t, got)["segment"]; st != "middle" {
+		t.Errorf("data.segment 期望 middle, 实际 %v", st)
+	}
+	if n := len(msgElements(t, msgContentData(t, got))); n != 2 {
+		t.Errorf("set_segment 不应改动 elements, 实际 %d 个", n)
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "set_segment" || contentData["segment"] != "middle" {
+		t.Errorf("广播增量期望 op=set_segment segment=middle, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_SetSegment_Invalid set_segment 非法值返 400。
+func TestUpdateContent_SetSegment_Invalid(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_segment","segment":"bogus"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("非法 segment 期望 400, 实际 %d", w.Code)
+	}
+}
+
 // TestUpdateContent_SetSilent 聚合卡 set_silent:显式改 content.silent。
 func TestUpdateContent_SetSilent(t *testing.T) {
 	env := setupAggregateUpdateTest(t)

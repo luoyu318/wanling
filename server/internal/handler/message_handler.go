@@ -542,13 +542,14 @@ func contentSilent(content json.RawMessage) (silent, ok bool) {
 }
 
 // aggregateContentOp 聚合卡增量 op 参数(content.data 内的字段)。
-//   - op: append | update | remove | reorder | set_state | set_silent
+//   - op: append | update | remove | reorder | set_state | set_silent | set_segment
 //   - element: append 用,{type, element_id, data}
 //   - element_id: update / remove 用
 //   - data: update 用,整体替换目标元素 data
 //   - order: reorder 用,element_id 数组
 //   - state: set_state 用
 //   - silent: set_silent 用
+//   - segment: set_segment 用,分卡序列三态标记(first/middle/last)
 type aggregateContentOp struct {
 	Op        string                     `json:"op"`
 	Element   map[string]json.RawMessage `json:"element"`
@@ -557,6 +558,7 @@ type aggregateContentOp struct {
 	Order     []string                   `json:"order"`
 	State     string                     `json:"state"`
 	Silent    *bool                      `json:"silent"`
+	Segment   string                     `json:"segment"`
 }
 
 // applyContentOp 应用 PATCH content 到原消息 content,返回写库用全量 merged:
@@ -575,6 +577,7 @@ type aggregateContentOp struct {
 //   - remove → 按 element_id 删除元素(不存在 → 幂等跳过,便于网络重试)
 //   - reorder → 按 order 数组重排 elements(order 含未知 id → 报错;未列出的元素保序追加尾部)
 //   - set_state → 改 data.state
+//   - set_segment → 改 data.segment(分卡序列三态标记 first/middle/last)
 //   - set_silent → 改顶层 content.silent(翻转 true→false 触达 IncrUnread 由调用方处理)
 //
 // 解析用 map[string]json.RawMessage 保留原 content 未知字段与未改动部分的原始字节。
@@ -713,6 +716,18 @@ func applyContentOp(origContent, reqContent json.RawMessage) (merged json.RawMes
 			return nil, true, e
 		}
 		data["state"] = rawState
+	case "set_segment":
+		if delta.Segment == "" {
+			return nil, true, errors.New("set_segment 需要 segment")
+		}
+		if delta.Segment != "first" && delta.Segment != "middle" && delta.Segment != "last" {
+			return nil, true, fmt.Errorf("set_segment 非法值: %s", delta.Segment)
+		}
+		rawSegment, e := json.Marshal(delta.Segment)
+		if e != nil {
+			return nil, true, e
+		}
+		data["segment"] = rawSegment
 	case "set_silent":
 		if delta.Silent == nil {
 			return nil, true, errors.New("set_silent 需要 silent")
