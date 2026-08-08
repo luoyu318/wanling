@@ -505,7 +505,7 @@ void main() {
   });
 
 // 聚合卡空中间态(generating + 无 elements)不缓存:重进读到会渲染空白。
-test('空聚合卡中间态不写库,完整卡正常写', () async {
+test('生成中空聚合卡也写库(避免整条缺失)', () async {
   final emptyAgg = _mkAggregateCard('empty-agg', 'conv1',
       createdAt: DateTime(2026, 7, 2), state: 'generating', elems: 0);
   final fullAgg = _mkAggregateCard('full-agg', 'conv1',
@@ -516,7 +516,8 @@ test('空聚合卡中间态不写库,完整卡正常写', () async {
 
   final result = await db.getMessages(conversationId: 'conv1', limit: 100);
   final ids = result.map((m) => m.id).toSet();
-  expect(ids, isNot(contains('empty-agg')), reason: '空聚合卡不写库');
+  // 写入不过滤:生成中聚合卡也入库(done 后 DB 有完整记录,重进不缺失)。
+  expect(ids, contains('empty-agg'), reason: '生成中聚合卡也写库');
   expect(ids, contains('full-agg'), reason: 'done 完整聚合卡写库');
   expect(ids, contains('txt'));
 });

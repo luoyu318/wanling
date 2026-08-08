@@ -12,7 +12,6 @@ import '../models/agent.dart' as model;
 import '../models/conversation.dart' as model;
 import '../models/friendship.dart' as model;
 import '../models/message.dart';
-import '../models/msg_type.dart';
 import '../models/user_summary.dart';
 import 'local_message_key.dart';
 
@@ -295,20 +294,18 @@ class LocalDatabaseOpenException implements Exception {
 /// 转换层在 MessagesRow ↔ ChatMessage 之间。
 extension LocalMessageStoreImpl on LocalMessageDatabase {
   /// 单条 upsert(id 冲突时整体替换)。
+  /// 聚合卡一律写库(含生成中的空态):done 后 DB 有完整记录,重进即使走
+  /// hasUnread 分支(只拉 firstUnread 之后)也能从 eager 读到,避免整条缺失。
+  /// 渲染侧空卡过滤在读取时做(见 chat_provider._isEmptyAggregateCard)。
   Future<void> putMessage(ChatMessage msg) async {
-    // 空聚合卡中间态(generating+无 elements)不写库:重进读到会渲染空白且
-    // server 拉取范围可能覆盖不到。生成中的卡由 WS 实时建卡/填充,不依赖缓存。
-    if (_isEmptyAggregateCard(msg)) return;
     await into(messages).insertOnConflictUpdate(_toRow(msg));
   }
 
   /// 批量插入(原子事务,insertOrReplace 语义同 putMessage)。
   Future<void> putMessages(Iterable<ChatMessage> msgs) async {
-    final valid = msgs.where((m) => !_isEmptyAggregateCard(m)).toList();
-    if (valid.isEmpty) return;
     await batch((b) => b.insertAll(
           messages,
-          valid.map(_toRow).toList(),
+          msgs.map(_toRow).toList(),
           mode: InsertMode.insertOrReplace,
         ));
   }
@@ -348,22 +345,6 @@ extension LocalMessageStoreImpl on LocalMessageDatabase {
       debugPrint('[localdb] getMessages: $failures/${rows.length} rows parse failed');
     }
     return results;
-  }
-
-  /// 聚合卡是否为空中间态(generating + elements 空/缺失)。是则不入库:
-  /// 生成中的聚合卡靠 WS 实时建卡/填充,DB 缓存空快照会在重进时渲染空白卡
-  /// (server 拉取范围可能覆盖不到,见 chat_provider._isEmptyAggregateCard)。
-  bool _isEmptyAggregateCard(ChatMessage m) {
-    if (MsgTypeX.fromString(m.content['msg_type'] as String?) !=
-        MsgType.aggregateCard) {
-      return false;
-    }
-    final data = m.content['data'];
-    if (data is! Map) return false;
-    if (data['state'] == 'done') return false;
-    final raw = data['elements'];
-    if (raw is! List) return true;
-    return raw.isEmpty;
   }
 
   /// ChatMessage → MessagesCompanion(写库)。
