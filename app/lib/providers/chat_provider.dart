@@ -295,22 +295,45 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         debugPrint('[chatInit] getMessagesAfter returned ${listAsc.length} msgs');
         // ListAfter 返回 ASC，reverse 成 newest first 配合 reverse ListView
-        final loaded = listAsc.reversed.toList();
+        final loadedAfter = listAsc.reversed.toList();
+
+        // 补拉 firstUnread 之前的最新上下文:hasUnread 分支只拉 firstUnread 之后,
+        // 但分卡序列的 first 卡必然在 last 卡(firstUnread)之前,若 DB 缓存又是旧态
+        // (后台 WS 断连时聚合卡停在生成中,增量未写 DB),first 卡会整条缺失。
+        // getMessagesBefore(limit) 拉最新 N 条覆盖 firstUnread 之前的分卡序列。
+        final loadedBefore = await api.getMessagesBefore(
+          conversationId,
+          limit: _pageSize,
+        );
+        debugPrint('[chatInit] hasUnread getMessagesBefore returned '
+            '${loadedBefore.length} msgs');
+
+        // 合并:before 提供 firstUnread 之前的上下文,after 提供未读。按 id 去重,
+        // 保留 createdAt 更新者,最终 _mergeHistory 升序。
+        final byId = <String, ChatMessage>{};
+        for (final m in [...loadedAfter, ...loadedBefore]) {
+          final existing = byId[m.id];
+          if (existing == null || m.createdAt.isAfter(existing.createdAt)) {
+            byId[m.id] = m;
+          }
+        }
+        final loaded = byId.values.toList();
         if (loaded.isEmpty) {
           debugPrint('[chatInit] WARNING: loaded is empty after reverse!');
         } else {
-          debugPrint('[chatInit] loaded after reverse: length=${loaded.length}, '
+          debugPrint('[chatInit] loaded after merge: length=${loaded.length}, '
               'first(=最新, messages[0])=${loaded.first.id} createdAt=${loaded.first.createdAt}, '
               'last(=最老, firstUnread expected)=${loaded.last.id} createdAt=${loaded.last.createdAt}');
         }
         // hasMore 必须综合判断：
-        // - ListAfter 取到 _pageSize 条 → 之后可能还有更新的消息
-        // - 服务端告知 firstUnread 之前有已读历史 → 之前还有更老的消息（上滑加载）
+        // - before 拉满 _pageSize 条 → 之前可能还有更老的历史（上滑加载）
+        // - 服务端告知 firstUnread 之前有已读历史 → 之前还有更老的消息
         // 二者之一为真就允许上滑加载历史。
         // 修复 Bug B：原来只看 loaded.length == _pageSize，导致 ListAfter
         // 取不满时（如总共只有 10 条未读）误判 hasMore=false，永远拉不到
-        // firstUnread 之前的已读历史。
-        final hasMore = loaded.length == _pageSize ||
+        // firstUnread 之前的已读历史。合并 after+before 后 length 可能超页,
+        // 用 before 是否拉满判断"还有更老"。
+        final hasMore = loadedBefore.length == _pageSize ||
             unread.hasMoreBeforeFirstUnread;
         state = _mergeHistory(loaded).copyWith(
           hasMore: hasMore,
