@@ -18,6 +18,11 @@ silent),新元素 append 到新卡。seq 跨卡继续递增,element_id 仍全卡
 卡由 finalizeCard/finishCard 写 footer + silent 翻转计未读。分卡纯属渲染与存储
 约束,不打断 Agent 执行(opencode task/step 零感知,仅切换增量 PATCH 目标消息)。
 
+分卡序列打 `data.segment` 三态标记:`first`(首卡,下边平)/ `middle`(中间卡,
+上下平)/ `last`(末卡,上边平);未分卡单卡无标记。plugin 切卡时经
+`{op:"set_segment"}` 写旧卡标记、新卡建卡 data 带 `last`,APP 据此渲染
+相邻接触处直角(视觉连续分段)。识别关系由 plugin 显式标记,APP 不推断。
+
 ## 增量 PATCH（非全量）
 
 plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并，server `applyContentOp` 合并到全量存储、广播**带增量**的 MESSAGE_UPDATE；无 `op` 带 `elements` 仍全量替换兼容旧 plugin。server 广播的 MESSAGE_UPDATE content 即增量 delta，APP `_applyAggregateCardDelta` 按 op 合并本地元素。
