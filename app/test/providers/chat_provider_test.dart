@@ -1301,4 +1301,62 @@ void main() {
     });
   });
 
+  group('hasUnread 分支补拉 before(ba6d289)', () {
+    test('firstUnread 之前的聚合卡经 getMessagesBefore 补拉,不缺失', () async {
+      // 有未读:firstUnread 是 last 卡,分卡 first 卡在它之前
+      when(() => api.getUnreadInfo(any())).thenAnswer((_) async => UnreadInfo(
+            unreadCount: 1,
+            firstUnreadMessageId: 'last-card',
+            firstUnreadCreatedAt: DateTime.utc(2026, 7, 6),
+          ));
+      // getMessagesAfter 只返 firstUnread(last 卡)
+      when(() => api.getMessagesAfter(any(),
+              limit: any(named: 'limit'), after: any(named: 'after')))
+          .thenAnswer((_) async => [
+                ChatMessage(
+                  id: 'last-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'last'}},
+                  createdAt: DateTime.utc(2026, 7, 6),
+                ),
+              ]);
+      // getMessagesBefore 补拉最新上下文(含 first 卡)
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                ChatMessage(
+                  id: 'first-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'first'}},
+                  createdAt: DateTime.utc(2026, 7, 5),
+                ),
+                ChatMessage(
+                  id: 'last-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'last'}},
+                  createdAt: DateTime.utc(2026, 7, 6),
+                ),
+              ]);
+
+      final notifier = ChatNotifier(api, ws, 'c1', null, 'u1');
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // 合并后 first + last 都在(去重保留 after 版 last)
+      final ids = notifier.state.displayMessages.map((m) => m.id).toSet();
+      expect(ids, contains('first-card'),
+          reason: 'hasUnread 分支补拉 firstUnread 之前的卡');
+      expect(ids, contains('last-card'));
+      // 升序:first 在 last 前
+      final msgs = notifier.state.displayMessages;
+      expect(msgs.first.id, 'first-card');
+      expect(msgs.last.id, 'last-card');
+      notifier.dispose();
+    });
+  });
 }

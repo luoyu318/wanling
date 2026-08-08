@@ -472,7 +472,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
             conversationId: conversationId,
             before: oldest.createdAt,
             limit: _pageSize,
-          ));
+          ))
+              .where((m) => !_isEmptyAggregateCard(m))
+              .toList();
           debugPrint('[loadMore] DB hit ${older.length} older msgs');
         } catch (e) {
           debugPrint('[localdb] loadMore getMessages fail: $e');
@@ -510,12 +512,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
           debugPrint('[localdb] loadMore putMessages fail: $e');
         }
       }
-      // server 拉的结果合并:对当前 state 去重(可能已含 DB older)
+      // server 拉的结果合并:对当前 state 去重(可能已含 DB older)。
+      // server 是真相源:若 state 已有同 id 的空白聚合卡(DB 脏快照),用 server
+      // 完整版覆盖,避免 dedup 跳过导致空白卡永久停留。
       final currentIds = state.displayMessages.map((m) => m.id).toSet();
       final dedupedRemote =
           remote.where((m) => !currentIds.contains(m.id)).toList();
+      final remoteById = {for (final m in remote) m.id: m};
+      // 覆盖:state 中同 id 且为空聚合卡的,用 server 版替换(history/live 都查)。
+      final historyCovered = state.historyMessages.map((m) {
+        final remoteVersion = remoteById[m.id];
+        return (remoteVersion != null && _isEmptyAggregateCard(m))
+            ? remoteVersion
+            : m;
+      }).toList();
+      final liveCovered = state.liveMessages.map((m) {
+        final remoteVersion = remoteById[m.id];
+        return (remoteVersion != null && _isEmptyAggregateCard(m))
+            ? remoteVersion
+            : m;
+      }).toList();
       state = state.copyWith(
-        historyMessages: [...state.historyMessages, ...dedupedRemote],
+        historyMessages: [...historyCovered, ...dedupedRemote],
+        liveMessages: liveCovered,
         hasMore: remoteRaw.length == _pageSize,
         isLoadingMore: false,
       );
