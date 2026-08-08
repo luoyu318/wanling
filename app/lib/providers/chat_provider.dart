@@ -956,6 +956,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
         final state = data['state'] as String?;
         if (state == null || state.isEmpty) return content;
         newData['state'] = state;
+      case 'set_segment':
+        final segment = data['segment'] as String?;
+        if (segment == null || segment.isEmpty) return content;
+        newData['segment'] = segment;
       case 'set_silent':
         final silent = data['silent'];
         if (silent is! bool) return content;

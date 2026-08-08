@@ -84,10 +84,15 @@ void main() {
   Map<String, dynamic> content({
     String state = 'generating',
     List<Map<String, dynamic>> elements = const [],
+    String? segment,
   }) {
     return {
       'msg_type': MsgType.aggregateCard.value,
-      'data': {'state': state, 'elements': elements},
+      'data': {
+        'state': state,
+        'elements': elements,
+        if (segment != null) 'segment': segment,
+      },
     };
   }
 
@@ -140,6 +145,50 @@ void main() {
       expect(deco.border, isNull); // 无边框
       expect(deco.boxShadow, isNotNull); // 有阴影
       expect(deco.boxShadow!.single.blurRadius, 8);
+    });
+
+    testWidgets('无 segment(单卡):左上直角 + 其余三角 12px 圆角(现状)', (tester) async {
+      await tester.pumpWidget(host(content(elements: [])));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      final r = deco.borderRadius as BorderRadius;
+      expect(r.topLeft, Radius.zero);
+      expect(r.topRight, const Radius.circular(12));
+      expect(r.bottomLeft, const Radius.circular(12));
+      expect(r.bottomRight, const Radius.circular(12));
+    });
+
+    testWidgets('segment=first:下边两角平,上边保留圆角', (tester) async {
+      await tester.pumpWidget(host(content(elements: [], segment: 'first')));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      final r = deco.borderRadius as BorderRadius;
+      expect(r.topLeft, Radius.zero);
+      expect(r.topRight, const Radius.circular(12));
+      expect(r.bottomLeft, Radius.zero); // 下边平
+      expect(r.bottomRight, Radius.zero);
+    });
+
+    testWidgets('segment=middle:四角平', (tester) async {
+      await tester.pumpWidget(host(content(elements: [], segment: 'middle')));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      final r = deco.borderRadius as BorderRadius;
+      expect(r.topLeft, Radius.zero);
+      expect(r.topRight, Radius.zero); // 上边平
+      expect(r.bottomLeft, Radius.zero); // 下边平
+      expect(r.bottomRight, Radius.zero);
+    });
+
+    testWidgets('segment=last:上边两角平,下边保留圆角', (tester) async {
+      await tester.pumpWidget(host(content(elements: [], segment: 'last')));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      final r = deco.borderRadius as BorderRadius;
+      expect(r.topLeft, Radius.zero);
+      expect(r.topRight, Radius.zero); // 上边平
+      expect(r.bottomLeft, const Radius.circular(12));
+      expect(r.bottomRight, const Radius.circular(12));
     });
   });
 

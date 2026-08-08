@@ -41,21 +41,35 @@ class AggregateCardRenderer implements MessageContentRenderer {
     final elements = (data['elements'] as List?)?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
 
+    // 分卡序列圆角:data.segment 三态标记(first/middle/last)决定四角。
+    // first→下边平(其下还有续卡);middle→上下平;last→上边平(其上还有前卡);
+    // 无标记=未分卡单卡,保持现状(左上直角对齐头像,其余三角圆角)。
+    final segment = data['segment'] as String?;
+    final radius = BorderRadius.only(
+      topLeft: Radius.zero, // 左上恒直角(对齐头像起始)
+      topRight: (segment == null || segment == 'first')
+          ? const Radius.circular(12)
+          : Radius.zero,
+      bottomLeft: (segment == null || segment == 'last')
+          ? const Radius.circular(12)
+          : Radius.zero,
+      bottomRight: (segment == null || segment == 'last')
+          ? const Radius.circular(12)
+          : Radius.zero,
+    );
+
     // 分组:连续 tool_card 折叠合并(纯渲染层),task/交互卡平铺
     final slots = groupAggregateElements(elements);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       // 左上角直角(对齐头像起始),其余三角 12px 圆角;无边框,阴影浮起(0x1A = 10% 黑)
-      decoration: const BoxDecoration(
+      // 分卡序列按 data.segment 调整四角(相邻接触处直角,首末保留圆角)。
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.zero,
-          topRight: Radius.circular(12),
-          bottomLeft: Radius.circular(12),
-          bottomRight: Radius.circular(12),
-        ),
-        boxShadow: [
+        borderRadius: radius,
+        // 阴影参数恒定,radius 动态故 BoxDecoration 本身不能 const,阴影子项可 const
+        boxShadow: const [
           BoxShadow(
             color: Color(0x1A000000),
             blurRadius: 8,
@@ -64,12 +78,7 @@ class AggregateCardRenderer implements MessageContentRenderer {
         ],
       ),
       child: ClipRRect(
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.zero,
-          topRight: Radius.circular(12),
-          bottomLeft: Radius.circular(12),
-          bottomRight: Radius.circular(12),
-        ),
+        borderRadius: radius,
         clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
