@@ -1013,10 +1013,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       // 聚合卡增量 op:合并进本地 content,保持元素/state/silent 增量演进;
       // 非增量(无 op / 非聚合卡)走全量替换兼容(旧 plugin / 历史消息)。
-      state = _updateMessageById(msgId, (m) {
+      final newState = _updateMessageById(msgId, (m) {
         final merged = _applyAggregateCardDelta(m.content, newContent);
         return m.copyWith(content: merged ?? newContent);
       });
+      state = newState;
+      // 聚合卡内容更新后写回 DB:避免 DB 只存 _initialize 时的旧快照(中间态/空态),
+      // 重进 eager 读到旧版导致缺消息/空白。写单条(insertOrReplace 幂等)。
+      if (MsgTypeX.fromString(newContent['msg_type'] as String?) ==
+          MsgType.aggregateCard && store != null) {
+        final idx = newState.messages.indexWhere((m) => m.id == msgId);
+        if (idx >= 0) {
+          store!.putMessage(newState.messages[idx]).catchError((e) {
+            debugPrint('[localdb] _listenUpdates putMessage fail: $e');
+          });
+        }
+      }
     });
   }
 
