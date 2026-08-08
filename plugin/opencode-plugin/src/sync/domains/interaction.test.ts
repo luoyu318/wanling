@@ -327,18 +327,77 @@ describe("InteractionCards 聚合模式 — 反向流(更新聚合卡内元素 s
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    // 模拟回合已结束并重置:新轮建了新卡(msgId 不同,element_id 从 1 重计)
+    // 模拟回合已结束并重置:新轮建了新卡(msgId 不同,element_id 从 1 重计)。
+    // _sealCard 回合收尾会清空 aggregateElementCardIds,真跨轮映射必为空。
     state.aggregateCardMsgId = "card-2-new-turn"
     state.aggregateElements = [AggregateCardManager.questionCard({
       oc_request_id: "new-turn-q",
       questions: [{ question: "新一轮?", header: "确认", options: [{ label: "是", description: "" }] }],
       status: "pending",
     }, 1)]
+    state.aggregateElementCardIds = new Map()
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
     // 不追加 PATCH(不能拿旧 entry 的元素 id 误更新新卡),仍 deleteCard
     expect(wanling.patchAggregateMessage.mock.calls.length).toBe(2)
     expect(state.aggregateElements[0].data.status).toBe("pending")
     expect(getCard("req-q-1")).toBeNull()
+  })
+
+  it("分卡后旧卡交互回传:元素在旧卡映射、当前卡已切新卡 → update 仍打旧卡", async () => {
+    const { interaction, state, wanling } = makeFixture()
+    await interaction.onQuestionAsked(questionPayload)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    // 模拟分卡:当前卡已切到 card-2(旧卡 question_card_1 留在 card-1),
+    // 元素归属映射记录 question_card_1 → card-1(分卡后 _sealIntermediateCard 不清映射)
+    state.aggregateCardMsgId = "card-2"
+    state.aggregateElements = [AggregateCardManager.markdown("新卡正文", 2)]
+    state.aggregateElementCardIds = new Map([
+      ["question_card_1", "card-1"],
+      ["markdown_2", "card-2"],
+    ])
+    await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    // 回传 PATCH 打到旧卡 card-1(而非当前卡 card-2)
+    const calls = wanling.patchAggregateMessage.mock.calls
+    const updateCall = calls.find(([msgId, b]) => msgId === "card-1" && b.op === "update")
+    expect(updateCall).toBeDefined()
+    expect(updateCall![1].element_id).toBe("question_card_1")
+    expect(updateCall![1].data.status).toBe("answered")
+    expect(calls.some(([msgId, b]) => msgId === "card-2" && b.op === "update")).toBe(false)
+    expect(getCard("req-q-1")).toBeNull()
+  })
+
+  it("分卡后旧卡仍有其他 pending 交互时不恢复 silent", async () => {
+    const { interaction, state, wanling } = makeFixture()
+    // 先挂一个 permission pending(真实 saveCard,entry 在 card_store)
+    await interaction.onPermissionAsked(permissionPayload)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    // 再挂 question pending
+    await interaction.onQuestionAsked(questionPayload)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
+    })
+    // 模拟分卡:当前卡切到 card-2,两个交互元素都留在旧卡(映射指向 card-1)
+    state.aggregateCardMsgId = "card-2"
+    state.aggregateElements = []
+    state.aggregateElementCardIds = new Map([
+      ["permission_card_1", "card-1"],
+      ["question_card_2", "card-1"],
+    ])
+    await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(5)
+    })
+    // 旧卡仍有 permission pending 未答 → 只 update 回传,不恢复 silent
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    expect(ops.some((b) => b.op === "update")).toBe(true)
+    expect(ops.some((b) => b.op === "set_silent" && b.silent === true)).toBe(false)
   })
 })
 

@@ -240,23 +240,50 @@ export class InteractionCards {
     patchData: Record<string, unknown>,
   ): Promise<void> {
     const state = entry.sessionId ? this.store.peekState(entry.sessionId) : undefined
-    // 跨轮防护:state 当前聚合卡必须就是 entry 指向的那张卡(msgId 一致),
-    // 否则 element_id 可能被新一轮复用(序号从 1 重计),误更新新卡元素。
-    if (!state || state.aggregateCardMsgId !== entry.msgId) {
-      console.warn(`[interaction] 聚合卡交互响应:session 状态不可用或跨轮,跳过元素更新: request=${entry.msgId.slice(0, 16)}`)
+    // 分卡跨卡防护:元素归属映射命中(该元素确实在当前 session 的某张聚合卡上,
+    // 含分卡后留在旧卡的元素) → 允许回传,updateElement 内部按映射 PATCH 到旧卡。
+    // 真跨轮(新一轮 element_id 复用,映射未命中)→ 跳过,防误更新新卡元素。
+    // (不再用 aggregateCardMsgId === entry.msgId:分卡后当前卡已指向新卡,旧卡
+    // 交互元素回传会被误伤,这是分卡后的回传 bug 根因。)
+    const elementId = entry.elementId as string
+    const ownerCardId = state?.aggregateElementCardIds?.get(elementId)
+    if (!state || !ownerCardId) {
+      console.warn(`[interaction] 聚合卡交互响应:session 状态不可用或元素不在归属映射,跳过更新: request=${entry.msgId.slice(0, 16)}`)
       return
     }
-    const stillPending = (state.aggregateElements ?? []).some(
-      (e) => (e.type === "question_card" || e.type === "permission_card")
-        && e.element_id !== entry.elementId
-        && e.data.status === "pending",
-    )
+    // 仍有 pending 交互判断要覆盖全卡(含分卡后旧卡遗留的 pending 交互):
+    // 若还有其它 pending 交互未答 → 不恢复 silent(避免打断用户);
+    // 全部答完才恢复。旧卡元素在 aggregateElementCardIds 映射里,但累计
+    // aggregateElements 只剩当前卡,这里从映射反查元素集合补齐判断。
+    const stillPending = this.hasOtherPending(state, entry.sessionId ?? "", elementId)
     const restoreSilent = state.aggregateCardState !== "done" && !stillPending
     await new AggregateCardManager(this.wanling, state).updateElement(
-      entry.elementId as string,
+      elementId,
       patchData,
       restoreSilent ? { silent: true } : undefined,
     )
+  }
+
+  // 判断聚合卡序列(含分卡旧卡)中是否存在其它仍 pending 的交互元素。
+  // 分卡后 state.aggregateElements 只含当前卡累计,旧卡元素不在其中;
+  // 用当前卡累计 + 从 card_store 全量 entry 反查未答交互,避免漏判。
+  private hasOtherPending(state: SessionState, sessionId: string, exceptElementId: string): boolean {
+    // 当前卡累计内的 pending 交互(除目标元素)
+    const currentPending = (state.aggregateElements ?? []).some(
+      (e) => (e.type === "question_card" || e.type === "permission_card")
+        && e.element_id !== exceptElementId
+        && e.data.status === "pending",
+    )
+    if (currentPending) return true
+    // 旧卡遗留 pending 交互:card_store 中仍存活的交互卡(未 deleteCard),
+    // 且其元素属于当前 session 的聚合卡序列(映射命中),视为未答完。
+    const entries = getAllCards()
+    for (const e of Object.values(entries)) {
+      if (e.sessionId !== sessionId || !e.elementId) continue
+      if (e.elementId === exceptElementId) continue
+      if (state.aggregateElementCardIds?.has(e.elementId)) return true
+    }
+    return false
   }
 
   async cleanupOrphans(): Promise<void> {
@@ -276,16 +303,17 @@ export class InteractionCards {
       try {
         if (entry.elementId) {
           // 聚合模式:更新聚合卡内对应元素 expired。
-          // session 状态不可用(plugin 重启后内存空)/跨轮(state 聚合卡不是 entry
-          // 指向的那张)时无法全量替换 PATCH(会丢其他元素),只丢弃本地记账,不反复重试。
+          // 分卡跨卡防护:元素归属映射命中(含分卡后旧卡元素)才 PATCH;
+          // session 状态不可用(plugin 重启后内存空)/映射未命中(真跨轮或
+          // 元素已不在聚合卡序列)时只丢弃本地记账,不反复重试。
           const state = entry.sessionId ? this.store.peekState(entry.sessionId) : undefined
-          if (state && state.aggregateCardMsgId === entry.msgId) {
+          if (state && state.aggregateElementCardIds?.has(entry.elementId)) {
             await new AggregateCardManager(this.wanling, state).updateElement(
               entry.elementId,
               { oc_request_id: requestId, status: "expired" },
             )
           } else {
-            console.warn(`[streamer] 聚合卡孤儿元素 session 状态不可用或跨轮,丢弃记账: ${requestId.slice(0, 16)}`)
+            console.warn(`[streamer] 聚合卡孤儿元素 session 状态不可用或不在归属映射,丢弃记账: ${requestId.slice(0, 16)}`)
           }
           deleteCard(requestId)
           continue
