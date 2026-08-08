@@ -191,13 +191,13 @@ void main() {
       expect(r.bottomRight, const Radius.circular(12));
     });
 
-    testWidgets('分段序列内间距:first/middle 底部 2px 缝', (tester) async {
+    testWidgets('分段序列内间距:first/middle 底部 4px 缝', (tester) async {
       await tester.pumpWidget(host(content(elements: [], segment: 'first')));
       final first = tester.widget<Container>(find.byType(Container).first);
-      expect((first.margin as EdgeInsets).bottom, 2.0);
+      expect((first.margin as EdgeInsets).bottom, 4.0);
       await tester.pumpWidget(host(content(elements: [], segment: 'middle')));
       final middle = tester.widget<Container>(find.byType(Container).first);
-      expect((middle.margin as EdgeInsets).bottom, 2.0);
+      expect((middle.margin as EdgeInsets).bottom, 4.0);
     });
 
     testWidgets('末卡/单卡保持 8px 常规间距', (tester) async {
