@@ -53,6 +53,9 @@ export interface SessionState {
   // 分卡后(满 MAX_AGGREGATE_ELEMENTS_PER_CARD 自动开新卡)旧卡元素仍会被
   // 工具终态 / 交互应答 update,updateElement 据此定位目标卡,不误打当前卡。
   aggregateElementCardIds?: Map<string, string>
+  // 聚合卡分卡序号(0=首卡):分卡时递增,用于给旧卡打 first/middle 标记。
+  // 建卡默认不带 segment(未分卡);切卡时旧卡按此值 set_segment,新卡建卡带 "last"。
+  aggregateCardSegmentIndex?: number
   // 聚合模式下工具元素定位:partId → 聚合卡内 tool_card element_id。
   // 工具 running 时同步写入(append 前),completed/error 时按 partId 找到目标元素
   // 做全量替换更新 status/output/error/file_diff。非聚合模式不写入。

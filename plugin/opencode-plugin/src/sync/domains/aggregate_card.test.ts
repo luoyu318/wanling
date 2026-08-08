@@ -202,6 +202,7 @@ describe("AggregateCardManager 分卡(满 20 自动开新卡)", () => {
       schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
+      segment: "last",
     })
   })
 
@@ -228,6 +229,54 @@ describe("AggregateCardManager 分卡(满 20 自动开新卡)", () => {
     await manager.updateElement("tool_card_5", { status: "working" })
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
     expect(state.aggregatePendingUpdates?.get("tool_card_5")).toEqual({ status: "working" })
+  })
+
+  it("切卡时旧卡 set_segment:首卡 first,新卡建卡带 segment last", async () => {
+    const state = makeState()
+    state.aggregateElements = Array.from({ length: 20 }, (_, i) =>
+      AggregateCardManager.markdown(`m${i + 1}`, i + 1),
+    )
+    state.aggregateCardMsgId = "card-1"
+    state.aggregateCardState = "generating"
+    state.aggregateCardSegmentIndex = 0
+    wanling.sendCardMessage.mockResolvedValueOnce("card-2")
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.appendElement(AggregateCardManager.markdown("m21", 21))
+    // 旧卡:set_state done + set_segment first
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith("card-1", { op: "set_state", state: "done" })
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith("card-1", { op: "set_segment", segment: "first" })
+    // 新卡建卡带 segment last
+    expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
+      state: "generating",
+      elements: [],
+      segment: "last",
+    })
+  })
+
+  it("二次切卡:旧卡标 middle(非首卡)", async () => {
+    const state = makeState()
+    state.aggregateElements = Array.from({ length: 20 }, (_, i) =>
+      AggregateCardManager.markdown(`m${i + 1}`, i + 1),
+    )
+    state.aggregateCardMsgId = "card-2"
+    state.aggregateCardState = "generating"
+    state.aggregateCardSegmentIndex = 1
+    wanling.sendCardMessage.mockResolvedValueOnce("card-3")
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.appendElement(AggregateCardManager.markdown("m22", 22))
+    expect(wanling.patchAggregateMessage).toHaveBeenCalledWith("card-2", { op: "set_segment", segment: "middle" })
+  })
+
+  it("未分卡(单卡)不标 segment:建卡 data 无 segment 字段", async () => {
+    const state = makeState()
+    const manager = new AggregateCardManager(wanling, state)
+    await manager.appendElement(AggregateCardManager.markdown("m1", 1))
+    expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
+      schema_ver: AGGREGATE_SCHEMA_VER,
+      state: "generating",
+      elements: [],
+    })
   })
 })
 

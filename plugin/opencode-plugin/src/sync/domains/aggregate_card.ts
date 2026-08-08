@@ -78,6 +78,7 @@ export type PermissionCardData = {
 //   { op:"remove", element_id }                   → 删除元素(不存在幂等跳过)
 //   { op:"reorder", order:[...] }                 → 按 order 重排
 //   { op:"set_state", state }                     → 改 data.state
+//   { op:"set_segment", segment }                 → 改 data.segment(分卡序列 first/middle/last)
 //   { op:"set_silent", silent }                   → 改顶层 content.silent(翻转触发未读)
 export type AggregatePatchOp =
   | { op: "append"; element: AggregateElement }
@@ -85,6 +86,7 @@ export type AggregatePatchOp =
   | { op: "remove"; element_id: string }
   | { op: "reorder"; order: string[] }
   | { op: "set_state"; state: "generating" | "done" }
+  | { op: "set_segment"; segment: "first" | "middle" | "last" }
   | { op: "set_silent"; silent: boolean }
 
 // patchAggregateMessage 的 data 入参:增量 op 或全量替换(兼容,无 op)。
@@ -133,6 +135,9 @@ export class AggregateCardManager {
       schema_ver: AGGREGATE_SCHEMA_VER,
       state: "generating",
       elements: [],
+      // 分卡续卡:已切过卡(序号>0)建的新卡标 segment "last"(当前为序列末卡)。
+      // 若后续再切卡,旧卡 _sealIntermediateCard 会 set_segment 覆盖为 middle。
+      ...((this.state.aggregateCardSegmentIndex ?? 0) > 0 ? { segment: "last" } : {}),
     })
     this.state.aggregateCardInflight = promise
     try {
@@ -172,6 +177,7 @@ export class AggregateCardManager {
       // 同序执行,不会并发开卡。
       if (!existed && (this.state.aggregateElements?.length ?? 0) >= MAX_AGGREGATE_ELEMENTS_PER_CARD) {
         await this._sealIntermediateCard()
+        this.state.aggregateCardSegmentIndex = (this.state.aggregateCardSegmentIndex ?? 0) + 1
       }
       const elements = existed
         ? (this.state.aggregateElements ?? []).map((e) => (e.element_id === element.element_id ? element : e))
@@ -374,6 +380,13 @@ export class AggregateCardManager {
     if (!this.state.aggregateCardMsgId) return
     const msgId = this.state.aggregateCardMsgId
     await this.wanling.patchAggregateMessage(msgId, { op: "set_state", state: "done" })
+    // 分卡序列标记:首卡(idx==0)→ first,后续→ middle(旧卡下边做平)。
+    // 旧卡本次收尾即确定其终态 segment(它不再会变),一次性 PATCH 定格。
+    const idx = this.state.aggregateCardSegmentIndex ?? 0
+    await this.wanling.patchAggregateMessage(msgId, {
+      op: "set_segment",
+      segment: idx === 0 ? "first" : "middle",
+    })
     // 清本卡 msgId/inflight/累计/流式占位,让后续 ensureCard 重开新卡。
     // 保留 aggregateCardState(仍 generating,回合未结束)与 aggregateElementCardIds
     // (旧卡元素 update 定位);aggregateSeq 跨卡继续递增(element_id 不复用)。
@@ -416,6 +429,7 @@ export class AggregateCardManager {
       this.state.aggregatePendingUpdates = undefined
       this.state.aggregateToolElementIds = undefined
       this.state.aggregateElementCardIds = undefined
+      this.state.aggregateCardSegmentIndex = undefined
     })
     // 队列吞掉前一次失败,保证后续追加不被坏 Promise 阻塞;next 本身仍向调用方传播错误。
     this.state.aggregatePatchQueue = next.catch(() => {})
