@@ -190,6 +190,24 @@ void main() {
       expect(r.bottomLeft, const Radius.circular(12));
       expect(r.bottomRight, const Radius.circular(12));
     });
+
+    testWidgets('分段序列内间距:first/middle 底部 4px 缝', (tester) async {
+      await tester.pumpWidget(host(content(elements: [], segment: 'first')));
+      final first = tester.widget<Container>(find.byType(Container).first);
+      expect((first.margin as EdgeInsets).bottom, 4.0);
+      await tester.pumpWidget(host(content(elements: [], segment: 'middle')));
+      final middle = tester.widget<Container>(find.byType(Container).first);
+      expect((middle.margin as EdgeInsets).bottom, 4.0);
+    });
+
+    testWidgets('末卡/单卡保持 8px 常规间距', (tester) async {
+      await tester.pumpWidget(host(content(elements: [], segment: 'last')));
+      final last = tester.widget<Container>(find.byType(Container).first);
+      expect((last.margin as EdgeInsets).bottom, 8.0);
+      await tester.pumpWidget(host(content(elements: [])));
+      final single = tester.widget<Container>(find.byType(Container).first);
+      expect((single.margin as EdgeInsets).bottom, 8.0);
+    });
   });
 
   group('元素分派（复用 ContentRendererRegistry）', () {

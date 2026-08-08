@@ -61,8 +61,13 @@ class AggregateCardRenderer implements MessageContentRenderer {
     // 分组:连续 tool_card 折叠合并(纯渲染层),task/交互卡平铺
     final slots = groupAggregateElements(elements);
 
+    // 分段序列内卡间距:first/middle 下面还有续卡 → 缝收窄到 4px;
+    // 末卡(下面无续卡)/单卡保持 8px 常规间距。
+    final bottomMargin =
+        (segment == 'first' || segment == 'middle') ? 4.0 : 8.0;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.only(bottom: bottomMargin),
       // 左上角直角(对齐头像起始),其余三角 12px 圆角;无边框,阴影浮起(0x1A = 10% 黑)
       // 分卡序列按 data.segment 调整四角(相邻接触处直角,首末保留圆角)。
       decoration: BoxDecoration(
