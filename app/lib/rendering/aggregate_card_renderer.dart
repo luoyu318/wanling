@@ -40,6 +40,12 @@ class AggregateCardRenderer implements MessageContentRenderer {
     final generating = state != 'done';
     final elements = (data['elements'] as List?)?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
+    // 临时诊断(排查空白卡):打印每次构建的元素数与首个元素,定位进入页面后
+    // 聚合卡 elements 是否为空/丢失。定位后移除。
+    debugPrint('[AGG-DBG] build msg=${rc.messageId} state=$state elems=${elements.length} '
+        'firstType=${elements.isEmpty ? "-" : elements.first['type']} '
+        'firstId=${elements.isEmpty ? "-" : elements.first['element_id']} '
+        'segment=${data['segment']}');
 
     // 分卡序列圆角:data.segment 三态标记(first/middle/last)决定四角。
     // first→下边平(其下还有续卡);middle→上下平;last→上边平(其上还有前卡);

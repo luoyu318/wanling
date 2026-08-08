@@ -1235,4 +1235,70 @@ void main() {
       notifier.dispose();
     });
   });
+
+  group('聚合卡增量合并回归(分卡 bug)', () {
+    test('建卡空 elements + append 增量 → 元素被填充,不空白', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+
+      // 1. 建聚合卡:MESSAGE_CREATE, elements=[] (plugin ensureCard)
+      ws.emit(WSMessage(
+        op: 0,
+        t: 'MESSAGE_CREATE',
+        d: {
+          'id': 'agg-1',
+          'conversation_id': 'c1',
+          'sender_type': 'agent',
+          'sender_id': 'a1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'silent': true,
+            'data': {
+              'schema_ver': 1,
+              'state': 'generating',
+              'elements': [],
+            },
+          },
+          'created_at': '2026-08-08T10:00:00Z',
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      var msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.where((m) => m.id == 'agg-1').length, 1,
+          reason: '聚合卡 MESSAGE_CREATE 应入列表');
+
+      // 2. append 增量:MESSAGE_UPDATE {op:"append", element}
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'conversation_id': 'c1',
+          'message_id': 'agg-1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {
+              'op': 'append',
+              'element': {
+                'type': 'markdown',
+                'element_id': 'markdown_1',
+                'data': {'text': '正文内容'},
+              },
+            },
+          },
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      msgs = container.read(chatProvider(key)).displayMessages;
+      final agg = msgs.firstWhere((m) => m.id == 'agg-1');
+      final elements =
+          ((agg.content['data'] as Map)['elements'] as List).toList();
+      expect(elements.length, 1, reason: 'append 增量应合并进 elements');
+      expect((elements[0] as Map)['element_id'], 'markdown_1');
+      expect(((elements[0] as Map)['data'] as Map)['text'], '正文内容');
+    });
+  });
+
 }
