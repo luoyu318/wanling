@@ -9,6 +9,15 @@
 - **schema_ver 协议版本**：建卡写 `1`，缺失视为 1，破坏性协议变更时递增；server 合并保留未知字段天然透传；APP 读本地 content 的 schema_ver，`> 支持版本` 时不应用增量 op（保持现状防误用），等全量替换兜底
 - **element_id 规则**：按 type_seq 生成（如 reasoning_1 / tool_card_2），全卡唯一、字母开头、≤20 字符；reasoning/markdown 流式用预留 seq，与终态 append 同一号
 
+## 分卡(单卡元素上限)
+
+plugin 侧硬性约束:单张聚合卡元素数达 `MAX_AGGREGATE_ELEMENTS_PER_CARD`(20)时,
+追加新元素前自动开新卡 — 旧卡 `set_state:done`(中间卡空态:不写 footer、不翻转
+silent),新元素 append 到新卡。seq 跨卡继续递增,element_id 仍全卡唯一;旧卡元素
+后续 update(工具终态/交互应答/流式占位)经元素归属映射仍打到旧卡。只有最后一张
+卡由 finalizeCard/finishCard 写 footer + silent 翻转计未读。分卡纯属渲染与存储
+约束,不打断 Agent 执行(opencode task/step 零感知,仅切换增量 PATCH 目标消息)。
+
 ## 增量 PATCH（非全量）
 
 plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并，server `applyContentOp` 合并到全量存储、广播**带增量**的 MESSAGE_UPDATE；无 `op` 带 `elements` 仍全量替换兼容旧 plugin。server 广播的 MESSAGE_UPDATE content 即增量 delta，APP `_applyAggregateCardDelta` 按 op 合并本地元素。
