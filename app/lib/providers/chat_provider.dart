@@ -187,7 +187,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         final local = await store!.getMessages(
             conversationId: conversationId, limit: _pageSize);
         if (local.isNotEmpty) {
-          state = _mergeHistory(local).copyWith(
+          // 过滤 DB 缓存的空聚合卡快照:生成中(为空)被 putMessages 写入的中间态,
+          // 重进读到会显示空白且 server 拉取范围(hasUnread 分支)可能覆盖不到。
+          // 生成中的聚合卡由 WS 实时建卡/填充,不依赖 DB 缓存,过滤掉是安全的。
+          final validLocal =
+              local.where((m) => !_isEmptyAggregateCard(m)).toList();
+          state = _mergeHistory(validLocal).copyWith(
             hasMore: true,
             isInitialLoading: false,
             convType: cachedConvType,
@@ -195,7 +200,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
           final nullNames =
               state.displayMessages.where((m) => m.senderName == null).length;
-          debugPrint('[chatInit] DB hit ${local.length} msgs, presented eagerly; '
+          debugPrint('[chatInit] DB hit ${local.length} msgs (agg-empty '
+              'filtered=${local.length - validLocal.length}), presented eagerly; '
               'null senderName=$nullNames/${state.displayMessages.length}');
         } else if (cachedConvType != null) {
           // 无消息但有 conversation 缓存(理论上不会发生,兜底)
@@ -1530,6 +1536,25 @@ List<ChatMessage> _filterDisplayable(Iterable<ChatMessage> msgs) {
         t != MsgType.questionReply &&
         !(t == MsgType.stepFinish && !_isMainLoopStepFinish(m.content));
   }).toList();
+}
+
+/// 判定聚合卡是否为"空中间态"(generating + elements 为空/缺失)。
+///
+/// 这种状态是 plugin 建卡瞬间(空卡)的合法中间态,但**不应被 DB 缓存**:
+/// 生成中的聚合卡靠 WS 实时建卡/增量填充,DB 缓存空快照会导致重进时
+/// 读到空白卡(且 hasUnread 分支拉取范围可能覆盖不到,永久空白)。
+/// 用于 DB eager 读取后过滤,避免渲染空卡。server 历史(完整 content)不过滤。
+bool _isEmptyAggregateCard(ChatMessage m) {
+  if (MsgTypeX.fromString(m.content['msg_type'] as String?) !=
+      MsgType.aggregateCard) {
+    return false;
+  }
+  final data = m.content['data'];
+  if (data is! Map) return false;
+  if (data['state'] == 'done') return false; // done 卡必完整,不过滤
+  final raw = data['elements'];
+  if (raw is! List) return true; // generating 但缺 elements → 空
+  return raw.isEmpty;
 }
 
 /// step_finish 是否主循环结束汇总条(finished=true,plugin part_dispatcher 的 isLoopEnd)。
