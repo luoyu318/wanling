@@ -1074,9 +1074,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 重进 eager 读到旧版导致缺消息/空白。写单条(insertOrReplace 幂等)。
       if (MsgTypeX.fromString(newContent['msg_type'] as String?) ==
           MsgType.aggregateCard && store != null) {
-        final idx = newState.messages.indexWhere((m) => m.id == msgId);
+        final idx =
+            newState.displayMessages.indexWhere((m) => m.id == msgId);
         if (idx >= 0) {
-          store!.putMessage(newState.messages[idx]).catchError((e) {
+          store!.putMessage(newState.displayMessages[idx]).catchError((e) {
             debugPrint('[localdb] _listenUpdates putMessage fail: $e');
           });
         }

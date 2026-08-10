@@ -1352,10 +1352,10 @@ void main() {
       expect(ids, contains('first-card'),
           reason: 'hasUnread 分支补拉 firstUnread 之前的卡');
       expect(ids, contains('last-card'));
-      // 升序:first 在 last 前
+      // develop displayMessages 是 newest-first:first=最新(last 卡),last=最老(first 卡)
       final msgs = notifier.state.displayMessages;
-      expect(msgs.first.id, 'first-card');
-      expect(msgs.last.id, 'last-card');
+      expect(msgs.first.id, 'last-card');
+      expect(msgs.last.id, 'first-card');
       notifier.dispose();
     });
   });
