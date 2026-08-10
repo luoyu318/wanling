@@ -63,8 +63,14 @@ HEALTH_URL="${HEALTH_URL:-}"  # 可选：发布后做健康检查
 # ─── 步骤 1：本地编译 ────────────────────────────────────────────────────
 info "[1/4] 编译 Linux amd64 二进制（CGO_ENABLED=0，静态）..."
 cd "$ROOT/server"
+# ldflags 注入版本号 + git commit(见 server/internal/version)
+# 版本从最近的 v* tag 派生,无 tag 时 fallback dev
+DEPLOY_VERSION="${DEPLOY_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+DEPLOY_VERSION="${DEPLOY_VERSION:-dev}"
+DEPLOY_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X github.com/wanling/server/internal/version.Version=$DEPLOY_VERSION \
+              -X github.com/wanling/server/internal/version.BuildCommit=$DEPLOY_COMMIT" \
     -o "$LOCAL_BIN" \
     ./cmd/main.go
 ok "编译完成: $LOCAL_BIN ($(du -h "$LOCAL_BIN" | cut -f1))"

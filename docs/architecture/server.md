@@ -55,3 +55,4 @@ flowchart TB
 - `internal/config/config.go` — 环境变量配置加载(必填项缺失 fail-fast)。详见 [support.md](./server/support.md#config)
 - `internal/presence/` — Redis 在线状态(幂等 SET + 内存降级)。详见 [support.md](./server/support.md#presence)
 - `internal/approval/` — 审批状态机编排 + 超时清理 goroutine。详见 [support.md](./server/support.md#approval)
+- `internal/version/` — server 版本号(Version + BuildCommit),编译时 ldflags 注入(`-X github.com/wanling/server/internal/version.Version=...`),`/health` 返回。本地 go run 用默认值

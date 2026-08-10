@@ -259,7 +259,17 @@ EOF
     wait_port_free "$port" || die "端口 $port 无法释放"
 
     info "编译 server..."
-    (cd "$SERVER_DIR" && go build -o /tmp/wanling-server ./cmd/main.go) || die "编译失败"
+    # ldflags 注入版本号 + git commit(见 server/internal/version)
+    # VERSION 从最近的 v* tag 派生(如 v1.4.0 → 1.4.0),无 tag 时 fallback dev
+    local ver
+    ver=$(git -C "$SERVER_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+    [ -z "$ver" ] && ver="dev"
+    local commit
+    commit=$(git -C "$SERVER_DIR" rev-parse --short HEAD 2>/dev/null)
+    (cd "$SERVER_DIR" && go build \
+        -ldflags "-X github.com/wanling/server/internal/version.Version=$ver \
+                  -X github.com/wanling/server/internal/version.BuildCommit=$commit" \
+        -o /tmp/wanling-server ./cmd/main.go) || die "编译失败"
 
     # 用 systemd 启动：独立 cgroup，prod-ctl 操作不再误杀。
     systemctl --user start "$DEV_SERVER_UNIT"
