@@ -1467,4 +1467,83 @@ void main() {
           reason: '仅最新一条 generating 卡进 live');
     });
   });
+
+  group('未读定位兼容(generating 卡不影响 firstUnread 锚点)', () {
+    test('hasUnread 分支:firstUnread 是 done 聚合卡 → 留在 history 可定位',
+        () async {
+      // 清掉 setUp 的 stub,重建本测试专属 mock(hasUnread 分支)
+      reset(api);
+      when(() => api.getMessages(any(),
+              limit: any(named: 'limit'), offset: any(named: 'offset')))
+          .thenAnswer((_) async => <ChatMessage>[]);
+      when(() => api.getUnreadInfo(any())).thenAnswer((_) async => UnreadInfo(
+            unreadCount: 1,
+            firstUnreadMessageId: 'agg-done',
+            firstUnreadCreatedAt: DateTime.parse('2026-06-20T10:04:00Z'),
+            hasMoreBeforeFirstUnread: false,
+          ));
+      when(() => api.getMessagesAfter(any(),
+              after: any(named: 'after'), limit: any(named: 'limit')))
+          .thenAnswer((_) async => [
+                ChatMessage.fromJson({
+                  'id': 'agg-done',
+                  'conversation_id': 'c1',
+                  'sender_type': 'agent',
+                  'sender_id': 'a1',
+                  'content': {
+                    'msg_type': 'aggregate_card',
+                    'data': {
+                      'state': 'done',
+                      'elements': [
+                        {
+                          'type': 'markdown',
+                          'element_id': 'm1',
+                          'data': {'text': '最终'},
+                        },
+                      ],
+                    },
+                  },
+                  'created_at': '2026-06-20T10:04:00Z',
+                }),
+              ]);
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                ChatMessage.fromJson({
+                  'id': 'agg-gen',
+                  'conversation_id': 'c1',
+                  'sender_type': 'agent',
+                  'sender_id': 'a1',
+                  'content': {
+                    'msg_type': 'aggregate_card',
+                    'data': {
+                      'state': 'generating',
+                      'elements': [
+                        {
+                          'type': 'reasoning',
+                          'element_id': 'r1',
+                          'data': {'text': '思考'},
+                        },
+                      ],
+                    },
+                  },
+                  'created_at': '2026-06-20T10:05:00Z',
+                }),
+              ]);
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.firstUnreadMessageId, 'agg-done');
+      expect(state.historyMessages.map((m) => m.id), contains('agg-done'),
+          reason: 'done 聚合卡(未读锚点)留在 history,定位逻辑可找到');
+      expect(state.liveMessages.map((m) => m.id), contains('agg-gen'),
+          reason: '更新的 generating 卡进 live');
+      // displayMessages 按 id 去重,不双显
+      expect(state.displayMessages.map((m) => m.id).toSet().length,
+          state.displayMessages.length);
+    });
+  });
 }
