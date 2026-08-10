@@ -89,11 +89,13 @@ if [[ "$DRY_RUN" == "true" ]]; then
     rsync -av --delete --dry-run \
         --exclude='.git/' \
         --exclude='__pycache__/' --exclude='*.pyc' \
+        --exclude='node_modules/' --exclude='.dart_tool/' --exclude='dist/' \
         "$PLUGIN_SRC/" "$PUBLISH_REPO_DIR/"
 else
     rsync -a --delete \
         --exclude='.git/' \
         --exclude='__pycache__/' --exclude='*.pyc' \
+        --exclude='node_modules/' --exclude='.dart_tool/' --exclude='dist/' \
         "$PLUGIN_SRC/" "$PUBLISH_REPO_DIR/"
     ok "已同步"
 fi
