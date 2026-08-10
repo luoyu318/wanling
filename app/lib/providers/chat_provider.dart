@@ -402,13 +402,40 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // live 占位,由 _onMessageCreate 终态到达时清理(race fix 分支)。
       state.historyMessages.where((m) => !loadedIds.contains(m.id)),
     );
-    final merged = [...extra, ...filtered];
+
+    // 生成中聚合卡(generating,非空)归 live:agent 正在回复,应渲染到底部活跃区
+    // 而非历史区。只对「最新一条」应用判定——生成中的消息必是会话最后一条
+    // (agent 最后回复未结束),避免历史里残留的旧 generating 卡误入 live。
+    // 被剥离的卡不再进 history(displayMessages 按 id 去重防双显)。
+    // 注意:filtered 是 _filterDisplayable 结果但未排序,用 reduce 按 createdAt
+    // 取最新(不能直接用 filtered.first)。
+    ChatMessage? liveAgg;
+    if (filtered.isNotEmpty) {
+      final newest = filtered.reduce(
+          (a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);
+      if (_isLiveBoundGeneratingAggregate(newest)) {
+        liveAgg = newest;
+      }
+    }
+    final historyFromLoaded = liveAgg != null
+        ? filtered.where((m) => m.id != liveAgg!.id).toList()
+        : filtered;
+
+    final merged = [...extra, ...historyFromLoaded];
     merged.sort((a, b) => b.createdAt.compareTo(a.createdAt)); // newest first
     // 清理 live 中残留的 isStreaming 占位:_mergeHistory 由 _initialize / jumpToBottom
     // 触发,server 历史是真相源(只含终态)。窗口期内 STREAM 插的占位若终态已在 history
     // (或终态尚未入库的活跃流),此处统一移除;活跃流的下个 STREAM delta 会经
     // _listenStream 的 idx<0 分支重建占位,不丢内容(对齐旧架构 messages=merged 整体替换)。
-    final liveCleaned = state.liveMessages.where((m) => !m.isStreaming).toList();
+    var liveCleaned = state.liveMessages.where((m) => !m.isStreaming).toList();
+    final liveAggFinal = liveAgg;
+    if (liveAggFinal != null) {
+      // 追加生成中聚合卡到 live(去重:WS 已实时插入同 id 时不再重复)。
+      // 保持 isStreaming 占位恒在末尾。
+      if (!liveCleaned.any((m) => m.id == liveAggFinal.id)) {
+        liveCleaned = _insertLiveKeepingStreamingLast(liveCleaned, liveAggFinal);
+      }
+    }
     return state.copyWith(
       historyMessages: merged,
       liveMessages:
@@ -1601,6 +1628,24 @@ List<ChatMessage> _filterDisplayable(Iterable<ChatMessage> msgs) {
         t != MsgType.questionReply &&
         !(t == MsgType.stepFinish && !_isMainLoopStepFinish(m.content));
   }).toList();
+}
+
+/// 生成中聚合卡判定:aggregate_card + state=generating + 非空卡。
+/// 用于 _mergeHistory 把正在生成的聚合卡归 live sliver(底部活跃区),
+/// 与实时场景(已在会话里收到 MESSAGE_CREATE)口径一致。
+/// - done 卡(state=done)归 history(含翻转后未读锚点场景)
+/// - 空卡(generating 无 elements)不进 live:数据拉慢/建卡瞬间的瞬态,
+///   靠后续 WS append 填充,避免空白卡渲染进 live
+bool _isLiveBoundGeneratingAggregate(ChatMessage m) {
+  if (MsgTypeX.fromString(m.content['msg_type'] as String?) !=
+      MsgType.aggregateCard) {
+    return false;
+  }
+  final data = m.content['data'];
+  if (data is! Map) return false;
+  if (data['state'] == 'done') return false;
+  if (_isEmptyAggregateCard(m)) return false;
+  return true;
 }
 
 /// 判定聚合卡是否为"空中间态"(generating + elements 为空/缺失)。

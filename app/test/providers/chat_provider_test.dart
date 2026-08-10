@@ -1359,4 +1359,112 @@ void main() {
       notifier.dispose();
     });
   });
+
+  group('_initialize 拉取时生成中聚合卡归属 live', () {
+    ChatMessage aggregateCard({
+      required String id,
+      String state = 'generating',
+      bool silent = false,
+      List<Map<String, dynamic>>? elements,
+    }) {
+      return ChatMessage.fromJson({
+        'id': id,
+        'conversation_id': 'c1',
+        'sender_type': 'agent',
+        'sender_id': 'a1',
+        'content': {
+          'msg_type': 'aggregate_card',
+          'data': {
+            'state': state,
+            'elements': elements ??
+                [
+                  {
+                    'type': 'reasoning',
+                    'element_id': 'r1',
+                    'data': {'text': '思考'},
+                  },
+                ],
+          },
+          if (silent) 'silent': true,
+        },
+        'created_at': '2026-06-20T10:05:00Z',
+      });
+    }
+
+    test('noUnread 分支拉到 generating 非空聚合卡 → 进 live', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      // 覆盖 setUp 的空 mock:注入一条生成中聚合卡(最新)
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1'),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), contains('agg1'),
+          reason: '生成中聚合卡应进 live sliver');
+      expect(state.historyMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '生成中聚合卡不应进 history');
+    });
+
+    test('done 聚合卡 → 进 history,不进 live', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1', state: 'done', silent: false),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.historyMessages.map((m) => m.id), contains('agg1'),
+          reason: 'done 聚合卡应进 history');
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')));
+    });
+
+    test('generating 空卡(elements 空)→ 不进 live', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1', elements: const []),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '空卡不进 live(靠 WS 增量填充)');
+    });
+
+    test('generating 卡非最新一条(后面还有更新消息)→ 不进 live', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1'),
+                ChatMessage.fromJson({
+                  'id': 'newer',
+                  'conversation_id': 'c1',
+                  'sender_type': 'user',
+                  'sender_id': 'u1',
+                  'content': {'msg_type': 'text', 'data': {'text': '更新的消息'}},
+                  'created_at': '2026-06-20T10:06:00Z',
+                }),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '仅最新一条 generating 卡进 live');
+    });
+  });
 }
