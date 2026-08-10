@@ -36,7 +36,7 @@ family，key 是 record `({convId, agentId})`。**双 list 数据流**(2026-07-3
 
 ## agentSessionsProvider
 
-agent_session 二级列表状态管理（对齐 conversationProvider 模式，family by agentId）。`StateNotifier<List<Conversation>?>`，null = 首次加载中。监听 WS MESSAGE_CREATE / MESSAGE_UPDATE / MESSAGE_READ 本地 copyWith 更新 last_message + unread + pendingCount + **lastAgentReplyContent**（0 延迟，不调 API）。lastAgentReplyContent 实时派生规则（2026-08-05 起，原 lastUserMessageContent「最后一条用户指令」废弃）：仅 agent 发的**非 silent** text/markdown 更新,与 server SQL 的 `msg_type IN ('text','markdown') AND silent IS DISTINCT FROM 'true'` 对齐,过程消息(reasoning/step_finish/tool_card)不覆盖简介。新 session（agent 发消息）自动 `load()` 拉入。`createSession({directory})` user 主动建 agent_session 群（directory 透传 server conversations.directory 一级列）。二级列表目录面板（DirectoryPanel）+ pendingCount 实时增减靠本 provider
+agent_session 二级列表状态管理（对齐 conversationProvider 模式，family by agentId）。`StateNotifier<List<Conversation>?>`，null = 首次加载中。监听 WS MESSAGE_CREATE / MESSAGE_UPDATE / MESSAGE_READ 本地 copyWith 更新 last_message + unread + pendingCount + **lastAgentReplyContent**（0 延迟，不调 API）。lastAgentReplyContent 实时派生规则（2026-08-05 起，原 lastUserMessageContent「最后一条用户指令」废弃）：仅 agent 发的**非 silent** text/markdown 更新,与 server SQL 的 `msg_type IN ('text','markdown') AND silent IS DISTINCT FROM 'true'` 对齐,过程消息(reasoning/step_finish/tool_card)不覆盖简介;**2026-08-10 起聚合卡回合结束翻转也更新**(取 `data.preview`,对齐 server SQL 对 aggregate_card 的摘要口径;增量 set_silent 翻转走 load() 拉 server 全量)。新 session（agent 发消息）自动 `load()` 拉入。`createSession({directory})` user 主动建 agent_session 群（directory 透传 server conversations.directory 一级列）。二级列表目录面板（DirectoryPanel）+ pendingCount 实时增减靠本 provider
 
 ## agentStatusProvider
 

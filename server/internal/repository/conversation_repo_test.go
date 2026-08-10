@@ -1210,6 +1210,86 @@ func TestListAgentSessionsForUser_LastAgentReplyContent(t *testing.T) {
 	}
 }
 
+// TestListAgentSessionsForUser_LastAgentReplyContent_AggregateCard 验证
+// last_agent_reply_content 对 aggregate_card 的摘要:读 data.preview(回合结束
+// 翻转时 server 写入的最后 markdown 正文);无 preview 的聚合卡(生成中)不命中。
+func TestListAgentSessionsForUser_LastAgentReplyContent_AggregateCard(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+	urepo := NewUserRepo(db)
+	arepo := NewAgentRepo(db)
+
+	user, _ := urepo.Create(t.Context(), uniqueShortName(t, "u"), "$2a$10$h")
+	agent, _ := arepo.Create(t.Context(), user.ID, uniqueShortName(t, "ag"), "sk", "opencode")
+
+	conv1, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s1", "")
+	conv2, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s2", "")
+	conv3, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s3", "")
+
+	mkAggregate := func(preview string, silent bool) json.RawMessage {
+		content := map[string]interface{}{
+			"msg_type": "aggregate_card",
+			"data": map[string]interface{}{
+				"state":    "done",
+				"elements": []map[string]interface{}{{"type": "markdown", "element_id": "m1", "data": map[string]string{"text": preview}}},
+			},
+		}
+		if silent {
+			content["silent"] = true
+		}
+		b, _ := json.Marshal(content)
+		return b
+	}
+	// 翻转后的聚合卡(silent=false + preview 由 server 写入)
+	mkFlipped := func(preview string) json.RawMessage {
+		b, _ := json.Marshal(map[string]interface{}{
+			"msg_type": "aggregate_card",
+			"data": map[string]interface{}{
+				"state":    "done",
+				"preview":  preview,
+				"elements": []map[string]interface{}{{"type": "markdown", "element_id": "m1", "data": map[string]string{"text": preview}}},
+			},
+			"silent": false,
+		})
+		return b
+	}
+
+	// conv1: 翻转后的聚合卡 → 摘要取 data.preview
+	msgRepo.Create(t.Context(), conv1.ID, "agent", agent.ID, mkFlipped("聚合回复正文"))
+
+	// conv2: silent 聚合卡(生成中) → 不命中,摘要空
+	msgRepo.Create(t.Context(), conv2.ID, "agent", agent.ID, mkAggregate("中间态", true))
+
+	// conv3: 翻转聚合卡 + 后续 text 回复 → 取最新(text 覆盖聚合卡摘要)
+	msgRepo.Create(t.Context(), conv3.ID, "agent", agent.ID, mkFlipped("聚合回复正文"))
+	time.Sleep(5 * time.Millisecond)
+	textContent, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "最终文字回复"},
+	})
+	msgRepo.Create(t.Context(), conv3.ID, "agent", agent.ID, textContent)
+
+	got, err := repo.ListAgentSessionsForUser(t.Context(), user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("ListAgentSessionsForUser: %v", err)
+	}
+	byID := map[string]model.ConversationListItem{}
+	for _, c := range got {
+		byID[c.ID] = c
+	}
+
+	if byID[conv1.ID].LastAgentReplyContent != "聚合回复正文" {
+		t.Errorf("conv1 期望聚合卡摘要「聚合回复正文」, 实际 %q", byID[conv1.ID].LastAgentReplyContent)
+	}
+	if byID[conv2.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv2 silent 聚合卡期望空, 实际 %q", byID[conv2.ID].LastAgentReplyContent)
+	}
+	if byID[conv3.ID].LastAgentReplyContent != "最终文字回复" {
+		t.Errorf("conv3 期望最新 text 覆盖聚合卡, 实际 %q", byID[conv3.ID].LastAgentReplyContent)
+	}
+}
+
 // TestListForUser_ExcludesAgentSession 验证 ListForUser 的一级列表过滤:
 //   - agent_session 不出现在 ListForUser(只在二级列表展示,避免污染 IM 主列表)
 //   - dm_user_agent 的 AgentSummary 带 Type(供 APP 据类型路由点击行为)

@@ -23,11 +23,27 @@ func marshalOrWarn(v any) json.RawMessage {
 // BroadcastMessageUpdate 给会话全员发 MESSAGE_UPDATE。
 // content 是更新后的完整 messages.content（json.RawMessage）。
 // 按 participants 遍历路由(N 方模型),不再要求调用方显式传 userID/agentID。
+// 不含会话元信息(convType/convTitle 为空),调用方需 title/type 时用
+// BroadcastMessageUpdateWithConvMeta。
 func (h *Hub) BroadcastMessageUpdate(convID, messageID string, content json.RawMessage) {
+	h.broadcastMessageUpdate(convID, messageID, content, "", "")
+}
+
+// BroadcastMessageUpdateWithConvMeta 同 BroadcastMessageUpdate,附带会话
+// type/title(对齐 MESSAGE_CREATE payload 的 conversation_type/title 字段)。
+// 聚合卡回合结束翻转(set_silent→false)广播用:bg-service 据此判断 agent_session
+// 通知 title=会话标题(否则误走单聊分支 title=senderName)。
+func (h *Hub) BroadcastMessageUpdateWithConvMeta(convID, messageID string, content json.RawMessage, convType, convTitle string) {
+	h.broadcastMessageUpdate(convID, messageID, content, convType, convTitle)
+}
+
+func (h *Hub) broadcastMessageUpdate(convID, messageID string, content json.RawMessage, convType, convTitle string) {
 	payload := marshalOrWarn(map[string]any{
-		"message_id":      messageID,
-		"conversation_id": convID,
-		"content":         content,
+		"message_id":         messageID,
+		"conversation_id":    convID,
+		"content":            content,
+		"conversation_type":  convType,
+		"conversation_title": convTitle,
 	})
 	if payload == nil {
 		return

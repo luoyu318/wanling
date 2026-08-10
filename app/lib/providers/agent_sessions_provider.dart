@@ -201,11 +201,13 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
   }
 
   /// 聚合卡回合结束(silent true→false)翻转:徽章+1 + lastMessageContent 更新为
-  /// 聚合卡 content(预览经 MsgTypeX.preview 取最后 markdown 元素 text)+ 排序。
+  /// 聚合卡 content(预览经 MsgTypeX.preview 取 preview 或最后 markdown 元素 text)
+  /// + lastAgentReplyContent 同步更新(对齐 server SQL 新口径:
+  /// aggregate_card 读 data.preview 也算「agent 回复摘要」)+ 排序。
   ///
-  /// lastAgentReplyContent 不更新:server ListAgentSessionsForUser 的 SQL 只认
-  /// msg_type IN ('text','markdown') 且非 silent,aggregate_card 不在其列,
-  /// 本地实时派生保持同口径(翻转只影响 lastMessageContent / unread)。
+  /// 兼容全量替换翻转(content 带 elements):本地直接算 preview;
+  /// 增量 set_silent 翻转走 load() 拉 server 全量(set_silent delta 无 elements,
+  /// 直接算 preview 会退化,见 _onMessageUpdate 注释)。
   void _onAggregateCardFlip(String convId, Map<String, dynamic> content) {
     final s = state;
     if (s == null) return;
@@ -214,9 +216,17 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
     final item = s[idx];
     // 与 _onMessageCreate 同口径:正在看该会话时不 +1(本地徽章 UX 优化)。
     final isActive = convId == _activeConvId;
+    final preview = MsgTypeX.preview(
+      MsgType.aggregateCard,
+      content['data'] as Map<String, dynamic>?,
+    );
     final updated = List<Conversation>.from(s);
     updated[idx] = item.copyWith(
       lastMessageContent: content,
+      lastAgentReplyContent:
+          (preview != null && preview.isNotEmpty)
+              ? preview
+              : item.lastAgentReplyContent,
       unreadCount: isActive ? item.unreadCount : item.unreadCount + 1,
     );
     state = updated..sort(_compare);

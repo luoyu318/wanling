@@ -428,6 +428,8 @@ void main() {
       expect(conv.lastMessageContent!['msg_type'], 'aggregate_card');
       expect(conv.lastMessagePreview(currentUserId: 'user-1'), '聚合卡最终回复',
           reason: '预览应取聚合卡最后 markdown 元素的 text');
+      expect(conv.lastAgentReplyContent, '聚合卡最终回复',
+          reason: '聚合卡翻转也算 agent 回复摘要(对齐 server SQL data.preview 口径)');
     });
 
     test('generating 阶段 MESSAGE_UPDATE(silent 仍 true)→ 不更新徽章/预览', () async {

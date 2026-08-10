@@ -34,7 +34,11 @@ plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并�
 | `remove` | element_id 删除（不存在幂等跳过） |
 | `reorder` | order 数组重排（未列出的保序追加尾部） |
 | `set_state` | 改 data.state |
-| `set_silent` | 改顶层 content.silent（翻转 true→false 触发 IncrUnread） |
+| `set_silent` | 改顶层 content.silent（翻转 true→false 触发 IncrUnread + 广播附 `data.preview`） |
+
+## data.preview（回合结束摘要）
+
+`set_silent` 翻转(false)时 server 从 elements 取**最后 markdown 正文**写入 `data.preview`（落库 merged + 注入广播 delta）。用途：通知 body（bg-service 无本地累计，增量广播无 elements）+ agent_session 二级列表摘要（server SQL `last_agent_reply_content` 对 aggregate_card 读 `data.preview`）。无 markdown 元素时不写 preview，APP 端 fallback `[聚合回复]`。
 
 ## 元素级 finished 标记
 

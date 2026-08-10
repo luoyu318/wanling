@@ -470,6 +470,11 @@ class BackgroundChatService {
       senderId: senderId ?? convId,
       senderName: senderName,
       content: content,
+      // 翻转广播 server 附带会话 type/title(对齐 MESSAGE_CREATE payload):
+      // agent_session 通知 title=会话标题,群聊 title=群名;老 server 无此字段
+      // 时走原单聊 fallback(title=senderName)。
+      conversationType: data['conversation_type'] as String?,
+      conversationTitle: data['conversation_title'] as String?,
     );
   }
 

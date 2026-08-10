@@ -980,6 +980,53 @@ func TestUpdateContent_SetSilent(t *testing.T) {
 	}
 }
 
+// TestUpdateContent_SetSilent_Preview set_silent 翻转(false)时,server 从 elements
+// 提取最后 markdown 正文写入 data.preview,并注入广播 delta(通知/摘要直接读)。
+func TestUpdateContent_SetSilent_Preview(t *testing.T) {
+	initContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"reasoning","element_id":"r1","data":{"text":"思考"}},{"type":"markdown","element_id":"m1","data":{"text":"回合最终回复"}}]},"silent":true}`)
+	env := setupMsgUpdateTest(t, initContent)
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	// 1. 落库 merged 带 data.preview(取最后 markdown 正文)
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if contentData["preview"] != "回合最终回复" {
+		t.Errorf("落库 data.preview 期望「回合最终回复」, 实际 %v", contentData["preview"])
+	}
+
+	// 2. 广播 delta 也带 preview(增量无 elements,通知/摘要靠它)
+	payload := recvMessageUpdate(t, env)
+	broadcastData := msgContentData(t, payload["content"].(map[string]any))
+	if broadcastData["op"] != "set_silent" || broadcastData["silent"] != false {
+		t.Errorf("广播增量期望 op=set_silent silent=false, 实际 %v", broadcastData)
+	}
+	if broadcastData["preview"] != "回合最终回复" {
+		t.Errorf("广播 delta.data.preview 期望「回合最终回复」, 实际 %v", broadcastData["preview"])
+	}
+	// 3. 翻转广播附带会话 type/title(对齐 MESSAGE_CREATE,bg-service 据此识别通知 title)
+	if payload["conversation_type"] != "dm_user_agent" {
+		t.Errorf("翻转广播 conversation_type 期望 dm_user_agent, 实际 %v", payload["conversation_type"])
+	}
+}
+
+// TestUpdateContent_SetSilent_Preview_NoMarkdown set_silent 翻转时 elements 无
+// markdown 元素 → 不写 preview(不影响现有语义)。
+func TestUpdateContent_SetSilent_Preview_NoMarkdown(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if preview, ok := contentData["preview"]; ok {
+		t.Errorf("无 markdown 元素不应写 preview, 实际 %v", preview)
+	}
+}
+
 // TestUpdateContent_SetSilent_Flip_IncrsUnread set_silent true→false 翻转时,
 // 对非 sender 全员 IncrUnread(复用 Task 1 翻转逻辑)。
 func TestUpdateContent_SetSilent_Flip_IncrsUnread(t *testing.T) {
