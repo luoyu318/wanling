@@ -805,14 +805,23 @@ func (r *ConversationRepo) ListAgentSessionsForUser(ctx context.Context, userID,
 		           AND m.deleted_at IS NULL
 		       ) AS pending_count,
 		       (
-		         SELECT m.content->'data'->>'text'
+		         SELECT CASE
+		           WHEN m.content->>'msg_type' = 'aggregate_card'
+		             THEN m.content->'data'->>'preview'
+		           ELSE m.content->'data'->>'text'
+		         END
 		         FROM messages m
 		         WHERE m.conversation_id = c.id
 		           AND m.is_main_stream
 		           AND m.sender_type = 'agent'
 		           AND m.sender_id = $2
-		           AND m.content->>'msg_type' IN ('text', 'markdown')
 		           AND m.content->>'silent' IS DISTINCT FROM 'true'
+		           AND (
+		             m.content->>'msg_type' IN ('text', 'markdown')
+		             OR (m.content->>'msg_type' = 'aggregate_card'
+		                 AND m.content->'data'->>'preview' IS NOT NULL
+		                 AND m.content->'data'->>'preview' != '')
+		           )
 		           AND m.deleted_at IS NULL
 		           AND NOT EXISTS (
 		             SELECT 1 FROM message_hidden h

@@ -132,10 +132,15 @@ extension MsgTypeX on MsgType {
     }
   }
 
-  /// 聚合卡预览文本:取最后一个 markdown 元素(最终回复)的 text,截断 50 字符;
-  /// 无 markdown 元素时 fallback `[聚合回复]`。
+  /// 聚合卡预览文本:优先用 server set_silent 翻转时写入的 data.preview
+  /// (增量广播无 elements,通知/摘要直接读 preview);无则取最后一个 markdown
+  /// 元素的 text,截断 50 字符;再无 → fallback `[聚合回复]`。
   /// 回合结束时聚合卡才计未读 + 推送通知,此时 elements 已含最终正文。
   static String? _aggregateCardPreview(Map<String, dynamic>? data) {
+    final preview = data?['preview'] as String?;
+    if (preview != null && preview.isNotEmpty) {
+      return preview.length > 50 ? preview.substring(0, 50) : preview;
+    }
     final elements = data?['elements'];
     if (elements is List) {
       for (final raw in elements.reversed) {
