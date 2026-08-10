@@ -182,8 +182,12 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
 
     // 聚合卡回合结束翻转:silent true→false → 徽章+1 + lastMessageContent 更新。
     // generating 阶段(silent 仍 true)只更新渲染(chatProvider),列表不动。
-    // 增量 set_silent op:silent 在 data 内,delta 无 elements,直接覆盖
-    // lastMessageContent 会让预览退化 → 走 load() 拉 server 全量。
+    // 增量 set_silent op 与全量替换统一走本地 _onAggregateCardFlip:
+    // 广播 delta 带 data.preview(server 翻转时写入最后 markdown 正文),
+    // 本地即可算摘要,无需 load() 拉 server 全量。
+    // 不走 load() 的原因:load() 与 (2.7) markRead 竞态——load 拉到的 server
+    // unread 可能是 markRead 生效前的旧值(1),diffMerge 用 fresh 覆盖本地
+    // 已被 MESSAGE_READ 清零的 state,导致列表徽章残留(需手动刷新才消失)。
     if (msgType == 'aggregate_card' && content != null) {
       final data = content['data'];
       final isSetSilentDelta = data is Map && data['op'] == 'set_silent';
@@ -191,11 +195,7 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
           ? data['silent'] == false
           : content['silent'] == false;
       if (flipped) {
-        if (isSetSilentDelta) {
-          load();
-        } else {
-          _onAggregateCardFlip(convId, content);
-        }
+        _onAggregateCardFlip(convId, content);
       }
     }
   }
@@ -205,9 +205,10 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
   /// + lastAgentReplyContent 同步更新(对齐 server SQL 新口径:
   /// aggregate_card 读 data.preview 也算「agent 回复摘要」)+ 排序。
   ///
-  /// 兼容全量替换翻转(content 带 elements):本地直接算 preview;
-  /// 增量 set_silent 翻转走 load() 拉 server 全量(set_silent delta 无 elements,
-  /// 直接算 preview 会退化,见 _onMessageUpdate 注释)。
+  /// 全量替换与增量 set_silent 统一走本方法:set_silent 广播 delta 带
+  /// data.preview(server 翻转时写入),本地即可算摘要;不走 load() 避免与
+  /// MESSAGE_READ 竞态覆盖(见 _onMessageUpdate 注释)。delta 无 preview 时
+  /// preview 为 null,lastAgentReplyContent 保留旧值(不退化覆盖)。
   void _onAggregateCardFlip(String convId, Map<String, dynamic> content) {
     final s = state;
     if (s == null) return;
