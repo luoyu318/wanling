@@ -48,6 +48,17 @@ class _StubLocator extends Fake implements UnreadLocatorController {
   bool get isLocating => locating;
 }
 
+/// 可控 isMessageInViewport 的 stub,用于聚合卡翻转补 markRead 的
+/// 「翻转卡是否在视口内」守卫(替代原 userScrolledAway 语义)。
+class _ViewportStubLocator extends Fake implements UnreadLocatorController {
+  final bool inViewport;
+  _ViewportStubLocator({required this.inViewport});
+  @override
+  bool get isLocating => false;
+  @override
+  bool isMessageInViewport(String msgId) => inViewport;
+}
+
 ChatMessage _msg(String id, {String senderType = 'agent', bool silent = false}) {
   return ChatMessage(
     id: id,
@@ -657,7 +668,7 @@ void main() {
       return scrollCtrl;
     }
 
-    testWidgets('贴底 + 聚合卡 silent true→false → 补 markRead', (tester) async {
+    testWidgets('翻转卡在视口内 → 补 markRead(实时观看语义)', (tester) async {
       final ref = _MockWidgetRef();
       final notifier = _MockChatNotifier();
       final convSync = _MockConvSync();
@@ -671,9 +682,10 @@ void main() {
       final listener = ChatStateListener(_ctx(
         ref: ref,
         notifier: notifier,
-        userScrolledAway: false,
+        userScrolledAway: true, // 即使 _userScrolledAway 卡在 true
         convSync: convSync,
         scrollController: scrollCtrl,
+        unreadLocator: _ViewportStubLocator(inViewport: true),
       ));
 
       // 聚合卡生成中(silent=true,server 不计未读)
@@ -696,7 +708,7 @@ void main() {
       verify(() => convSync.markRead()).called(1);
     });
 
-    testWidgets('用户已滚动离开 + 聚合卡 silent 翻转 → 不 markRead(保持未读)', (tester) async {
+    testWidgets('翻转卡不在视口内 → 不 markRead(保持未读浮标)', (tester) async {
       final ref = _MockWidgetRef();
       final notifier = _MockChatNotifier();
       final convSync = _MockConvSync();
@@ -706,6 +718,7 @@ void main() {
         notifier: notifier,
         userScrolledAway: true,
         convSync: convSync,
+        unreadLocator: _ViewportStubLocator(inViewport: false),
       ));
 
       final prev = ChatState(

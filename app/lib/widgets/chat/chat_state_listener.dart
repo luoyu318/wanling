@@ -349,12 +349,16 @@ class ChatStateListener {
     // 本地 unreadCount/firstUnread 恒干净,导致所有兜底同步路径(checkUnreadSeen/
     // markReadAtBottom)被「本地清白」守卫短路,server 未读清不掉(列表徽章残留,
     // 重进分隔线残留)。
-    // 这里检测「同 id 聚合卡 silent true→false」,用户实时贴底观看
-    // (未滚动离开 + 非定位中)时补 markRead 对齐 server;已滚动离开时保持
-    // 未读浮标不动(用户主动上滑阅读进度,由 checkUnreadSeen 本地递减)。
-    if (_hasAggregateSilentFlip(prev, next) &&
-        !_ctx.getUserScrolledAway() &&
-        !_ctx.getUnreadLocator().isLocating) {
+    // 这里检测「同 id 聚合卡 silent true→false」,**翻转卡在视口内**(用户实时
+    // 看到了这条回复)时补 markRead 对齐 server;翻转卡不在视口(用户滚动离开
+    // 看历史)时保持未读浮标不动,由 checkUnreadSeen 在用户滚动到时本地递减。
+    // 守卫用「视口内」而非 userScrolledAway:userScrolledAway 会因进入会话有
+    // 未读→定位置 true→流式跟随被同一守卫短路→永不复位而卡死,导致实时观看
+    // 场景翻转未读残留(2026-08-10 修复)。
+    final flippedAggId = _findAggregateSilentFlip(prev, next);
+    if (flippedAggId != null &&
+        !_ctx.getUnreadLocator().isLocating &&
+        _ctx.getUnreadLocator().isMessageInViewport(flippedAggId)) {
       debugPrint(
         '[listen] (2.7) aggregate card silent flip, markRead convId=${_ctx.convId}',
       );
@@ -440,12 +444,12 @@ class ChatStateListener {
     return placeholderGone && terminalAdded;
   }
 
-  /// 是否发生聚合卡 silent 翻转(回合结束 true→false)。
+  /// 返回聚合卡 silent true→false 翻转的 message id(无翻转返 null)。
   /// 比较 prev/next 中同 id 消息:类型为 aggregate_card 且 content['silent']
   /// 从 true → false。聚合卡回合结束 PATCH set_silent 翻转,server 此时才
   /// IncrUnread +1(见 (2.7) 分支注释)。
-  bool _hasAggregateSilentFlip(ChatState? prev, ChatState next) {
-    if (prev == null) return false;
+  String? _findAggregateSilentFlip(ChatState? prev, ChatState next) {
+    if (prev == null) return null;
     final prevById = {for (final m in prev.displayMessages) m.id: m};
     for (final m in next.displayMessages) {
       if (m.content['msg_type'] != 'aggregate_card') continue;
@@ -453,9 +457,9 @@ class ChatStateListener {
       if (pm == null) continue;
       final prevSilent = pm.content['silent'] == true;
       final nextSilent = m.content['silent'] == true;
-      if (prevSilent && !nextSilent) return true;
+      if (prevSilent && !nextSilent) return m.id;
     }
-    return false;
+    return null;
   }
 
   /// 是否发生非流式消息的 content 更新(如卡片 PATCH 增高)。
