@@ -1393,7 +1393,7 @@ void main() {
 
     test('noUnread 分支拉到 generating 非空聚合卡 → 进 live', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       // 覆盖 setUp 的空 mock:注入一条生成中聚合卡(最新)
       when(() => api.getMessagesBefore(any(),
               limit: any(named: 'limit'), before: any(named: 'before')))
@@ -1412,7 +1412,7 @@ void main() {
 
     test('done 聚合卡 → 进 history,不进 live', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       when(() => api.getMessagesBefore(any(),
               limit: any(named: 'limit'), before: any(named: 'before')))
           .thenAnswer((_) async => [
@@ -1429,7 +1429,7 @@ void main() {
 
     test('generating 空卡(elements 空)→ 不进 live', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       when(() => api.getMessagesBefore(any(),
               limit: any(named: 'limit'), before: any(named: 'before')))
           .thenAnswer((_) async => [
@@ -1445,7 +1445,7 @@ void main() {
 
     test('generating 卡非最新一条(后面还有更新消息)→ 不进 live', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       when(() => api.getMessagesBefore(any(),
               limit: any(named: 'limit'), before: any(named: 'before')))
           .thenAnswer((_) async => [
@@ -1531,7 +1531,7 @@ void main() {
                 }),
               ]);
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
