@@ -862,6 +862,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (!matched) return;
 
     final newContent = <String, dynamic>{
+      // 保留原 content 顶层字段(silent/preview 等):整体替换 elements 时若只带
+      // msg_type+data 会丢 silent → _findAggregateSilentFlip 检测不到后续翻转
+      // (prev.silent 从 true 变 null,翻转 true→false 无法识别)→ 未读残留。
+      ...card.content,
       'msg_type': MsgType.aggregateCard.value,
       'data': {...data, 'elements': newElements},
     };

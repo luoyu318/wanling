@@ -1301,6 +1301,65 @@ void main() {
     });
   });
 
+  group('聚合卡 silent 翻转 MESSAGE_UPDATE 反映到 content(未读清除前提)', () {
+    test('翻转广播后 chatProvider content.silent true→false', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      // 聚合卡创建(silent=true)
+      ws.emit(WSMessage(
+        op: 0,
+        t: 'MESSAGE_CREATE',
+        d: {
+          'id': 'agg-1',
+          'conversation_id': 'c1',
+          'sender_type': 'agent',
+          'sender_id': 'a1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'state': 'generating', 'elements': const []},
+            'silent': true,
+          },
+          'created_at': '2026-06-20T10:00:00Z',
+        },
+      ));
+      await Future.delayed(Duration.zero);
+      expect(
+        container
+            .read(chatProvider(key))
+            .displayMessages
+            .firstWhere((m) => m.id == 'agg-1')
+            .content['silent'],
+        true,
+        reason: '创建时 silent=true',
+      );
+
+      // 回合结束翻转:set_silent delta 广播
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'conversation_id': 'c1',
+          'message_id': 'agg-1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': false},
+          },
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      expect(
+        container
+            .read(chatProvider(key))
+            .displayMessages
+            .firstWhere((m) => m.id == 'agg-1')
+            .content['silent'],
+        false,
+        reason: '翻转后 silent=false(未读清除前提)',
+      );
+    });
+  });
+
   group('hasUnread 分支补拉 before(ba6d289)', () {
     test('firstUnread 之前的聚合卡经 getMessagesBefore 补拉,不缺失', () async {
       // 有未读:firstUnread 是 last 卡,分卡 first 卡在它之前
