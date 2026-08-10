@@ -93,8 +93,15 @@ info "插件: $PLUGIN_NAME"
 info "下载到 $TMP_DIR"
 
 if [[ "$PLUGIN_NAME" == "opencode-plugin" ]]; then
-    # opencode 插件:install.sh + 单文件二进制产物(免 NodeJS)
+    # opencode 插件:install.sh + 单文件二进制产物(免 NodeJS) + ocwl 快捷命令脚本
     download "$RAW_BASE/opencode-plugin/install.sh" "$TMP_DIR/install.sh"
+
+    # ocwl / ocwl-restart / ocwl-logs 快捷命令(install.sh setup_shell_aliases 从
+    # SCRIPT_DIR/scripts 安装到 ~/.local/bin,远程场景需一并下载到同目录)
+    mkdir -p "$TMP_DIR/scripts"
+    for script in ocwl ocwl-restart ocwl-logs; do
+        download "$RAW_BASE/opencode-plugin/scripts/$script" "$TMP_DIR/scripts/$script"
+    done
 
     # 平台推导(uname -m):x86_64 → x64, aarch64 → arm64
     local_arch="$(uname -m)"
