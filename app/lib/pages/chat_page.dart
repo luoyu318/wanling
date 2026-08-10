@@ -686,32 +686,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// live sliver 顶部分割线(占 SliverList index 0)。
-  /// 双 sliver center 几何下 pixels=0 对齐 live 起点,此分割线在该处可见,
-  /// 引导用户下滑(drag down → pixels 减小 → 露出 leading 的 history)查看历史。
-  /// 兼作首屏定位失败的容错:落到空屏时用户不会面对纯白。
-  Widget _buildHistoryDivider() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: const Center(
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(width: 32, child: Divider(thickness: 0.5, color: Color(0xFFCCCCCC))),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                '下滑查看历史消息',
-                style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
-              ),
-            ),
-            SizedBox(width: 32, child: Divider(thickness: 0.5, color: Color(0xFFCCCCCC))),
-          ],
-        ),
-      ),
-    );
-  }
-
   ChatNotifier get _notifier => ref.read(
     chatProvider((convId: widget.convId, agentId: widget.agentId)).notifier,
   );
@@ -1141,11 +1115,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               key: _liveSliverKey,
                               delegate: SliverChildBuilderDelegate(
                                 (ctx, i) {
-                                  if (i == 0) {
-                                    return _buildHistoryDivider();
-                                  }
-                                  final msgIdx = i - 1;
-                                  final liveMsg = chatState.liveMessages[msgIdx];
+                                  final liveMsg = chatState.liveMessages[i];
                                   // 首达(集合里没有该 id)才播入场动画并记录;
                                   // 滚动重建(集合已有)不重播,避免卡片闪烁。
                                   final animateEntry =
@@ -1154,15 +1124,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     ctx,
                                     liveMsg,
                                     itemCtx,
-                                    olderNeighbor: (msgIdx > 0)
-                                        ? chatState.liveMessages[msgIdx - 1]
+                                    olderNeighbor: (i > 0)
+                                        ? chatState.liveMessages[i - 1]
                                         : (chatState.historyMessages.isNotEmpty
                                             ? chatState.historyMessages.first
                                             : null),
                                     animateEntry: animateEntry,
                                   );
                                 },
-                                childCount: chatState.liveMessages.length + 1,
+                                childCount: chatState.liveMessages.length,
                               ),
                             ),
                             if (_isTyping)

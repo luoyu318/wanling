@@ -42,7 +42,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   StreamSubscription<Map<String, dynamic>>? _streamSub;
   Timer? _metaRefreshTimer;
 
-  static const int _pageSize = 10;
+  static const int _pageSize = 30;
 
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId,
       {this.store, this.currentUser})
