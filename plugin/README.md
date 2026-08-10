@@ -2,7 +2,7 @@
 
 万灵（Wanling）IM 平台的 Agent 接入插件集合。每个子目录是一个独立插件，通过标准 WebSocket 接口把 Agent 平台接入万灵 server —— APP 里每个 Agent 背后就是一个插件实例。
 
-`plugin/` 是权威源（日常开发在此改），公开镜像 repo `gitee.com/luoyu318/wanling-plugin` 同步分发（可 curl 安装的插件走镜像）。
+`plugin/` 是权威源（日常开发在此改）。插件代码与产物统一在主仓库 `gitee.com/luoyu318/wanling`：可 curl 安装的插件（hermes）走主仓库 raw 路径，opencode 插件二进制产物走主仓库 Gitee release 附件。
 
 ## 插件概览
 
@@ -32,7 +32,7 @@ flowchart TB
 
 - 插件经标准 WS 协议接入，服务端不绑定具体 Agent 平台（不存适配层）
 - 两插件共用握手约束：首条 Identify → 注册成功 → 断线 OpResume 补发
-- 详细组件拆解见仓库 `docs/architecture/plugin.md`（镜像 repo 不包含 docs，请到主仓库查看）
+- 详细组件拆解见仓库 `docs/architecture/plugin.md`（docs 在主仓库）
 
 ## Hermes Plugin
 
@@ -41,18 +41,20 @@ flowchart TB
 ### 一键安装
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --server=https://your.server.com --agent-id=YOUR_AGENT_ID --secret-key=YOUR_SECRET_KEY
 ```
 
 `--plugin` 支持指定插件名（默认 `hermes-plugin`）：
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --plugin=hermes-plugin --server=... --agent-id=... --secret-key=...
 ```
 
-> `--plugin` 仅支持 hermes 布局插件（含 `adapter.py` + `install.sh` 的可 curl 安装插件）；`opencode-plugin` 是编译型 TypeScript 插件，需走独立安装流程（见其 README）。
+> `--plugin` 支持 hermes 与 opencode：
+> - `hermes-plugin`（默认）：下载 `adapter.py` + `install.sh`（可 curl 安装）
+> - `opencode-plugin`：下载单文件二进制产物（免 NodeJS）+ install.sh，需 `--version=<tag>` 指定主仓库 release 版本，如 `--plugin=opencode-plugin --version=v1.4.0`
 
 参数说明（除 `--plugin` 由远程脚本消费外，其余透传给插件的 install.sh）：
 
@@ -66,7 +68,7 @@ curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh 
 交互式安装（不带参数，会逐个问）：
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | bash
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | bash
 ```
 
 装完后重启 hermes gateway：
@@ -87,7 +89,7 @@ hermes gateway restart
 远程一键（curl | bash）：
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --pair --server=https://your.server.com
 ```
 
@@ -98,7 +100,7 @@ curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh 
 ### 更新插件
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --update
 ```
 
@@ -113,14 +115,14 @@ curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh 
 
 把 OpenCode CLI/TUI 与万灵 APP 双向实时同步，实现 TUI ↔ APP 对话连续。
 
-- **安装**：独立流程，`./install.sh --pair` 扫码配对（推荐）或手动安装，详见 [opencode-plugin/README.md](./opencode-plugin/README.md)
+- **安装**：远程一键（免 NodeJS，下载单文件二进制）`--plugin=opencode-plugin --version=<tag>`，或独立流程 `./install.sh --pair` 扫码配对（推荐）或手动安装，详见 [opencode-plugin/README.md](./opencode-plugin/README.md)
 - **启动**：`systemctl --user start opencode-wanling`（或 `node dist/index.js` 前台）
 - **连 TUI**：`ocwl`（自动鉴权 + 当前目录）或 `opencode attach http://localhost:5096`
 - **运维**：`ocwl-restart` 重启 / `ocwl-logs` 实时日志 / 多实例用 `install.sh --config-dir=...` 隔离
 
 ## 公共协议（两插件共用）
 
-协议细节见仓库 `docs/ai-handbook/`（镜像 repo 不包含 docs，请到主仓库查看）：
+协议细节见仓库 `docs/ai-handbook/`（docs 在主仓库）：
 
 - **WS 协议**：握手 Identify → 注册成功 → 断线 OpResume 补发（`docs/ai-handbook/websocket-protocol.md`）
 - **扫码配对**：三方握手 / 领完即焚 / 5 分钟过期（`docs/ai-handbook/qr-pair.md`）

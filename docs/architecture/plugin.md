@@ -1,6 +1,6 @@
 # Plugin 架构
 
-插件总目录。主库 plugin/ = 权威源,公开镜像 repo 同步分发。当前两个插件：hermes-plugin（Python，18 平台 IM 适配）+ opencode-plugin（TypeScript，OpenCode CLI/TUI 桥接）。
+插件总目录。主库 plugin/ = 权威源,插件代码与产物统一在主仓库发布(镜像 repo 已废弃)。当前两个插件：hermes-plugin（Python，18 平台 IM 适配）+ opencode-plugin（TypeScript，OpenCode CLI/TUI 桥接）。
 
 ## 子系统拓扑
 
@@ -15,10 +15,10 @@ flowchart TB
         OSTREAMER[sync/streamer.ts<br/>SSE→WS 过程同步]
         OSYNC[sync/engine.ts<br/>APP→TUI 反向同步]
     end
-    PUBLISH[scripts/publish-plugin.sh<br/>主库 → 镜像 repo]
+    PUBLISH[scripts/build-plugin-binaries.sh<br/>bun compile → 单文件]
 
     SERVER[万灵 Server]
-    MIRROR[(公开镜像 repo)]
+    REL[(主仓库 Gitee release)]
     HERMES[hermes 端]
     OC[OpenCode Serve]
 
@@ -30,7 +30,7 @@ flowchart TB
     OPROXY -. WS .- SERVER
     OSTREAMER -. WS .- SERVER
     OSYNC -. WS .- SERVER
-    PUBLISH --> MIRROR
+    PUBLISH --> REL
 ```
 
 ## 组件清单(按目录)
