@@ -2,39 +2,43 @@
 #
 # Wanling 插件远程安装引导脚本（两段式安装的第一段）。
 #
+# 主仓库(镜像 repo 已废弃):插件代码在 gitee.com/luoyu318/wanling 的 plugin/,
+# 插件二进制产物(如 opencode-plugin 单文件)在主仓库 Gitee release 附件。
+#
 # 用户用法：
-#   curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
-#     bash -s -- --server=URL --agent-id=ID --secret-key=KEY
+#   curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+#     bash -s -- --plugin=hermes-plugin --server=URL --agent-id=ID --secret-key=KEY
 #
 # 扫码配对（推荐，无需 agent-id/secret-key；必须显式传 --server，管道下无交互输入）：
-#   curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
-#     bash -s -- --pair --server=URL
+#   curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+#     bash -s -- --plugin=hermes-plugin --pair --server=URL
 #
-# 多插件场景指定插件名（默认 hermes-plugin）：
-#   curl -fsSL .../install-remote.sh | bash -s -- --plugin=openclaw-plugin ...
+# opencode 插件（免 NodeJS，下载单文件二进制产物，需指定版本 tag）：
+#   curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+#     bash -s -- --plugin=opencode-plugin --version=v1.4.0 --pair --server=URL
 #
 # 做两件事：
-#   1. 从镜像 repo 的 raw URL 下载指定插件的文件到临时目录
+#   1. 从主仓库下载插件文件到临时目录
 #   2. exec 调用该插件的 install.sh（透传所有参数），由它完成实际安装
 #
-# install-remote.sh 本身在镜像 repo 根目录，插件文件在各插件子目录下：
-#   镜像 repo 根/
-#   ├── install-remote.sh      ← 本文件（总入口）
-#   ├── README.md
-#   └── hermes-plugin/         ← 插件子目录
-#       ├── install.sh
-#       ├── adapter.py
-#       └── ...
+# 各插件下载内容：
+#   hermes-plugin:   hermes-plugin/{adapter.py, __init__.py, plugin.yaml, install.sh}
+#   opencode-plugin: opencode-plugin/install.sh + 从主仓库 release 下载单文件二进制
+#                    (附件名 wanling-opencode-plugin-<os>-<arch>,由 --version 指定 tag)
 #
-# 所有参数透传给插件的 install.sh（--plugin 除外，本脚本消费）。
+# 所有参数透传给插件的 install.sh（--plugin / --version 除外，本脚本消费）。
 #
 set -euo pipefail
 
-# 镜像 repo 的 raw 根 URL（repo 地址已固化）
-RAW_BASE="https://gitee.com/luoyu318/wanling-plugin/raw/main"
+# 主仓库 raw 根 URL（repo 地址已固化）
+RAW_BASE="https://gitee.com/luoyu318/wanling/raw/main/plugin"
+# 主仓库 Gitee release 附件 base URL
+RELEASE_BASE="https://gitee.com/luoyu318/wanling/releases/download"
 
-# 默认插件名（多插件时用 --plugin=xxx 覆盖）
+# 默认插件名
 PLUGIN_NAME="hermes-plugin"
+# opencode 插件二进制产物版本(对应主仓库 release tag,默认最新 v 前缀 tag 由 --version 指定)
+BIN_VERSION=""
 
 # 颜色
 if [[ -t 1 ]]; then
@@ -49,13 +53,16 @@ die()   { echo -e "${RED}[ERR]${NC} $*" >&2; exit 1; }
 # 检查前置依赖
 command -v curl >/dev/null 2>&1 || die "未找到 curl，请先安装"
 
-# 解析参数：--plugin 本脚本消费，--dry-run 本脚本也用，其余透传给 install.sh
+# 解析参数：--plugin / --version 本脚本消费，--dry-run 本脚本也用，其余透传
 REMOTE_DRY_RUN="false"
 PASSTHROUGH_ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --plugin=*)
             PLUGIN_NAME="${arg#*=}"
+            ;;
+        --version=*)
+            BIN_VERSION="${arg#*=}"
             ;;
         --dry-run)
             REMOTE_DRY_RUN="true"
@@ -67,24 +74,52 @@ for arg in "$@"; do
     esac
 done
 
-# 要下载的插件文件（与各插件 install.sh 的 SCRIPT_DIR 解析对应，需在同一目录）
-PLUGIN_FILES=(adapter.py __init__.py plugin.yaml install.sh)
-
 # 创建临时目录，退出时清理
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# ─── 下载插件文件 ──────────────────────────────────────────────────────────
+download() {
+    local url="$1" out="$2"
+    if [[ "$REMOTE_DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}[DRY]${NC} curl -fsSL $url -o $out"
+        return
+    fi
+    curl -fsSL "$url" -o "$out" || die "下载失败: $url（检查网络/插件名/版本是否可访问）"
+    ok "已下载: $(basename "$out")"
+}
+
 info "插件: $PLUGIN_NAME"
 info "下载到 $TMP_DIR"
-for f in "${PLUGIN_FILES[@]}"; do
-    url="$RAW_BASE/$PLUGIN_NAME/$f"
-    if [[ "$REMOTE_DRY_RUN" == "true" ]]; then
-        echo -e "${YELLOW}[DRY]${NC} curl -fsSL $url -o $TMP_DIR/$f"
-    else
-        curl -fsSL "$url" -o "$TMP_DIR/$f" || die "下载失败: $url（检查网络/插件名/镜像 repo 是否可访问）"
-        info "已下载: $f"
+
+if [[ "$PLUGIN_NAME" == "opencode-plugin" ]]; then
+    # opencode 插件:install.sh + 单文件二进制产物(免 NodeJS)
+    download "$RAW_BASE/opencode-plugin/install.sh" "$TMP_DIR/install.sh"
+
+    # 平台推导(uname -m):x86_64 → x64, aarch64 → arm64
+    local_arch="$(uname -m)"
+    case "$local_arch" in
+        x86_64|amd64) arch="x64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) die "不支持的平台: $local_arch（当前仅提供 linux-x64 / linux-arm64 产物）" ;;
+    esac
+    bin_name="wanling-opencode-plugin-linux-$arch"
+    if [[ -z "$BIN_VERSION" ]]; then
+        # 未指定版本:从主仓库最新 v* tag 派生(release 名与 tag 一致)
+        # 简单方案:用户必须显式传 --version(避免网络探测 tag),否则报错提示
+        die "opencode 插件需显式传 --version=<tag>(如 --version=v1.4.0) 指定 release 版本"
     fi
-done
+    download "$RELEASE_BASE/$BIN_VERSION/$bin_name" "$TMP_DIR/$bin_name"
+    if [[ "$REMOTE_DRY_RUN" != "true" ]]; then
+        chmod +x "$TMP_DIR/$bin_name"
+    fi
+else
+    # hermes 插件(默认):4 个文件
+    PLUGIN_FILES=(adapter.py __init__.py plugin.yaml install.sh)
+    for f in "${PLUGIN_FILES[@]}"; do
+        download "$RAW_BASE/hermes-plugin/$f" "$TMP_DIR/$f"
+    done
+fi
 
 if [[ "$REMOTE_DRY_RUN" == "true" ]]; then
     echo

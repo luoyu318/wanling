@@ -33,6 +33,10 @@ readonly PLUGIN_NAME="opencode-plugin"
 CONFIG_DIR="${HOME}/.config/opencode-wanling"
 SERVICE_NAME="opencode-wanling"
 
+# 单文件二进制产物路径(bun compile,免 NodeJS)。空 = 用源码模式(node dist/index.js)。
+# 远程安装时由 install-remote.sh 下载产物后以 --binary=<路径> 传入。
+PLUGIN_BIN=""
+
 # ─── 参数解析 ──────────────────────────────────────────────────────────────
 MODE="install"
 SERVER_URL="http://localhost:18008"
@@ -60,6 +64,7 @@ while [[ $# -gt 0 ]]; do
         --proxy-port=*) PROXY_PORT="${1#*=}"; shift ;;
         --config-dir=*) CONFIG_DIR="${1#*=}"; shift ;;
         --service-name=*) SERVICE_NAME="${1#*=}"; shift ;;
+        --binary=*) PLUGIN_BIN="${1#*=}"; shift ;;
         --help|-h) cat <<EOF
 用法: $0 [模式] [选项]
 
@@ -80,6 +85,7 @@ while [[ $# -gt 0 ]]; do
   --proxy-port=N            proxy 端口 (默认 5096)
   --config-dir=PATH         配置目录 (默认 ~/.config/opencode-wanling)
   --service-name=NAME       systemd 服务名 (默认 opencode-wanling)
+  --binary=PATH             单文件二进制产物路径(免 NodeJS,远程安装由 install-remote.sh 传入)
 
 多实例示例:
   # 第二套实例(隔离 configDir + 端口 + 服务名)
@@ -195,6 +201,14 @@ setup_systemd() {
     info "探测到 opencode 二进制: ${opencode_bin}"
     mkdir -p "$(dirname "$service_file")"
 
+    # ExecStart:二进制模式直接用产物(免 NodeJS);源码模式 node dist/index.js
+    local exec_start
+    if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
+        exec_start="${PLUGIN_BIN}"
+    else
+        exec_start="$(which node) ${PLUGIN_DIR}/dist/index.js"
+    fi
+
     cat > "$service_file" <<EOF
 [Unit]
 Description=OpenCode Wanling Plugin
@@ -202,7 +216,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(which node) ${PLUGIN_DIR}/dist/index.js
+ExecStart=${exec_start}
 WorkingDirectory=${PLUGIN_DIR}
 Restart=on-failure
 RestartSec=5
@@ -486,7 +500,14 @@ print(d.get('owner_user_id',''))
 # ─── 模式: install ─────────────────────────────────────────────────────────
 do_install() {
     info "=== 安装 opencode-plugin ==="
-    check_node
+    # 二进制模式免 NodeJS;源码模式需 check_node
+    local USE_BIN=false
+    if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
+        USE_BIN=true
+        info "使用单文件二进制产物: $PLUGIN_BIN"
+    else
+        check_node
+    fi
 
     if [[ -z "$AGENT_ID" || -z "$SECRET_KEY" ]]; then
         read_config
@@ -498,8 +519,20 @@ do_install() {
     fi
 
     write_config
-    install_deps
-    build_code
+    if [[ "$USE_BIN" == "true" ]]; then
+        # 二进制模式:复制产物到插件目录(systemd 引用固定路径,防临时目录被清)。
+        # 产物已在插件目录(幂等重装)时跳过复制。
+        mkdir -p "$PLUGIN_DIR"
+        local target_bin="$PLUGIN_DIR/wanling-opencode-plugin"
+        if [[ "$PLUGIN_BIN" != "$target_bin" ]]; then
+            cp "$PLUGIN_BIN" "$target_bin"
+            chmod +x "$target_bin"
+        fi
+        PLUGIN_BIN="$target_bin"
+    else
+        install_deps
+        build_code
+    fi
     setup_systemd
     setup_shell_aliases
     ensure_service
@@ -510,9 +543,23 @@ do_install() {
 # ─── 模式: update ──────────────────────────────────────────────────────────
 do_update() {
     info "=== 更新 opencode-plugin ==="
-    check_node
-    install_deps
-    build_code
+    local USE_BIN=false
+    if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
+        USE_BIN=true
+        info "使用单文件二进制产物: $PLUGIN_BIN"
+        # 复制产物到插件目录覆盖旧版(已在插件目录则跳过)
+        mkdir -p "$PLUGIN_DIR"
+        local target_bin="$PLUGIN_DIR/wanling-opencode-plugin"
+        if [[ "$PLUGIN_BIN" != "$target_bin" ]]; then
+            cp "$PLUGIN_BIN" "$target_bin"
+            chmod +x "$target_bin"
+        fi
+        PLUGIN_BIN="$target_bin"
+    else
+        check_node
+        install_deps
+        build_code
+    fi
     setup_systemd
     setup_shell_aliases
 

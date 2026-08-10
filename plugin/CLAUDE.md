@@ -1,6 +1,6 @@
 # plugin/CLAUDE.md
 
-万灵插件总目录。主库 plugin/ = 权威源（日常开发在此改），公开镜像 repo 同步分发。Claude Code 在 plugin/ 目录工作时自动加载本文件 + 根 CLAUDE.md。
+万灵插件总目录。主库 plugin/ = 权威源（日常开发在此改），插件代码与产物统一在主仓库发布。Claude Code 在 plugin/ 目录工作时自动加载本文件 + 根 CLAUDE.md。
 
 ## 子系统身份
 
@@ -11,7 +11,7 @@
 插件代码可公开，与主库私有代码解耦。
 
 - **主库 `plugin/`** = 权威源（日常开发在此改，经常和 server 同步改协议）
-- **公开镜像 repo**：`gitee.com/luoyu318/wanling-plugin`（镜像 repo 根 = 主库 `plugin/` 内容）
+- **发布**：插件代码在主仓库 git，二进制产物（opencode 单文件）上传主仓库 Gitee release 附件（镜像 repo 已废弃）
 
 ## 开发命令
 
@@ -24,12 +24,12 @@
   - `opencode attach http://localhost:5096` — TUI 连接 proxy
   - systemd 服务 `opencode-wanling`（用户级，`systemctl --user restart opencode-wanling`）
   - `install.sh` 支持多实例隔离：`--config-dir` / `--service-name` / `--opencode-port` / `--proxy-port` / `--control-port` flag，unit 注入 `WANLING_CONFIG_DIR`。同机多套详见 `docs/deployment-source.md`「同机多实例」节
-- **`scripts/publish-plugin.sh`** — 发布：`PUBLISH_REPO_DIR=<镜像 repo 本地路径> ./scripts/publish-plugin.sh`，用 rsync 同步整个 `plugin/` 到镜像 repo（排除 `.git/`、`__pycache__`），从 `hermes-plugin/plugin.yaml` 读 version 打 tag
+- **`scripts/build-plugin-binaries.sh`** — 构建 opencode 插件单文件二进制产物（bun compile，免 NodeJS），产物输出 `release/`（gitignore 排除）。发布时上传主仓库 Gitee release
 
 用户一键安装：
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
-  bash -s -- --server=URL --agent-id=ID --secret-key=KEY
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+  bash -s -- --plugin=hermes-plugin --server=URL --agent-id=ID --secret-key=KEY
 ```
 
 ## 架构(概要)
@@ -45,14 +45,14 @@ flowchart TB
         OSTREAMER[streamer.ts<br/>SSE→WS]
         OSYNC[engine.ts<br/>APP→TUI]
     end
-    PUBLISH[publish-plugin.sh]
+    PUBLISH[build-plugin-binaries.sh<br/>bun compile]
     
     HINSTALL --> HADAPTER
     HADAPTER <-->|WS| SERVER[万灵 Server]
     OPROXY -. WS .- SERVER
     OSTREAMER -. WS .- SERVER
     OSYNC -. WS .- SERVER
-    PUBLISH --> MIRROR[(镜像 repo)]
+    PUBLISH --> REL[(主仓库 Gitee release)]
 ```
 
 详细组件清单(install-remote / install.sh 4 模式 / adapter 协议约束)见 [@../docs/architecture/plugin.md](@../docs/architecture/plugin.md)

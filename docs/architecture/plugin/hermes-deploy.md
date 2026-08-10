@@ -2,9 +2,7 @@
 
 > OpenCode Plugin（TypeScript）的部署见 `docs/deployment-source.md` §12，本文件专讲 Hermes Plugin（Python，主流 IM 适配）的部署与运维。
 
-> **插件分发**：插件源码在主库 `plugin/` 下，公开镜像在 `gitee.com/luoyu318/wanling-plugin`。
-> 第三方用户**无需访问主库**，用一键安装命令即可。改完主库插件后，跑
-> `PUBLISH_REPO_DIR=<镜像 repo 路径> ./scripts/publish-plugin.sh` 同步到镜像 repo。
+> **插件分发**：插件源码与安装脚本在主仓库 `plugin/` 下，第三方用户用主仓库 raw URL 一键安装（镜像 repo 已废弃）。
 
 ## 前置条件
 
@@ -17,14 +15,14 @@
 
 ```bash
 # 交互式安装（已有 agent_id 和 secret_key）
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | bash
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | bash
 
 # 或参数式安装
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --server=https://chat.example.com --agent-id=<uuid> --secret-key=<key>
 
 # 或一键注册新 Agent + 安装插件
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --register --server=https://chat.example.com \
     --user-token=<user-jwt> --agent-name="我的 Agent"
 ```
@@ -32,7 +30,7 @@ curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh 
 **扫码配对（推荐，无需 user token）**：
 
 ```bash
-curl -fsSL https://gitee.com/luoyu318/wanling-plugin/raw/main/install-remote.sh | \
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
   bash -s -- --pair --server=https://chat.example.com
 ```
 
