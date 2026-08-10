@@ -445,24 +445,15 @@ void main() {
           reason: 'generating 阶段不应覆盖会话列表预览');
     });
 
-    test('set_silent 增量 op 翻转 → load() 重拉 server 全量(徽章+1 + 预览更新)',
+    test('set_silent 增量 op 翻转 → 本地更新(徽章+1 + preview 摘要,不走 load)',
         () async {
       final notifier = await boot();
-      // 翻转后 server 返回翻转后的聚合卡全量(含 elements + silent:false)
-      when(() => api.getAgentSessions('agent-1')).thenAnswer((_) async => [
-            _session(unread: 1).copyWith(lastMessageContent: {
-              'msg_type': 'aggregate_card',
-              'data': {
-                'state': 'done',
-                'elements': [
-                  {'type': 'markdown', 'data': {'text': '聚合卡最终回复'}},
-                ],
-              },
-              'silent': false,
-            }),
-          ]);
+      // 清掉 boot() 期间的 load 调用记录,翻转后断言不再触发 load():
+      // set_silent 翻转本地即可更新(广播 delta 带 preview),走 load() 会与
+      // MESSAGE_READ 竞态覆盖已清零的 state(列表徽章残留)。
+      clearInteractions(api);
 
-      // set_silent 增量 delta:silent 在 data 内,顶层无 silent/elements
+      // set_silent 增量 delta:silent 在 data 内,带 server 翻转写入的 preview
       ws.emitUpdate(WSMessage(
         op: 0,
         t: 'MESSAGE_UPDATE',
@@ -472,17 +463,25 @@ void main() {
           'conversation_id': 'c1',
           'content': {
             'msg_type': 'aggregate_card',
-            'data': {'op': 'set_silent', 'silent': false},
+            'data': {
+              'op': 'set_silent',
+              'silent': false,
+              'preview': '聚合卡最终回复',
+            },
           },
         },
       ));
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(Duration.zero);
 
       final conv = notifier.state!.first;
       expect(conv.unreadCount, 1,
           reason: 'set_silent 增量翻转应计 1 未读(server 已在翻转时 IncrUnread)');
       expect(conv.lastMessagePreview(currentUserId: 'user-1'), '聚合卡最终回复',
-          reason: '预览应经 load() 重拉取 server 全量聚合卡最后 markdown 元素');
+          reason: '预览应取广播 delta 的 data.preview');
+      expect(conv.lastAgentReplyContent, '聚合卡最终回复',
+          reason: '聚合卡翻转摘要从 preview 本地派生');
+      // load() 不应被翻转触发(避免与 MESSAGE_READ 竞态覆盖本地已清零 state)
+      verifyNever(() => api.getAgentSessions(any()));
     });
 
     test('set_silent 增量 op silent=true → 不触发 load()', () async {

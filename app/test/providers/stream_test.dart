@@ -88,7 +88,8 @@ void main() {
   void emitAggregateCard(String id,
       {List<Map<String, dynamic>>? elements,
       String state = 'generating',
-      int? schemaVer}) {
+      int? schemaVer,
+      bool silent = false}) {
     ws.emit(WSMessage(
       op: 0,
       t: 'MESSAGE_CREATE',
@@ -104,6 +105,7 @@ void main() {
             'state': state,
             'elements': elements ?? [],
           },
+          if (silent) 'silent': true,
         },
         'created_at': '2026-07-24T00:00:00Z',
       },
@@ -887,6 +889,59 @@ void main() {
 
       final msgs = container.read(chatProvider(key)).displayMessages;
       expect(elementsOf(msgs.first.content).length, 3);
+    });
+
+    test('聚合流式元素更新保留 silent 顶层字段(未读翻转检测前提)', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await pump();
+
+      // 建卡 silent=true(回合进行中,server 不计未读)
+      emitAggregateCard('agg-1',
+          state: 'generating',
+          silent: true,
+          elements: [
+            {
+              'type': 'reasoning',
+              'element_id': 'reasoning_1',
+              'data': {'text': '思考中'},
+            },
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_1',
+              'data': {'text': 'Hi'},
+            },
+          ]);
+      await pump();
+      expect(
+        container
+            .read(chatProvider(key))
+            .displayMessages
+            .firstWhere((m) => m.id == 'agg-1')
+            .content['silent'],
+        true,
+        reason: '建卡 silent=true',
+      );
+
+      // 聚合流式帧更新元素 text(模拟 agent 生成中)
+      emitAggregateStream('s1', '思考更新', msgId: 'agg-1', elementId: 'reasoning_1');
+      await pump();
+
+      final content =
+          container
+              .read(chatProvider(key))
+              .displayMessages
+              .firstWhere((m) => m.id == 'agg-1')
+              .content;
+      expect(
+        ((content['data'] as Map)['elements'] as List).first['data']['text'],
+        '思考更新',
+        reason: '聚合流式帧应更新元素 text',
+      );
+      // 回归:流式元素更新不得丢 silent(否则后续 set_silent 翻转检测失效 → 未读残留)
+      expect(content['silent'], true,
+          reason: '聚合流式元素更新必须保留 silent 顶层字段');
     });
   });
 }
