@@ -182,11 +182,15 @@ void main() {
         userScrolledAway: true,
       ));
 
-      final prev =
-          ChatState(historyMessages: [_msg('m-old')], isInitialLoading: false);
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: true,
+      );
       final next = ChatState(
         historyMessages: [_msg('m-new'), _msg('m-old')], // 无 silent 字段
         isInitialLoading: false,
+        isServerInitialized: true,
       );
 
       listener.onChatStateChanged(prev, next);
@@ -194,6 +198,69 @@ void main() {
 
       verify(() => notifier.incrementUnread()).called(1);
       verify(() => convNotifier.incrementUnreadLocally('c1')).called(1);
+    });
+  });
+
+  // ========== 初始化加载补全不计数(未读浮标防误报)==========
+  // 场景:_initialize 的 DB eager → server 补全让 messages 增长(如 14→15),
+  // 此时 userScrolledAway 仍为初始 true,(2) 分支若不加 isServerInitialized
+  // 守卫会把「历史补全」误判为「实时新消息」→ incrementUnread +1 →
+  // 右下角出现「1条新消息」浮标(用户实时观看后残留)。
+  group('初始化加载补全不计数(浮标防误报)', () {
+    test('isServerInitialized=false 期间 prepend → 不 incrementUnread', () async {
+      final ref = _MockWidgetRef();
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: true, // 初始值:server 加载期间用户尚未复位
+      ));
+
+      // prev:DB eager 14 条(isServerInitialized=false)
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: false,
+      );
+      // next:server 补全 15 条(isServerInitialized 仍 false,加载中)
+      final next = ChatState(
+        historyMessages: [_msg('m-new'), _msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: false,
+      );
+
+      listener.onChatStateChanged(prev, next);
+      await Future.delayed(Duration.zero);
+
+      verifyNever(() => notifier.incrementUnread());
+    });
+
+    test('isServerInitialized=true 后 prepend(实时新消息)→ 正常计数', () async {
+      final convNotifier = _MockConvListNotifier();
+      final ref = _MockWidgetRef();
+      when(() => ref.read(conversationProvider.notifier)).thenReturn(convNotifier);
+      final notifier = _MockChatNotifier();
+      final listener = ChatStateListener(_ctx(
+        ref: ref,
+        notifier: notifier,
+        userScrolledAway: true,
+      ));
+
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: true,
+      );
+      final next = ChatState(
+        historyMessages: [_msg('m-new'), _msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: true,
+      );
+
+      listener.onChatStateChanged(prev, next);
+      await Future.delayed(Duration.zero);
+
+      verify(() => notifier.incrementUnread()).called(1);
     });
   });
 
@@ -250,11 +317,15 @@ void main() {
         jumpController: jumpCtrl,
       ));
 
-      final prev =
-          ChatState(historyMessages: [_msg('m-old')], isInitialLoading: false);
+      final prev = ChatState(
+        historyMessages: [_msg('m-old')],
+        isInitialLoading: false,
+        isServerInitialized: true,
+      );
       final next = ChatState(
         historyMessages: [_msg('m-new'), _msg('m-old')],
         isInitialLoading: false,
+        isServerInitialized: true,
       );
 
       listener.onChatStateChanged(prev, next);

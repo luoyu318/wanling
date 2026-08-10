@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -293,16 +292,28 @@ class ChatStateListener {
           // 与 server IncrUnreadTx + bg-service + conversationProvider
           // + agentSessionsProvider 四路完全对齐,否则用户在 ChatPage 内会看到
           // 浮标 N 但 server unread=0 的不一致。
-          final newMsg = next.displayMessages.first;
-          final isSilent = newMsg.content['silent'] == true;
-          if (!isSilent) {
-            _ctx.getNotifier().incrementUnread();
-            // 同步会话列表徽章：conversationProvider 内置 _onMessageCreate 在
-            // isActive=true 时不 +1（与 server 对齐），但浮标 +1 了，这里手动同步
-            // 让两端一致，否则返回列表时徽章比浮标少。
-            _ctx.ref
-                .read(conversationProvider.notifier)
-                .incrementUnreadLocally(_ctx.convId);
+          // 初始化守卫:prev.isServerInitialized=false 期间(DB eager → server 补全)
+          // 的 prepend 是「历史补全」非「实时新消息」,此时 userScrolledAway 仍为
+          // 初始 true 会误入本分支 → incrementUnread +1 → 右下角「1条新消息」
+          // 浮标误报(用户实时观看后残留,2026-08-10 修复)。
+          final prevInit = prev;
+          if (prevInit != null && !prevInit.isServerInitialized) {
+            debugPrint(
+              '[listen] (2) skip unread count during init '
+              '(prev.isServerInitialized=false)',
+            );
+          } else {
+            final newMsg = next.displayMessages.first;
+            final isSilent = newMsg.content['silent'] == true;
+            if (!isSilent) {
+              _ctx.getNotifier().incrementUnread();
+              // 同步会话列表徽章：conversationProvider 内置 _onMessageCreate 在
+              // isActive=true 时不 +1（与 server 对齐），但浮标 +1 了，这里手动同步
+              // 让两端一致，否则返回列表时徽章比浮标少。
+              _ctx.ref
+                  .read(conversationProvider.notifier)
+                  .incrementUnreadLocally(_ctx.convId);
+            }
           }
         }
       } else {
