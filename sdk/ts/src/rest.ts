@@ -45,6 +45,24 @@ export type CreateApprovalResult = {
   matched_pattern?: string
 }
 
+// 聚合卡增量 op,对齐 docs/ai-handbook/aggregate-card.md。
+// 与 updateMessageContent(全量替换)互补:聚合卡流式增量用本方法,避免全量替换
+// 触发 server mergePreservedSilent 保留 silent 造成翻转不生效。
+export type AggregateElement = {
+  type: string
+  element_id: string
+  data: Record<string, unknown>
+}
+
+export type AggregatePatchOp =
+  | { op: "append"; element: AggregateElement }
+  | { op: "update"; element_id: string; data: Record<string, unknown> }
+  | { op: "remove"; element_id: string }
+  | { op: "reorder"; order: string[] }
+  | { op: "set_state"; state: "generating" | "done" }
+  | { op: "set_segment"; segment: "first" | "middle" | "last" }
+  | { op: "set_silent"; silent: boolean }
+
 export class WanlingRestClient {
   private serverUrl: string
   private tokenProvider: () => Promise<string>
@@ -132,6 +150,18 @@ export class WanlingRestClient {
 
   async updateMessageContent(msgId: string, content: MessageContent): Promise<void> {
     const resp = await this.request<{ ok: boolean }>("PATCH", `/api/messages/${msgId}`, { content })
+    this.envelopeOk(resp)
+  }
+
+  // 聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)。
+  // 语义对齐 aggregate-card.md 的增量协议:
+  // - append/update/remove/reorder 维护 elements
+  // - set_state / set_segment / set_silent 改卡状态与 silent(翻转 false 触发未读+通知)
+  async patchAggregateMessage(msgId: string, op: AggregatePatchOp): Promise<void> {
+    const resp = await this.request<{ ok: boolean }>(
+      "PATCH", `/api/messages/${msgId}`,
+      { content: { msg_type: "aggregate_card", data: op as unknown as Record<string, unknown> } },
+    )
     this.envelopeOk(resp)
   }
 

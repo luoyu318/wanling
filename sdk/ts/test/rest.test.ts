@@ -108,4 +108,30 @@ describe("WanlingRestClient", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it("patchAggregateMessage PATCH 增量 op(append)", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    await client.patchAggregateMessage("m1", {
+      op: "append",
+      element: { type: "markdown", element_id: "m1", data: { text: "hi" } },
+    })
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:18008/api/messages/m1")
+    expect(init.method).toBe("PATCH")
+    expect(JSON.parse(String(init.body))).toEqual({
+      content: {
+        msg_type: "aggregate_card",
+        data: { op: "append", element: { type: "markdown", element_id: "m1", data: { text: "hi" } } },
+      },
+    })
+  })
+
+  it("patchAggregateMessage set_silent 翻转", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    await client.patchAggregateMessage("m1", { op: "set_silent", silent: false })
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({
+      content: { msg_type: "aggregate_card", data: { op: "set_silent", silent: false } },
+    })
+  })
 })
