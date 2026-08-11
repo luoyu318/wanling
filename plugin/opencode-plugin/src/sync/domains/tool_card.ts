@@ -71,7 +71,6 @@ export class ToolCardManager {
     const error = part.state?.error as string | undefined
     const toolName = part.tool || ""
     const metadata = extractTaskMetadata(part.state)
-    console.log(`[TC-DBG] onPartUpdated tool=${toolName} status=${status} part=${part.id} session=${sessionID.slice(0, 12)}`)
 
     // question 工具由 question_card 处理（SSE question.asked → onQuestionAsked），
     // 不再发 tool_call 消息，避免 APP 同时出现两张卡片。
@@ -94,7 +93,6 @@ export class ToolCardManager {
       // 普通工具无 child session 关联,清空避免残留上一次 task 的字段
       state.pendingChildSessionId = undefined
       state.pendingParentSessionId = undefined
-      console.log(`[TC-DBG] running → pendingToolCard 已存,排 setImmediate part=${part.id}`)
       setImmediate(() => this.flushPending(state))
 
     } else if (status === "completed") {
@@ -119,7 +117,6 @@ export class ToolCardManager {
       if (!msgId) {
         console.warn(`[streamer] tool_card msgId 缺失,跳过 PATCH: session=${sessionID.slice(0, 12)} part=${part.id}`)
       } else {
-        console.log(`[TC-DBG] completed PATCH msgId=${msgId} part=${part.id} tool=${toolName}`)
         const fileDiffData = this.buildFileDiff(toolName, input, output)
         const patchData: Record<string, unknown> = {
           name: toolName,
@@ -173,17 +170,14 @@ export class ToolCardManager {
     // 1. msgId 已就位
     const existing = state.toolCardMsgIds.get(part.id)
     if (existing) {
-      console.log(`[TC-DBG] resolveMsgId 分支1(已就位) part=${part.id} msgId=${existing}`)
       return existing
     }
 
     // 2. sendCardMessage(running) 在飞行中 → await 它(捕获竞态窗口)
     const inflight = state.toolCardInflight.get(part.id)
     if (inflight) {
-      console.log(`[TC-DBG] resolveMsgId 分支2(await inflight) part=${part.id}`)
       try {
         const mid = await inflight
-        console.log(`[TC-DBG] resolveMsgId 分支2 resolved part=${part.id} msgId=${mid}`)
         return mid
       } catch {
         // sendCardMessage 失败,落到下面的兜底分支(若 pending 已被消费则返回 undefined)
@@ -195,7 +189,6 @@ export class ToolCardManager {
     //    并注册 childSessionTree(否则子 session 后续事件全部丢失)。
     //    普通工具无 childSessionId,只发卡片不注册。
     if (state.pendingToolCard && state.pendingToolCard.partId === part.id) {
-      console.log(`[TC-DBG] resolveMsgId 分支3(pending同步发) part=${part.id} — completed 抢占了 setImmediate`)
       const pending = state.pendingToolCard
       state.pendingToolCard = undefined
       // task 工具同步发起用 starting 状态(对齐 flushPending),普通工具用 running。
@@ -384,11 +377,9 @@ export class ToolCardManager {
   flushPending(state: SessionState, childSessionId?: string, parentSessionId?: string): void {
     const pending = state.pendingToolCard
     if (!pending) {
-      console.log(`[TC-DBG] flushPending 无 pending(已被消费)`)
       return
     }
     state.pendingToolCard = undefined
-    console.log(`[TC-DBG] flushPending 发 running 卡 tool=${pending.toolName} part=${pending.partId}`)
     // wide-review I-1:childSessionId 优先用参数(setImmediate 路径传),
     // fallback 到 state.pending*(审批/提问抢占路径无参,从 pending 对象读)。
     const effectiveChild = childSessionId ?? state.pendingChildSessionId
@@ -468,7 +459,6 @@ export class ToolCardManager {
     if (isTask && effectiveChild) {
       data.sub_session_id = effectiveChild
     }
-    console.log(`[TC-DBG] flushPending 聚合追加 tool_card_${seq} tool=${pending.toolName} part=${pending.partId}`)
     void this.appendToolElement(state, data, seq)
       .then(() => {
         // task 子 session:entry 已在 handleTaskTool running 同步注册(提前注册),

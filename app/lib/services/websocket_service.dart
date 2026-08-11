@@ -315,8 +315,6 @@ class WebSocketService {
         // op=14 流式快照:不落库、不带 seq、不进 _persistToStore。
         final d = msg.d as Map<String, dynamic>?;
         if (d != null) {
-          final tlen = (d['text'] as String?)?.length ?? -1;
-          debugPrint('[SSE-DBG] ws recv op=14 sid=${d['stream_id']} kind=${d['msg_type']} len=$tlen');
           _streamController.add(d);
         }
         return;

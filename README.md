@@ -10,6 +10,10 @@
 
 ![消息会话列表](docs/images/消息会话列表主界面_small.jpg)
 
+> 🎬 演示视频（B站）：[万灵 自托管 AI Agent 聊天系统，Hermes、OpenCode 插件一键接入](https://www.bilibili.com/video/BV1iFui6HEvS)
+
+<iframe src="//player.bilibili.com/player.html?bvid=BV1iFui6HEvS&autoplay=0&high_quality=1&danmaku=0" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true" width="100%" height="420"></iframe>
+
 ---
 
 ## 这是什么
@@ -37,9 +41,9 @@ Agent 平台走标准 WebSocket 协议接入,服务端不绑定具体 LLM;内置
 
 ## 一览
 
-| 审批通知 | 问答 | 安全审批 | OpenCode 项目 | OpenCode 会话列表 | 文件预览 | 聊天执行中 | 命令面板 |
-|---|---|---|---|---|---|---|---|
-| <img src="docs/images/权限审批通知_small.jpg" width="170" alt="权限审批通知"/> | <img src="docs/images/问答抽屉_small.jpg" width="170" alt="问答抽屉"/> | <img src="docs/images/权限审批抽屉_small.jpg" width="170" alt="权限审批抽屉"/> | <img src="docs/images/opencode项目列表_small.jpg" width="170" alt="opencode 项目列表"/> | <img src="docs/images/opencode会话列表_small.jpg" width="170" alt="opencode 会话列表"/> | <img src="docs/images/文件资源管理器-文件预览_small.jpg" width="170" alt="文件预览"/> | <img src="docs/images/聊天页面执行中_small.jpg" width="170" alt="聊天执行中"/> | <img src="docs/images/命令面板_small.jpg" width="170" alt="命令面板"/> |
+| 审批通知 | 问答 | 安全审批 | OpenCode 项目 | OpenCode 会话列表 | 文件预览 | 聊天执行中 | 命令面板 | 子Agent |
+|---|---|---|---|---|---|---|---|---|
+| <img src="docs/images/权限审批通知_small.jpg" width="170" alt="权限审批通知"/> | <img src="docs/images/问答抽屉_small.jpg" width="170" alt="问答抽屉"/> | <img src="docs/images/权限审批抽屉_small.jpg" width="170" alt="权限审批抽屉"/> | <img src="docs/images/opencode项目列表_small.jpg" width="170" alt="opencode 项目列表"/> | <img src="docs/images/opencode会话列表_small.jpg" width="170" alt="opencode 会话列表"/> | <img src="docs/images/文件资源管理器-文件预览_small.jpg" width="170" alt="文件预览"/> | <img src="docs/images/聊天页面执行中_small.jpg" width="170" alt="聊天执行中"/> | <img src="docs/images/命令面板_small.jpg" width="170" alt="命令面板"/> | <img src="docs/images/子Agent_small.jpg" width="170" alt="子Agent"/> |
 
 ## 架构
 

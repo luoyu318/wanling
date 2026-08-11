@@ -84,11 +84,6 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
       final convId = d['conversation_id'] as String?;
       if (convId == null) return;
       final newUnread = (d['unread_count'] as num?)?.toInt() ?? 0;
-      debugPrint(
-        '[debug-ws-read] MESSAGE_READ convId=$convId newUnread=$newUnread '
-        'state has conv? ${state.indexWhere((c) => c.id == convId) >= 0} '
-        'state entries=${state.map((c) => c.id.length >= 8 ? '${c.id.substring(0, 8)}...' : c.id).join(',')}',
-      );
       setUnreadCountLocally(convId, newUnread);
     });
     _messageUpdateSub = ws.messageUpdates.listen(_onMessageUpdate);

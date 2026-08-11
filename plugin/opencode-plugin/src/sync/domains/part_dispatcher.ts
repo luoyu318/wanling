@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { logger } from "../../utils/logger.js"
 import type { EventEmitter } from "events"
 import type {
   PartUpdatedPayload,
@@ -103,7 +104,6 @@ export class PartDispatcher {
               const sid = state.reasoning?.streamId
               // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
               if (state.reasoning) this.forceFlushStream(state, "reasoning")
-              console.log(`[SSE-DBG] part_updated reasoning END sid=${sid ?? "-"} ocLen=${text.length} child=${!!state.isChildSession} head=${JSON.stringify(text.slice(0, 30))}`)
               if (text.trim()) {
                 if (this.useAggregate(state)) {
                   // 流式已预留 seq 则复用(终态与流式帧同一 element_id),未流式走 nextSeq
@@ -149,7 +149,6 @@ export class PartDispatcher {
               const sid = state.text?.streamId
               // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
               if (state.text) this.forceFlushStream(state, "text")
-              console.log(`[SSE-DBG] part_updated text END sid=${sid ?? "-"} ocLen=${text.length} child=${!!state.isChildSession} head=${JSON.stringify(text.slice(0, 30))}`)
               // 根治(未读锚点=真实内容):text 终态缓存到 pendingText,不立即发。
               // 最终回复(step-finish isLoopEnd)以 silent=false 发(markdown 计未读),
               // 中间步骤以 silent=true 发。子 agent 文本恒 silent=true。
@@ -187,7 +186,7 @@ export class PartDispatcher {
           // - finished=true → APP 渲染 tokens 汇总行
           // 主 session 中间步骤(reason!="stop")和子 session 所有 step-finish 保持 silent=true。
           const isLoopEnd = part.reason === "stop" && !state.isChildSession
-          console.log(`[streamer] step-finish session=${payload.sessionID.slice(0, 12)} isChild=${!!state.isChildSession} reason=${part.reason} isLoopEnd=${isLoopEnd} convId=${state.convId?.slice(0, 8)}`)
+          logger.info(`[streamer] step-finish session=${payload.sessionID.slice(0, 12)} isChild=${!!state.isChildSession} reason=${part.reason} isLoopEnd=${isLoopEnd} convId=${state.convId?.slice(0, 8)}`)
           // 根治(未读锚点=真实内容):step-finish 判定时把缓存的最终 text 终态发出。
           // - isLoopEnd(回合结束)→ silent=false,markdown 计未读成为未读锚点
           // - 非 isLoopEnd(中间步骤)→ silent=true,不打扰
@@ -271,11 +270,9 @@ export class PartDispatcher {
 
     if (state.reasoning?.partID === payload.partID) {
       state.reasoning.text += payload.delta
-      console.log(`[SSE-DBG] part_delta reasoning part=${payload.partID.slice(0, 8)} dLen=${payload.delta.length} accLen=${state.reasoning.text.length}`)
       this.maybeFlushStream(state, "reasoning")
     } else if (state.text?.partID === payload.partID) {
       state.text.text += payload.delta
-      console.log(`[SSE-DBG] part_delta text part=${payload.partID.slice(0, 8)} dLen=${payload.delta.length} accLen=${state.text.text.length}`)
       this.maybeFlushStream(state, "text")
     } else {
       this.store.dropPart(payload.partID)
@@ -307,7 +304,6 @@ export class PartDispatcher {
     if (holder.flushTimer) clearTimeout(holder.flushTimer)
     const now = Date.now()
     if (holder.lastFlushAt === 0 || now - (holder.lastFlushAt ?? 0) >= PartDispatcher.FLUSH_INTERVAL_MS) {
-      console.log(`[SSE-DBG] maybeFlushStream PUSH sid=${holder.streamId} kind=${kind} len=${holder.text.length} first=${holder.lastFlushAt === 0}`)
       this.pushStreamFrame(state, kind, holder)
       holder.lastFlushAt = now
       holder.lastFlushedLen = holder.text.length
@@ -331,7 +327,6 @@ export class PartDispatcher {
     if (!holder || !holder.streamId) return
     if (holder.flushTimer) { clearTimeout(holder.flushTimer); holder.flushTimer = undefined }
     if (holder.text.length <= (holder.lastFlushedLen ?? 0)) return
-    console.log(`[SSE-DBG] forceFlushStream 补推 sid=${holder.streamId} kind=${kind} len=${holder.text.length} prev=${holder.lastFlushedLen ?? 0}`)
     this.pushStreamFrame(state, kind, holder)
     holder.lastFlushedLen = holder.text.length
   }
@@ -401,7 +396,6 @@ export class PartDispatcher {
     // 让 APP 占位在终态替换前显示完整文本(对齐 TUI 的 delta 实时拼接)。
     this.forceFlushStream(state, "reasoning")
     const sid = state.reasoning.streamId
-    console.log(`[SSE-DBG] FLUSH(reasoning)兜底 sid=${sid ?? "-"} accLen=${state.reasoning.text.length} head=${JSON.stringify(state.reasoning.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
       // 思考耗时:flush 时 part.end 未到(LLM 已切走,reasoning 已完整),用 now - timeStart
       // 近似(误差 < 数百 ms,对齐 TUI reasoning duration,**毫秒**)。timeStart 缺失则省略。
@@ -440,7 +434,6 @@ export class PartDispatcher {
     // 让 APP 占位在终态替换前显示完整文本(对齐 TUI 的 delta 实时拼接)。
     this.forceFlushStream(state, "text")
     const sid = state.text.streamId
-    console.log(`[SSE-DBG] FLUSH(text)兜底 sid=${sid ?? "-"} accLen=${state.text.text.length} head=${JSON.stringify(state.text.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
       const element = AggregateCardManager.markdown(state.text.text, state.text.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
@@ -463,7 +456,6 @@ export class PartDispatcher {
     if (!state.pendingText) return
     const pt = state.pendingText
     state.pendingText = undefined
-    console.log(`[SSE-DBG] FLUSH(pendingText) silent=${silent} ocLen=${pt.text.length} head=${JSON.stringify(pt.text.slice(0, 30))}`)
     if (this.useAggregate(state)) {
       const element = AggregateCardManager.markdown(pt.text, pt.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {

@@ -248,17 +248,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
-    debugPrint(
-      '[chatPage] initState convId=${widget.convId} agentId=${widget.agentId}',
-    );
-    // 列出 conversationProvider 中所有匹配 agentId 的条目，确认 convId 对应关系
-    final allConvs = ref.read(conversationProvider);
-    final agentConvs = allConvs.where((c) => c.agent?.id == widget.agentId).toList();
-    debugPrint(
-      '[chatPage] conversationProvider entries for agentId=${widget.agentId}: '
-      '${agentConvs.map((c) => "id=${c.id.substring(0, 12)}... type=${c.type} "
-      "unreadCount=${c.unreadCount}").join(" | ")}',
-    );
     // scrollview_observer 初始化:SliverObserverController 驱动 SliverViewObserver,
     // 提供跨 sliver 的 jumpTo(index, sliverContext) 定位能力。
     _scrollCtrl = ScrollController(
@@ -598,9 +587,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       // _isAtBottom 变化时触发 rebuild：跳转底部浮标 / 未读浮标的显示条件都依赖
       // !_isAtBottom，不 rebuild 它们不会消失/出现。
       setState(() {});
-      debugPrint(
-        '[debug-onScroll] _isAtBottom changed: $wasAtBottom → $_isAtBottom px=$px',
-      );
     }
     if (!wasAtBottom && _isAtBottom) {
       // 用户主动滑到底部时标记已读：清未读浮标 + 分割线。
@@ -618,10 +604,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ref.read(conversationProvider.notifier).markReadLocally(widget.convId);
       _sessionsNotifier?.markReadLocally(widget.convId);
       _convSync.syncParentConvUnread();
-      debugPrint(
-        '[debug-onScroll] markReadAtBottom convId=${widget.convId} '
-        'agentId=${widget.agentId}',
-      );
     }
     // 菜单打开时随滚动动态调整定位或取消。
     _menuController.updateMenuOnScroll();
@@ -929,10 +911,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     if (_stateListener.pendingScroll &&
         (chatState.displayMessages.isNotEmpty || _isTyping)) {
-      debugPrint(
-        '[debug-pendingScroll] CONSUMED at build, scheduling scrollToBottom, '
-        'messages.length=${chatState.displayMessages.length}',
-      );
       _stateListener.pendingScroll = false;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _jumpController.scrollToBottom(),
@@ -940,9 +918,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
 
     if (_stateListener.pendingInitialScroll) {
-      debugPrint(
-        '[debug-initScroll] CONSUMED at build, scheduling jumpTo bottom',
-      );
       _stateListener.pendingInitialScroll = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _scrollCtrl.hasClients) {

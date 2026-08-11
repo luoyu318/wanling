@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
 import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/conversation_provider.dart' show conversationProvider;
+import '../../utils/debug_log.dart';
 
 /// [ConvSyncController] 的依赖注入容器。
 ///
@@ -49,17 +50,13 @@ class ConvSyncController {
   /// 标记会话已读:本地立即清零(conversationProvider + agent sessions)
   /// + API markConversationRead 同步 server,成功后刷新父会话未读数。
   Future<void> markRead() async {
-    debugPrint(
-      '[debug-markRead] CALLED convId=${_ctx.convId} agentId=${_ctx.agentId}',
-    );
     _ctx.ref.read(conversationProvider.notifier).markReadLocally(_ctx.convId);
     _ctx.getSessionsNotifier()?.markReadLocally(_ctx.convId);
     try {
       await _ctx.ref.read(apiProvider).markConversationRead(_ctx.convId);
-      debugPrint('[debug-markRead] API done convId=${_ctx.convId}');
       syncParentConvUnread();
     } catch (_) {
-      debugPrint('[debug-markRead] API FAILED convId=${_ctx.convId}');
+      // server 同步失败不影响本地已读清零,静默。
     }
   }
 
@@ -73,7 +70,7 @@ class ConvSyncController {
       (c) => c.isUserAgentDM && c.agent?.id == _ctx.agentId,
     ).firstOrNull;
     if (parent == null) {
-      debugPrint(
+      debugLog(
         '[syncParentConv] no dm_user_agent found for agentId=${_ctx.agentId} '
         'state has ${parentList.length} convs',
       );
@@ -82,7 +79,7 @@ class ConvSyncController {
       _ctx.ref.read(conversationProvider.notifier).load();
       return;
     }
-    debugPrint(
+    debugLog(
       '[syncParentConv] parent convId=${parent.id} unread=${parent.unreadCount} '
       '→ refreshing from server',
     );
