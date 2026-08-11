@@ -93,6 +93,17 @@ class WanlingRestClient:
     async def update_message_content(self, msg_id: str, content: dict) -> None:
         await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
 
+    async def patch_aggregate_message(self, msg_id: str, op: dict) -> None:
+        """聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)。
+
+        对齐 docs/ai-handbook/aggregate-card.md 增量协议:
+        - append/update/remove/reorder 维护 elements
+        - set_state / set_segment / set_silent 改卡状态与 silent(翻转 false 触发未读+通知)
+        与 update_message_content(全量替换)互补,聚合卡流式增量用本方法。
+        """
+        content = {"msg_type": "aggregate_card", "data": op}
+        await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
+
     async def create_group_as_agent(
         self,
         user_id: str,

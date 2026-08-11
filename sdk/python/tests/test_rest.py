@@ -163,3 +163,41 @@ async def test_upload_default_max_bytes_allows_21mb():
     finally:
         os.close(fd)
         os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_patch_aggregate_message_append():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["method"] = request.method
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True})
+
+    client = build_client(handler)
+    await client.patch_aggregate_message(
+        "m1",
+        {"op": "append", "element": {"type": "markdown", "element_id": "m1", "data": {"text": "hi"}}},
+    )
+    assert seen["url"] == "http://localhost:18008/api/messages/m1"
+    assert seen["method"] == "PATCH"
+    assert seen["body"] == {
+        "content": {
+            "msg_type": "aggregate_card",
+            "data": {"op": "append", "element": {"type": "markdown", "element_id": "m1", "data": {"text": "hi"}}},
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_patch_aggregate_message_set_silent():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True})
+
+    client = build_client(handler)
+    await client.patch_aggregate_message("m1", {"op": "set_silent", "silent": False})
+    assert seen["body"] == {"content": {"msg_type": "aggregate_card", "data": {"op": "set_silent", "silent": False}}}
