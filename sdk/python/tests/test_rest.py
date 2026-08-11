@@ -89,3 +89,38 @@ async def test_aclose_releases_client():
     client = build_client(handler)
     async with client:
         assert await client.create_group_as_agent("u1", "agent_session", "t") == "conv-9"
+
+
+@pytest.mark.asyncio
+async def test_create_approval():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True, "data": {"approval_id": "appr-1"}})
+
+    client = build_client(handler)
+    res = await client.create_approval(
+        "conv-1",
+        {"card_type": "command", "title": "命令执行审批", "preview": "rm -rf /tmp/x", "session_key": "sk-1", "timeout_sec": 300},
+    )
+    assert res["approval_id"] == "appr-1"
+    assert seen["url"] == "http://localhost:18008/api/conversations/conv-1/approvals"
+    assert seen["body"] == {
+        "card_type": "command", "title": "命令执行审批", "preview": "rm -rf /tmp/x",
+        "session_key": "sk-1", "timeout_sec": 300,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_approval_auto_approved():
+    def handler(request):
+        return httpx_response(200, {"ok": True, "data": {"state": "approved", "auto_approved": True, "matched_pattern": "rm *"}})
+
+    client = build_client(handler)
+    res = await client.create_approval(
+        "conv-1",
+        {"card_type": "command", "title": "t", "preview": "rm -rf /x", "session_key": "sk-1", "allow_pattern": "rm *"},
+    )
+    assert res["auto_approved"] is True

@@ -72,6 +72,17 @@ class WanlingRestClient:
             raise ApiError(0, "send_card_message: missing message_id")
         return message_id
 
+    async def create_approval(self, conv_id: str, body: dict) -> dict[str, Any]:
+        """发起审批卡(approvals 状态机通道,含 allow_pattern 会话白名单)。
+
+        对齐 server POST /api/conversations/:id/approvals(CreateApproval):
+        - card_type 仅 command/tool/file/slash_confirm,slash_confirm 必带 confirm_id
+        - allow_pattern 仅 command 生效,命中白名单服务端返 auto_approved=true(不再发卡)
+        响应 data 正常含 approval_id;白名单命中含 state/auto_approved/matched_pattern。
+        """
+        resp = await self.request("POST", f"/api/conversations/{conv_id}/approvals", body)
+        return resp.get("data", {}) or {}
+
     async def update_message_content(self, msg_id: str, content: dict) -> None:
         await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
 
