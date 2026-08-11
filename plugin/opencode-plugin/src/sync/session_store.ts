@@ -1,4 +1,5 @@
 import type { WanlingClient } from "../wanling/client.js"
+import { logger } from "../utils/logger.js"
 import type { EnsureDeps } from "./ensure_conversation.js"
 import { ensureConversation } from "./ensure_conversation.js"
 import { findBySessionId } from "./mapper.js"
@@ -226,7 +227,7 @@ export class SessionStore {
     const oldEntry = this.childSessionTree.get(childSessionId)
     if (oldEntry?.cleanupTimer) clearTimeout(oldEntry.cleanupTimer)
     this.childSessionTree.set(childSessionId, entry)
-    console.log(`[streamer] childSessionTree 注册: child=${childSessionId.slice(0, 12)} parentMsg=${taskCardMsgId.slice(0, 8)} depth=${depth}`)
+    logger.info(`[streamer] childSessionTree 注册: child=${childSessionId.slice(0, 12)} parentMsg=${taskCardMsgId.slice(0, 8)} depth=${depth}`)
     // 兜底超时:task 崩溃或漏发 completed/error SSE 时,30min 后强制清理避免泄漏。
     // 正常路径(task/completed|error)在 _handleTaskTool 调 cleanupChildSession 前 clearTimeout。
     // 超时时不仅删 map,还要 PATCH 父卡片为 error,避免父卡片永远转圈(I-N)。

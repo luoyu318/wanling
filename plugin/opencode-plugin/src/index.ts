@@ -1,4 +1,5 @@
 import { Agent, setGlobalDispatcher } from "undici"
+import { logger } from "./utils/logger.js"
 import { loadConfig, configDir } from "./config.js"
 import { WanlingClient } from "./wanling/client.js"
 import { OpencodeBridge } from "./opencode/bridge.js"
@@ -29,13 +30,13 @@ async function main(): Promise<void> {
 
   const opencode = new OpencodeBridge(config.opencodePort)
   await opencode.ensureServer()
-  console.log(`[wanling] connected to OpenCode (port ${config.opencodePort})`)
+  logger.info(`[wanling] connected to OpenCode (port ${config.opencodePort})`)
 
   // 解析主 session:首事件触发建群(agent_session)的判定基准。
   const existingMain = await opencode.getCurrentSession()
   const mainSessionId = existingMain ?? await opencode.createSession("万灵对话")
   if (!existingMain) {
-    console.log(`[wanling] created main session: ${mainSessionId.slice(0, 12)}…`)
+    logger.info(`[wanling] created main session: ${mainSessionId.slice(0, 12)}…`)
   }
 
   const dispatcher = createDefaultDispatcher({
@@ -47,18 +48,18 @@ async function main(): Promise<void> {
     secretKey: config.secretKey,
     dispatcher,
   })
-  console.log(`[rpc] 已注册 methods: ${dispatcher.methods().join(", ")}`)
+  logger.info(`[rpc] 已注册 methods: ${dispatcher.methods().join(", ")}`)
 
   wanling.on("connected", () => {
-    console.log("[wanling] connected to Wanling server")
+    logger.info("[wanling] connected to Wanling server")
   })
 
   wanling.on("disconnected", () => {
-    console.log("[wanling] disconnected from Wanling server")
+    logger.info("[wanling] disconnected from Wanling server")
   })
 
   wanling.on("reconnecting", ({ delay }: { delay: number }) => {
-    console.log(`[wanling] reconnecting in ${delay.toFixed(1)}s`)
+    logger.info(`[wanling] reconnecting in ${delay.toFixed(1)}s`)
   })
 
   wanling.on("fatal", (_code: string, msg: string) => {
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
       streamer.on("error", (err: Error) => console.error("[streamer] error:", err.message))
       subscriber.start().catch((err) => console.error("[subscriber] failed:", err))
       streamer.start()
-      console.log("[wanling] streamer started")
+      logger.info("[wanling] streamer started")
     })().catch((err) => console.error("[wanling] connected handler failed:", err))
   })
 
@@ -130,15 +131,15 @@ async function main(): Promise<void> {
     password: config.proxyPassword,
   })
 
-  console.log(`[wanling] control API on 127.0.0.1:${config.controlPort}`)
-  console.log(`[wanling] proxy on 127.0.0.1:${proxy.port} → :${config.opencodePort}`)
+  logger.info(`[wanling] control API on 127.0.0.1:${config.controlPort}`)
+  logger.info(`[wanling] proxy on 127.0.0.1:${proxy.port} → :${config.opencodePort}`)
 
-  console.log(`[wanling] main session: ${mainSessionId.slice(0, 12)}… (首事件触发建群)`)
+  logger.info(`[wanling] main session: ${mainSessionId.slice(0, 12)}… (首事件触发建群)`)
 
-  console.log("[wanling] opencode-plugin ready")
+  logger.info("[wanling] opencode-plugin ready")
 
   process.on("SIGINT", () => {
-    console.log("\n[wanling] shutting down...")
+    logger.info("\n[wanling] shutting down...")
     proxy.close()
     control.close()
     streamer?.stop()
@@ -149,7 +150,7 @@ async function main(): Promise<void> {
   })
 
   process.on("SIGTERM", () => {
-    console.log("\n[wanling] shutting down...")
+    logger.info("\n[wanling] shutting down...")
     proxy.close()
     control.close()
     streamer?.stop()

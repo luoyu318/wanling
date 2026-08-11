@@ -1,4 +1,5 @@
 import type { WanlingClient } from "../wanling/client.js"
+import { logger } from "../utils/logger.js"
 import type { EventSubscriber } from "../opencode/subscriber.js"
 import type { RPCDispatcher } from "../rpc/dispatcher.js"
 import type {
@@ -138,7 +139,7 @@ export class Streamer extends EventEmitter {
 
   updateMainSessionId(id: string): void {
     if (id && id !== this.mainSessionId) {
-      console.log(`[streamer] main session 切换: ${this.mainSessionId.slice(0, 12)}… → ${id.slice(0, 12)}…`)
+      logger.info(`[streamer] main session 切换: ${this.mainSessionId.slice(0, 12)}… → ${id.slice(0, 12)}…`)
       this.mainSessionId = id
       // 同步给 store:getOrCreateState 的主/非主判定依赖此值
       this.store.updateMainSessionId(id)

@@ -96,9 +96,6 @@ class ChatListOverlays extends ConsumerWidget {
             child: UnreadNavBadge(
               count: chatState.unreadCount,
               onTap: () async {
-                debugPrint(
-                  '[unreadBadge] TAP: scroll to bottom + jumpToBottom',
-                );
                 onScrollToBottom();
                 await onJumpToBottom();
               },
@@ -114,7 +111,6 @@ class ChatListOverlays extends ConsumerWidget {
             right: 16,
             child: JumpToBottomButton(
               onTap: () {
-                debugPrint('[jumpBtn] TAP: scroll to bottom');
                 onScrollToBottom();
               },
             ),

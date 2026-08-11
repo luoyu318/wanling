@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/chat_provider.dart' show chatProvider, ChatNotifier;
+import '../../utils/debug_log.dart';
 
 /// [LoadMoreController] 的依赖注入容器。
 ///
@@ -83,7 +84,7 @@ class LoadMoreController {
     if (notification is ScrollStartNotification) {
       _isUserScrolling = notification.dragDetails != null;
       if (notification.dragDetails == null) {
-        debugPrint(
+        debugLog(
           '[scrollStart] programmatic scroll (dragDetails=null) '
           'px=${scrollCtrl.position.pixels}',
         );
@@ -92,7 +93,7 @@ class LoadMoreController {
     }
 
     if (notification is ScrollEndNotification) {
-      debugPrint(
+      debugLog(
         '[scrollEnd] px=${scrollCtrl.position.pixels} '
         'userScrolling=$_isUserScrolling',
       );
@@ -114,14 +115,14 @@ class LoadMoreController {
     final distanceToTop = px - minExtent;
     final threshold = viewport * 0.5;
     if (distanceToTop > threshold) {
-      debugPrint(
+      debugLog(
         '[scrollUpdate] near top but not trigger: distanceToTop=$distanceToTop '
         'threshold=$threshold userScrolling=$_isUserScrolling',
       );
       return false;
     }
 
-    debugPrint(
+    debugLog(
       '[scrollUpdate] TRIGGER loadMore: distanceToTop=$distanceToTop, '
       'threshold=$threshold, viewport=$viewport, minExtent=$minExtent, '
       'px=$px',
@@ -137,7 +138,7 @@ class LoadMoreController {
   /// 无需 standby 补偿(center 几何下增长朝远离锚点方向,天然不动)。
   Future<void> loadMore() async {
     final chatState = _ctx.ref.read(chatProvider(_ctx.chatKey));
-    debugPrint(
+    debugLog(
       '[loadMore] CHECK: isLoadingMore=${chatState.isLoadingMore}, '
       'hasMore=${chatState.hasMore}',
     );

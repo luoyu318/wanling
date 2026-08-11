@@ -1,4 +1,5 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync, chmodSync } from "fs"
+import { logger } from "./utils/logger.js"
 import { join } from "path"
 import { homedir } from "os"
 import { randomUUID } from "crypto"
@@ -125,7 +126,7 @@ export function loadConfig(): Config {
       mkdirSync(configDir(), { recursive: true })
       writeFileSync(file, JSON.stringify(fileJson, null, 2), "utf-8")
       try { chmodSync(file, 0o600) } catch { /* 非 POSIX */ }
-      console.log("[wanling] 生成 proxyPassword 并写入 config.json")
+      logger.info("[wanling] 生成 proxyPassword 并写入 config.json")
     } catch {
       console.warn("[wanling] ⚠️  proxyPassword 自动生成但写回 config.json 失败,本次启动用临时 token")
     }

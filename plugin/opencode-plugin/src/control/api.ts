@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { logger } from "../utils/logger.js"
 import type { IncomingMessage, ServerResponse } from "http";
 import { createServer } from "http"
 import type { SyncEngine } from "../sync/engine.js"
@@ -16,7 +17,7 @@ export async function startControlApi(
   opts: ControlApiOptions,
 ): Promise<{ close: () => void; port: number; token: string }> {
   const apiToken = randomUUID()
-  console.log(`[control] API token: ${apiToken}`)
+  logger.info(`[control] API token: ${apiToken}`)
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     handleRequest(req, res, opts, apiToken).catch((err) => {

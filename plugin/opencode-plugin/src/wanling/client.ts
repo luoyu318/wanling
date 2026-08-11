@@ -14,6 +14,7 @@ import type {
   OutboundMessage,
 } from "./types.js"
 import { decodeJwtExp } from "./jwt.js"
+import { logger } from "../utils/logger.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
 import type { AggregatePatchData } from "../sync/domains/aggregate_card.js"
 
@@ -152,7 +153,6 @@ export class WanlingClient extends EventEmitter {
     },
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.log(`[SSE-DBG] sendStream DROP(ws未连接) sid=${payload.stream_id} len=${payload.text.length}`)
       return
     }
     const frame: WSMessage = {
@@ -160,7 +160,6 @@ export class WanlingClient extends EventEmitter {
       d: { conversation_id: convId, ...payload },
     }
     this.ws.send(JSON.stringify(frame))
-    console.log(`[SSE-DBG] sendStream OK sid=${payload.stream_id} kind=${payload.msg_type} len=${payload.text.length}`)
   }
 
   sendTyping(convId: string): void {
@@ -188,7 +187,7 @@ export class WanlingClient extends EventEmitter {
       d,
     }
     this.ws.send(JSON.stringify(payload))
-    console.log(`[wanling] sendSessionStatus conv=${convId.slice(0, 8)}… status=${status}`)
+    logger.info(`[wanling] sendSessionStatus conv=${convId.slice(0, 8)}… status=${status}`)
   }
 
   // 上报 agent 可选模型清单(plugin 启动/重连时拉 opencode providers)。
@@ -211,7 +210,7 @@ export class WanlingClient extends EventEmitter {
       d: { agent_id: agentId, models, reported_at: new Date().toISOString() },
     }
     this.ws.send(JSON.stringify(payload))
-    console.log(`[wanling] sendAgentModels agent=${agentId.slice(0, 8)}… ${models.length} models`)
+    logger.info(`[wanling] sendAgentModels agent=${agentId.slice(0, 8)}… ${models.length} models`)
   }
 
   // plugin 启动/重连时上报该 agent 的命令清单(OC command.list 拉取结果)。
@@ -234,7 +233,7 @@ export class WanlingClient extends EventEmitter {
       d: { agent_id: agentId, commands, reported_at: new Date().toISOString() },
     }
     this.ws.send(JSON.stringify(payload))
-    console.log(`[wanling] sendAgentSlashCatalog agent=${agentId.slice(0, 8)}… ${commands.length} commands`)
+    logger.info(`[wanling] sendAgentSlashCatalog agent=${agentId.slice(0, 8)}… ${commands.length} commands`)
   }
 
   // plugin 启动/重连时上报 RPC 方法清单(dispatcher.listMethods() 结果)。
@@ -255,7 +254,7 @@ export class WanlingClient extends EventEmitter {
       d: { agent_id: agentId, methods, reported_at: new Date().toISOString() },
     }
     this.ws.send(JSON.stringify(payload))
-    console.log(`[wanling] sendPluginCapabilities agent=${agentId.slice(0, 8)}… ${methods.length} methods`)
+    logger.info(`[wanling] sendPluginCapabilities agent=${agentId.slice(0, 8)}… ${methods.length} methods`)
   }
 
   private apiUrl(p: string): string {
@@ -298,7 +297,7 @@ export class WanlingClient extends EventEmitter {
     try {
       const newToken = await this.exchangeToken()
       this.token = newToken
-      console.log("[wanling] token 已刷新")
+      logger.info("[wanling] token 已刷新")
       this.scheduleTokenRefresh()
     } catch (err) {
       this.emit("fatal", "token_refresh_failed", String(err))
@@ -329,7 +328,7 @@ export class WanlingClient extends EventEmitter {
         console.error(`[wanling] 主动 token 刷新失败: ${err}`)
       })
     }, delay)
-    console.log(`[wanling] token 刷新已计划: ${Math.round(delay / 1000 / 60)}min 后`)
+    logger.info(`[wanling] token 刷新已计划: ${Math.round(delay / 1000 / 60)}min 后`)
   }
 
   async sendCardMessage(
@@ -582,7 +581,6 @@ export class WanlingClient extends EventEmitter {
         }
         const t = msg.t
         if (t === EVENT_MESSAGE_CREATE) {
-          console.log(`[wanling] WS 收到 MESSAGE_CREATE sender_type=${(msg.d as unknown as { sender_type?: string })?.sender_type} id=${(msg.d as unknown as { id?: string })?.id?.slice(0, 8)}`)
           const payload = msg.d as unknown as MessageCreatePayload
           this.emit("message", payload)
         } else if (t === EVENT_TYPING_START) {

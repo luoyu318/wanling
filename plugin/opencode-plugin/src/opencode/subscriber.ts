@@ -262,7 +262,6 @@ export class EventSubscriber extends EventEmitter {
       case "message.part.updated": {
         const partObj = properties.part as PartUpdatedPayload["part"] & { messageID?: string }
         const skip = partObj.type === "text" && !!partObj.messageID && this.userMessageIds.has(partObj.messageID)
-        console.log(`[RAW] part_updated type=${partObj.type} id=${partObj.id?.slice(0, 12)} time=${JSON.stringify(partObj.time)} textLen=${(partObj.text ?? "").length} reason=${partObj.reason ?? "-"} tool=${partObj.tool ?? "-"} status=${(partObj.state as Record<string, unknown> | undefined)?.status ?? "-"}`)
         this.emit("part_updated", {
           sessionID,
           part: partObj,
@@ -284,12 +283,6 @@ export class EventSubscriber extends EventEmitter {
 
       case "message.updated": {
         const info = properties.info as Record<string, unknown> | undefined
-        const infoId = (info as { id?: string })?.id ?? "-"
-        const infoTime = (info?.time ?? {}) as Record<string, unknown>
-        const infoFinish = (info as { finish?: unknown })?.finish
-        console.log(
-          `[RAW] message.updated role=${info?.role ?? "-"} id=${infoId.slice(0, 20)} parentID=${((info as { parentID?: string })?.parentID ?? "-").slice(0, 20)} time=${JSON.stringify(infoTime)} finish=${infoFinish === undefined ? "-" : JSON.stringify(infoFinish)}`,
-        )
         if (info?.role === "user") {
           const msgId = (info as { id?: string }).id
           const created = (info?.time as { created?: number } | undefined)?.created
@@ -300,9 +293,7 @@ export class EventSubscriber extends EventEmitter {
             this.rememberUserCreated(msgId, created)
           }
           if (msgId && !this.userMessageIds.has(msgId)) {
-            const isFirstUser = this.userMessageIds.size === 0
             this.addUserMessageId(msgId)
-            console.log(`[subscriber] user message first-seen id=${msgId.slice(0, 12)} isFirst=${isFirstUser} setSize=${this.userMessageIds.size}`)
           }
         }
         // assistant 回合边界(聚合卡分段):新 assistant message 的 parentID 指向
@@ -318,10 +309,10 @@ export class EventSubscriber extends EventEmitter {
             if (prev !== undefined && prev !== parentID) {
               const prevFinish = this.lastAssistantFinish.get(sessionID)
               if (prevFinish !== "stop") {
-                console.log(`[subscriber] assistant round started id=${msgId.slice(0, 12)} parentID=${parentID.slice(0, 12)} prevFinish=${prevFinish ?? "-"}`)
+                logger.debug(`[subscriber] assistant round started id=${msgId.slice(0, 12)} parentID=${parentID.slice(0, 12)} prevFinish=${prevFinish ?? "-"}`)
                 this.emit("assistant_message_started", { sessionID: sessionID as string, messageID: msgId, parentID })
               } else {
-                console.log(`[subscriber] assistant round 旧回合已 stop 定稿,不打断 prevFinish=${prevFinish}`)
+                logger.debug(`[subscriber] assistant round 旧回合已 stop 定稿,不打断 prevFinish=${prevFinish}`)
               }
             }
             this.lastAssistantParent.set(sessionID, parentID)
@@ -339,7 +330,7 @@ export class EventSubscriber extends EventEmitter {
           const t = info.time as { created?: number; completed?: number } | undefined
           const isFinal = finish !== undefined && typeof finish === "string" && !["tool-calls", "unknown"].includes(finish)
           if (isFinal && t && typeof t.created === "number" && typeof t.completed === "number") {
-            console.log(`[subscriber] assistant round completed id=${msgId?.slice(0, 12)} parent=${parentID?.slice(0, 12)} finish=${finish} dur=${((t.completed - t.created) / 1000).toFixed(1)}s`)
+            logger.debug(`[subscriber] assistant round completed id=${msgId?.slice(0, 12)} parent=${parentID?.slice(0, 12)} finish=${finish} dur=${((t.completed - t.created) / 1000).toFixed(1)}s`)
             if (parentID && msgId) {
               this.emit("assistant_message_completed", {
                 sessionID: sessionID as string,

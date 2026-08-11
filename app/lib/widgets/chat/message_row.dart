@@ -162,13 +162,6 @@ class MessageRow extends ConsumerWidget {
         : (message.senderName ?? agentFallbackName ?? '');
     final String? effectiveAvatarUrl =
         isMe ? currentUser?.avatarUrl : (message.senderAvatarUrl ?? agentFallbackAvatar);
-    if (effectiveName.isEmpty && !isMe) {
-      debugPrint(
-        '[debug-avatar] EMPTY senderName for msg id=${message.id} '
-        'senderType=${message.senderType} senderId=${message.senderId} '
-        'status=${message.status}',
-      );
-    }
 
     // 头像 widget(含屏幕边缘间距 + 跟 bubble 顶部对齐):
     // - showAvatar=true:Avatar(40) + 距屏幕边缘 6(接收方 left / 发送方 right)
