@@ -38,6 +38,8 @@ flowchart LR
 - opcodes 常量以 `server/internal/model/opcodes.go` 为单真相源,改动 server 协议必须同步 `sdk/ts/src/opcodes.ts` + `sdk/python/wanling_sdk/opcodes.py` + 各自对照表单测
 - 事件命名两语言一致,见 `docs/architecture/sdk.md` 事件表
 - REST 方法遵循 `docs/ai-handbook/rest-response.md` envelope
+- 审批接口(createApproval)字段对齐 `server/internal/handler/approval_handler.go` CreateApproval(card_type 枚举/session_key/allow_pattern/confirm_id)
+- 聚合卡增量(patchAggregateMessage)对齐 `docs/ai-handbook/aggregate-card.md` 增量 op,改动 server 增量协议必须同步
 
 ## 发布
 
