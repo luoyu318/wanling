@@ -56,4 +56,31 @@ describe("WanlingRestClient", () => {
     await expect(client.downloadFile("f1")).rejects.toThrow(ApiError)
     await expect(client.downloadFile("f1")).rejects.toThrow("request failed: The operation was aborted.")
   })
+
+  it("createApproval POST /api/conversations/:id/approvals 返 approval_id", async () => {
+    fetchSpy.mockResolvedValue(okJson({ approval_id: "appr-1" }))
+    const res = await client.createApproval("conv-1", {
+      card_type: "command",
+      title: "命令执行审批",
+      preview: "rm -rf /tmp/x",
+      session_key: "sk-1",
+      timeout_sec: 300,
+    })
+    expect(res.approval_id).toBe("appr-1")
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:18008/api/conversations/conv-1/approvals")
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(String(init.body))).toEqual({
+      card_type: "command", title: "命令执行审批", preview: "rm -rf /tmp/x",
+      session_key: "sk-1", timeout_sec: 300,
+    })
+  })
+
+  it("createApproval 白名单命中返 auto_approved", async () => {
+    fetchSpy.mockResolvedValue(okJson({ state: "approved", auto_approved: true, matched_pattern: "rm *" }))
+    const res = await client.createApproval("conv-1", {
+      card_type: "command", title: "t", preview: "rm -rf /x", session_key: "sk-1", allow_pattern: "rm *",
+    })
+    expect(res.auto_approved).toBe(true)
+  })
 })

@@ -22,6 +22,29 @@ export type SessionMeta = {
   contextLimit?: number
 }
 
+export type ApprovalCardType = "command" | "tool" | "file" | "slash_confirm"
+
+export type CreateApprovalBody = {
+  card_type: ApprovalCardType
+  title: string
+  preview?: string
+  preview_language?: string
+  tool_name?: string
+  file?: { id: string }
+  meta?: Array<{ icon?: string; text?: string; warn?: boolean }>
+  session_key: string
+  allow_pattern?: string
+  confirm_id?: string
+  timeout_sec?: number
+}
+
+export type CreateApprovalResult = {
+  approval_id?: string
+  state?: string
+  auto_approved?: boolean
+  matched_pattern?: string
+}
+
 export class WanlingRestClient {
   private serverUrl: string
   private tokenProvider: () => Promise<string>
@@ -85,6 +108,19 @@ export class WanlingRestClient {
     this.envelopeOk(resp)
     if (!resp.data?.message_id) throw new ApiError(0, "sendCardMessage: missing message_id")
     return resp.data.message_id
+  }
+
+  // 发起审批卡(approvals 状态机通道,含 allow_pattern 会话白名单)。
+  // 对齐 server POST /api/conversations/:id/approvals(CreateApproval):
+  // - card_type=slash_confirm 必带 confirm_id
+  // - allow_pattern 仅 command 生效,命中白名单服务端返 auto_approved=true(不再发卡)
+  // 响应 data 正常含 approval_id;白名单命中含 state/auto_approved/matched_pattern。
+  async createApproval(convId: string, body: CreateApprovalBody): Promise<CreateApprovalResult> {
+    const resp = await this.request<{ ok: boolean; data?: CreateApprovalResult }>(
+      "POST", `/api/conversations/${convId}/approvals`, body,
+    )
+    this.envelopeOk(resp)
+    return resp.data ?? {}
   }
 
   async updateMessageContent(msgId: string, content: MessageContent): Promise<void> {
