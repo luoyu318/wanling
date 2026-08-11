@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/msg_type.dart';
 import '../providers/auth_provider.dart' show apiProvider;
+import '../utils/icon_font.dart';
 import '../utils/snackbar.dart';
 import 'message_content_renderer.dart';
 import 'truncatable_text_block.dart';
@@ -168,6 +169,9 @@ class _PendingPermissionCard extends StatelessWidget {
           children: [
             Row(
               children: [
+                IconFont.icon(IconFont.permission,
+                    size: 15, color: const Color(0xFFB45F06)),
+                const SizedBox(width: 5),
                 Text(
                   '权限审批 · $label',
                   style: const TextStyle(
@@ -474,7 +478,8 @@ class _PermissionReplySheetState extends ConsumerState<_PermissionReplySheet> {
                 children: [
                   Row(
                     children: [
-                      const Text('⚡', style: TextStyle(fontSize: 20)),
+                      IconFont.icon(IconFont.permission,
+                          size: 20, color: const Color(0xFFFA8C16)),
                       const SizedBox(width: 8),
                       const Text(
                         '权限审批',

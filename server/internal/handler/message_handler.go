@@ -752,11 +752,12 @@ func applyContentOp(origContent, reqContent json.RawMessage) (merged json.RawMes
 			return nil, true, e
 		}
 		orig["silent"] = rawSilent
-		// 回合结束翻转(silent→false):从 elements 提取最后 markdown 正文写入
-		// data.preview。增量广播无 elements,通知 body / 会话列表摘要直接读 preview
-		// (单一真相源在 server 落库 merged,广播 delta 由调用方注入)。
+		// 回合结束翻转(silent→false):写 data.preview。增量广播无 elements,
+		// 通知 body / 会话列表摘要直接读 preview(单一真相源在 server 落库 merged,
+		// 广播 delta 由调用方注入)。预览取交互感知文案:仍待用户介入的
+		// permission_card / question_card 优先(提示"需要处理"),否则最后 markdown 正文。
 		if !*delta.Silent {
-			if p, err := lastMarkdownText(data); err == nil && p != "" {
+			if p, err := aggregatePreviewText(data); err == nil && p != "" {
 				rawPreview, merr := json.Marshal(p)
 				if merr != nil {
 					return nil, true, merr
@@ -826,6 +827,64 @@ func lastMarkdownText(data map[string]json.RawMessage) (string, error) {
 		return text, nil
 	}
 	return "", nil
+}
+
+// 聚合卡预览交互文案(纯文字:系统通知 / 会话摘要用系统字体渲染,
+// iconfont 自定义字形会豆腐块,故不嵌入字形,卡片内图标由 APP 渲染层提供)。
+const (
+	permissionPreviewText = "权限审批"
+	questionPreviewText   = "选择题"
+)
+
+// aggregatePreviewText 聚合卡 silent 翻转(false)时的预览正文(通知 body /
+// agent_session 摘要单一真相源)。优先级:
+//   1. 仍待用户介入的交互元素(permission_card / question_card 且 status 非终态)
+//      → 返回交互类型文案,提示"需要处理"而非正文文本;
+//   2. 否则最后 markdown 正文(正常回复摘要,复用 lastMarkdownText)。
+// 与 APP MsgTypeX.preview 的聚合卡预览同口径(server 落库 merged 为权威,
+// 广播 delta 由 injectAggregatePreview 注入)。
+func aggregatePreviewText(data map[string]json.RawMessage) (string, error) {
+	elems, err := contentElements(data)
+	if err != nil {
+		return "", err
+	}
+	// 1. pending 交互元素:倒序取最新一个(任何位置都优先于 markdown,需要用户行动)。
+	for i := len(elems) - 1; i >= 0; i-- {
+		raw, err := json.Marshal(elems[i])
+		if err != nil {
+			continue
+		}
+		var elem struct {
+			Type string                     `json:"type"`
+			Data map[string]json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &elem); err != nil {
+			continue
+		}
+		switch elem.Type {
+		case "permission_card":
+			if isPendingInteraction(elem.Data) {
+				return permissionPreviewText, nil
+			}
+		case "question_card":
+			if isPendingInteraction(elem.Data) {
+				return questionPreviewText, nil
+			}
+		}
+	}
+	return lastMarkdownText(data)
+}
+
+// isPendingInteraction 聚合卡交互元素是否仍需用户介入:
+// data.status 缺失或为 "pending" → pending(建卡默认);终态
+// (approved/denied/answered/rejected/expired)不算。与 plugin 建元素
+// status:"pending"、反向流切终态对齐。
+func isPendingInteraction(data map[string]json.RawMessage) bool {
+	var status string
+	if err := json.Unmarshal(data["status"], &status); err != nil {
+		return true // status 缺失 → 视为 pending
+	}
+	return status == "" || status == "pending"
 }
 
 // injectAggregatePreview 把 merged(合并后全量)的 data.preview 注入广播 delta 的

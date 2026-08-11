@@ -1027,6 +1027,65 @@ func TestUpdateContent_SetSilent_Preview_NoMarkdown(t *testing.T) {
 	}
 }
 
+// TestUpdateContent_SetSilent_PendingPermission set_silent 翻转(false)时聚合卡含
+// pending permission_card 元素 → data.preview 取交互文案「权限审批」
+// (提示需要处理),优先于卡内 markdown 正文。
+func TestUpdateContent_SetSilent_PendingPermission(t *testing.T) {
+	initContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"reasoning","element_id":"r1","data":{"text":"思考"}},{"type":"markdown","element_id":"m1","data":{"text":"回合最终回复"}},{"type":"permission_card","element_id":"p1","data":{"oc_request_id":"req1","action":"bash","status":"pending"}}]},"silent":true}`)
+	env := setupMsgUpdateTest(t, initContent)
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	// 1. 落库 merged 带 data.preview = 交互文案
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if contentData["preview"] != "权限审批" {
+		t.Errorf("落库 data.preview 期望「权限审批」, 实际 %v", contentData["preview"])
+	}
+	// 2. 广播 delta 也带 preview(增量无 elements,通知 body 直接读)
+	payload := recvMessageUpdate(t, env)
+	broadcastData := msgContentData(t, payload["content"].(map[string]any))
+	if broadcastData["preview"] != "权限审批" {
+		t.Errorf("广播 delta.data.preview 期望「权限审批」, 实际 %v", broadcastData["preview"])
+	}
+}
+
+// TestUpdateContent_SetSilent_PendingQuestion 聚合卡含 pending question_card 且
+// 无 markdown → preview 取「选择题」(原逻辑不写 preview,通知 fallback)。
+func TestUpdateContent_SetSilent_PendingQuestion(t *testing.T) {
+	initContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"question_card","element_id":"q1","data":{"oc_request_id":"req1","questions":[],"status":"pending"}}]},"silent":true}`)
+	env := setupMsgUpdateTest(t, initContent)
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if contentData["preview"] != "选择题" {
+		t.Errorf("落库 data.preview 期望「选择题」, 实际 %v", contentData["preview"])
+	}
+}
+
+// TestUpdateContent_SetSilent_InteractionAnswered 交互元素已答(终态)时 preview
+// 回落到最后 markdown 正文,不误报"需要处理"。
+func TestUpdateContent_SetSilent_InteractionAnswered(t *testing.T) {
+	initContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"markdown","element_id":"m1","data":{"text":"已完成的回复"}},{"type":"permission_card","element_id":"p1","data":{"oc_request_id":"req1","status":"approved"}}]},"silent":true}`)
+	env := setupMsgUpdateTest(t, initContent)
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if contentData["preview"] != "已完成的回复" {
+		t.Errorf("已答交互不应覆盖 preview, 期望「已完成的回复」, 实际 %v", contentData["preview"])
+	}
+}
+
 // TestUpdateContent_SetSilent_Flip_IncrsUnread set_silent true→false 翻转时,
 // 对非 sender 全员 IncrUnread(复用 Task 1 翻转逻辑)。
 func TestUpdateContent_SetSilent_Flip_IncrsUnread(t *testing.T) {

@@ -38,7 +38,9 @@ plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并�
 
 ## data.preview（回合结束摘要）
 
-`set_silent` 翻转(false)时 server 从 elements 取**最后 markdown 正文**写入 `data.preview`（落库 merged + 注入广播 delta）。用途：通知 body（bg-service 无本地累计，增量广播无 elements）+ agent_session 二级列表摘要（server SQL `last_agent_reply_content` 对 aggregate_card 读 `data.preview`）。无 markdown 元素时不写 preview，APP 端 fallback `[聚合回复]`。
+`set_silent` 翻转(false)时 server 写 `data.preview`（落库 merged + 注入广播 delta）。用途：通知 body（bg-service 无本地累计，增量广播无 elements）+ agent_session 二级列表摘要（server SQL `last_agent_reply_content` 对 aggregate_card 读 `data.preview`）。取值优先级（server `aggregatePreviewText`，APP `_aggregateCardPreview` 同口径）：
+1. **pending 交互元素**（permission_card / question_card 且 status 非终态，缺失按 pending）→ `权限审批` / `选择题`（纯文字：系统通知/会话摘要用系统字体渲染，iconfont 自定义字形会豆腐块；卡片内图标由 APP 渲染层用 iconfont 提供）
+2. 否则取**最后 markdown 正文**；无 markdown 无 pending 交互时不写 preview，APP 端 fallback `[聚合回复]`
 
 ## 元素级 finished 标记
 

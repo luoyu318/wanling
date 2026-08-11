@@ -379,7 +379,17 @@ func (r *ConversationRepo) BatchLoadAgentSessionStats(
 	rows2, err := r.query(ctx, `
 		SELECT
 			cpa.member_id AS agent_id,
-			COUNT(*) AS pending_count
+			COALESCE(SUM(
+			  CASE
+			    WHEN m.content->>'msg_type' IN ('permission_card', 'question_card')
+			      THEN (CASE WHEN m.content->'data'->>'status' = 'pending' THEN 1 ELSE 0 END)
+			    WHEN m.content->>'msg_type' = 'aggregate_card'
+			      THEN (SELECT COUNT(*) FROM jsonb_array_elements(m.content->'data'->'elements') e
+			            WHERE e->>'type' IN ('permission_card', 'question_card')
+			              AND COALESCE(e->'data'->>'status', 'pending') = 'pending')
+			    ELSE 0
+			  END
+			), 0) AS pending_count
 		FROM messages m
 		JOIN conversations cs ON cs.id = m.conversation_id AND cs.type = 'agent_session'
 		JOIN conversation_participants cpu
@@ -388,9 +398,7 @@ func (r *ConversationRepo) BatchLoadAgentSessionStats(
 		JOIN conversation_participants cpa
 			ON cpa.conv_id = cs.id AND cpa.member_type = 'agent'
 			AND cpa.member_id = ANY($2::uuid[])
-		WHERE m.content->>'msg_type' IN ('permission_card', 'question_card')
-		  AND m.content->'data'->>'status' = 'pending'
-		  AND m.is_main_stream
+		WHERE m.is_main_stream
 		  AND m.deleted_at IS NULL
 		GROUP BY cpa.member_id`,
 		userID, pq.Array(agentIDs),
@@ -797,13 +805,25 @@ func (r *ConversationRepo) ListAgentSessionsForUser(ctx context.Context, userID,
 		         ORDER BY m.created_at DESC LIMIT 1
 		       ) AS last_message_sender_name,
 		       (
-		         SELECT COUNT(*) FROM messages m
+		         SELECT COALESCE(SUM(
+		           CASE
+		             -- 独立交互卡:pending 计 1
+		             WHEN m.content->>'msg_type' IN ('permission_card', 'question_card')
+		               THEN (CASE WHEN m.content->'data'->>'status' = 'pending' THEN 1 ELSE 0 END)
+		             -- 聚合卡内嵌 pending 交互元素:按元素数计(一条聚合卡可含多个,
+		             -- status 缺失按 pending 与 server 口径一致)
+		             WHEN m.content->>'msg_type' = 'aggregate_card'
+		               THEN (SELECT COUNT(*) FROM jsonb_array_elements(m.content->'data'->'elements') e
+		                     WHERE e->>'type' IN ('permission_card', 'question_card')
+		                       AND COALESCE(e->'data'->>'status', 'pending') = 'pending')
+		             ELSE 0
+		           END
+		         ), 0) AS pending_count
+		         FROM messages m
 		         WHERE m.conversation_id = c.id
-		           AND m.content->>'msg_type' IN ('permission_card', 'question_card')
-		           AND m.content->'data'->>'status' = 'pending'
 		           AND m.is_main_stream
 		           AND m.deleted_at IS NULL
-		       ) AS pending_count,
+		       ),
 		       (
 		         SELECT CASE
 		           WHEN m.content->>'msg_type' = 'aggregate_card'

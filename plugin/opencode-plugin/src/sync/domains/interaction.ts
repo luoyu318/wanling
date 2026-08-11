@@ -94,6 +94,10 @@ export class InteractionCards {
         save: payload.save || [],
         metadata: payload.metadata || {},
         status: "pending",
+        // 子 session:带 sub_session_id 供 APP 精确挂载到对应 task 卡。
+        // 聚合卡模式下多个 task 元素共享聚合卡 msgId(parentMsgId 无法区分),
+        // 缺此字段会串挂到所有 task 卡下。
+        ...(state.isChildSession ? { sub_session_id: state.childEntry?.childSessionId } : {}),
       }, false)
 
       await saveCard(payload.id, { msgId, convId: state.convId, type: "permission", directory: payload.directory, data: { action: payload.action, resources: payload.resources, save: payload.save || [], metadata: payload.metadata || {} } })
@@ -136,6 +140,8 @@ export class InteractionCards {
         oc_request_id: payload.id,
         questions: payload.questions,
         status: "pending",
+        // 子 session:带 sub_session_id 供 APP 精确挂载到对应 task 卡(同上)。
+        ...(state.isChildSession ? { sub_session_id: state.childEntry?.childSessionId } : {}),
       }, false)
 
       await saveCard(payload.id, { msgId, convId: state.convId, type: "question", directory: payload.directory, data: { questions: payload.questions } })

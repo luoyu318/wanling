@@ -3,6 +3,7 @@ import 'package:app/models/msg_type.dart';
 import 'package:app/rendering/builtin_renderers.dart';
 import 'package:app/rendering/message_content_renderer.dart' show ContentRendererRegistry, MessageRenderContext;
 import 'package:app/rendering/truncatable_text_block.dart';
+import 'package:app/utils/icon_font.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -570,7 +571,48 @@ void main() {
       ));
 
       expect(find.textContaining('待审批'), findsOneWidget);
-      expect(find.byIcon(Icons.bolt), findsOneWidget);
+      expect(find.text(IconFont.permission), findsOneWidget);
+    });
+
+    testWidgets('子审批卡 sub_session_id 与 task 不匹配时不串挂(task 元素共享聚合卡 msgId)', (tester) async {
+      // 聚合卡模式下 task 卡元素 taskCardId 都是聚合卡 id(此处 messageId),
+      // 另一子 agent 的审批卡 sub_session_id 不同,不应挂到本 task 下。
+      final otherChildApproval = ChatMessage.fromJson({
+        'id': 'perm-other-child',
+        'conversation_id': 'conv-1',
+        'sender_type': 'agent',
+        'sender_id': 'a1',
+        'content': {
+          'msg_type': 'permission_card',
+          'data': {
+            'status': 'pending',
+            'action': 'bash',
+            'sub_session_id': 'ses-child-2',
+          },
+        },
+        'parent_msg_id': 'task-msg-1',
+        'created_at': '2026-07-15T10:00:00Z',
+      });
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeTaskContent(status: 'working', subSessionId: 'ses-child-1'),
+              ctx,
+              MessageRenderContext(
+                isMe: false, baseUrl: '', token: '', isDark: false,
+                convId: 'conv-1',
+                messageId: 'task-msg-1',
+                conversationMessages: [otherChildApproval],
+              ),
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.textContaining('待审批'), findsNothing);
     });
 
     testWidgets('子审批卡 parent 不匹配时不渲染审批条', (tester) async {

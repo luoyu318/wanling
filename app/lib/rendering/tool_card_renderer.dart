@@ -175,6 +175,20 @@ Widget _wrapAnimated(Widget child) {
 String _taskRootId(MessageRenderContext rc) =>
     rc.rootMessageId.isNotEmpty ? rc.rootMessageId : rc.messageId;
 
+/// 子审批卡与 task 卡是否同属一个子 agent。
+///
+/// 聚合卡模式下多个 task 元素共享聚合卡 msgId(parentMsgId 都是聚合卡 id,
+/// 无法区分归属),审批卡 data 带 `sub_session_id`(plugin 子 session 发送)时
+/// 按它精确匹配,杜绝一条审批卡串挂到所有 task 卡下;审批卡无 sub_session_id
+/// (老数据 / 非子 session)或 task 无 sub_session_id 时退化按 parent 匹配兜底。
+bool _matchesTaskSubSession(ChatMessage m, String taskSubSessionId) {
+  if (taskSubSessionId.isEmpty) return true;
+  final sub =
+      (m.content['data'] as Map<String, dynamic>?)?['sub_session_id'] as String?;
+  if (sub == null || sub.isEmpty) return true;
+  return sub == taskSubSessionId;
+}
+
 /// 从输入中提取当前操作的文件/目录上下文标签。
 (String, String) _toolContext(Map<String, dynamic> input) {
   for (final field in ['filePath', 'path', 'workdir']) {
@@ -1164,8 +1178,13 @@ class _TaskCardShell extends StatelessWidget {
     // 聚合 pending 子审批卡(permission_card/question_card, parent 指向本 task)。
     // 子审批卡作为独立 ChatMessage 存在(由 chat_provider 放行进扁平列表),
     // 这里在 task 卡片渲染时从 conversationMessages 反查挂载到下方。
+    // 聚合卡模式下多个 task 元素共享聚合卡 msgId(parentMsgId 都是聚合卡 id),
+    // 必须叠加 sub_session_id 精确匹配,否则一条审批卡串挂到所有 task 卡下。
     final pendingApprovals = conversationMessages
-        .where((m) => m.parentMsgId == taskCardId && m.isPendingChildApproval)
+        .where((m) =>
+            m.parentMsgId == taskCardId &&
+            m.isPendingChildApproval &&
+            _matchesTaskSubSession(m, subSessionId))
         .toList();
 
     Widget result = card;
@@ -1224,7 +1243,7 @@ class _PendingApprovalChip extends StatelessWidget {
         ),
         child: Row(
           children: [
-            const Icon(Icons.bolt, size: 14, color: color),
+            IconFont.icon(IconFont.permission, size: 14, color: color),
             const SizedBox(width: 6),
             const Text('待审批', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
             if (action.isNotEmpty) ...[

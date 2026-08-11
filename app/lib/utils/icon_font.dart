@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 /// 字形 unicode 见 `fonts/iconfont.ttf`（glyphs）:
 /// - think=e6de 思考 / deepThink=e622 深度思考 / search=e62f 搜索
 /// - explore=e600 WebFetch/探索 / shell=e666 shell / edit=e62c 编辑
+/// - permission=fbb8 权限 / question=e604 问答
 ///
 /// 聚合卡工具类别图标统一走这里,避免魔法字符串散落各 renderer。
 class IconFont {
@@ -29,6 +30,12 @@ class IconFont {
 
   /// 编辑（编辑组 edit/write）。
   static const String edit = '\u{e62c}';
+
+  /// 权限（权限审批卡）。
+  static const String permission = '\u{fbb8}';
+
+  /// 问答（选择题卡）。
+  static const String question = '\u{e604}';
 
   /// 渲染单个 iconfont 字形。
   ///

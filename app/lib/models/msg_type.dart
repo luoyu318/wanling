@@ -111,11 +111,11 @@ extension MsgTypeX on MsgType {
       case MsgType.card:
         return '[审批]';
       case MsgType.permissionCard:
-        return '⚡ 权限审批';
+        return '权限审批';
       case MsgType.permissionReply:
         return null;
       case MsgType.questionCard:
-        return '❓ 选择题';
+        return '选择题';
       case MsgType.questionReply:
         return null;
       case MsgType.slashEcho:
@@ -133,8 +133,10 @@ extension MsgTypeX on MsgType {
   }
 
   /// 聚合卡预览文本:优先用 server set_silent 翻转时写入的 data.preview
-  /// (增量广播无 elements,通知/摘要直接读 preview);无则取最后一个 markdown
-  /// 元素的 text,截断 50 字符;再无 → fallback `[聚合回复]`。
+  /// (增量广播无 elements,通知/摘要直接读 preview);无则扫描元素——先看
+  /// 仍待用户介入的交互元素(permission_card / question_card pending,提示
+  /// "需要处理"而非正文),再看最后 markdown 正文,截断 50 字符;再无 →
+  /// fallback `[聚合回复]`。与 server aggregatePreviewText 同口径。
   /// 回合结束时聚合卡才计未读 + 推送通知,此时 elements 已含最终正文。
   static String? _aggregateCardPreview(Map<String, dynamic>? data) {
     final preview = data?['preview'] as String?;
@@ -143,6 +145,17 @@ extension MsgTypeX on MsgType {
     }
     final elements = data?['elements'];
     if (elements is List) {
+      // pending 交互优先于正文;倒序取最新一个(与 server aggregatePreviewText 同口径)
+      for (final raw in elements.reversed) {
+        if (raw is! Map) continue;
+        final type = raw['type'];
+        if (type == 'permission_card' && _isPendingInteraction(raw['data'])) {
+          return '权限审批';
+        }
+        if (type == 'question_card' && _isPendingInteraction(raw['data'])) {
+          return '选择题';
+        }
+      }
       for (final raw in elements.reversed) {
         if (raw is! Map) continue;
         if (raw['type'] != 'markdown') continue;
@@ -152,6 +165,16 @@ extension MsgTypeX on MsgType {
       }
     }
     return '[聚合回复]';
+  }
+
+  /// 聚合卡交互元素是否仍需用户介入:status 缺失或为 "pending" → pending;
+  /// 终态(approved/denied/answered/rejected/expired)不算。
+  /// 与 server isPendingInteraction 同口径。
+  static bool _isPendingInteraction(dynamic data) {
+    if (data is! Map) return true;
+    final status = data['status'];
+    if (status is! String) return true;
+    return status.isEmpty || status == 'pending';
   }
 
   static MsgType fromString(String? raw) {

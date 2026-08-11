@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/icon_font.dart';
+
 /// question 工具渲染 body。
 /// 由 ToolCallRenderer 在 name == "question" 时调用。
 /// 暖色卡片 + 首题 header + 点击弹底部抽屉查看全部选项。
@@ -176,7 +178,9 @@ class _QuestionOptionsSheetState extends State<_QuestionOptionsSheet>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  const Text('❓ ', style: TextStyle(fontSize: 16)),
+                  IconFont.icon(IconFont.question,
+                      size: 18, color: const Color(0xFF7A5CFF)),
+                  const SizedBox(width: 6),
                   Text(
                     multi
                         ? '选择题 · ${idx + 1} / ${widget.questions.length}'

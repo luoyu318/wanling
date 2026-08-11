@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/msg_type.dart';
 import '../providers/auth_provider.dart' show apiProvider;
+import '../utils/icon_font.dart';
 import '../utils/snackbar.dart';
 import 'message_content_renderer.dart';
 
@@ -123,6 +124,9 @@ class _PendingQuestionCard extends StatelessWidget {
           children: [
             Row(
               children: [
+                IconFont.icon(IconFont.question,
+                    size: 15, color: const Color(0xFF7C4DFF)),
+                const SizedBox(width: 5),
                 Text(
                   count > 1 ? '选择题 · $count 个问题' : '选择题',
                   style: const TextStyle(
@@ -398,7 +402,9 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  const Text('❓ ', style: TextStyle(fontSize: 16)),
+                  IconFont.icon(IconFont.question,
+                      size: 18, color: const Color(0xFF7A5CFF)),
+                  const SizedBox(width: 6),
                   Text(
                     multi
                         ? '选择题 · ${idx + 1} / ${widget.questions.length}'

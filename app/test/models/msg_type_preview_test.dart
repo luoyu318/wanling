@@ -66,12 +66,12 @@ void main() {
       expect(MsgTypeX.preview(MsgType.card, {}), '[审批]');
     });
 
-    test('permissionCard 返 ⚡ 权限审批', () {
-      expect(MsgTypeX.preview(MsgType.permissionCard, {}), '⚡ 权限审批');
+    test('permissionCard 返 权限审批', () {
+      expect(MsgTypeX.preview(MsgType.permissionCard, {}), '权限审批');
     });
 
-    test('questionCard 返 ❓ 选择题', () {
-      expect(MsgTypeX.preview(MsgType.questionCard, {}), '❓ 选择题');
+    test('questionCard 返 选择题', () {
+      expect(MsgTypeX.preview(MsgType.questionCard, {}), '选择题');
     });
   });
 
@@ -138,6 +138,66 @@ void main() {
 
     test('question 返 [提问]', () {
       expect(MsgTypeX.preview(MsgType.question, {}), '[提问]');
+    });
+  });
+
+  group('MsgTypeX.preview — 聚合卡', () {
+    Map<String, dynamic> card(List<Map<String, dynamic>> elements) => {
+          'state': 'done',
+          'elements': elements,
+        };
+
+    test('含 pending permission_card 元素 → 权限审批(优先于 markdown)', () {
+      final data = card([
+        {'type': 'markdown', 'element_id': 'm1', 'data': {'text': '正文回复'}},
+        {
+          'type': 'permission_card',
+          'element_id': 'p1',
+          'data': {'status': 'pending', 'action': 'bash'},
+        },
+      ]);
+      expect(MsgTypeX.preview(MsgType.aggregateCard, data), '权限审批');
+    });
+
+    test('含 pending question_card 元素且无 markdown → 选择题', () {
+      final data = card([
+        {
+          'type': 'question_card',
+          'element_id': 'q1',
+          'data': {'status': 'pending'},
+        },
+      ]);
+      expect(MsgTypeX.preview(MsgType.aggregateCard, data), '选择题');
+    });
+
+    test('交互已答(终态)时回落到最后 markdown 正文', () {
+      final data = card([
+        {'type': 'markdown', 'element_id': 'm1', 'data': {'text': '已完成的回复'}},
+        {
+          'type': 'permission_card',
+          'element_id': 'p1',
+          'data': {'status': 'approved'},
+        },
+      ]);
+      expect(MsgTypeX.preview(MsgType.aggregateCard, data), '已完成的回复');
+    });
+
+    test('server 写入 data.preview 时优先用 preview(含交互文案)', () {
+      final data = {
+        'preview': '权限审批',
+        'state': 'done',
+        'elements': [
+          {'type': 'markdown', 'element_id': 'm1', 'data': {'text': '正文'}},
+        ],
+      };
+      expect(MsgTypeX.preview(MsgType.aggregateCard, data), '权限审批');
+    });
+
+    test('无 markdown 无交互 → [聚合回复]', () {
+      final data = card([
+        {'type': 'reasoning', 'element_id': 'r1', 'data': {'text': '思考'}},
+      ]);
+      expect(MsgTypeX.preview(MsgType.aggregateCard, data), '[聚合回复]');
     });
   });
 }

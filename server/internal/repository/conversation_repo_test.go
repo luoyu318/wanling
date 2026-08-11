@@ -1614,3 +1614,69 @@ func TestListAgentSessionsForUser_PendingCount(t *testing.T) {
 		t.Errorf("s2 pending_count 期望 0, 实际 %d", s2Item.PendingCount)
 	}
 }
+
+// TestListAgentSessionsForUser_PendingCount_AggregateEmbedded 聚合卡内嵌 pending
+// 交互元素(permission_card / question_card)同样计入 pending_count(交互卡嵌入
+// 聚合卡后不再发独立卡);已答终态元素不计。
+func TestListAgentSessionsForUser_PendingCount_AggregateEmbedded(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+	urepo := NewUserRepo(db)
+	arepo := NewAgentRepo(db)
+
+	user, _ := urepo.Create(t.Context(), uniqueShortName(t, "u"), "$2a$10$h")
+	agent, _ := arepo.Create(t.Context(), user.ID, uniqueShortName(t, "ag"), "sk", "opencode")
+
+	s1, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s1", "")
+	s2, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s2", "")
+
+	// s1: 聚合卡内嵌 1 个 pending permission_card + 1 个 pending question_card
+	aggPending, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "aggregate_card",
+		"silent":   false,
+		"data": map[string]interface{}{
+			"state": "done",
+			"elements": []map[string]interface{}{
+				{"type": "permission_card", "element_id": "p1", "data": map[string]interface{}{"status": "pending", "action": "bash"}},
+				{"type": "question_card", "element_id": "q1", "data": map[string]interface{}{"status": "pending"}},
+			},
+		},
+	})
+	msgRepo.Create(t.Context(), s1.ID, "agent", agent.ID, aggPending)
+
+	// s2: 聚合卡内嵌已答 question_card(终态不计)
+	aggAnswered, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "aggregate_card",
+		"data": map[string]interface{}{
+			"state": "done",
+			"elements": []map[string]interface{}{
+				{"type": "question_card", "element_id": "q1", "data": map[string]interface{}{"status": "answered"}},
+			},
+		},
+	})
+	msgRepo.Create(t.Context(), s2.ID, "agent", agent.ID, aggAnswered)
+
+	got, err := repo.ListAgentSessionsForUser(t.Context(), user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("ListAgentSessionsForUser: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("期望 2 个 session, 实际 %d", len(got))
+	}
+	var s1Item, s2Item model.ConversationListItem
+	for _, item := range got {
+		if item.ID == s1.ID {
+			s1Item = item
+		}
+		if item.ID == s2.ID {
+			s2Item = item
+		}
+	}
+	if s1Item.PendingCount != 2 {
+		t.Errorf("s1 pending_count 期望 2(聚合卡内嵌 perm+qa), 实际 %d", s1Item.PendingCount)
+	}
+	if s2Item.PendingCount != 0 {
+		t.Errorf("s2 pending_count 期望 0(已答终态), 实际 %d", s2Item.PendingCount)
+	}
+}
