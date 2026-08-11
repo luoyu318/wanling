@@ -1154,29 +1154,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   // 滚动重建(集合已有)不重播,避免卡片闪烁。
                                   final animateEntry =
                                       _animatedLiveIds.add(liveMsg.id);
-                                  return ChatMessageItemBuilder.buildMessage(
+                                  final item =
+                                      ChatMessageItemBuilder.buildMessage(
                                     ctx,
                                     liveMsg,
                                     itemCtx,
                                     olderNeighbor: (i > 0)
                                         ? chatState.liveMessages[i - 1]
-                                        : (chatState.historyMessages.isNotEmpty
+                                        : (chatState
+                                                .historyMessages.isNotEmpty
                                             ? chatState.historyMessages.first
                                             : null),
                                     animateEntry: animateEntry,
                                   );
+                                  // live 首条顶部加 8px 留白:首次进入/发消息贴底后,
+                                  // 首条消息不直接顶到视口上沿(Center 锚点对齐导致)。
+                                  // 滚动后首条移出视口,间距自然消失,不影响消息行距。
+                                  if (i == 0) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: item,
+                                    );
+                                  }
+                                  return item;
                                 },
                                 childCount: chatState.liveMessages.length,
                               ),
                             ),
                             if (_isTyping)
-                              SliverToBoxAdapter(
-                                child: isAgentSession &&
-                                        ref.read(agentStatusProvider)[
-                                                widget.convId] !=
-                                            null
-                                    ? const AgentBusyBubble()
-                                    : const TypingBubble(),
+                              const SliverToBoxAdapter(
+                                child: TypingBubble(),
                               ),
                           ],
                         ),
