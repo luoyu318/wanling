@@ -53,7 +53,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     }
 
     return AppBar(
-      backgroundColor: const Color(0xFFEDEDED),
+      backgroundColor: const Color(0xFFFFFFFF),
       surfaceTintColor: Colors.transparent,
       // 下边框:极细线,深于背景色
       shape: const Border(

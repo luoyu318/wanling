@@ -46,6 +46,9 @@ class MessageContextMenu extends StatefulWidget {
   /// 是否显示「撤回」按钮(自己发的 + 5min 内 → true)。
   /// false 时只显示「删除」(对自己隐藏,per-participant)。
   final bool canRecall;
+  /// 是否显示「引用」按钮。agent_session 会话引用语义不适用,隐藏该项。
+  /// 默认 true(普通会话显示)。
+  final bool showQuote;
   final VoidCallback onCopy;
   /// 引用回调。nullable:菜单项始终显示,onQuote=null 时点击无操作。
   /// 主流 IM 风格:长按菜单始终列出所有可用功能,未配置回调时点击静默。
@@ -63,6 +66,7 @@ class MessageContextMenu extends StatefulWidget {
     this.tailOffsetX = 75,
     this.pointDown = true,
     this.canRecall = false,
+    this.showQuote = true,
     required this.onCopy,
     this.onQuote,
     required this.onDelete,
@@ -125,6 +129,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
             pointDown: widget.pointDown,
             tailOffsetX: widget.tailOffsetX,
             canRecall: widget.canRecall,
+            showQuote: widget.showQuote,
             onCopy: widget.onCopy,
             onQuote: widget.onQuote,
             onDelete: widget.onDelete,
@@ -145,6 +150,8 @@ class _MenuBody extends StatelessWidget {
   final double tailOffsetX;
   /// 是否显示「撤回」按钮。
   final bool canRecall;
+  /// 是否显示「引用」按钮。
+  final bool showQuote;
   final VoidCallback onCopy;
   /// 引用回调。nullable:菜单项始终显示,onQuote=null 时点击无操作。
   final VoidCallback? onQuote;
@@ -156,6 +163,7 @@ class _MenuBody extends StatelessWidget {
     required this.pointDown,
     required this.tailOffsetX,
     required this.canRecall,
+    required this.showQuote,
     required this.onCopy,
     this.onQuote,
     required this.onDelete,
@@ -200,12 +208,14 @@ class _MenuBody extends StatelessWidget {
                     label: '复制',
                     color: AppMenuStyle.darkFg,
                     onTap: onCopy),
-                // 引用:onQuote=null 时点击静默(无操作),菜单项始终显示。
-                _MenuItem(
-                    icon: Icons.format_quote,
-                    label: '引用',
-                    color: AppMenuStyle.darkFg,
-                    onTap: onQuote ?? () {}),
+                // 引用:onQuote=null 时点击静默(无操作),菜单项始终显示;
+                // agent_session 会话 showQuote=false 时不渲染该项。
+                if (showQuote)
+                  _MenuItem(
+                      icon: Icons.format_quote,
+                      label: '引用',
+                      color: AppMenuStyle.darkFg,
+                      onTap: onQuote ?? () {}),
                 _MenuItem(
                     icon: Icons.delete_outline,
                     label: '删除',
