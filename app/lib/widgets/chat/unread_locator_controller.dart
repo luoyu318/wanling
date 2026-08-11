@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 
 import '../../providers/chat_provider.dart' show chatProvider;
+import '../../utils/debug_log.dart';
 import '../../utils/chat/render_box_utils.dart' show globalRectOf, listViewRect;
 import 'jump_controller.dart' show dualSliverBottomTarget;
 
@@ -119,29 +120,29 @@ class UnreadLocatorController {
   /// 由 chat_page build 内的 ref.listen 监听 firstUnreadMessageId 从
   /// null→非null 触发。
   void scrollToFirstUnreadIfNeeded() {
-    debugPrint('[locateUnread] CALLED');
+    debugLog('[locateUnread] CALLED');
     final chatState = _ctx.ref.read(chatProvider(_ctx.chatKey));
     final firstUnreadId = chatState.firstUnreadMessageId;
-    debugPrint('[locateUnread] firstUnreadId=$firstUnreadId');
+    debugLog('[locateUnread] firstUnreadId=$firstUnreadId');
     if (firstUnreadId == null) {
-      debugPrint('[locateUnread] ABORT: firstUnreadId is null');
+      debugLog('[locateUnread] ABORT: firstUnreadId is null');
       return;
     }
     final scrollCtrl = _ctx.getScrollCtrl();
     if (!scrollCtrl.hasClients) {
-      debugPrint('[locateUnread] ABORT: scrollCtrl has no clients');
+      debugLog('[locateUnread] ABORT: scrollCtrl has no clients');
       return;
     }
 
     // 在 historyMessages（newest-first）中找到第一条未读的 index。
     // 未读必在历史段（_initialize 把整页加载进 historyMessages，活跃段为空）。
     final index = chatState.historyMessages.indexWhere((m) => m.id == firstUnreadId);
-    debugPrint(
+    debugLog(
       '[locateUnread] index=$index, historyMessages.length=${chatState.historyMessages.length}, '
       'historyMessages.first.id=${chatState.historyMessages.isEmpty ? null : chatState.historyMessages.first.id}',
     );
     if (index < 0) {
-      debugPrint('[locateUnread] ABORT: firstUnreadId not found in historyMessages');
+      debugLog('[locateUnread] ABORT: firstUnreadId not found in historyMessages');
       return;
     }
 
@@ -155,7 +156,7 @@ class UnreadLocatorController {
     // 语义上 firstUnread 是最新一条 = 用户本就应在底部,复用无未读场景
     // 的贴底逻辑(dualSliverBottomTarget),行为一致。
     if (index == 0) {
-      debugPrint(
+      debugLog(
         '[locateUnread] firstUnread is newest history (index=0), '
         'fallback to bottom (skip 30% align)',
       );
@@ -168,7 +169,7 @@ class UnreadLocatorController {
     // PostFrameCallback 中填充。即使我们用了 loading overlay 让 SliverViewObserver
     // 提前挂载,jumpTo 仍可能在 sliverContexts 还空时被调用 → 静默失败。
     if (observerController.sliverContexts.isEmpty) {
-      debugPrint('[locateUnread] sliverContexts empty, retrying next frame');
+      debugLog('[locateUnread] sliverContexts empty, retrying next frame');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_ctx.isMounted()) scrollToFirstUnreadIfNeeded();
       });
@@ -182,7 +183,7 @@ class UnreadLocatorController {
     // jumpTo 是 Future,内部会逐步翻页直到目标 index 进可见区。
     // sliverContext 指定历史 sliver（未读在 historyMessages 内）。
     final pxBefore = scrollCtrl.position.pixels;
-    debugPrint(
+    debugLog(
       '[locateUnread] before jumpTo: px=$pxBefore, will jumpTo index=$index, '
       'sliverContexts=${observerController.sliverContexts.length}',
     );
@@ -196,14 +197,14 @@ class UnreadLocatorController {
       // jumpTo 完成后目标消息必然已渲染,BuildContext 可拿
       if (!_ctx.isMounted()) {
         _isLocating = false;
-        debugPrint('[locateUnread] jumpTo completed but not mounted');
+        debugLog('[locateUnread] jumpTo completed but not mounted');
         return;
       }
       final key = _ctx.getBubbleKeys()[firstUnreadId];
       final ctx = key?.currentContext;
       if (ctx == null) {
         _isLocating = false;
-        debugPrint(
+        debugLog(
           '[locateUnread] after jumpTo: still no ctx for $firstUnreadId',
         );
         return;
@@ -211,7 +212,7 @@ class UnreadLocatorController {
       final pxBeforeEnsure = scrollCtrl.hasClients
           ? scrollCtrl.position.pixels
           : null;
-      debugPrint(
+      debugLog(
         '[locateUnread] jumpTo done, computing target px, px before=$pxBeforeEnsure',
       );
       // 第二步:屏幕几何自算目标 px(替代 ensureVisible——对超高 markdown 会滚过头,
@@ -229,14 +230,14 @@ class UnreadLocatorController {
           viewportHeight: pos.viewportDimension,
           alignment: 0.3,
         );
-        debugPrint(
+        debugLog(
           '[locateUnread] computeTargetPx: targetTop=${targetRect.top} '
           'viewportTop=${viewportRect.top} vd=${pos.viewportDimension} '
           '→ px=$targetPx',
         );
         scrollCtrl.jumpTo(targetPx);
       } else {
-        debugPrint(
+        debugLog(
           '[locateUnread] targetRect null 或 no clients, fallback jumpTo done px=$pxBeforeEnsure',
         );
       }
@@ -254,7 +255,7 @@ class UnreadLocatorController {
         );
         if (pos.pixels > bottomTarget) {
           scrollCtrl.jumpTo(bottomTarget);
-          debugPrint(
+          debugLog(
             '[locateUnread] 自算 px 越锚点,clamp 回贴底: px=${scrollCtrl.position.pixels}',
           );
         }
@@ -263,14 +264,14 @@ class UnreadLocatorController {
       // (预加载历史 + 检查已在视口内的未读)。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _isLocating = false;
-        debugPrint('[locateUnread] _isLocating released');
+        debugLog('[locateUnread] _isLocating released');
         _ctx.onLocateComplete();
       });
     });
     final pxRightAfterJump = scrollCtrl.hasClients
         ? scrollCtrl.position.pixels
         : null;
-    debugPrint('[locateUnread] rightAfter jumpTo call: px=$pxRightAfterJump');
+    debugLog('[locateUnread] rightAfter jumpTo call: px=$pxRightAfterJump');
   }
 
   /// firstUnread 即最新历史(index==0)时直接贴底(与无未读场景一致)。
@@ -281,7 +282,7 @@ class UnreadLocatorController {
   void _scrollToBottomForFirstUnread() {
     final scrollCtrl = _ctx.getScrollCtrl();
     if (!scrollCtrl.hasClients) {
-      debugPrint('[locateUnread] (bottom fallback) no clients');
+      debugLog('[locateUnread] (bottom fallback) no clients');
       return;
     }
     _isLocating = true;
@@ -293,7 +294,7 @@ class UnreadLocatorController {
       viewportDimension: pos.viewportDimension,
       liveEmpty: chatState.liveMessages.isEmpty,
     );
-    debugPrint(
+    debugLog(
       '[locateUnread] (bottom fallback) jumpTo $target '
       '(min=${pos.minScrollExtent}, max=${pos.maxScrollExtent}, '
       'vd=${pos.viewportDimension}, liveEmpty=${chatState.liveMessages.isEmpty})',
@@ -301,7 +302,7 @@ class UnreadLocatorController {
     scrollCtrl.jumpTo(target);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _isLocating = false;
-      debugPrint('[locateUnread] (bottom fallback) _isLocating released');
+      debugLog('[locateUnread] (bottom fallback) _isLocating released');
       _ctx.onLocateComplete();
     });
   }

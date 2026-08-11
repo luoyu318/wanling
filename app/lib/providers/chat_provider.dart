@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../utils/debug_log.dart';
 import '../models/conversation.dart' show SessionMeta;
 import '../models/message.dart';
 import '../models/msg_type.dart';
@@ -105,7 +106,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           clearModelOverride: shouldClearModelOverride,
         );
       } catch (e) {
-        debugPrint('[chatInit] refreshSessionMeta fail: $e');
+        debugLog('[chatInit] refreshSessionMeta fail: $e');
       }
     });
   }
@@ -152,7 +153,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 拉取结果用 _mergeHistory 合并，保留初始化期间 WS 并发到达的新消息
   /// （沿用现有防并发设计，避免直接覆盖丢失数据）。
   Future<void> _initialize() async {
-    debugPrint('[chatInit] START convId=$conversationId');
+    debugLog('[chatInit] START convId=$conversationId');
 
     // F4: 优先从 DB 即时呈现(失败 silently,不阻塞原 unread 四象限逻辑)。
     // server 仍是真相源,原 unread 四象限(unreadCount==0 拉最新 /
@@ -210,7 +211,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
           final nullNames =
               state.displayMessages.where((m) => m.senderName == null).length;
-          debugPrint('[chatInit] DB hit ${local.length} msgs (agg-empty '
+          debugLog('[chatInit] DB hit ${local.length} msgs (agg-empty '
               'filtered=${local.length - validLocal.length}), presented eagerly; '
               'null senderName=$nullNames/${state.displayMessages.length}');
         } else if (cachedConvType != null) {
@@ -237,7 +238,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           sessionMeta: convDetail.sessionMeta,
           directory: convDetail.directory,
         );
-        debugPrint('[chatInit] getConversation ok: type=${convDetail.type}, title=${convDetail.displayName}, meta=${convDetail.sessionMeta?.toJson()}');
+        debugLog('[chatInit] getConversation ok: type=${convDetail.type}, title=${convDetail.displayName}, meta=${convDetail.sessionMeta?.toJson()}');
         // 写回 store:下次离线进入时 eager 阶段可读出 type/title/meta 兜底
         // (agent_session 被 ListForUser 排除,只能靠此缓存)。
         if (store != null) {
@@ -250,50 +251,50 @@ class ChatNotifier extends StateNotifier<ChatState> {
           }
         }
       } catch (e) {
-        debugPrint('[chatInit] getConversation fail: $e');
+        debugLog('[chatInit] getConversation fail: $e');
       }
 
       // getUnreadInfo 已返 UnreadInfo model(Task 16),无需手动 fromJson
       final unread = await api.getUnreadInfo(conversationId);
-      debugPrint('[chatInit] getUnreadInfo raw=$unread');
-      debugPrint('[chatInit] unread parsed: count=${unread.unreadCount}, '
+      debugLog('[chatInit] getUnreadInfo raw=$unread');
+      debugLog('[chatInit] unread parsed: count=${unread.unreadCount}, '
           'firstUnreadId=${unread.firstUnreadMessageId}, '
           'firstUnreadCreatedAt=${unread.firstUnreadCreatedAt}, '
           'hasMoreBeforeFirstUnread=${unread.hasMoreBeforeFirstUnread}');
 
       if (unread.unreadCount == 0) {
         // 无未读：拉最新 20 条
-        debugPrint('[chatInit] BRANCH: no unread');
+        debugLog('[chatInit] BRANCH: no unread');
         // API 已返 List<ChatMessage>(Task 16),无需手动 fromJson。
         final loaded = await api.getMessagesBefore(conversationId, limit: _pageSize);
-        debugPrint('[chatInit] noUnread loaded ${loaded.length} msgs');
+        debugLog('[chatInit] noUnread loaded ${loaded.length} msgs');
         state = _mergeHistory(loaded).copyWith(
           hasMore: loaded.length == _pageSize,
           unreadCount: 0,
           isInitialLoading: false,
           isServerInitialized: true,
         );
-        debugPrint('[chatInit] noUnread state set: hasMore=${state.hasMore}, '
+        debugLog('[chatInit] noUnread state set: hasMore=${state.hasMore}, '
             'displayMessages=${state.displayMessages.length}');
       } else {
         // 有未读：用 firstUnreadCreatedAt 作 after 游标的起点（减 1ms 让 firstUnread
         // 本身也被 created_at > after 包含）。ListAfter 返回 ASC（最老在前），
         // reverse 后变 newest first（firstUnread 在末尾=视觉顶部，跳到它，下方是更新的未读）。
         // 这与"用户期望跳到第一条未读 + 上下文（前后消息）"一致。
-        debugPrint('[chatInit] BRANCH: has unread');
+        debugLog('[chatInit] BRANCH: has unread');
         assert(unread.firstUnreadCreatedAt != null,
             'unreadCount > 0 但 firstUnreadCreatedAt 为 null，服务端数据不一致');
         final after = unread.firstUnreadCreatedAt!.subtract(
           const Duration(milliseconds: 1),
         );
-        debugPrint('[chatInit] after cursor=$after');
+        debugLog('[chatInit] after cursor=$after');
         // API 已返 List<ChatMessage>(ASC,Task 16),无需手动 fromJson。
         final listAsc = await api.getMessagesAfter(
           conversationId,
           after: after,
           limit: _pageSize,
         );
-        debugPrint('[chatInit] getMessagesAfter returned ${listAsc.length} msgs');
+        debugLog('[chatInit] getMessagesAfter returned ${listAsc.length} msgs');
         // ListAfter 返回 ASC，reverse 成 newest first 配合 reverse ListView
         final loadedAfter = listAsc.reversed.toList();
 
@@ -305,7 +306,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           conversationId,
           limit: _pageSize,
         );
-        debugPrint('[chatInit] hasUnread getMessagesBefore returned '
+        debugLog('[chatInit] hasUnread getMessagesBefore returned '
             '${loadedBefore.length} msgs');
 
         // 合并:before 提供 firstUnread 之前的上下文,after 提供未读。按 id 去重,
@@ -319,9 +320,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
         final loaded = byId.values.toList();
         if (loaded.isEmpty) {
-          debugPrint('[chatInit] WARNING: loaded is empty after reverse!');
+          debugLog('[chatInit] WARNING: loaded is empty after reverse!');
         } else {
-          debugPrint('[chatInit] loaded after merge: length=${loaded.length}, '
+          debugLog('[chatInit] loaded after merge: length=${loaded.length}, '
               'first(=最新, messages[0])=${loaded.first.id} createdAt=${loaded.first.createdAt}, '
               'last(=最老, firstUnread expected)=${loaded.last.id} createdAt=${loaded.last.createdAt}');
         }
@@ -343,7 +344,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           isInitialLoading: false,
           isServerInitialized: true,
         );
-        debugPrint('[chatInit] hasUnread state set: hasMore=$hasMore, '
+        debugLog('[chatInit] hasUnread state set: hasMore=$hasMore, '
             'firstUnreadMessageId=${state.firstUnreadMessageId}, '
             'unreadCount=${state.unreadCount}, '
             'displayMessages=${state.displayMessages.length}, '
@@ -364,7 +365,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
     } catch (e, st) {
-      debugPrint('[chatInit] EXCEPTION: $e\n$st');
+      debugLog('[chatInit] EXCEPTION: $e\n$st');
       // 兜底：拉最新消息（定位/高亮全部放弃，保证列表可用）
       // API 已返 List<ChatMessage>(Task 16),无需手动 fromJson。
       final loaded = await api.getMessages(conversationId, limit: _pageSize, offset: 0);
@@ -373,7 +374,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         isInitialLoading: false,
         isServerInitialized: true,
       );
-      debugPrint('[chatInit] fallback state set: hasMore=${state.hasMore}, '
+      debugLog('[chatInit] fallback state set: hasMore=${state.hasMore}, '
           'displayMessages=${state.displayMessages.length}');
     }
   }
@@ -472,10 +473,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// F4: 优先从 DB 读更老消息,DB 命中整页(>=_pageSize)跳过 server;
   /// DB 不够才走 server 拉,拉到后写回 DB。
   Future<void> loadMoreHistory() async {
-    debugPrint('[loadMore] CALLED: isLoadingMore=${state.isLoadingMore}, '
+    debugLog('[loadMore] CALLED: isLoadingMore=${state.isLoadingMore}, '
         'hasMore=${state.hasMore}, displayMessages=${state.displayMessages.length}');
     if (state.isLoadingMore || !state.hasMore || state.displayMessages.isEmpty) {
-      debugPrint('[loadMore] ABORT: guard failed');
+      debugLog('[loadMore] ABORT: guard failed');
       return;
     }
 
@@ -486,7 +487,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final oldest = state.historyMessages.isNotEmpty
         ? state.historyMessages.last
         : state.liveMessages.first;
-    debugPrint('[loadMore] oldest.id=${oldest.id}, oldest.createdAt=${oldest.createdAt}');
+    debugLog('[loadMore] oldest.id=${oldest.id}, oldest.createdAt=${oldest.createdAt}');
     try {
       // F4: DB 即时呈现(加速 UI 响应),server 仍然拉校正。
       // 不直接跳过 server 是为了避免 DB 内部 hole(server 之前拉失败留断片):
@@ -502,7 +503,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           ))
               .where((m) => !_isEmptyAggregateCard(m))
               .toList();
-          debugPrint('[loadMore] DB hit ${older.length} older msgs');
+          debugLog('[loadMore] DB hit ${older.length} older msgs');
         } catch (e) {
           debugPrint('[localdb] loadMore getMessages fail: $e');
         }
@@ -531,7 +532,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 过滤 silent 回复（显示用），hasMore 判断用未过滤的 raw 长度，
       // 避免整页混入回复时计数缩水误判 hasMore=false。
       final remote = _filterDisplayable(remoteRaw);
-      debugPrint('[loadMore] fetched ${remote.length} older msgs from server');
+      debugLog('[loadMore] fetched ${remote.length} older msgs from server');
       if (store != null) {
         try {
           await store!.putMessages(remoteRaw);
@@ -565,10 +566,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
         hasMore: remoteRaw.length == _pageSize,
         isLoadingMore: false,
       );
-      debugPrint('[loadMore] DONE: new hasMore=${state.hasMore}, '
+      debugLog('[loadMore] DONE: new hasMore=${state.hasMore}, '
           'displayMessages=${state.displayMessages.length}');
     } catch (e, st) {
-      debugPrint('[loadMore] EXCEPTION: $e\n$st');
+      debugLog('[loadMore] EXCEPTION: $e\n$st');
       state = state.copyWith(isLoadingMore: false);
     }
   }
@@ -615,7 +616,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 与 markReadAtBottom / jumpToBottom 对未读字段的清白口径一致。
   void decrementUnread(int n) {
     if (n <= 0) {
-      debugPrint('[decrement] SKIP: n=$n (no-op)');
+      debugLog('[decrement] SKIP: n=$n (no-op)');
       return;
     }
     final oldCount = state.unreadCount;
@@ -629,7 +630,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } else {
       state = state.copyWith(unreadCount: newCount);
     }
-    debugPrint('[decrement] $oldCount - $n = ${state.unreadCount}'
+    debugLog('[decrement] $oldCount - $n = ${state.unreadCount}'
         '${newCount <= 0 ? " (clamp+clear)" : ""}');
   }
 
@@ -683,8 +684,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (streamId != null) {
       final placeholderId = 'stream:$streamId';
       final liveIdx = state.liveMessages.indexWhere((m) => m.id == placeholderId);
-      final finalText =
-          (effective.content['data'] as Map?)?['text'] as String? ?? '';
       if (liveIdx >= 0) {
         final histHasTerminal =
             state.historyMessages.any((m) => m.id == effective.id);
@@ -692,16 +691,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
           // race: _initialize 异步窗口内 STREAM 插占位 + server 历史已含终态。
           // 仅清 live 占位(不重复插 live,避免 displayMessages 双显)。
           state = _removeMessageByIds({placeholderId});
-          debugPrint('[SSE-DBG] _onMessageCreate 终态已在 history(race),清 live 占位 sid=$streamId msgId=${effective.id}');
         } else {
           // 正常: live 占位同位置替换为终态(避免占位与终态并存闪烁)。
           state = _updateMessageById(placeholderId, (_) => effective);
-          debugPrint('[SSE-DBG] _onMessageCreate 终态替换占位 OK sid=$streamId len=${finalText.length} msgId=${effective.id}');
         }
         if (effective.senderType == 'agent') _refreshSessionMeta();
         return;
       }
-      debugPrint('[SSE-DBG] _onMessageCreate 终态无占位(滞留?) sid=$streamId len=${finalText.length} msgId=${effective.id}');
       // fall through 到正常 dedup + 插入(占位不存在:刚进会话未收 STREAM 等场景)
     }
 
@@ -718,7 +714,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (effective.senderId == currentUserId &&
         state.liveMessages.any((m) =>
             m.id.startsWith('local_') && m.senderId == effective.senderId)) {
-      debugPrint('[wsMsg] SKIP self-echo (local pending): ${effective.id}');
+      debugLog('[wsMsg] SKIP self-echo (local pending): ${effective.id}');
       return;
     }
 
@@ -783,7 +779,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         // 后续块:替换占位 text(单 list 更新,不新增行)
         state = _updateMessageById(
             placeholderId, (m) => m.copyWith(content: newContent));
-        debugPrint('[SSE-DBG] _listenStream 替换占位 sid=$streamId len=${text.length}');
       } else {
         // 首块:插占位到 live
         final placeholder = ChatMessage(
@@ -798,7 +793,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         state = state.copyWith(
           liveMessages: [...state.liveMessages, placeholder],
         );
-        debugPrint('[SSE-DBG] _listenStream 新建占位 sid=$streamId len=${text.length}');
       }
     });
   }
@@ -870,7 +864,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       'data': {...data, 'elements': newElements},
     };
     state = _updateMessageById(messageId, (m) => m.copyWith(content: newContent));
-    debugPrint('[SSE-DBG] _listenStream 聚合元素更新 msgId=$messageId element=$elementId len=${text.length}');
   }
 
   void _listenWS() {
@@ -1244,25 +1237,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
     };
     _mergePendingQuote(content);
     final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    debugPrint(
-      '[debug-send] sendText localId=$localId '
-      'displayMessages before=${state.displayMessages.length} '
-      'isInitialLoading=${state.isInitialLoading}',
-    );
     _appendOptimisticMessage(content: content, localId: localId);
     try {
       final result = await api.sendMessage(conversationId, content);
-      debugPrint(
-        '[debug-send] sendText API done localId=$localId '
-        'serverId=${result.messageId}',
-      );
       _replaceLocalWithServerId(
         localId,
         serverId: result.messageId,
         serverCreatedAt: result.createdAt,
       );
     } catch (e) {
-      debugPrint('[debug-send] sendText FAILED localId=$localId: $e');
+      debugPrint('[chat] sendText FAILED localId=$localId: $e');
       _markFailed(localId);
     }
     // 发送完成(成功或失败)后清空 pendingQuote。
@@ -1313,7 +1297,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         serverCreatedAt: result.createdAt,
       );
     } catch (e) {
-      debugPrint('[debug-send] sendSlash FAILED localId=$localId: $e');
+      debugPrint('[chat] sendSlash FAILED localId=$localId: $e');
       _markFailed(localId);
     }
   }
@@ -1442,12 +1426,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       createdAt: DateTime.now(),
       status: MessageStatus.sending,
     );
-    debugPrint(
-      '[debug-optimistic] PUSH localId=$localId '
-      'liveMessages ${state.liveMessages.length}→${state.liveMessages.length + 1} '
-      'senderName=${currentUser?.displayName} '
-      'hasAvatar=${currentUser?.avatarUrl != null}',
-    );
     state = state.copyWith(
       liveMessages:
           _insertLiveKeepingStreamingLast(state.liveMessages, tempMsg),
@@ -1470,24 +1448,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required String serverId,
     required DateTime serverCreatedAt,
   }) {
-    final before = state.liveMessages.isEmpty
-        ? "live=empty hist=${state.historyMessages.length}"
-        : "live=${state.liveMessages.length} last=${state.liveMessages.last.id}";
-    debugPrint(
-      '[debug-replaceId] $localId → $serverId (serverCreatedAt=$serverCreatedAt) '
-      'before=$before',
-    );
     state = _updateMessageById(localId, (m) => m.copyWith(
       id: serverId,
       createdAt: serverCreatedAt,
       status: MessageStatus.sent,
     ));
-    final inLive = state.liveMessages.where((m) => m.id == serverId).length;
-    final inHist =
-        state.historyMessages.where((m) => m.id == serverId).length;
-    debugPrint(
-      '[debug-replaceId] after update: server $serverId inLive=$inLive inHist=$inHist',
-    );
     if (store != null) {
       // C1: 此处 fire-and-forget 假设 putMessage(tempMsg) 已 commit,
       // 否则 replaceLocalWithServer select 找不到 localId 行,replace 会是 no-op,

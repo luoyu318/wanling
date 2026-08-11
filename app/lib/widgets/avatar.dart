@@ -73,9 +73,6 @@ class Avatar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final letter = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
-    if (name.isEmpty) {
-      debugPrint('[debug-avatar] name empty → showing "?"');
-    }
     final bg = colorFor(name);
 
     // 头像 URL 拼接策略：

@@ -242,11 +242,6 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
     if (convId == null) return;
     final newUnread = (data['unread_count'] as num?)?.toInt() ?? 0;
     final idx = s.indexWhere((c) => c.id == convId);
-    debugPrint(
-      '[debug-agent-ws-read] MESSAGE_READ convId=$convId '
-      'newUnread=$newUnread found in sessions? ${idx >= 0} '
-      'sessions count=${s.length}',
-    );
     if (idx == -1) return;
     final updated = List<Conversation>.from(s);
     updated[idx] = updated[idx].copyWith(unreadCount: newUnread);

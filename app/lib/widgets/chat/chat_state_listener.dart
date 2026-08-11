@@ -7,6 +7,7 @@ import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier
 import '../../providers/chat_provider.dart' show ChatNotifier, chatProvider;
 import '../../providers/chat_state.dart' show ChatState;
 import '../../providers/conversation_provider.dart' show conversationProvider;
+import '../../utils/debug_log.dart';
 import 'conv_sync_controller.dart' show ConvSyncController;
 import 'jump_controller.dart' show JumpController, dualSliverBottomTarget;
 import 'unread_locator_controller.dart' show UnreadLocatorController;
@@ -145,7 +146,7 @@ class ChatStateListener {
   /// - `widget.convId` → `_ctx.convId`
   /// - `ref.read(...)` → `_ctx.ref.read(...)`
   void onChatStateChanged(ChatState? prev, ChatState next) {
-    debugPrint(
+    debugLog(
       '[listen] prev: messages=${prev?.displayMessages.length}, '
       'firstUnread=${prev?.firstUnreadMessageId}, hasMore=${prev?.hasMore}; '
       'next: messages=${next.displayMessages.length}, '
@@ -158,10 +159,6 @@ class ChatStateListener {
     // (isInitialLoading: true→false),避免每次 state 变化都重复刷。
     if (prev?.isInitialLoading == true && !next.isInitialLoading) {
       if (next.unreadCount == 0 && next.firstUnreadMessageId == null) {
-        debugPrint(
-          '[debug-initLoad] server unread=0 convId=${_ctx.convId} '
-          'syncing conversationProvider',
-        );
         _ctx.ref
             .read(conversationProvider.notifier)
             .setUnreadCountLocally(_ctx.convId, 0);
@@ -176,7 +173,7 @@ class ChatStateListener {
     // 不含 strip → 过早 jumpTo 会让最新消息被后续挂载的 strip 遮挡。
     if (prev?.isServerInitialized == false && next.isServerInitialized) {
       if (next.firstUnreadMessageId == null) {
-        debugPrint(
+        debugLog(
           '[listen] (init) schedule initial jumpTo bottom '
           '(server initialized, no unread locator)',
         );
@@ -211,7 +208,7 @@ class ChatStateListener {
         next.firstUnreadMessageId != null &&
         !_didLocateUnread) {
       _didLocateUnread = true;
-      debugPrint('[listen] (1) locateUnread TRIGGERED, scheduling');
+      debugLog('[listen] (1) locateUnread TRIGGERED, scheduling');
       final firstUnread = next.firstUnreadMessageId!;
       final msgs = next.displayMessages;
       final firstUnreadIdx = msgs.indexWhere((m) => m.id == firstUnread);
@@ -225,7 +222,7 @@ class ChatStateListener {
       //   (C) firstUnreadIdx < 0:server 返了 firstUnread 但 client 列表里找不到,
       //       定位无法生效,徽章应立即清零
       if (firstIsUnread || msgs.isEmpty || firstUnreadIdx < 0) {
-        debugPrint(
+        debugLog(
           '[listen] (1) immediate markRead '
           '(firstIsUnread=$firstIsUnread, msgsEmpty=${msgs.isEmpty}, '
           'idx=$firstUnreadIdx) convId=${_ctx.convId}',
@@ -240,7 +237,7 @@ class ChatStateListener {
     } else if (prevFirstUnread == null &&
         next.firstUnreadMessageId != null &&
         _didLocateUnread) {
-      debugPrint(
+      debugLog(
         '[listen] (1) locateUnread already done (_didLocateUnread=true)',
       );
     }
@@ -259,7 +256,7 @@ class ChatStateListener {
       if (isPrepend) {
         final changeCount = newLen - oldLen;
         final isSelfEcho = next.displayMessages.first.senderType == 'user';
-        debugPrint(
+        debugLog(
           '[listen] (2) newMsg prepend $oldLen→$newLen, '
           'userScrolledAway=${_ctx.getUserScrolledAway()}, '
           'changeCount=$changeCount, '
@@ -272,7 +269,7 @@ class ChatStateListener {
           // → checkUnreadSeen 会重新评估视口内未读。
           // 注意:不能只守卫「滚底+markRead」分支,否则 isLocating=true 会
           // fall through 到 else 增计数,误把"用户在底部定位中"当成"不在底部"。
-          debugPrint('[listen] (2) skip prepend during unread locating');
+          debugLog('[listen] (2) skip prepend during unread locating');
         } else if (isSelfEcho) {
           // 自己发消息的 echo：交给 (3) 分支滚到底看自己消息，不增计数（自己发的不算新消息）
         } else if (!_ctx.getUserScrolledAway()) {
@@ -298,7 +295,7 @@ class ChatStateListener {
           // 浮标误报(用户实时观看后残留,2026-08-10 修复)。
           final prevInit = prev;
           if (prevInit != null && !prevInit.isServerInitialized) {
-            debugPrint(
+            debugLog(
               '[listen] (2) skip unread count during init '
               '(prev.isServerInitialized=false)',
             );
@@ -317,7 +314,7 @@ class ChatStateListener {
           }
         }
       } else {
-        debugPrint(
+        debugLog(
           '[listen] (2) loadMore append $oldLen→$newLen, '
           'history sliver extends leading (center keeps px)',
         );
@@ -333,7 +330,7 @@ class ChatStateListener {
     if (_hasStreamPlaceholderReplaced(prev, next) &&
         !_ctx.getUserScrolledAway() &&
         !_ctx.getUnreadLocator().isLocating) {
-      debugPrint(
+      debugLog(
         '[listen] (2.6) stream placeholder → terminal replace, markRead convId=${_ctx.convId}',
       );
       _ctx.getConvSync().markRead();
@@ -370,7 +367,7 @@ class ChatStateListener {
     if (flippedAggId != null &&
         !_ctx.getUnreadLocator().isLocating &&
         _ctx.getUnreadLocator().isMessageInViewport(flippedAggId)) {
-      debugPrint(
+      debugLog(
         '[listen] (2.7) aggregate card silent flip, markRead convId=${_ctx.convId}',
       );
       _ctx.getConvSync().markRead();
@@ -407,15 +404,15 @@ class ChatStateListener {
     // 关键约束 2：仅「自己 echo」（senderType=user）才触发——对方发的新消息
     //   由 (2) 分支按 _isAtBottom 处理（在底部滚/不在底部增计数），不能在这里误滚到底。
     if (next.displayMessages.isEmpty) {
-      debugPrint('[listen] (3) skip pendingScroll: messages empty');
+      debugLog('[listen] (3) skip pendingScroll: messages empty');
       return;
     }
     if (!_didLocateUnread && next.firstUnreadMessageId != null) {
-      debugPrint('[listen] (3) skip pendingScroll: still locating');
+      debugLog('[listen] (3) skip pendingScroll: still locating');
       return; // 定位进行中：让 (1) 的 jumpTo 生效
     }
     if (next.displayMessages.first.senderType != 'user') {
-      debugPrint(
+      debugLog(
         '[listen] (3) skip pendingScroll: not self echo '
         '(senderType=${next.displayMessages.first.senderType})',
       );
@@ -424,15 +421,7 @@ class ChatStateListener {
     final prevFirstId = prev?.displayMessages.isEmpty == true
         ? null
         : prev?.displayMessages.first.id;
-    debugPrint(
-      '[debug-pendingScroll] (3) check: prevFirstId=$prevFirstId '
-      'nextFirstId=${next.displayMessages.first.id} '
-      'senderType=${next.displayMessages.first.senderType}',
-    );
     if (prevFirstId != next.displayMessages.first.id) {
-      debugPrint(
-        '[debug-pendingScroll] SET pendingScroll=true (id changed)',
-      );
       _pendingScroll = true;
     }
     _ctx.onRefreshExtraItems();

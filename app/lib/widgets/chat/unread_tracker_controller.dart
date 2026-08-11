@@ -7,6 +7,7 @@ import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier
 import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/chat_provider.dart' show chatProvider;
 import '../../providers/conversation_provider.dart' show conversationProvider;
+import '../../utils/debug_log.dart';
 import '../../utils/chat/unread_tracker.dart' show computeNewlySeenUnread;
 
 /// [UnreadTrackerController] 的依赖注入容器。
@@ -106,7 +107,7 @@ class UnreadTrackerController {
     );
     if (newlySeen.isEmpty) return;
 
-    debugPrint(
+    debugLog(
       '[unreadCheck] idx=$firstUnreadIdx, unread=${chatState.unreadCount}, '
       'seen=${_seenUnreadMsgIds.length}, newlySeen=${newlySeen.length}',
     );
@@ -134,17 +135,13 @@ class UnreadTrackerController {
     if (_pendingReadMsgIds.isEmpty) return;
     final ids = _pendingReadMsgIds.toList();
     _pendingReadMsgIds.clear();
-    debugPrint('[markSync] FLUSH: syncing ${ids.length} ids to server');
+    debugLog('[markSync] FLUSH: syncing ${ids.length} ids to server');
     try {
       // API 已返 record ({int unreadCount})(Task 16),无需 Map 访问。
       final res = await _ctx.ref
           .read(apiProvider)
           .markMessagesRead(_ctx.chatKey.convId, ids);
       final newUnread = res.unreadCount;
-      debugPrint(
-        '[debug-flushRead] convId=${_ctx.chatKey.convId} newUnread=$newUnread '
-        'conversationProvider setUnreadCountLocally',
-      );
       // 同步 conversationProvider 的本地未读数（让会话列表徽章立即更新）
       _ctx.ref
           .read(conversationProvider.notifier)
@@ -152,9 +149,9 @@ class UnreadTrackerController {
       _ctx.getSessionsNotifier()
           ?.setUnreadCountLocally(_ctx.chatKey.convId, newUnread);
       _ctx.onSyncParentConvUnread();
-      debugPrint('[markSync] flushed, server unread_count=$newUnread');
+      debugLog('[markSync] flushed, server unread_count=$newUnread');
     } catch (e) {
-      debugPrint('[markSync] flush failed: $e');
+      debugLog('[markSync] flush failed: $e');
       // 失败不重试，下次进入会话 server 仍是旧值，可接受（用户重进会重新触发同步）
     }
   }
