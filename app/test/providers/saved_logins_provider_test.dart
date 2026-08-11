@@ -136,6 +136,33 @@ void main() {
       expect(notifier.state.logins[0].password, 'p2');
       expect(notifier.state.selectedIndex, 0);
     });
+
+    test('add select:false 新增不改变当前选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      notifier.select(0);
+      await notifier.add('http://y', 'u2', 'p2', select: false);
+      expect(notifier.state.logins.length, 2);
+      expect(notifier.state.selectedIndex, 0); // 仍选中原账号
+    });
+
+    test('add select:false 重复组合更新密码不改变当前选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://y', 'u2', 'p2');
+      notifier.select(0);
+      await notifier.add('http://y', 'u2', 'p3', select: false);
+      expect(notifier.state.logins.length, 2);
+      expect(notifier.state.logins[1].password, 'p3');
+      expect(notifier.state.selectedIndex, 0);
+    });
+
+    test('saveOrAdd select:false 保持原选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://y', 'u2', 'p2');
+      notifier.select(0);
+      await notifier.saveOrAdd('http://z', 'u3', 'p3', select: false);
+      expect(notifier.state.logins.length, 3);
+      expect(notifier.state.selectedIndex, 0);
+    });
   });
 
   group('edit', () {
@@ -186,6 +213,44 @@ void main() {
       notifier.select(1);
       await notifier.remove(0);
       expect(notifier.state.selectedIndex, 0);
+    });
+  });
+
+  group('duplicate', () {
+    test('克隆完整卡片插入列表末尾,username 加后缀避免唯一性冲突', () async {
+      await notifier.add('http://x', 'u1', 'p1', label: '开发', mark: const AccountMark(colorIndex: 2));
+      await notifier.duplicate(0);
+      expect(notifier.state.logins.length, 2);
+      final clone = notifier.state.logins[1];
+      expect(clone.server, 'http://x');
+      expect(clone.password, 'p1');
+      expect(clone.label, '开发');
+      expect(clone.mark?.colorIndex, 2);
+      expect(clone.username, 'u1_copy');
+    });
+
+    test('username 冲突时后缀递增到不冲突', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://x', 'u1_copy', 'p2');
+      await notifier.duplicate(0);
+      expect(notifier.state.logins.length, 3);
+      expect(notifier.state.logins[2].username, 'u1_copy_2');
+    });
+
+    test('duplicate 不改变当前选中', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      await notifier.add('http://y', 'u2', 'p2');
+      notifier.select(1);
+      await notifier.duplicate(0);
+      expect(notifier.state.selectedIndex, 1);
+    });
+
+    test('duplicate 越界抛 RangeError', () async {
+      await notifier.add('http://x', 'u1', 'p1');
+      expect(
+        () => notifier.duplicate(5),
+        throwsA(isA<RangeError>()),
+      );
     });
   });
 

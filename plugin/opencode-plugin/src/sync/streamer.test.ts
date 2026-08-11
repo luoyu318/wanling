@@ -41,7 +41,9 @@ function makeStreamer(mainSessionId: string, opts: { dispatcher?: RPCDispatcher;
   if (opts.agentId === undefined && "agentId" in opts) delete wanling.agentId
   const opencode = { getSessionTitle: vi.fn().mockResolvedValue(""), getSessionDirectory: vi.fn().mockResolvedValue(""), getClient: vi.fn(() => null) } as any
   const dispatcher = opts.dispatcher ?? new RPCDispatcher()
-  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher)
+  // aggregateCardEnabled=false:现有整链测试断言旧逐条发送语义,聚合路径由
+  // part_dispatcher.test.ts 单独覆盖(PartDispatcher 聚合卡改造)。
+  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, false)
   return { streamer, wanling, opencode, dispatcher }
 }
 
@@ -1072,7 +1074,7 @@ describe("Streamer 卡片 silent=false", () => {
 describe("Streamer step-finish silent 区分循环结束信号", () => {
   beforeEach(() => _resetInflight())
 
-  it("主 session reason=stop → silent=false + finished=true(循环结束,触发未读+响铃)", async () => {
+  it("主 session reason=stop → step_finish silent=true + finished=true(结束标记不打扰,未读响铃由最终文本承担)", async () => {
     // reason=stop 是 opencode agent 循环真正结束的语义信号。
     const { streamer, wanling } = makeStreamer("sess-main")
     await (streamer as any).onPartUpdated({
@@ -1093,6 +1095,8 @@ describe("Streamer step-finish silent 区分循环结束信号", () => {
       time: 2,
     })
 
+    // step_finish 恒 silent=true:循环结束标记不响铃、不计未读、不作未读锚点,
+    // 未读+响铃职责由最终文本(flushPendingText isLoopEnd → silent=false)承担。
     expect(wanling.sendTypedMessage).toHaveBeenCalledWith(
       expect.any(String),
       "step_finish",
@@ -1102,7 +1106,7 @@ describe("Streamer step-finish silent 区分循环结束信号", () => {
         finished: true,
         tokens: expect.objectContaining({ total: 360 }),
       }),
-      undefined, // silent=false → sendMsg 转 undefined(server 默认 silent=false)
+      { silent: true },
     )
   })
 
@@ -2136,6 +2140,9 @@ function makePartDispatcherFixture() {
     compaction: { completePending: vi.fn() } as any,
     emitter: new EventEmitter(),
     wanling: wanling as any,
+    // 聚合卡开关默认 true,但现有流式/终态测试断言旧逐条发送(router.send),
+    // 显式关掉避免误入聚合路径;聚合路径由 part_dispatcher.test.ts 单独覆盖。
+    aggregateCardEnabled: false,
   })
   return { partDispatcher, state, store, router, wanling }
 }
@@ -2300,7 +2307,7 @@ describe("PartDispatcher 流式输出", () => {
     expect(state.pendingText).toBeUndefined()
   })
 
-  it("无 text 终态(纯工具回合)→ isLoopEnd 不发 markdown,仅 step_finish(silent=false 兜底)", async () => {
+  it("无 text 终态(纯工具回合)→ isLoopEnd 不发 markdown,仅 step_finish(silent=true)", async () => {
     const { partDispatcher, state, router } = makePartDispatcherFixture()
     state.isChildSession = false
 
@@ -2313,12 +2320,12 @@ describe("PartDispatcher 流式输出", () => {
       time: 3,
     })
 
-    // 断言:无缓存 text → 只发 step_finish(silent=false,哨兵兜底)
+    // 断言:无缓存 text → 只发 step_finish(silent=true,结束标记不响铃不计未读)
     expect(router.send).toHaveBeenCalledTimes(1)
     expect(router.send).toHaveBeenCalledWith(
       state, "step_finish",
       expect.objectContaining({ finished: true, reason: "stop" }),
-      false,
+      true,
     )
   })
 })

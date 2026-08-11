@@ -60,6 +60,7 @@ class ToolCallRenderer implements MessageContentRenderer {
               text: input.toString(),
               sheetTitle: Text(capitalize(name)),
               textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+              maxLines: 1,
             )
           : null,
     };

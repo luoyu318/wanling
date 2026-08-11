@@ -46,6 +46,7 @@ class ToolErrorRenderer implements MessageContentRenderer {
               textStyle: const TextStyle(fontSize: 12, color: Color(0xFFFA5151)),
               backgroundColor: Colors.transparent,
               padding: EdgeInsets.zero,
+              maxLines: 1,
             ),
           ],
         ],

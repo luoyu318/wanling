@@ -14,6 +14,15 @@ import 'notification_service.dart';
 import '../utils/notification_payload.dart';
 import '../utils/reconnect_backoff.dart';
 
+/// 通知发送回调。默认走 [NotificationService.instance]，测试可注入替身断言触发。
+typedef ShowMessageNotifier = Future<void> Function({
+  required NotificationPayload payload,
+  required String title,
+  required String body,
+  required int unreadCount,
+  Uint8List? avatarBytes,
+});
+
 /// IPC handler 名称（UI ↔ Service 通信）。
 class _Ipc {
   static const setLifecycle = 'setAppLifecycle';
@@ -102,7 +111,23 @@ class BackgroundChatService {
   /// login 写完落盘),fallback 读 prefs 兜底。
   String? _myUserId;
 
-  BackgroundChatService(this.service);
+  /// 会话 → 最近一条非本人消息的 sender_id(供聚合卡 MESSAGE_UPDATE 翻转时取 agent 名/头像)。
+  ///
+  /// 聚合卡创建时 silent=true(bg-service 跳过通知/未读),回合结束 PATCH 翻转
+  /// silent=false 的 MESSAGE_UPDATE 广播**不带 sender 字段**(server dispatch.go
+  /// BroadcastMessageUpdate 只有 message_id / conversation_id / content),弹通知
+  /// 需要 sender 名/头像,故在 MESSAGE_CREATE 阶段记录会话发送者回查。
+  /// 取不到(如 bg-service 回合中途才启动)fallback 'Agent' 名 + 无头像,不阻塞通知。
+  final Map<String, String> _convSenders = {};
+
+  /// 通知发送出口(MESSAGE_CREATE 与聚合卡翻转共用)。
+  final ShowMessageNotifier _showNotification;
+
+  BackgroundChatService(
+    this.service, {
+    ShowMessageNotifier? showNotification,
+  }) : _showNotification =
+           showNotification ?? NotificationService.instance.showMessageNotification;
 
   void run() {
     try {
@@ -309,6 +334,11 @@ class BackgroundChatService {
       return;
     }
 
+    if (msg.t == 'MESSAGE_UPDATE') {
+      await _handleMessageUpdate(msg);
+      return;
+    }
+
     if (msg.t != 'MESSAGE_CREATE') return;
 
     final data = msg.d as Map<String, dynamic>?;
@@ -352,16 +382,18 @@ class BackgroundChatService {
     final content = data['content'] as Map<String, dynamic>?;
     if (convId == null || content == null) return;
 
+    // 记录会话最近的非本人发送者:聚合卡创建时 silent=true 不弹通知/不计未读,
+    // 回合结束 PATCH 翻转 silent=false 的 MESSAGE_UPDATE 广播不带 sender 字段,
+    // 需回查本缓存拿 agent 名/头像(取不到 fallback 'Agent')。
+    // 此处 senderId 已在上方非空校验(senderId==null 早退)。
+    _convSenders[convId] = senderId;
+
     // silent 消息不打扰用户（过程类信息：AI 思考、工具调用等）
     // 仍通过 WS 到达主 UI 渲染，但 bg-service 跳过通知和未读计数。
     if (content['silent'] == true) return;
 
     // 计数(在通知前累加,N 反映含本条)
     _unread.increment(convId);
-
-    final msgType = content['msg_type'] as String? ?? 'text';
-    final msgData = content['data'] as Map<String, dynamic>?;
-    final body = messagePreview(msgType: msgType, data: msgData);
 
     // 显示名:agent 走 prefs 缓存(agent_name_$agentId),user 走 dispatch payload
     // 的 sender_name(S4.3 加),都拿不到时 fallback「新消息」。
@@ -371,20 +403,105 @@ class BackgroundChatService {
             ? ((await SharedPreferences.getInstance()).getString('agent_name_$senderId') ?? 'Agent')
             : '新消息');
 
-    // 会话元信息(server processor 注入到 dispatch payload):
-    //   - conversation_type:区分单聊/群聊/agent_session
-    //   - conversation_title:群名 / agent_session 用 agent 名(APP 建会话时
-    //     默认 title=agent.name 透传,空串仅极端 race,fallback sender 名)
-    // 三档通知格式:
-    //   - agent_session:title=会话标题,body=内容(不加 sender 前缀,单 agent 语义)
-    //   - 群聊(group_user/group_mixed):title=群名,body=「${sender}：${内容}」
-    //   - 单聊(dm_*):维持现状,title=sender 名,body=内容。
-    // 老 server 不带这两字段时 isGroupConv/isAgentSession 均为 false,
-    // 自动 fallback 单聊格式,零回归。
-    final convType = data['conversation_type'] as String? ?? '';
-    final convTitle = data['conversation_title'] as String? ?? '';
-    final isGroupConv =
-        convType == 'group_user' || convType == 'group_mixed';
+    await _notifyIncomingMessage(
+      convId: convId,
+      senderId: senderId,
+      senderName: senderName,
+      content: content,
+      senderAvatarUrl: data['sender_avatar_url'] as String?,
+      conversationType: data['conversation_type'] as String?,
+      conversationTitle: data['conversation_title'] as String?,
+    );
+  }
+
+  /// 聚合卡回合结束翻转识别(纯函数,便于单测)。
+  ///
+  /// MESSAGE_UPDATE 广播的 content 满足「聚合卡回合结束翻转」语义时返回 true,
+  /// 应触发通知/未读。两种形态:
+  ///   - 全量替换 PATCH(旧协议):`msg_type==aggregate_card && silent==false`
+  ///   - 增量 set_silent op(新协议):`data.op=="set_silent" && data.silent==false`
+  ///     (增量下 silent 在 data 内而非 content 顶层,见 ai-handbook/websocket-protocol)
+  /// generating 阶段(silent 仍 true)或非聚合卡更新 → false,不打扰。
+  @visibleForTesting
+  static bool isAggregateCardSilentFlip(Map<String, dynamic>? content) {
+    if (content == null) return false;
+    if (content['msg_type'] != 'aggregate_card') return false;
+    final data = content['data'];
+    if (data is Map && data['op'] == 'set_silent') {
+      return data['silent'] == false;
+    }
+    return content['silent'] == false;
+  }
+
+  /// 聚合卡回合结束 silent 翻转 → 弹通知 + 计未读。
+  ///
+  /// 聚合卡一次问答 = 一条 silent=true 创建的消息,回合结束 plugin PATCH 成
+  /// silent=false + state=done,server 广播 MESSAGE_UPDATE(仅
+  /// message_id / conversation_id / content,不带 sender 字段)。此时才对该会话
+  /// 弹通知 + unread 计数(与 MESSAGE_CREATE silent=false 口径一致)。
+  /// generating 阶段(silent 仍 true)的 MESSAGE_UPDATE 只刷新渲染,直接忽略。
+  Future<void> _handleMessageUpdate(WSMessage msg) async {
+    final data = msg.d as Map<String, dynamic>?;
+    if (data == null) return;
+    final convId = data['conversation_id'] as String?;
+    final content = data['content'] as Map<String, dynamic>?;
+    if (convId == null || content == null || !isAggregateCardSilentFlip(content)) {
+      return;
+    }
+
+    // 与 MESSAGE_CREATE 同口径:正在看该会话则不弹不计(用户已直接看到)。
+    if (_appInForeground && convId == _activeConvId) return;
+
+    // 计数(在通知前累加,N 反映含本条)
+    _unread.increment(convId);
+
+    // MESSAGE_UPDATE 广播不带 sender 字段,回查 MESSAGE_CREATE 阶段记录的
+    // 会话发送者;取不到(回合中途 bg-service 才启动)fallback 'Agent'。
+    final senderId = _convSenders[convId];
+    final senderName = senderId != null
+        ? ((await SharedPreferences.getInstance())
+                    .getString('agent_name_$senderId') ??
+                'Agent')
+        : 'Agent';
+
+    await _notifyIncomingMessage(
+      convId: convId,
+      // agentId 字段是占位(点击路由用 convId),无 sender 记录时用 convId 兜底。
+      senderId: senderId ?? convId,
+      senderName: senderName,
+      content: content,
+      // 翻转广播 server 附带会话 type/title(对齐 MESSAGE_CREATE payload):
+      // agent_session 通知 title=会话标题,群聊 title=群名;老 server 无此字段
+      // 时走原单聊 fallback(title=senderName)。
+      conversationType: data['conversation_type'] as String?,
+      conversationTitle: data['conversation_title'] as String?,
+    );
+  }
+
+  /// 发送一条「新消息」通知(MESSAGE_CREATE 与聚合卡 MESSAGE_UPDATE 翻转共用)。
+  ///
+  /// 会话元信息三档通知格式:
+  ///   - agent_session:title=会话标题,body=内容(不加 sender 前缀,单 agent 语义)
+  ///   - 群聊(group_user/group_mixed):title=群名,body=「${sender}：${内容}」
+  ///   - 单聊(dm_*):title=sender 名,body=内容
+  /// [senderAvatarUrl] MESSAGE_CREATE 的 dispatch payload 带 sender_avatar_url,
+  /// 聚合卡 MESSAGE_UPDATE 不带,fallback 到 _avatarUrls(UI 同步缓存)。
+  Future<void> _notifyIncomingMessage({
+    required String convId,
+    required String senderId,
+    required String senderName,
+    required Map<String, dynamic> content,
+    String? senderAvatarUrl,
+    String? conversationType,
+    String? conversationTitle,
+  }) async {
+    final msgType = content['msg_type'] as String? ?? 'text';
+    final msgData = content['data'] as Map<String, dynamic>?;
+    final body = messagePreview(msgType: msgType, data: msgData);
+
+    final convType = conversationType ?? '';
+    final convTitle = conversationTitle ?? '';
+    final isGroupConv = convType == 'group_user' || convType == 'group_mixed';
     final isAgentSession = convType == 'agent_session';
     final hasConvTitle = convTitle.isNotEmpty;
     final String notifTitle;
@@ -403,12 +520,8 @@ class BackgroundChatService {
 
     try {
       // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载 → 兜底色块)
-      // avatarUrl 优先取 dispatch payload 的 sender_avatar_url(server S? 已带),
-      // 让首次接收消息时也能拿到正确头像(不依赖 UI IPC syncAgentAvatar 同步时机);
-      // 老 server 不带该字段时 fallback 到 _avatarUrls(UI 同步过来的缓存)。
       Uint8List? avatarBytes;
-      final avatarUrl =
-          (data['sender_avatar_url'] as String?) ?? _avatarUrls[senderId];
+      final avatarUrl = senderAvatarUrl ?? _avatarUrls[senderId];
       if (_baseUrl != null && _token != null) {
         // loadAvatarBitmap 必返回非空(下载失败兜底色块),故用空合并直接赋值
         avatarBytes = _avatarBitmapCache[senderId] ??
@@ -422,7 +535,7 @@ class BackgroundChatService {
         _avatarBitmapCache[senderId] = avatarBytes;
       }
 
-      await NotificationService.instance.showMessageNotification(
+      await _showNotification(
         payload: NotificationPayload(
           convId: convId,
           // user-user 消息 sender 是 user,agentId 字段作占位(点击路由用 convId)。
@@ -440,6 +553,14 @@ class BackgroundChatService {
       debugLog('[bg-service] 通知发送失败: $e');
     }
   }
+
+  /// 测试入口:注入一条原始 WS 帧,走与真实 WS 通道一致的 _handleMessage 路径。
+  @visibleForTesting
+  Future<void> handleRawMessageForTest(String raw) => _handleMessage(raw);
+
+  /// 测试入口:读某会话的本地未读计数。
+  @visibleForTesting
+  int unreadForTest(String convId) => _unread.get(convId);
 
   void _sendIdentify() {
     if (_token == null) return;

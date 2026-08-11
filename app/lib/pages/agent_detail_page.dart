@@ -14,6 +14,7 @@ import '../providers/conversation_provider.dart';
 import '../router_helpers.dart';
 import '../utils/snackbar.dart';
 import '../widgets/agent_badge.dart';
+import '../widgets/app_dropdown_field.dart';
 import '../widgets/avatar.dart';
 import '../widgets/avatar_picker.dart';
 import '../widgets/copyable_field.dart';
@@ -273,15 +274,15 @@ class AgentDetailPage extends ConsumerWidget {
               decoration: const InputDecoration(labelText: '简介'),
             ),
             const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: agentType,
-              decoration: const InputDecoration(labelText: '类型'),
+            AppDropdownFormField<String>(
+              value: agentType,
+              label: '类型',
               items: const [
-                DropdownMenuItem(value: '', child: Text('普通')),
-                DropdownMenuItem(
-                    value: AgentCategory.hermes, child: Text('Hermes')),
-                DropdownMenuItem(
-                    value: AgentCategory.opencode, child: Text('OpenCode')),
+                AppDropdownItem(value: '', label: '普通'),
+                AppDropdownItem(
+                    value: AgentCategory.hermes, label: 'Hermes'),
+                AppDropdownItem(
+                    value: AgentCategory.opencode, label: 'OpenCode'),
               ],
               onChanged: (v) => setState(() => agentType = v ?? ''),
             ),

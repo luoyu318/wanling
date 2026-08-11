@@ -447,6 +447,143 @@ void main() {
     });
   });
 
+  // ========== C2: 聚合卡 MESSAGE_UPDATE silent 翻转 → 徽章+1 + 预览更新 ==========
+  group('MESSAGE_UPDATE 聚合卡翻转', () {
+    WSMessage flipUpdate({required bool silent, String state = 'done'}) =>
+        WSMessage(
+          op: 0,
+          t: 'MESSAGE_UPDATE',
+          s: 2,
+          d: {
+            'message_id': 'm-agg',
+            'conversation_id': 'c1',
+            'content': {
+              'msg_type': 'aggregate_card',
+              'data': {
+                'state': state,
+                'elements': [
+                  {'type': 'markdown', 'data': {'text': '聚合卡最终回复'}},
+                ],
+              },
+              'silent': silent,
+            },
+          },
+        );
+
+    test('翻转(silent true→false)→ 徽章+1 + 预览更新为最后 markdown 元素', () async {
+      final container = makeContainer();
+      final notifier = container.read(conversationProvider.notifier);
+      await notifier.load();
+      expect(container.read(conversationProvider).first.lastMessagePreview(currentUserId: 'u'), 'old');
+
+      // server PATCH 翻转后广播 MESSAGE_UPDATE(content 带 silent:false)
+      ws.emitUpdate(flipUpdate(silent: false));
+      await Future.delayed(Duration.zero);
+
+      final conv = container.read(conversationProvider).first;
+      expect(conv.unreadCount, 1,
+          reason: '聚合卡回合结束翻转应计 1 未读(server 已在翻转时 IncrUnread)');
+      expect(conv.lastMessagePreview(currentUserId: 'u'), '聚合卡最终回复',
+          reason: '预览应取聚合卡最后 markdown 元素的 text');
+      expect(conv.id, 'c1');
+    });
+
+    test('generating 阶段 MESSAGE_UPDATE(silent 仍 true)→ 不更新徽章/预览', () async {
+      final container = makeContainer();
+      final notifier = container.read(conversationProvider.notifier);
+      await notifier.load();
+
+      ws.emitUpdate(flipUpdate(silent: true, state: 'generating'));
+      await Future.delayed(Duration.zero);
+
+      final conv = container.read(conversationProvider).first;
+      expect(conv.unreadCount, 0,
+          reason: 'generating 阶段 silent 仍 true,不应计未读');
+      expect(conv.lastMessagePreview(currentUserId: 'u'), 'old',
+          reason: 'generating 阶段不应覆盖会话列表预览');
+    });
+
+    test('set_silent 增量 op 翻转 → load() 重拉 server 全量(徽章+1 + 预览更新)', () async {
+      final container = makeContainer();
+      final notifier = container.read(conversationProvider.notifier);
+      await notifier.load();
+      expect(container.read(conversationProvider).first.lastMessagePreview(currentUserId: 'u'), 'old');
+
+      // 翻转后 server 列表返回翻转后的聚合卡全量(含 elements + silent:false)
+      when(() => api.getConversations()).thenAnswer((_) async => [
+        Conversation(
+          id: 'c1',
+          type: 'dm_user_agent',
+          agent: AgentSummary(
+              id: 'a1', name: 'Bot', status: AgentStatus.online),
+          participants: [],
+          lastMessageContent: {
+            'msg_type': 'aggregate_card',
+            'data': {
+              'state': 'done',
+              'elements': [
+                {'type': 'markdown', 'data': {'text': '聚合卡最终回复'}},
+              ],
+            },
+            'silent': false,
+          },
+          lastMessageAt: DateTime.parse('2026-06-13T15:00:00Z'),
+          createdAt: DateTime.parse('2026-06-13T10:00:00Z'),
+          unreadCount: 1,
+        ),
+      ]);
+
+      // set_silent 增量 delta:silent 在 data 内,顶层无 silent/elements
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        s: 2,
+        d: {
+          'message_id': 'm-agg',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': false},
+          },
+        },
+      ));
+      // 等 _pendingReloadTimer(200ms) + load() 完成
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      final conv = container.read(conversationProvider).first;
+      expect(conv.unreadCount, 1,
+          reason: 'set_silent 增量翻转应计 1 未读(server 已在翻转时 IncrUnread)');
+      expect(conv.lastMessagePreview(currentUserId: 'u'), '聚合卡最终回复',
+          reason: '预览应经 load() 重拉取 server 全量聚合卡最后 markdown 元素');
+      expect(conv.id, 'c1');
+    });
+
+    test('set_silent 增量 op silent=true → 不触发 load()', () async {
+      final container = makeContainer();
+      final notifier = container.read(conversationProvider.notifier);
+      await notifier.load();
+
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        s: 2,
+        d: {
+          'message_id': 'm-agg',
+          'conversation_id': 'c1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': true},
+          },
+        },
+      ));
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      final conv = container.read(conversationProvider).first;
+      expect(conv.unreadCount, 0);
+      expect(conv.lastMessagePreview(currentUserId: 'u'), 'old');
+    });
+  });
+
   // ========== createGroup: 用 memberUsernames 不用 memberIds ==========
   group('createGroup', () {
     late MockApi api4;

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../models/session_diff.dart';
 import '../providers/session_diff_provider.dart';
+import '../theme/app_colors.dart';
 import '../services/api_service.dart';
 
 class SessionDiffPage extends ConsumerWidget {
@@ -89,6 +90,7 @@ class SessionDiffPage extends ConsumerWidget {
             );
           }
           return RefreshIndicator(
+            color: AppColors.accentGreen,
             onRefresh: () =>
                 ref.read(sessionDiffProvider(key).notifier).refresh(),
             child: ListView.separated(

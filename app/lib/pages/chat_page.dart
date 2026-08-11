@@ -25,11 +25,11 @@ import '../services/file_download_service.dart';
 import '../services/websocket_service.dart';
 import '../utils/chat/message_preview.dart' show extractMessageText;
 import '../utils/chat/render_box_utils.dart' show globalRectOf;
+import '../utils/aggregate_card_state.dart' show hasGeneratingAggregateCard;
 import '../router_helpers.dart' show openFileBrowser;
 import '../widgets/chat/chat_app_bar.dart';
 import '../widgets/chat/chat_input_bar.dart';
 import '../widgets/chat/chat_list_overlays.dart';
-import '../widgets/chat/agent_busy_bubble.dart';
 import '../widgets/chat/typing_bubble.dart';
 import '../widgets/chat/env_meta_strip.dart' show EnvMetaStrip;
 import '../widgets/chat/model_picker_sheet.dart' show ModelPickerDialog;
@@ -453,6 +453,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       },
       onConfirmDelete: _confirmDelete,
       onEnterSelectionMode: _multiSelectController.enterSelection,
+      getIsAgentSession: () {
+        // convType 异步加载,菜单展示时动态判断(与 build 里 isAgentSession 同口径)。
+        final conv = ref
+            .read(conversationProvider)
+            .where((c) => c.id == widget.convId)
+            .firstOrNull;
+        if (conv?.isAgentSession ?? false) return true;
+        return ref
+                .read(chatProvider(
+                  (convId: widget.convId, agentId: widget.agentId),
+                ))
+                .convType ==
+            'agent_session';
+      },
       onMenuHide: () {
         // 菜单关闭 → 清选区(常驻 SelectableRegion)+ 清选中文本缓存。
         _selectionKey.currentState?.clearSelection();
@@ -633,14 +647,52 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return _loadMoreController.onScrollNotification(n);
   }
 
+  /// 聚合卡工具折叠组展开/收起时的滚动补偿。
+  ///
+  /// 同步方案:ToolGroupCard 展开内容始终渲染(heightFactor 控制视觉高度),
+  /// 点击时同步测出展开内容真实高度,回调传 [topDelta](= ±高度)。
+  /// history sliver 反向列表下,展开内容向上长 → 折叠框 top 上移 topDelta,
+  /// 要让视觉锚点不动,offset 需补偿 pixels + topDelta(展开 topDelta<0 往上滚,
+  /// 收起 topDelta>0 往下滚)。
+  ///
+  /// 在同一帧 jumpTo(瞬时):ToolGroupCard 的 setState 与本次 jumpTo 同步排队,
+  /// 下一帧 build 时 offset 已就位 + 内容已展开 → 视觉锚点不动、无补间动画、
+  /// 无 postFrame 一帧跳变。
+  ///
+  /// 仅 history sliver 需要补偿:live sliver 正向展开/收起内容自然,补偿会破坏
+  /// 原有锚定。由 [isHistory] 区分。
+  void _onToolGroupToggle(
+      GlobalKey key, bool _, double topDelta, bool isHistory) {
+    if (!isHistory || !_scrollCtrl.hasClients) return;
+    if (topDelta.abs() < 0.5) return; // 无高度变化,无需补偿
+    final pos = _scrollCtrl.position;
+    final target =
+        (pos.pixels + topDelta)
+            .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    _scrollCtrl.jumpTo(target);
+  }
+
   /// 重算打字态(busy/retry 也视作占位,与 typing 共用同一个 trailing 插槽)。
-  /// 双 sliver 下 typing 走 trailing SliverToBoxAdapter,loadMore 走 leading,
-  /// 不再合并进 itemCount,故只需跟踪 _isTyping。
+  /// generating 聚合卡存在时抑制气泡:聚合卡自身承载生成状态,无需重复 dots。
+  /// agent_session 会话恒不显示气泡:运行时状态已由 AppBar subtitle「灵光涌动...」
+  /// + StopBar 红色高亮 + 聚合卡生成状态承载,气泡提示多余。
   void _refreshExtraItems() {
     if (!mounted) return;
     final typing = ref.read(typingProvider)[widget.convId] ?? false;
     final agentStatus = ref.read(agentStatusProvider)[widget.convId];
-    final showBubble = typing || agentStatus != null;
+    final chatState = ref
+        .read(chatProvider((convId: widget.convId, agentId: widget.agentId)));
+    final live = chatState.liveMessages;
+    final hasGeneratingCard = hasGeneratingAggregateCard(live);
+    final conv = ref.read(conversationProvider).where(
+          (c) => c.id == widget.convId,
+        ).firstOrNull;
+    final isAgentSession =
+        conv?.isAgentSession ?? (chatState.convType == 'agent_session');
+    // agent_session 恒不显示气泡;普通会话按 typing/busy 状态 + 聚合卡抑制决定。
+    final showBubble = !isAgentSession &&
+        (typing || agentStatus != null) &&
+        !hasGeneratingCard;
     if (_isTyping != showBubble) {
       _isTyping = showBubble;
       if (mounted) setState(() {});
@@ -655,32 +707,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _isChatReady = true;
       setState(() {});
     }
-  }
-
-  /// live sliver 顶部分割线(占 SliverList index 0)。
-  /// 双 sliver center 几何下 pixels=0 对齐 live 起点,此分割线在该处可见,
-  /// 引导用户下滑(drag down → pixels 减小 → 露出 leading 的 history)查看历史。
-  /// 兼作首屏定位失败的容错:落到空屏时用户不会面对纯白。
-  Widget _buildHistoryDivider() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: const Center(
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(width: 32, child: Divider(thickness: 0.5, color: Color(0xFFCCCCCC))),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                '下滑查看历史消息',
-                style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
-              ),
-            ),
-            SizedBox(width: 32, child: Divider(thickness: 0.5, color: Color(0xFFCCCCCC))),
-          ],
-        ),
-      ),
-    );
   }
 
   ChatNotifier get _notifier => ref.read(
@@ -845,7 +871,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // 实现:详见 widgets/chat/chat_state_listener.dart(副作用逻辑封装)。
     ref.listen(
       chatProvider(chatKey),
-      (prev, next) => _stateListener.onChatStateChanged(prev, next),
+      (prev, next) {
+        _stateListener.onChatStateChanged(prev, next);
+        // 消息列表变化(含聚合卡创建)→ 重算 TypingBubble 插槽显隐:
+        // 聚合卡创建后应立刻隐藏 busy 气泡,不等 typing/status 下次触发。
+        _refreshExtraItems();
+      },
     );
 
     // 监听打字态 + hasMore 变化，合并更新偏移量（避免两路 provider 索引抖动）
@@ -1019,10 +1050,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       fileController: _fileController,
       jumpController: _jumpController,
       ref: ref,
+      onToolGroupToggle: _onToolGroupToggle,
     );
+    // history sliver(反向列表):折叠展开需滚动补偿,isHistorySliver=true。
+    // live sliver(正向):展开自然向下,无需补偿,用默认 false。
+    final historyItemCtx = itemCtx.copyWith(isHistorySliver: true);
 
     // PopScope:多选模式拦截返回键(优先退出多选,而非离开页面)。
-    return PopScope(
+    // 状态栏跟随 AppBar 模式:普通模式白底深色图标;多选模式深色底白色图标。
+    final selectionMode = _multiSelectController.isSelectionMode;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: selectionMode
+          ? SystemUiOverlayStyle.dark.copyWith(
+              statusBarColor: const Color(0xFF2A2A2A),
+            )
+          : SystemUiOverlayStyle.light.copyWith(
+              statusBarColor: Colors.white,
+              systemNavigationBarColor: Colors.white,
+            ),
+      child: PopScope(
       canPop: !_multiSelectController.isSelectionMode,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _multiSelectController.isSelectionMode) {
@@ -1086,7 +1132,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   (ctx, i) => ChatMessageItemBuilder.buildMessage(
                                     ctx,
                                     chatState.historyMessages[i],
-                                    itemCtx,
+                                    historyItemCtx,
                                     olderNeighbor:
                                         (i + 1 <
                                                 chatState
@@ -1103,38 +1149,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               key: _liveSliverKey,
                               delegate: SliverChildBuilderDelegate(
                                 (ctx, i) {
-                                  if (i == 0) {
-                                    return _buildHistoryDivider();
-                                  }
-                                  final msgIdx = i - 1;
-                                  final liveMsg = chatState.liveMessages[msgIdx];
+                                  final liveMsg = chatState.liveMessages[i];
                                   // 首达(集合里没有该 id)才播入场动画并记录;
                                   // 滚动重建(集合已有)不重播,避免卡片闪烁。
                                   final animateEntry =
                                       _animatedLiveIds.add(liveMsg.id);
-                                  return ChatMessageItemBuilder.buildMessage(
+                                  final item =
+                                      ChatMessageItemBuilder.buildMessage(
                                     ctx,
                                     liveMsg,
                                     itemCtx,
-                                    olderNeighbor: (msgIdx > 0)
-                                        ? chatState.liveMessages[msgIdx - 1]
-                                        : (chatState.historyMessages.isNotEmpty
+                                    olderNeighbor: (i > 0)
+                                        ? chatState.liveMessages[i - 1]
+                                        : (chatState
+                                                .historyMessages.isNotEmpty
                                             ? chatState.historyMessages.first
                                             : null),
                                     animateEntry: animateEntry,
                                   );
+                                  // live 首条顶部加 8px 留白:首次进入/发消息贴底后,
+                                  // 首条消息不直接顶到视口上沿(Center 锚点对齐导致)。
+                                  // 滚动后首条移出视口,间距自然消失,不影响消息行距。
+                                  if (i == 0) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: item,
+                                    );
+                                  }
+                                  return item;
                                 },
-                                childCount: chatState.liveMessages.length + 1,
+                                childCount: chatState.liveMessages.length,
                               ),
                             ),
                             if (_isTyping)
-                              SliverToBoxAdapter(
-                                child: isAgentSession &&
-                                        ref.read(agentStatusProvider)[
-                                                widget.convId] !=
-                                            null
-                                    ? const AgentBusyBubble()
-                                    : const TypingBubble(),
+                              const SliverToBoxAdapter(
+                                child: TypingBubble(),
                               ),
                           ],
                         ),
@@ -1365,8 +1414,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
           ],
         ), // Stack(body)
-      ),
-    );
+      ), // Scaffold
+      ), // PopScope
+    ); // AnnotatedRegion
   }
 }
 

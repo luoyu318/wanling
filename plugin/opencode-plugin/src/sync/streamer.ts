@@ -2,6 +2,7 @@ import type { WanlingClient } from "../wanling/client.js"
 import type { EventSubscriber } from "../opencode/subscriber.js"
 import type { RPCDispatcher } from "../rpc/dispatcher.js"
 import type {
+  AssistantMessageCompletedPayload,
   PartUpdatedPayload,
   SessionUpdatedPayload,
   VcsBranchUpdatedPayload,
@@ -17,6 +18,7 @@ import { ToolCardManager } from "./domains/tool_card.js"
 import { PartDispatcher } from "./domains/part_dispatcher.js"
 import { InteractionCards } from "./domains/interaction.js"
 import { SessionLifecycle } from "./domains/session_lifecycle.js"
+import { AggregateCardManager } from "./domains/aggregate_card.js"
 
 export class Streamer extends EventEmitter {
   // 子 session 兜底超时默认值:task 崩溃或漏发 completed/error SSE 时强制清理。
@@ -61,6 +63,8 @@ export class Streamer extends EventEmitter {
   private readonly lifecycle: SessionLifecycle
   private started = false
   private readonly router: MessageRouter
+  // 聚合卡开关(构造时存储,与 PartDispatcher/ToolCardManager 的 useAggregate 同语义)。
+  private readonly aggregateCardEnabled: boolean
 
   constructor(
     subscriber: EventSubscriber,
@@ -69,11 +73,13 @@ export class Streamer extends EventEmitter {
     ensureDeps: Omit<EnsureDeps, "wanling">,
     dispatcher: RPCDispatcher,
     childTimeoutMs?: number,
+    aggregateCardEnabled?: boolean,
   ) {
     super()
     this.subscriber = subscriber
     this.wanling = wanling
     this.mainSessionId = mainSessionId
+    this.aggregateCardEnabled = aggregateCardEnabled ?? true
     // wanling 以构造参数为准(单一实例来源),调用方传入的 deps 不含 wanling,这里统一补齐。
     this.ensureDeps = { ...ensureDeps, wanling }
     this.dispatcher = dispatcher
@@ -102,6 +108,7 @@ export class Streamer extends EventEmitter {
       router: this.router,
       wanling,
       emitter: this,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.partDispatcher = new PartDispatcher({
       store: this.store,
@@ -110,6 +117,7 @@ export class Streamer extends EventEmitter {
       compaction: this.compaction,
       emitter: this,
       wanling,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.interaction = new InteractionCards({
       store: this.store,
@@ -117,6 +125,7 @@ export class Streamer extends EventEmitter {
       wanling,
       toolCard: this.toolCard,
       emitter: this,
+      aggregateCardEnabled: aggregateCardEnabled ?? true,
     })
     this.lifecycle = new SessionLifecycle({
       store: this.store,
@@ -208,6 +217,20 @@ export class Streamer extends EventEmitter {
     this.subscriber.on("session_idle", (payload) => this.lifecycle.onSessionIdle(payload.sessionID))
     this.subscriber.on("session_updated", (payload) => this.metaSync.onSessionUpdated(payload))
     this.subscriber.on("vcs_branch_updated", (payload) => this.metaSync.onVcsBranchUpdated(payload))
+    // 新 assistant 回合开始(opencode 建新 assistant message,parentID 指向新 user
+    // 消息)→ 结束当前聚合卡段落(interrupt footer + reset),下一条回答开新卡。
+    // 时序可靠:opencode 对新回合的 assistant message 在此事件前已将旧回合以
+    // tool-calls/stop 完成,此时旧卡内容已完整,分段不会截断流式输出。
+    this.subscriber.on("assistant_message_started", (payload) => {
+      void this.finishCardForSession(payload.sessionID, "interrupt")
+    })
+    // assistant 回合完成(completed + finish 非 tool-calls/unknown,对齐 TUI final()):
+    // 回合正常结束,聚合卡收尾(footer 带完整 duration/cost/tokens/mode/model + reset)。
+    // 此时 completed 已落库,duration = completed - user.created 可直接计算,零轮询。
+    // 时序:旧回合 completed 先于新回合创建到达(已验证),footer 追加正确卡片。
+    this.subscriber.on("assistant_message_completed", (payload) => {
+      void this.finalizeCardForSession(payload)
+    })
 
     // 交互事件
     this.subscriber.on("approval_request", (payload) => this.interaction.onPermissionAsked(payload))
@@ -215,6 +238,54 @@ export class Streamer extends EventEmitter {
     this.subscriber.on("permission_replied", (payload) => this.interaction.onPermissionReplied(payload))
     this.subscriber.on("question_replied", (payload) => this.interaction.onQuestionReplied(payload))
     this.subscriber.on("question_rejected", (payload) => this.interaction.onQuestionRejected(payload))
+
+  }
+
+  // 供 engine(停止/分段)触发的聚合卡主动收尾:查 session 对应 state 的聚合卡。
+  // 停止(abort)→ finishCard("stop")(APP 显示「已停止」);排队分段 → finishCard("interrupt")。
+  async finishCardForSession(sessionId: string, reason: "stop" | "interrupt"): Promise<void> {
+    const state = await this.store.getOrCreateState(sessionId)
+    if (!state) return
+    if (!this.aggregateCardEnabled || state.isChildSession) return
+    await new AggregateCardManager(this.wanling, state)
+      .finishCard(reason)
+      .catch((err) => {
+        console.error(`[streamer] finishCard(${reason}) 失败: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+
+  // assistant 回合完成的聚合卡收尾(assistant_message_completed 事件驱动,对齐 TUI final()):
+  // 此时 completed 已落库,duration = completed - user.created(parentID 归属)可直接计算。
+  // footerDraft 由 step-finish 暂存(cost/tokens/reason),这里合并;meta 快照取 knownFullMeta。
+  // 幂等:finalizeCard 内部守卫(卡已 done / 未建卡跳过);若被 finishCard(abort/分段)
+  // 先收尾,此处静默跳过。
+  private async finalizeCardForSession(
+    payload: AssistantMessageCompletedPayload,
+  ): Promise<void> {
+    const state = await this.store.getOrCreateState(payload.sessionID)
+    if (!state) return
+    if (!this.aggregateCardEnabled || state.isChildSession) return
+    // 回合耗时起点:parent user 消息的 created(subscriber 缓存)。缺失则降级不显示耗时。
+    const userCreated = this.subscriber.peekUserCreated(payload.parentID)
+    // 回合耗时(毫秒,对齐 TUI:`message.time.completed - user.time.created` 原始毫秒,
+    // APP 端用 Locale.duration 格式化;不转秒否则 <100ms 变 0)。
+    const duration = userCreated
+      ? Math.max(0, payload.completed - userCreated)
+      : 0
+    const draft = state.footerDraft
+    const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
+    await new AggregateCardManager(this.wanling, state)
+      .finalizeCard({
+        reason: draft?.reason ?? "stop",
+        duration,
+        cost: draft?.cost,
+        tokens: draft?.tokens,
+        mode: footerMeta?.mode,
+        model: footerMeta ? (footerMeta.modelName ?? footerMeta.modelId) : undefined,
+      })
+      .catch((err) => {
+        console.error(`[streamer] finalizeCard 失败: ${err instanceof Error ? err.message : String(err)}`)
+      })
   }
 
   // 兼容委托(供 streamer.test.ts 直接调 (streamer as any).onPartUpdated):

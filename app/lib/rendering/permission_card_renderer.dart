@@ -77,12 +77,13 @@ class PermissionCardRenderer implements MessageContentRenderer {
 
     final isTerminal = status == 'approved' || status == 'denied' || status == 'expired';
     if (isTerminal) {
-      return _TerminalPermissionCard(
+      return _PermissionTerminalFold(
         action: action,
         resources: resources,
         metadata: metadata,
         status: status,
         result: result,
+        rc: rc,
       );
     }
 
@@ -200,6 +201,126 @@ class _PendingPermissionCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 权限卡终态折叠外壳：原卡片样式完全不变，外面包一层折叠组外壳。
+/// 折叠时只显示标题行（图标 + 「权限审批 · label」+ 结果 + 箭头），
+/// 展开显示完整原卡（[ _TerminalPermissionCard] 保持原样）。
+class _PermissionTerminalFold extends StatefulWidget {
+  final String action;
+  final List<String> resources;
+  final Map<String, dynamic> metadata;
+  final String status;
+  final String? result;
+  final MessageRenderContext rc;
+
+  const _PermissionTerminalFold({
+    required this.action,
+    required this.resources,
+    required this.metadata,
+    required this.status,
+    required this.result,
+    required this.rc,
+  });
+
+  @override
+  State<_PermissionTerminalFold> createState() => _PermissionTerminalFoldState();
+}
+
+class _PermissionTerminalFoldState extends State<_PermissionTerminalFold> {
+  bool _expanded = false;
+
+  /// 折叠行自身 GlobalKey：展开/收起时上报 ChatPage 做滚动补偿。
+  final GlobalKey _key = GlobalKey();
+
+  /// 展开内容测量 key：内容**始终渲染**（收起时用 Align(heightFactor:0)
+  /// 视觉高度为 0 但仍参与布局），同步读取真实高度做滚动补偿。
+  final GlobalKey _contentKey = GlobalKey();
+
+  /// 展开状态切换并通知外部（ChatPage 做滚动补偿）。与 ToolGroupCard._toggle 同构。
+  void _toggle() {
+    final contentHeight = _contentKey.currentContext?.size?.height ?? 0;
+    // history 反向:展开内容向上长,折叠行 top 上移 contentHeight(delta 负);
+    // 收起则下移 contentHeight(delta 正)。
+    final delta = _expanded ? contentHeight : -contentHeight;
+    setState(() => _expanded = !_expanded);
+    widget.rc.onToolGroupToggle
+        ?.call(_key, _expanded, delta, widget.rc.isHistorySliver);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final approved = widget.status == 'approved';
+    final expired = widget.status == 'expired';
+    final accent = expired
+        ? const Color(0xFF757575)
+        : approved
+            ? const Color(0xFF2E7D32)
+            : const Color(0xFFC62828);
+    final label = _permissionLabel(widget.action);
+    final resultText = expired
+        ? '会话已结束'
+        : approved
+            ? (widget.result == 'always' ? '已批准（始终）' : '已批准（仅本次）')
+            : '已拒绝';
+    return Padding(
+      key: _key,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 折叠标题行:无边框(对齐折叠组风格),图标 + 标题 + 结果 + 箭头
+          InkWell(
+            onTap: _toggle,
+            child: Row(
+              children: [
+                Icon(
+                  expired
+                      ? Icons.timelapse
+                      : approved
+                          ? Icons.check_circle_outline
+                          : Icons.cancel_outlined,
+                  size: 15,
+                  color: accent,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '权限审批 · $label',
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                ),
+                const SizedBox(width: 8),
+                Text(resultText, style: TextStyle(fontSize: 12, color: accent)),
+                const Spacer(),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: const Color(0xFFBBBBBB),
+                ),
+              ],
+            ),
+          ),
+          // 展开内容:完整原卡(样式不变)。始终渲染,_contentKey 可测真实高度。
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _expanded ? 1.0 : 0.0,
+              child: Padding(
+                key: _contentKey,
+                padding: const EdgeInsets.only(top: 6),
+                child: _TerminalPermissionCard(
+                  action: widget.action,
+                  resources: widget.resources,
+                  metadata: widget.metadata,
+                  status: widget.status,
+                  result: widget.result,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

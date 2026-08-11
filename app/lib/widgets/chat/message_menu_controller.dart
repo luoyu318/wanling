@@ -44,6 +44,10 @@ class MessageMenuContext {
   /// 删除/撤回确认(由菜单「删除」「撤回」触发,单条/批量共用)。
   final Future<void> Function(List<String> ids, {bool recall}) onConfirmDelete;
 
+  /// 当前会话是否 agent_session(动态判断,convType 异步加载,不能构造时固定)。
+  /// 为 true 时菜单隐藏「引用」/「撤回」,只保留复制/删除/多选。
+  final bool Function() getIsAgentSession;
+
   /// 进入多选模式(由菜单「多选」触发)。
   final void Function(String msgId) onEnterSelectionMode;
 
@@ -66,6 +70,7 @@ class MessageMenuContext {
     required this.onConfirmDelete,
     required this.onEnterSelectionMode,
     required this.onMenuHide,
+    required this.getIsAgentSession,
     required this.chatKey,
     required this.ref,
   });
@@ -105,10 +110,8 @@ class MessageMenuController {
   /// 选择由常驻 SelectableRegion 内置长按选词完成(落点选词+拉杆),本方法只弹菜单。
   void showMessageMenu(ChatMessage msg) {
     hideMessageMenu();
-    // 菜单宽度按 item 数动态算:
-    // canRecall=true: 复制/引用/删除/撤回/多选 = 5 项;
-    // canRecall=false: 复制/引用/删除/多选 = 4 项。
-    final menuWidth = menuWidthFor(canRecall(msg) ? 5 : 4);
+    // 菜单宽度按 item 数动态算(agent_session 隐藏引用/撤回,item 数更少)。
+    final menuWidth = menuWidthFor(_menuItemCount(msg));
     final placement = _computeMenuPlacement(msg.id, menuWidth: menuWidth);
     if (placement == null) return; // 消息不在可见区,不弹菜单
     _activeSelectMsgId = msg.id;
@@ -157,7 +160,7 @@ class MessageMenuController {
       orElse: () => messages.first,
     );
     // 菜单宽度按 item 数动态算,跟 showMessageMenu 同口径。
-    final menuWidth = menuWidthFor(canRecall(msg) ? 5 : 4);
+    final menuWidth = menuWidthFor(_menuItemCount(msg));
     final newPlacement = _computeMenuPlacement(msgId, menuWidth: menuWidth);
     if (newPlacement == null) {
       hideMessageMenu();
@@ -174,13 +177,17 @@ class MessageMenuController {
 
   /// 构造 [MessageContextMenu] widget。由 OverlayEntry.builder 调用。
   Widget buildMenu(ChatMessage msg, MenuPlacement p) {
-    final canRecallFlag = canRecall(msg);
+    // agent_session:隐藏引用/撤回(引用语义不适用,撤回由 stop bar 承载),
+    // 只保留复制/删除/多选。canRecall 仍单独判断,非 agent_session 不受影响。
+    final isAgentSession = _ctx.getIsAgentSession();
+    final canRecallFlag = !isAgentSession && canRecall(msg);
     return MessageContextMenu(
       left: p.left,
       top: p.top,
       tailOffsetX: p.tailOffsetX,
       pointDown: p.pointDown,
       canRecall: canRecallFlag,
+      showQuote: !isAgentSession,
       onCopy: () {
         _ctx.onCopySelectedOrFull(msg);
         hideMessageMenu();
@@ -228,6 +235,15 @@ class MessageMenuController {
     // 必须等 status=sent(拿到 server messageId)才能撤回。
     if (msg.status != MessageStatus.sent) return false;
     return DateTime.now().difference(msg.createdAt) <= _recallWindow;
+  }
+
+  /// 菜单 item 数(决定菜单宽度):
+  /// - agent_session: 复制/删除/多选 = 3(引用/撤回不适用)
+  /// - 普通会话 canRecall=true: 复制/引用/删除/撤回/多选 = 5
+  /// - 普通会话 canRecall=false: 复制/引用/删除/多选 = 4
+  int _menuItemCount(ChatMessage msg) {
+    if (_ctx.getIsAgentSession()) return 3;
+    return canRecall(msg) ? 5 : 4;
   }
 
   /// 计算菜单定位(left/top/tailOffsetX/pointDown,全屏幕绝对坐标)。

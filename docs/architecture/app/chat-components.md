@@ -8,6 +8,7 @@ ChatPage 用 `CustomScrollView(center: liveSliverKey)` 双 sliver 渲染:
 - **history sliver**(leading, 负方向): `historyMessages` newest-first([0]=最新历史贴近锚点)
 - **live sliver**(trailing/center, 正方向): `liveMessages` oldest-first(末尾=最新),index 0 = "下滑查看历史"分割线(占位,index 1+ 才是消息)
 - loadMore / typing 走独立 `SliverToBoxAdapter`(leading 末尾 / trailing 末尾),不烘焙进 SliverList itemCount
+- **live 首条顶部 8px 留白**(2026-08-11):itemBuilder `i==0` 时包 `Padding(top:8)`,首次进入/发消息贴底后首条消息不直接顶到视口上沿(Center 锚点对齐导致);滚动后随首条移出视口自然消失,不影响消息行距。不走 SliverPadding 包裹(会破坏 scrollview_observer 对 RenderSliverPadding 的定位支持)
 
 底部目标 px 由 `dualSliverBottomTarget` 纯函数统一计算(live 非空→maxScrollExtent;live 空→max(minScrollExtent,-vd)),scrollToBottom / _isAtBottom / 流式跟随 / 初始定位 4 处共用。`DualSliverClampingPhysics` 重写 applyBoundaryConditions 阻止手动下滑进入空白区。
 
@@ -18,7 +19,7 @@ ChatPage 用 `CustomScrollView(center: liveSliverKey)` 双 sliver 渲染:
 ## Controllers
 
 ### MessageMenuController
-长按消息弹浮动菜单(OverlayEntry 绝对定位锚钉)。`MessageMenuContext` 内联闭包持有 `_copySelectedOrFull`(多选优先复制选区、fallback 全文)。菜单项：复制/引用/删除/多选/撤回(`canRecall=true` 时)
+长按消息弹浮动菜单(OverlayEntry 绝对定位锚钉)。`MessageMenuContext` 内联闭包持有 `_copySelectedOrFull`(多选优先复制选区、fallback 全文)。菜单项：复制/引用/删除/多选/撤回(`canRecall=true` 时)。**agent_session 场景精简**(2026-08-11)：引用语义不适用 + 撤回由 StopBar 承载,`getIsAgentSession` 动态判断(convType 异步加载)后只显示复制/删除/多选 3 项;`_menuItemCount` 按会话类型算菜单宽度(agent_session 3 / 普通 4-5)。`MessageContextMenu.showQuote` 参数独立控制引用按钮显隐
 
 ### MultiSelectController
 多选状态 + 行为：进入/退出/勾选切换/全选/批量复制/批量删除。2 字段(`_selectedIds` Set + `_isSelected` bool) + 8 方法。`PopScope` 拦截返回键退出多选
@@ -58,7 +59,7 @@ ChatPage 用 `CustomScrollView(center: liveSliverKey)` 双 sliver 渲染:
 ## UI Widgets
 
 ### ChatAppBar
-聊天页顶部 AppBar。副标题仅 dm_user_agent 场景渲染在线/离线/正在输入。群聊标题拼「群名(N)」
+聊天页顶部 AppBar。副标题仅 dm_user_agent 场景渲染在线/离线/正在输入。群聊标题拼「群名(N)」。**白底 + 状态栏跟随**(2026-08-11)：普通模式背景白 `#FFFFFF`(对齐全局 AppBarTheme),ChatPage 包 `AnnotatedRegion<SystemUiOverlayStyle>` 让状态栏(通知栏)随模式切换——普通模式白底深色图标 / 多选模式深色底 `#2A2A2A` 白图标
 
 ### ChatInputBar
 底部输入区容器。`_buildInputBar()` 按 convType 分流：agent_session 走 v5 样式(白底/直角/模式色/SessionMeta 副标题条)，dm/群聊走原胶囊绿
@@ -104,7 +105,7 @@ agent_session 环境信息条(v1.0.10)：读 `SessionMeta.cwd`/`gitBranch` 渲�
 自定义 ScrollPhysics(继承 ClampingScrollPhysics)。重写 `applyBoundaryConditions`,live 空(纯历史会话)时上界收紧为 `max(minScrollExtent, -vd)` 阻止手动下滑/惯性滑入空白区。`getLiveEmpty` 闭包在 ChatPage initState 创建一次(build 引用同一实例避免 rebuild 抖动)
 
 ### StreamingText `lib/widgets/`(非 chat/)
-流式逐字符渐显 widget。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。已渲染部分正常显示,新增 delta 用 `FadeTransition`(150ms)逐字符淡入。`_settledLength` 追踪已稳定字符数,新 delta append 后推进 settledLength 并触发淡入动画。reasoning renderer 不接(单行省略卡片无需逐字符)
+流式文本渲染(2026-08-05 改造)。`MessageRenderContext.isStreaming=true` 时 text/markdown renderer 返回此组件替代静态文本。**整段文本走一次 mdBuilder(markdown 渲染),不拆分 settled/tail、无渐显动画**。背景:原「逐字符渐显」实现中 settled/tail 两块各自独立解析 markdown,语法跨边界(如 `**加` 在 settled、`粗**abc` 在 tail)时未闭合段必然以源码示人,settle 瞬间源码→富文本突变 + 上下抖动。整段统一解析后语法始终完整,未闭合语法由解析器降级为普通文本。reasoning renderer 不接(单行省略卡片)
 
 ### EnterExpand `lib/widgets/chat/`(入场展开动画)
 新消息入场动画:首次 build 从 0 高度向下展开(SizeTransition, 200ms easeOut, axisAlignment -1.0 顶部锚定)。`animate=false` 等价直接显示 child(用于历史加载/终态替换不重播)。由 ChatMessageItemBuilder 对 live 区卡片/审批卡与流式 reasoning 包装

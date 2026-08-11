@@ -59,15 +59,16 @@ void main() {
 
   testWidgets('渲染所有卡片', (tester) async {
     await pumpPage(tester);
-    expect(find.text('http://x'), findsOneWidget);
-    expect(find.text('http://y'), findsOneWidget);
+    // 无 label 时主标题回退 username(对齐侧边栏 accountCardTitle)
+    expect(find.text('u1'), findsOneWidget);
+    expect(find.text('u2'), findsOneWidget);
     expect(find.text('u1 @ http://x'), findsOneWidget);
     expect(find.text('u2 @ http://y'), findsOneWidget);
   });
 
   testWidgets('点卡片触发 switchTo 静默登录', (tester) async {
     await pumpPage(tester);
-    await tester.tap(find.text('http://x'));
+    await tester.tap(find.text('u1'));
     await tester.pumpAndSettle();
     // switchTo 成功后 selectedIndex 指向所点账号
     expect(notifier.state.selectedIndex, 0);
@@ -116,7 +117,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 点已选中卡片(index==selectedIndex==0)
-    await tester.tap(find.text('http://x'));
+    await tester.tap(find.text('u1'));
     await tester.pumpAndSettle();
 
     expect(loginCalls, ['u1:p1'],
@@ -164,7 +165,7 @@ void main() {
     await tester.pump();
     router.push('/select-account');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('http://y'));
+    await tester.tap(find.text('u2'));
     await tester.pump(); // 让 onTap 回调 + setState 执行
     await tester.pump(const Duration(milliseconds: 10)); // 渲染遮罩(onLogin 仍在延迟中)
     expect(find.text('登录中…'), findsOneWidget);
@@ -185,8 +186,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('确认'));
     await tester.pumpAndSettle();
-    expect(find.text('http://x'), findsNothing);
-    expect(find.text('http://y'), findsOneWidget);
+    expect(find.text('u1'), findsNothing);
+    expect(find.text('u2'), findsOneWidget);
   });
 
   testWidgets('点编辑按钮弹编辑表单', (tester) async {
@@ -258,10 +259,10 @@ void main() {
     expect(find.text('u1 @ http://x'), findsOneWidget);
   });
 
-  testWidgets('无 label 时主标题回退 server', (tester) async {
+  testWidgets('无 label 时主标题回退 username', (tester) async {
     await pumpPage(tester);
-    // setUp 的账号无 label,主标题应是 server 本身
-    expect(find.text('http://x'), findsOneWidget);
-    expect(find.text('http://y'), findsOneWidget);
+    // setUp 的账号无 label,主标题回退 username(对齐侧边栏 accountCardTitle)
+    expect(find.text('u1'), findsOneWidget);
+    expect(find.text('u2'), findsOneWidget);
   });
 }

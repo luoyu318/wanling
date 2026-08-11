@@ -294,6 +294,9 @@ class LocalDatabaseOpenException implements Exception {
 /// 转换层在 MessagesRow ↔ ChatMessage 之间。
 extension LocalMessageStoreImpl on LocalMessageDatabase {
   /// 单条 upsert(id 冲突时整体替换)。
+  /// 聚合卡一律写库(含生成中的空态):done 后 DB 有完整记录,重进即使走
+  /// hasUnread 分支(只拉 firstUnread 之后)也能从 eager 读到,避免整条缺失。
+  /// 渲染侧空卡过滤在读取时做(见 chat_provider._isEmptyAggregateCard)。
   Future<void> putMessage(ChatMessage msg) async {
     await into(messages).insertOnConflictUpdate(_toRow(msg));
   }

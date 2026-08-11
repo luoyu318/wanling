@@ -37,6 +37,16 @@ class ChatMessageItemBuildContext {
   final JumpController jumpController;
   final WidgetRef ref;
 
+  /// 聚合卡工具折叠组展开/收起回调(ChatPage 滚动补偿用)。
+  /// null = 不启用补偿(测试/非聊天页)。
+  final void Function(GlobalKey key, bool expanded, double topDelta,
+      bool isHistory)? onToolGroupToggle;
+
+  /// 当前消息所属 sliver:true = history(反向列表,展开需滚动补偿)/
+  /// false = live(正向,展开自然向下,无需补偿)。
+  /// 由 ChatPage 在 history/live 两个 sliver 的 buildMessage 分别传入。
+  final bool isHistorySliver;
+
   const ChatMessageItemBuildContext({
     required this.chatState,
     required this.currentUserId,
@@ -49,7 +59,28 @@ class ChatMessageItemBuildContext {
     required this.fileController,
     required this.jumpController,
     required this.ref,
+    this.onToolGroupToggle,
+    this.isHistorySliver = false,
   });
+
+  /// 复制并覆盖 sliver 归属(history/live 两个 builder 共用 base ctx)。
+  ChatMessageItemBuildContext copyWith({bool? isHistorySliver}) {
+    return ChatMessageItemBuildContext(
+      chatState: chatState,
+      currentUserId: currentUserId,
+      convForStatus: convForStatus,
+      bubbleKeys: bubbleKeys,
+      isTyping: isTyping,
+      isAgentBubble: isAgentBubble,
+      menuController: menuController,
+      multiSelectController: multiSelectController,
+      fileController: fileController,
+      jumpController: jumpController,
+      ref: ref,
+      onToolGroupToggle: onToolGroupToggle,
+      isHistorySliver: isHistorySliver ?? this.isHistorySliver,
+    );
+  }
 }
 
 /// ChatPage 双 sliver 的单条消息构造器。
@@ -202,6 +233,8 @@ class ChatMessageItemBuilder {
             ctx.fileController.buildSnapshots(),
         selectionMode: ctx.multiSelectController.isSelectionMode,
         selected: ctx.multiSelectController.isSelected(message.id),
+        onToolGroupToggle: ctx.onToolGroupToggle,
+        isHistorySliver: ctx.isHistorySliver,
         onLongPressStart: ctx.multiSelectController.isSelectionMode
             ? null
             : (details) => ctx.menuController.showMessageMenu(message),

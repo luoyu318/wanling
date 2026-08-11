@@ -60,6 +60,16 @@ class MessageRenderContext {
   /// 由 MessageBubble 从 message.id 注入。
   final String messageId;
 
+  /// 当前渲染单位的「根消息 id」：task 卡片跳转子 Agent 详情页时用它作为
+  /// root_msg_id 查询子事件流（API getSubagentMessages(convId, rootMsgId)）。
+  ///
+  /// 非聚合场景根就是消息自身（MessageBubble 注入时默认等于 messageId）；
+  /// 聚合卡内嵌元素由 AggregateCardRenderer 注入为聚合卡真实消息 id（此时
+  /// messageId 是 element_id，子会话消息的 root 指向聚合卡真实 id，用 element_id
+  /// 查不到子树 → 详情页空白）。空串表示未注入，消费方（task 卡）应 fallback
+  /// 到 [messageId]。
+  final String rootMessageId;
+
   /// 当前会话的全部消息（用于画廊收集会话级图片）。仅点击图片时使用。
   /// 默认空列表，保证 renderer 在测试/无画廊场景下也能正常构造。
   final List<ChatMessage> conversationMessages;
@@ -84,6 +94,22 @@ class MessageRenderContext {
   /// （如逐字打字机效果 / 占位骨架）。
   final bool isStreaming;
 
+  /// 当前消息所属 sliver 是否 history(反向列表)。仅 history 需要折叠展开滚动补偿。
+  /// 默认 false(live/正向),由 ChatPage 在 history sliver 构建时透传 true。
+  final bool isHistorySliver;
+
+  /// 聚合卡工具折叠组展开/收起回调。
+  ///
+  /// 由 ChatPage 注入。ToolGroupCard 点击切换折叠时，**同步**上报自身
+  /// [GlobalKey]、展开状态与 [topDelta]（= ±展开内容真实高度，同步测得），
+  /// ChatPage 在同一帧 jumpTo 补偿，让内容渲染与滚动补偿同步生效，视觉锚点
+  /// 不动、无补间动画、无 postFrame 一帧跳变。
+  /// [topDelta] 正负：展开(内容向上长,折叠框 top 上移)为负，收起为正。
+  /// [isHistory] = 折叠框所在 sliver 是否 history(反向)，仅 history 需补偿。
+  /// null 表示不启用补偿（测试/非聊天页场景）。
+  final void Function(GlobalKey key, bool expanded, double topDelta,
+      bool isHistory)? onToolGroupToggle;
+
   const MessageRenderContext({
     required this.isMe,
     required this.baseUrl,
@@ -91,14 +117,16 @@ class MessageRenderContext {
     required this.isDark,
     this.convId = '',
     this.messageId = '',
+    this.rootMessageId = '',
     this.conversationMessages = const [],
     this.openGallery,
     this.onFileTap,
     this.fileDownloadSnapshots,
     this.isStreaming = false,
+    this.isHistorySliver = false,
+    this.onToolGroupToggle,
   });
 }
-
 /// 文件下载状态快照（透传给 FileContentRenderer 决定 FileCard 的 downloadState）。
 ///
 /// state 取值与 [DownloadState] 一一对应（避开跨文件 import 依赖，用 int 透传）:

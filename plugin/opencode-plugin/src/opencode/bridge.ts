@@ -248,13 +248,19 @@ export class OpencodeBridge extends EventEmitter {
   // async 语义下 OC 收到请求即刻返回,慢的 LLM 生成不阻塞 fetch,
   // retry 窗口缩到几十 ms,重复概率趋零。
   // model?: APP 端选中的模型覆盖,snake→camel 转换由调用方(engine)完成。
+  // 通道选择:用 v1 prompt_async 异步发送(不阻塞)。聚合卡按用户消息边界分段
+  // 由 subscriber 的 message.updated role=assistant parentID 变化驱动
+  // (assistant_message_started)。
+  // 备注:同步 /session/:id/message 实测会串行但阻塞(agent 任务长时 HTTP 挂起),
+  // 且 messageID 必须 msg_ 前缀(wanling UUID 会被 400 拒绝),故不用同步发送。
   async promptAsync(
     sessionId: string,
     text: string,
     agent?: string,
     model?: { providerID: string; modelID: string },
-  ): Promise<void> {
-    await this.requireClient().session.promptAsync({
+  ): Promise<string | null> {
+    const client = this.requireClient()
+    await client.session.promptAsync({
       path: { id: sessionId },
       body: {
         ...(agent ? { agent } : {}),
@@ -262,8 +268,11 @@ export class OpencodeBridge extends EventEmitter {
         parts: [{ type: "text" as const, text }],
       },
     })
+    return null
   }
 
+  // 切换 session agent(POST /api/session/{id}/agent)。与 model 同理:v2 prompt
+  // 无法透传 agent,用 switchAgent 让排队消息使用 APP 选中的 mode。
   // 调用 opencode session.command API 执行斜杠命令。
   // 与 promptAsync 对应的两条通道:
   //   - promptAsync → POST /session/{id}/prompt_async(普通消息)
@@ -406,8 +415,9 @@ export class OpencodeBridge extends EventEmitter {
         | "user"
         | "assistant",
       text: extractText(m.parts || []),
+      // info.time.created 为毫秒(opencode 时间统一毫秒),直接构造 Date。
       timestamp: m.info?.time?.created
-        ? new Date(m.info.time.created * 1000).toISOString()
+        ? new Date(m.info.time.created).toISOString()
         : new Date().toISOString(),
     }))
   }

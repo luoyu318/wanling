@@ -67,6 +67,7 @@ flowchart TB
 
 @../docs/architecture/overview.md
 @../docs/ai-handbook/websocket-protocol.md
+@../docs/ai-handbook/aggregate-card.md
 @../docs/ai-handbook/approval-card.md
 @../docs/ai-handbook/qr-pair.md
 @../docs/ai-handbook/rest-response.md

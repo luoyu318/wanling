@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/message.dart';
+import '../../models/msg_type.dart';
 import '../../providers/agent_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;
@@ -63,6 +64,13 @@ class MessageRow extends ConsumerWidget {
   /// true 时引用块 preview 显示「原消息已撤回」。
   final bool isQuoteRevoked;
 
+  /// 聚合卡工具折叠组展开/收起回调(ChatPage 滚动补偿用)。透传给 MessageBubble。
+  final void Function(GlobalKey key, bool expanded, double topDelta,
+      bool isHistory)? onToolGroupToggle;
+
+  /// 当前消息所属 sliver 是否 history(反向列表,折叠展开需滚动补偿)。
+  final bool isHistorySliver;
+
   const MessageRow({
     super.key,
     required this.message,
@@ -84,6 +92,8 @@ class MessageRow extends ConsumerWidget {
     this.reserveAvatarSpace = true,
     this.onJumpToMessage,
     this.isQuoteRevoked = false,
+    this.onToolGroupToggle,
+    this.isHistorySliver = false,
   });
 
   static const double _avatarSize = 40;
@@ -104,6 +114,8 @@ class MessageRow extends ConsumerWidget {
       selected: selected,
       onLongPressStart: onLongPressStart,
       onTapSelect: onTapSelect,
+      onToolGroupToggle: onToolGroupToggle,
+      isHistorySliver: isHistorySliver,
       // bubble 自身 outerPadding=zero(所有场景):
       // 行间距/左右 padding 由外层 Padding 控制(包整个 Row)。
       // 这样 status icon 跟 bubble 中心对齐时,跟气泡主体(BubbleWithTail)精确居中,
@@ -115,6 +127,15 @@ class MessageRow extends ConsumerWidget {
     if (selectionMode) {
       return bubble;
     }
+
+    // 聚合卡消息:外层底部间距归零,间距完全由聚合卡 renderer 的 segment 逻辑控制
+    // (分段序列内 2px 缝 / 末卡与单卡 8px),避免此处固定 8px padding 覆盖 segment
+    // 的收窄效果(否则分段卡缝永远是 8px,视觉无变化)。
+    final isAggregateCard =
+        message.content['msg_type'] == MsgType.aggregateCard.value;
+
+    // 外层底部间距:聚合卡 0(交给 renderer),其余消息 8px。
+    final double rowBottom = isAggregateCard ? 0 : 8;
 
     // 是否真渲染昵称(空串保护:server COALESCE 兜底空串时不画;发送方永不渲染昵称)
     final bool nicknameShown = !isMe &&
@@ -239,8 +260,8 @@ class MessageRow extends ConsumerWidget {
       );
       return Padding(
         padding: reserveAvatarSpace
-            ? const EdgeInsets.only(bottom: 8)
-            : const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+            ? EdgeInsets.only(bottom: rowBottom)
+            : EdgeInsets.only(left: 12, right: 12, bottom: rowBottom),
         child: sendRow,
       );
     }
@@ -294,8 +315,8 @@ class MessageRow extends ConsumerWidget {
     );
     return Padding(
       padding: reserveAvatarSpace
-          ? const EdgeInsets.only(bottom: 8)
-          : const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+          ? EdgeInsets.only(bottom: rowBottom)
+          : EdgeInsets.only(left: 12, right: 12, bottom: rowBottom),
       child: recvRow,
     );
   }

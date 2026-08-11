@@ -1235,4 +1235,374 @@ void main() {
       notifier.dispose();
     });
   });
+
+  group('聚合卡增量合并回归(分卡 bug)', () {
+    test('建卡空 elements + append 增量 → 元素被填充,不空白', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+
+      // 1. 建聚合卡:MESSAGE_CREATE, elements=[] (plugin ensureCard)
+      ws.emit(WSMessage(
+        op: 0,
+        t: 'MESSAGE_CREATE',
+        d: {
+          'id': 'agg-1',
+          'conversation_id': 'c1',
+          'sender_type': 'agent',
+          'sender_id': 'a1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'silent': true,
+            'data': {
+              'schema_ver': 1,
+              'state': 'generating',
+              'elements': [],
+            },
+          },
+          'created_at': '2026-08-08T10:00:00Z',
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      var msgs = container.read(chatProvider(key)).displayMessages;
+      expect(msgs.where((m) => m.id == 'agg-1').length, 1,
+          reason: '聚合卡 MESSAGE_CREATE 应入列表');
+
+      // 2. append 增量:MESSAGE_UPDATE {op:"append", element}
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'conversation_id': 'c1',
+          'message_id': 'agg-1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {
+              'op': 'append',
+              'element': {
+                'type': 'markdown',
+                'element_id': 'markdown_1',
+                'data': {'text': '正文内容'},
+              },
+            },
+          },
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      msgs = container.read(chatProvider(key)).displayMessages;
+      final agg = msgs.firstWhere((m) => m.id == 'agg-1');
+      final elements =
+          ((agg.content['data'] as Map)['elements'] as List).toList();
+      expect(elements.length, 1, reason: 'append 增量应合并进 elements');
+      expect((elements[0] as Map)['element_id'], 'markdown_1');
+      expect(((elements[0] as Map)['data'] as Map)['text'], '正文内容');
+    });
+  });
+
+  group('聚合卡 silent 翻转 MESSAGE_UPDATE 反映到 content(未读清除前提)', () {
+    test('翻转广播后 chatProvider content.silent true→false', () async {
+      final container = makeContainer();
+      final key = (convId: 'c1', agentId: 'a1');
+      // 聚合卡创建(silent=true)
+      ws.emit(WSMessage(
+        op: 0,
+        t: 'MESSAGE_CREATE',
+        d: {
+          'id': 'agg-1',
+          'conversation_id': 'c1',
+          'sender_type': 'agent',
+          'sender_id': 'a1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'state': 'generating', 'elements': const []},
+            'silent': true,
+          },
+          'created_at': '2026-06-20T10:00:00Z',
+        },
+      ));
+      await Future.delayed(Duration.zero);
+      expect(
+        container
+            .read(chatProvider(key))
+            .displayMessages
+            .firstWhere((m) => m.id == 'agg-1')
+            .content['silent'],
+        true,
+        reason: '创建时 silent=true',
+      );
+
+      // 回合结束翻转:set_silent delta 广播
+      ws.emitUpdate(WSMessage(
+        op: 0,
+        t: 'MESSAGE_UPDATE',
+        d: {
+          'conversation_id': 'c1',
+          'message_id': 'agg-1',
+          'content': {
+            'msg_type': 'aggregate_card',
+            'data': {'op': 'set_silent', 'silent': false},
+          },
+        },
+      ));
+      await Future.delayed(Duration.zero);
+
+      expect(
+        container
+            .read(chatProvider(key))
+            .displayMessages
+            .firstWhere((m) => m.id == 'agg-1')
+            .content['silent'],
+        false,
+        reason: '翻转后 silent=false(未读清除前提)',
+      );
+    });
+  });
+
+  group('hasUnread 分支补拉 before(ba6d289)', () {
+    test('firstUnread 之前的聚合卡经 getMessagesBefore 补拉,不缺失', () async {
+      // 有未读:firstUnread 是 last 卡,分卡 first 卡在它之前
+      when(() => api.getUnreadInfo(any())).thenAnswer((_) async => UnreadInfo(
+            unreadCount: 1,
+            firstUnreadMessageId: 'last-card',
+            firstUnreadCreatedAt: DateTime.utc(2026, 7, 6),
+          ));
+      // getMessagesAfter 只返 firstUnread(last 卡)
+      when(() => api.getMessagesAfter(any(),
+              limit: any(named: 'limit'), after: any(named: 'after')))
+          .thenAnswer((_) async => [
+                ChatMessage(
+                  id: 'last-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'last'}},
+                  createdAt: DateTime.utc(2026, 7, 6),
+                ),
+              ]);
+      // getMessagesBefore 补拉最新上下文(含 first 卡)
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                ChatMessage(
+                  id: 'first-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'first'}},
+                  createdAt: DateTime.utc(2026, 7, 5),
+                ),
+                ChatMessage(
+                  id: 'last-card',
+                  conversationId: 'c1',
+                  senderType: 'agent',
+                  senderId: 'a1',
+                  content: {'msg_type': 'text', 'data': {'text': 'last'}},
+                  createdAt: DateTime.utc(2026, 7, 6),
+                ),
+              ]);
+
+      final notifier = ChatNotifier(api, ws, 'c1', null, 'u1');
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // 合并后 first + last 都在(去重保留 after 版 last)
+      final ids = notifier.state.displayMessages.map((m) => m.id).toSet();
+      expect(ids, contains('first-card'),
+          reason: 'hasUnread 分支补拉 firstUnread 之前的卡');
+      expect(ids, contains('last-card'));
+      // develop displayMessages 是 newest-first:first=最新(last 卡),last=最老(first 卡)
+      final msgs = notifier.state.displayMessages;
+      expect(msgs.first.id, 'last-card');
+      expect(msgs.last.id, 'first-card');
+      notifier.dispose();
+    });
+  });
+
+  group('_initialize 拉取时生成中聚合卡归属 live', () {
+    ChatMessage aggregateCard({
+      required String id,
+      String state = 'generating',
+      bool silent = false,
+      List<Map<String, dynamic>>? elements,
+    }) {
+      return ChatMessage.fromJson({
+        'id': id,
+        'conversation_id': 'c1',
+        'sender_type': 'agent',
+        'sender_id': 'a1',
+        'content': {
+          'msg_type': 'aggregate_card',
+          'data': {
+            'state': state,
+            'elements': elements ??
+                [
+                  {
+                    'type': 'reasoning',
+                    'element_id': 'r1',
+                    'data': {'text': '思考'},
+                  },
+                ],
+          },
+          if (silent) 'silent': true,
+        },
+        'created_at': '2026-06-20T10:05:00Z',
+      });
+    }
+
+    test('noUnread 分支拉到 generating 非空聚合卡 → 进 live', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      // 覆盖 setUp 的空 mock:注入一条生成中聚合卡(最新)
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1'),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), contains('agg1'),
+          reason: '生成中聚合卡应进 live sliver');
+      expect(state.historyMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '生成中聚合卡不应进 history');
+    });
+
+    test('done 聚合卡 → 进 history,不进 live', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1', state: 'done', silent: false),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.historyMessages.map((m) => m.id), contains('agg1'),
+          reason: 'done 聚合卡应进 history');
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')));
+    });
+
+    test('generating 空卡(elements 空)→ 不进 live', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1', elements: const []),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '空卡不进 live(靠 WS 增量填充)');
+    });
+
+    test('generating 卡非最新一条(后面还有更新消息)→ 不进 live', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                aggregateCard(id: 'agg1'),
+                ChatMessage.fromJson({
+                  'id': 'newer',
+                  'conversation_id': 'c1',
+                  'sender_type': 'user',
+                  'sender_id': 'u1',
+                  'content': {'msg_type': 'text', 'data': {'text': '更新的消息'}},
+                  'created_at': '2026-06-20T10:06:00Z',
+                }),
+              ]);
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.liveMessages.map((m) => m.id), isNot(contains('agg1')),
+          reason: '仅最新一条 generating 卡进 live');
+    });
+  });
+
+  group('未读定位兼容(generating 卡不影响 firstUnread 锚点)', () {
+    test('hasUnread 分支:firstUnread 是 done 聚合卡 → 留在 history 可定位',
+        () async {
+      // 清掉 setUp 的 stub,重建本测试专属 mock(hasUnread 分支)
+      reset(api);
+      when(() => api.getMessages(any(),
+              limit: any(named: 'limit'), offset: any(named: 'offset')))
+          .thenAnswer((_) async => <ChatMessage>[]);
+      when(() => api.getUnreadInfo(any())).thenAnswer((_) async => UnreadInfo(
+            unreadCount: 1,
+            firstUnreadMessageId: 'agg-done',
+            firstUnreadCreatedAt: DateTime.parse('2026-06-20T10:04:00Z'),
+            hasMoreBeforeFirstUnread: false,
+          ));
+      when(() => api.getMessagesAfter(any(),
+              after: any(named: 'after'), limit: any(named: 'limit')))
+          .thenAnswer((_) async => [
+                ChatMessage.fromJson({
+                  'id': 'agg-done',
+                  'conversation_id': 'c1',
+                  'sender_type': 'agent',
+                  'sender_id': 'a1',
+                  'content': {
+                    'msg_type': 'aggregate_card',
+                    'data': {
+                      'state': 'done',
+                      'elements': [
+                        {
+                          'type': 'markdown',
+                          'element_id': 'm1',
+                          'data': {'text': '最终'},
+                        },
+                      ],
+                    },
+                  },
+                  'created_at': '2026-06-20T10:04:00Z',
+                }),
+              ]);
+      when(() => api.getMessagesBefore(any(),
+              limit: any(named: 'limit'), before: any(named: 'before')))
+          .thenAnswer((_) async => [
+                ChatMessage.fromJson({
+                  'id': 'agg-gen',
+                  'conversation_id': 'c1',
+                  'sender_type': 'agent',
+                  'sender_id': 'a1',
+                  'content': {
+                    'msg_type': 'aggregate_card',
+                    'data': {
+                      'state': 'generating',
+                      'elements': [
+                        {
+                          'type': 'reasoning',
+                          'element_id': 'r1',
+                          'data': {'text': '思考'},
+                        },
+                      ],
+                    },
+                  },
+                  'created_at': '2026-06-20T10:05:00Z',
+                }),
+              ]);
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = container.read(chatProvider(key));
+      expect(state.firstUnreadMessageId, 'agg-done');
+      expect(state.historyMessages.map((m) => m.id), contains('agg-done'),
+          reason: 'done 聚合卡(未读锚点)留在 history,定位逻辑可找到');
+      expect(state.liveMessages.map((m) => m.id), contains('agg-gen'),
+          reason: '更新的 generating 卡进 live');
+      // displayMessages 按 id 去重,不双显
+      expect(state.displayMessages.map((m) => m.id).toSet().length,
+          state.displayMessages.length);
+    });
+  });
 }

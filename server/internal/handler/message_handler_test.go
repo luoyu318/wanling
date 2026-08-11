@@ -347,9 +347,15 @@ type updateContentEnv struct {
 	convID     string
 }
 
-// setupUpdateContentTest 起 testcontainers DB + user/agent/conv + 一条 agent 卡片消息,
-// hub 注册一个在线 user client(模拟 APP 在线),返回可复用件。
+// setupUpdateContentTest 起 testcontainers DB + user/agent/conv + 一条 agent
+// permission_card 消息,hub 注册一个在线 user client,返回可复用件。
 func setupUpdateContentTest(t *testing.T) updateContentEnv {
+	return setupMsgUpdateTest(t, json.RawMessage(`{"msg_type":"permission_card","data":{"status":"pending"}}`))
+}
+
+// setupMsgUpdateTest 起 testcontainers DB + user/agent/conv + 一条初始 content
+// 为 initContent 的 agent 消息,hub 注册一个在线 user client,返回可复用件。
+func setupMsgUpdateTest(t *testing.T, initContent json.RawMessage) updateContentEnv {
 	t.Helper()
 	db := repository.SetupTestDB(t)
 	userRepo := repository.NewUserRepo(db)
@@ -374,9 +380,8 @@ func setupUpdateContentTest(t *testing.T) updateContentEnv {
 		t.Fatalf("FindOrCreateDM 失败: %v", err)
 	}
 
-	// agent 发一条 pending 卡片消息
-	content := json.RawMessage(`{"msg_type":"permission_card","data":{"status":"pending"}}`)
-	msg, err := msgRepo.Create(t.Context(), conv.ID, "agent", agent.ID, content)
+	// agent 发一条初始卡片消息
+	msg, err := msgRepo.Create(t.Context(), conv.ID, "agent", agent.ID, initContent)
 	if err != nil {
 		t.Fatalf("Create msg 失败: %v", err)
 	}
@@ -575,5 +580,502 @@ func TestMessageHandlerUpdateContentPreservesSilent(t *testing.T) {
 	silent, ok := got["silent"].(bool)
 	if !ok || !silent {
 		t.Errorf("PATCH 后 silent 应保留 true, 实际 %v (silent=%v)", got["silent"], silent)
+	}
+}
+
+// 聚合卡回合结束:PATCH silent 从 true 翻转为 false 时,应对非 sender 全员 IncrUnread。
+//
+// 场景:aggregate_card 创建时 silent=true(回合进行中不打扰),回合结束 plugin PATCH
+// 显式带 silent=false 让结果对用户可见 → 该消息从"不计数"翻转为"计数",
+// 应对非 sender(user) unread_count +1,与发消息 IncrUnreadTx 口径一致。
+func TestUpdateContent_SilentFlip_IncrsUnread(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userRepo := repository.NewUserRepo(db)
+	agentRepo := repository.NewAgentRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	participantRepo := repository.NewParticipantRepo(db)
+
+	user, err := userRepo.Create(t.Context(), shortName(t, "silentflip"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user 失败: %v", err)
+	}
+	agent, err := agentRepo.Create(t.Context(), user.ID, "Agent", "secret-key", "")
+	if err != nil {
+		t.Fatalf("Create agent 失败: %v", err)
+	}
+	conv, err := convRepo.FindOrCreateDM(t.Context(), "dm_user_agent", repository.DMMembers{
+		Initiator: repository.ParticipantInput{MemberID: user.ID, MemberType: "user", Role: "owner"},
+		Other:     repository.ParticipantInput{MemberID: agent.ID, MemberType: "agent", Role: "member"},
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateDM 失败: %v", err)
+	}
+
+	// agent 发一张 silent=true 的聚合卡(回合进行中,不触发未读)
+	content := json.RawMessage(`{"msg_type":"aggregate_card","data":{"status":"running"},"silent":true}`)
+	msg, err := msgRepo.Create(t.Context(), conv.ID, "agent", agent.ID, content)
+	if err != nil {
+		t.Fatalf("Create msg 失败: %v", err)
+	}
+
+	// 前置:user 未读应为 0(silent 消息不计数)
+	p, err := participantRepo.Get(t.Context(), conv.ID, user.ID, "user")
+	if err != nil || p == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p.UnreadCount != 0 {
+		t.Fatalf("前置:silent=true 时 user 未读应为 0,实际 %d", p.UnreadCount)
+	}
+
+	h := hub.NewHub(nil, agentRepo, participantRepo, nil)
+	mh := NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
+
+	// PATCH content 显式带 silent=false(回合结束,聚合卡结果对用户可见)
+	newContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"status":"done"},"silent":false}`)
+	body, _ := json.Marshal(map[string]json.RawMessage{"content": newContent})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/messages/"+msg.ID, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: msg.ID}}
+	c.Set("userID", agent.ID)
+	c.Set("role", "agent")
+	mh.UpdateContent(c)
+	AssertOk(t, w, http.StatusOK)
+
+	// 翻转后:user 未读应为 1(非 sender 全员 IncrUnread)
+	p2, err := participantRepo.Get(t.Context(), conv.ID, user.ID, "user")
+	if err != nil || p2 == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p2.UnreadCount != 1 {
+		t.Errorf("silent true→false 翻转后 user 未读应为 1,实际 %d", p2.UnreadCount)
+	}
+}
+
+// ===== 聚合卡增量 op 测试 =====
+
+// aggregateInitContent 聚合卡初始 content:state=generating + 两个元素, silent=true。
+const aggregateInitContent = `{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"tool_card","element_id":"e1","data":{"name":"read","status":"running"}},{"type":"text","element_id":"e2","data":{"text":"hi"}}]},"silent":true}`
+
+// setupAggregateUpdateTest 起一套聚合卡更新环境(初始 content 见 aggregateInitContent)。
+func setupAggregateUpdateTest(t *testing.T) updateContentEnv {
+	t.Helper()
+	return setupMsgUpdateTest(t, json.RawMessage(aggregateInitContent))
+}
+
+// getMsgContent 读取 DB 中当前消息 content 并解析为 map[string]any。
+func getMsgContent(t *testing.T, env updateContentEnv) map[string]any {
+	t.Helper()
+	updated, err := env.mh.msgRepo.Get(t.Context(), env.msgID)
+	if err != nil {
+		t.Fatalf("Get msg 失败: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(updated.Content, &got); err != nil {
+		t.Fatalf("unmarshal DB content 失败: %v", err)
+	}
+	return got
+}
+
+// msgContentData 取 content 的 data(map)。
+func msgContentData(t *testing.T, got map[string]any) map[string]any {
+	t.Helper()
+	data, ok := got["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("content.data 非 object: %v", got["data"])
+	}
+	return data
+}
+
+// msgElements 取 content.data.elements([]any)。
+func msgElements(t *testing.T, data map[string]any) []any {
+	t.Helper()
+	elems, ok := data["elements"].([]any)
+	if !ok {
+		t.Fatalf("data.elements 非数组: %v", data["elements"])
+	}
+	return elems
+}
+
+// recvMessageUpdate 从在线 user client 收取一条 MESSAGE_UPDATE 并解析 payload。
+func recvMessageUpdate(t *testing.T, env updateContentEnv) map[string]any {
+	t.Helper()
+	select {
+	case raw := <-env.userClient.Send:
+		var wsMsg model.WSMessage
+		if err := json.Unmarshal(raw, &wsMsg); err != nil {
+			t.Fatalf("unmarshal ws 失败: %v", err)
+		}
+		if wsMsg.T != model.EventMessageUpdate {
+			t.Fatalf("期望 MESSAGE_UPDATE, 实际 %s", wsMsg.T)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(wsMsg.D, &payload); err != nil {
+			t.Fatalf("unmarshal payload 失败: %v", err)
+		}
+		return payload
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("未收到 MESSAGE_UPDATE 广播")
+		return nil
+	}
+}
+
+// TestUpdateContent_Append_Element 聚合卡 append:元素追加到末尾,DB 存全量,
+// 广播带增量 op 结构(与入站一致)。
+func TestUpdateContent_Append_Element(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"append","element":{"type":"text","element_id":"e3","data":{"text":"done"}}}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	// DB:全量合并,e3 追加到末尾
+	got := getMsgContent(t, env)
+	elems := msgElements(t, msgContentData(t, got))
+	if len(elems) != 3 {
+		t.Fatalf("append 后 elements 应 3 个, 实际 %d", len(elems))
+	}
+	last := elems[2].(map[string]any)
+	if last["element_id"] != "e3" {
+		t.Errorf("末尾元素应 e3, 实际 %v", last["element_id"])
+	}
+	if last["data"].(map[string]any)["text"] != "done" {
+		t.Errorf("e3 data 应 {text:done}, 实际 %v", last["data"])
+	}
+
+	// 广播带增量 op(APP 应用增量)
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "append" {
+		t.Errorf("广播 content.data.op 期望 append, 实际 %v", contentData["op"])
+	}
+	el := contentData["element"].(map[string]any)
+	if el["element_id"] != "e3" {
+		t.Errorf("广播 element_id 期望 e3, 实际 %v", el["element_id"])
+	}
+}
+
+// TestUpdateContent_Append_MissingElement append 缺 element → 400(fail fast)。
+func TestUpdateContent_Append_MissingElement(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"append"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+}
+
+// TestUpdateContent_Append_PreservesSilent 增量 append 不改变原 content 的 silent。
+func TestUpdateContent_Append_PreservesSilent(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"append","element":{"type":"text","element_id":"e3","data":{"text":"done"}}}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	silent, ok := got["silent"].(bool)
+	if !ok || !silent {
+		t.Errorf("增量 append 后 silent 应保留 true, 实际 %v", got["silent"])
+	}
+
+	// 广播带原始增量(不并入 silent),APP 应用增量
+	payload := recvMessageUpdate(t, env)
+	bcast := payload["content"].(map[string]any)
+	if _, hasSilent := bcast["silent"]; hasSilent {
+		t.Errorf("增量广播不应带顶层 silent, 实际 %v", bcast)
+	}
+}
+
+// TestUpdateContent_Update_ElementData 聚合卡 update:按 element_id 整体替换元素 data。
+func TestUpdateContent_Update_ElementData(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"update","element_id":"e1","data":{"name":"read","status":"completed"}}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	elems := msgElements(t, msgContentData(t, got))
+	if len(elems) != 2 {
+		t.Fatalf("update 不应增删元素, 实际 %d", len(elems))
+	}
+	e1 := elems[0].(map[string]any)
+	if e1["element_id"] != "e1" {
+		t.Fatalf("首个元素应 e1, 实际 %v", e1["element_id"])
+	}
+	d1 := e1["data"].(map[string]any)
+	if d1["status"] != "completed" {
+		t.Errorf("e1 data.status 期望 completed, 实际 %v", d1["status"])
+	}
+	if d1["name"] != "read" {
+		t.Errorf("e1 data.name 期望保留 read, 实际 %v", d1["name"])
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "update" || contentData["element_id"] != "e1" {
+		t.Errorf("广播增量期望 op=update element_id=e1, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_Update_ElementNotFound update 目标元素不存在 → 400(fail fast)。
+func TestUpdateContent_Update_ElementNotFound(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"update","element_id":"nope","data":{"x":1}}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+}
+
+// TestUpdateContent_Remove_Element 聚合卡 remove:按 element_id 删除元素。
+func TestUpdateContent_Remove_Element(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"remove","element_id":"e1"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	elems := msgElements(t, msgContentData(t, got))
+	if len(elems) != 1 {
+		t.Fatalf("remove 后 elements 应 1 个, 实际 %d", len(elems))
+	}
+	if elems[0].(map[string]any)["element_id"] != "e2" {
+		t.Errorf("剩余元素应 e2, 实际 %v", elems[0])
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "remove" || contentData["element_id"] != "e1" {
+		t.Errorf("广播增量期望 op=remove element_id=e1, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_Remove_ElementNotFound remove 目标元素不存在 → 幂等成功(200)。
+func TestUpdateContent_Remove_ElementNotFound(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"remove","element_id":"nope"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	if n := len(msgElements(t, msgContentData(t, got))); n != 2 {
+		t.Errorf("remove 不存在元素应幂等保留 2 个, 实际 %d", n)
+	}
+}
+
+// TestUpdateContent_Reorder_Elements 聚合卡 reorder:按 order 数组重排 elements。
+func TestUpdateContent_Reorder_Elements(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"reorder","order":["e2","e1"]}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	elems := msgElements(t, msgContentData(t, got))
+	if len(elems) != 2 {
+		t.Fatalf("reorder 后 elements 应 2 个, 实际 %d", len(elems))
+	}
+	if elems[0].(map[string]any)["element_id"] != "e2" || elems[1].(map[string]any)["element_id"] != "e1" {
+		t.Errorf("reorder 后顺序应 [e2,e1], 实际 [%v,%v]",
+			elems[0].(map[string]any)["element_id"], elems[1].(map[string]any)["element_id"])
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	order, _ := contentData["order"].([]any)
+	if contentData["op"] != "reorder" || len(order) != 2 || order[0] != "e2" {
+		t.Errorf("广播增量期望 op=reorder order=[e2,e1], 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_Reorder_UnknownElement reorder 中引用不存在的元素 → 400(fail fast)。
+func TestUpdateContent_Reorder_UnknownElement(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"reorder","order":["e2","nope"]}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+}
+
+// TestUpdateContent_SetState 聚合卡 set_state:改 data.state。
+func TestUpdateContent_SetState(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_state","state":"done"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	if st := msgContentData(t, got)["state"]; st != "done" {
+		t.Errorf("data.state 期望 done, 实际 %v", st)
+	}
+	if n := len(msgElements(t, msgContentData(t, got))); n != 2 {
+		t.Errorf("set_state 不应改动 elements, 实际 %d 个", n)
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "set_state" || contentData["state"] != "done" {
+		t.Errorf("广播增量期望 op=set_state state=done, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_SetSegment 聚合卡 set_segment:写 data.segment 三态标记。
+func TestUpdateContent_SetSegment(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_segment","segment":"middle"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	if st := msgContentData(t, got)["segment"]; st != "middle" {
+		t.Errorf("data.segment 期望 middle, 实际 %v", st)
+	}
+	if n := len(msgElements(t, msgContentData(t, got))); n != 2 {
+		t.Errorf("set_segment 不应改动 elements, 实际 %d 个", n)
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "set_segment" || contentData["segment"] != "middle" {
+		t.Errorf("广播增量期望 op=set_segment segment=middle, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_SetSegment_Invalid set_segment 非法值返 400。
+func TestUpdateContent_SetSegment_Invalid(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_segment","segment":"bogus"}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("非法 segment 期望 400, 实际 %d", w.Code)
+	}
+}
+
+// TestUpdateContent_SetSilent 聚合卡 set_silent:显式改 content.silent。
+func TestUpdateContent_SetSilent(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	silent, ok := got["silent"].(bool)
+	if !ok || silent {
+		t.Errorf("set_silent false 后 content.silent 应为 false, 实际 %v", got["silent"])
+	}
+
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if contentData["op"] != "set_silent" || contentData["silent"] != false {
+		t.Errorf("广播增量期望 op=set_silent silent=false, 实际 %v", contentData)
+	}
+}
+
+// TestUpdateContent_SetSilent_Preview set_silent 翻转(false)时,server 从 elements
+// 提取最后 markdown 正文写入 data.preview,并注入广播 delta(通知/摘要直接读)。
+func TestUpdateContent_SetSilent_Preview(t *testing.T) {
+	initContent := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"generating","elements":[{"type":"reasoning","element_id":"r1","data":{"text":"思考"}},{"type":"markdown","element_id":"m1","data":{"text":"回合最终回复"}}]},"silent":true}`)
+	env := setupMsgUpdateTest(t, initContent)
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	// 1. 落库 merged 带 data.preview(取最后 markdown 正文)
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if contentData["preview"] != "回合最终回复" {
+		t.Errorf("落库 data.preview 期望「回合最终回复」, 实际 %v", contentData["preview"])
+	}
+
+	// 2. 广播 delta 也带 preview(增量无 elements,通知/摘要靠它)
+	payload := recvMessageUpdate(t, env)
+	broadcastData := msgContentData(t, payload["content"].(map[string]any))
+	if broadcastData["op"] != "set_silent" || broadcastData["silent"] != false {
+		t.Errorf("广播增量期望 op=set_silent silent=false, 实际 %v", broadcastData)
+	}
+	if broadcastData["preview"] != "回合最终回复" {
+		t.Errorf("广播 delta.data.preview 期望「回合最终回复」, 实际 %v", broadcastData["preview"])
+	}
+	// 3. 翻转广播附带会话 type/title(对齐 MESSAGE_CREATE,bg-service 据此识别通知 title)
+	if payload["conversation_type"] != "dm_user_agent" {
+		t.Errorf("翻转广播 conversation_type 期望 dm_user_agent, 实际 %v", payload["conversation_type"])
+	}
+}
+
+// TestUpdateContent_SetSilent_Preview_NoMarkdown set_silent 翻转时 elements 无
+// markdown 元素 → 不写 preview(不影响现有语义)。
+func TestUpdateContent_SetSilent_Preview_NoMarkdown(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	contentData := msgContentData(t, got)
+	if preview, ok := contentData["preview"]; ok {
+		t.Errorf("无 markdown 元素不应写 preview, 实际 %v", preview)
+	}
+}
+
+// TestUpdateContent_SetSilent_Flip_IncrsUnread set_silent true→false 翻转时,
+// 对非 sender 全员 IncrUnread(复用 Task 1 翻转逻辑)。
+func TestUpdateContent_SetSilent_Flip_IncrsUnread(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+
+	// 前置:silent=true 创建,user 未读应为 0
+	p, err := env.mh.participantRepo.Get(t.Context(), env.convID, env.userID, "user")
+	if err != nil || p == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p.UnreadCount != 0 {
+		t.Fatalf("前置:silent=true 时 user 未读应为 0,实际 %d", p.UnreadCount)
+	}
+
+	delta := json.RawMessage(`{"msg_type":"aggregate_card","data":{"op":"set_silent","silent":false}}`)
+	w := patchUpdateContent(t, env, env.agentID, "agent", delta)
+	AssertOk(t, w, http.StatusOK)
+
+	p2, err := env.mh.participantRepo.Get(t.Context(), env.convID, env.userID, "user")
+	if err != nil || p2 == nil {
+		t.Fatalf("Get participant 失败: %v", err)
+	}
+	if p2.UnreadCount != 1 {
+		t.Errorf("set_silent true→false 翻转后 user 未读应为 1,实际 %d", p2.UnreadCount)
+	}
+}
+
+// TestUpdateContent_NoOp_Elements_FullReplace data 无 op 且含 elements → 全量替换(旧 plugin / 非聚合)。
+func TestUpdateContent_NoOp_Elements_FullReplace(t *testing.T) {
+	env := setupAggregateUpdateTest(t)
+	full := json.RawMessage(`{"msg_type":"aggregate_card","data":{"state":"done","elements":[{"type":"text","element_id":"x1","data":{"text":"new"}}]}}`)
+
+	w := patchUpdateContent(t, env, env.agentID, "agent", full)
+	AssertOk(t, w, http.StatusOK)
+
+	got := getMsgContent(t, env)
+	data := msgContentData(t, got)
+	if data["state"] != "done" {
+		t.Errorf("全量替换 data.state 期望 done, 实际 %v", data["state"])
+	}
+	elems := msgElements(t, data)
+	if len(elems) != 1 || elems[0].(map[string]any)["element_id"] != "x1" {
+		t.Fatalf("全量替换后 elements 应只剩 [x1], 实际 %v", elems)
+	}
+
+	// 无 op → 广播全量(非增量)
+	payload := recvMessageUpdate(t, env)
+	contentData := msgContentData(t, payload["content"].(map[string]any))
+	if _, hasOp := contentData["op"]; hasOp {
+		t.Errorf("无 op 全量替换广播不应带 op, 实际 %v", contentData)
 	}
 }

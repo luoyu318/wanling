@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/agent.dart' show AgentCategory;
+import '../theme/app_colors.dart';
 import '../models/conversation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart';
@@ -52,6 +53,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
     return ColoredBox(
       color: Colors.white,
       child: RefreshIndicator(
+        color: AppColors.accentGreen,
         onRefresh: () => ref.read(conversationProvider.notifier).load(),
         child: list.isEmpty
             ? _EmptyState(

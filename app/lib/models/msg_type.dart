@@ -1,3 +1,8 @@
+/// 聚合卡协议 schema 版本(data.schema_ver)。从 1 起,缺失视为 1;
+/// 破坏性协议变更时递增。APP 读本地 content 的 schema_ver,
+/// > 本版本时不应用增量 op(保持现状防误用),等全量替换兜底。
+const int aggregateCardSchemaVer = 1;
+
 /// 消息类型，对应 content JSONB 里的 msg_type 字段。
 /// 集中定义便于 IDE 补全、避免拼写错误。
 enum MsgType {
@@ -23,6 +28,7 @@ enum MsgType {
   questionReply,
   slashEcho,
   compactDivider,
+  aggregateCard,
   unknown;
 }
 
@@ -50,6 +56,7 @@ extension MsgTypeX on MsgType {
         MsgType.questionReply => 'question_reply',
         MsgType.slashEcho => 'slash_echo',
         MsgType.compactDivider => 'compact_divider',
+        MsgType.aggregateCard => 'aggregate_card',
         MsgType.unknown => 'unknown',
       };
 
@@ -116,11 +123,35 @@ extension MsgTypeX on MsgType {
         return text.isNotEmpty ? '[命令] $text' : '[命令]';
       case MsgType.compactDivider:
         return null;
+      case MsgType.aggregateCard:
+        return _aggregateCardPreview(data);
       case MsgType.mixed:
         return null;
       case MsgType.unknown:
         return null;
     }
+  }
+
+  /// 聚合卡预览文本:优先用 server set_silent 翻转时写入的 data.preview
+  /// (增量广播无 elements,通知/摘要直接读 preview);无则取最后一个 markdown
+  /// 元素的 text,截断 50 字符;再无 → fallback `[聚合回复]`。
+  /// 回合结束时聚合卡才计未读 + 推送通知,此时 elements 已含最终正文。
+  static String? _aggregateCardPreview(Map<String, dynamic>? data) {
+    final preview = data?['preview'] as String?;
+    if (preview != null && preview.isNotEmpty) {
+      return preview.length > 50 ? preview.substring(0, 50) : preview;
+    }
+    final elements = data?['elements'];
+    if (elements is List) {
+      for (final raw in elements.reversed) {
+        if (raw is! Map) continue;
+        if (raw['type'] != 'markdown') continue;
+        final text = (raw['data'] as Map?)?['text'] as String? ?? '';
+        if (text.isEmpty) continue;
+        return text.length > 50 ? text.substring(0, 50) : text;
+      }
+    }
+    return '[聚合回复]';
   }
 
   static MsgType fromString(String? raw) {
@@ -169,6 +200,8 @@ extension MsgTypeX on MsgType {
         return MsgType.slashEcho;
       case 'compact_divider':
         return MsgType.compactDivider;
+      case 'aggregate_card':
+        return MsgType.aggregateCard;
       default:
         return MsgType.unknown;
     }

@@ -45,6 +45,6 @@ flowchart LR
 
 - `init_db.sh` — 一键建库 + 跑 migrations；`deploy.sh` — 本地编译 → rsync → systemctl restart(生产部署)
 - `admin.sh` — 交互式管理菜单(加用户/重置密码/构建 APK/重启服务等)
-- `publish-plugin.sh` — 把 `plugin/` 同步到公开镜像 repo(`gitee.com/luoyu318/wanling-plugin`),用 `PUBLISH_REPO_DIR=<路径>` 指定本地 clone
-- `publish-sdk.sh` — 发布 SDK:TS `npm publish @wanling/sdk` + Python `uv publish wanling-sdk`(SDK 不进镜像 repo,版本独立演进)
+- `build-plugin-binaries.sh` — 构建 opencode 插件单文件二进制产物（bun compile，免 NodeJS），输出 `release/`，发布时上传主仓库 Gitee release（镜像 repo 已废弃）
+- `publish-sdk.sh` — 发布 SDK:TS `npm publish @wanling/sdk` + Python `uv publish wanling-sdk`(版本独立演进)
 - `send_test_message.py` — **消息测试工具**(开发调试用)。以 agent 身份给指定 user 发消息,支持 `--count N --interval X` 连发测试未读浮标链路。流程: agent_id+secret_key 换 JWT → 连 WS 完成 Hello/Identify → 发 MESSAGE_CREATE。环境变量 `WANLING_AGENT_ID` / `WANLING_SECRET_KEY` / `WANLING_USER_ID` 兜底(凭证可写在 `scripts/.test_env.local`,被 `scripts/.gitignore` 忽略)

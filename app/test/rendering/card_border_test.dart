@@ -268,7 +268,12 @@ void main() {
         ),
       ));
       await tester.pump();
-      final container = tester.widget<Container>(find.byType(Container).first);
+      // 终态卡外层是折叠外壳(无边框),需定位原卡(带左边框)的 Container
+      final container = tester.widget<Container>(
+        find.byWidgetPredicate((w) =>
+            w is Container &&
+            (w.decoration as BoxDecoration?)?.border is Border),
+      );
       final border =
           (container.decoration as BoxDecoration).border as Border;
       expect(border.left.width, 3.0);
@@ -293,7 +298,12 @@ void main() {
         ),
       ));
       await tester.pump();
-      final container = tester.widget<Container>(find.byType(Container).first);
+      // 终态卡外层是折叠外壳(无边框),需定位原卡(带左边框)的 Container
+      final container = tester.widget<Container>(
+        find.byWidgetPredicate((w) =>
+            w is Container &&
+            (w.decoration as BoxDecoration?)?.border is Border),
+      );
       final border =
           (container.decoration as BoxDecoration).border as Border;
       expect(border.left.width, 3.0);
@@ -318,7 +328,12 @@ void main() {
         ),
       ));
       await tester.pump();
-      final container = tester.widget<Container>(find.byType(Container).first);
+      // 终态卡外层是折叠外壳(无边框),需定位原卡(带左边框)的 Container
+      final container = tester.widget<Container>(
+        find.byWidgetPredicate((w) =>
+            w is Container &&
+            (w.decoration as BoxDecoration?)?.border is Border),
+      );
       final border =
           (container.decoration as BoxDecoration).border as Border;
       expect(border.left.width, 3.0);

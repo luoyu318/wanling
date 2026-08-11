@@ -1,6 +1,8 @@
 import 'package:app/models/conversation.dart';
 import 'package:app/models/message.dart';
+import 'package:app/models/msg_type.dart';
 import 'package:app/models/unread_info.dart';
+import 'package:app/models/ws_message.dart';
 import 'package:app/providers/chat_provider.dart';
 import 'package:app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -104,16 +106,16 @@ void main() {
   });
 
   test('上滑加载(DB 命中):即时呈现 DB + server 校正', () async {
-    // 当前会话窗口的 100 条(7月5日 9:00~10:39)
+    // 当前会话窗口的 30 条(7月5日 9:00~9:29)— 对齐 ChatNotifier._pageSize=30
     final currentBatch = <ChatMessage>[];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 30; i++) {
       final m = mkMsg('msg$i',
           createdAt: DateTime(2026, 7, 5, 9).add(Duration(minutes: i)));
       currentBatch.add(m);
       await store.putMessage(m);
     }
-    // 更老的 100 条(7月4日)— loadMore DB 应命中这部分
-    for (var i = 0; i < 100; i++) {
+    // 更老的 30 条(7月4日)— loadMore DB 应命中这部分
+    for (var i = 0; i < 30; i++) {
       await store.putMessage(mkMsg('old$i',
           createdAt: DateTime(2026, 7, 4).add(Duration(minutes: i))));
     }
@@ -124,7 +126,7 @@ void main() {
             limit: any(named: 'limit'), before: any(named: 'before')))
         .thenAnswer((inv) {
       serverBeforeCalls++;
-      // _initialize 期间 before=null,返当前批 100 条(让 hasMore=true);
+      // _initialize 期间 before=null,返当前批 30 条(让 hasMore=true);
       // loadMore 期间 before!=null,server 返空(模拟校正无新增)。
       final before = inv.namedArguments[#before] as DateTime?;
       if (before == null) {
@@ -140,9 +142,9 @@ void main() {
     final initCalls = serverBeforeCalls;
     expect(initCalls, 1, reason: '_initialize 调一次 getMessagesBefore(before=null)');
 
-    // 初始 state:DB 优先 100 条(server 返同批,_mergeHistory 去重保持 100)
-    expect(notifier.state.displayMessages.length, 100,
-        reason: 'DB 优先应即时呈现 100 条');
+    // 初始 state:DB 优先 30 条(server 返同批,_mergeHistory 去重保持 30)
+    expect(notifier.state.displayMessages.length, 30,
+        reason: 'DB 优先应即时呈现 30 条');
     expect(notifier.state.hasMore, isTrue,
         reason: 'server 返整页,hasMore=true 才能触发 loadMore');
 
@@ -152,9 +154,9 @@ void main() {
     expect(serverBeforeCalls, initCalls + 1,
         reason: 'C3 修复:DB 命中仍然 server 校正,loadMore 调一次 getMessagesBefore(before!=null)');
 
-    // state 应有 200 条(DB 初始 100 + DB 上滑追加 100 条更老消息,server 返空被去重)
-    expect(notifier.state.displayMessages.length, 200,
-        reason: 'loadMore 应从 DB 追加 100 条更老消息');
+    // state 应有 60 条(DB 初始 30 + DB 上滑追加 30 条更老消息,server 返空被去重)
+    expect(notifier.state.displayMessages.length, 60,
+        reason: 'loadMore 应从 DB 追加 30 条更老消息');
     expect(notifier.state.displayMessages.any((m) => m.id == 'old0'), isTrue,
         reason: '应包含 DB 命中的 old0');
   });
@@ -373,4 +375,81 @@ void main() {
       notifier.dispose();
     });
   });
+
+  test('c7d22e0: 聚合卡 MESSAGE_UPDATE 增量后 DB 写回最新 content', () async {
+    // 先构造 notifier(建立 WS 订阅),再建聚合卡进 live
+    final notifier = ChatNotifier(api, ws, 'conv1', null, 'me', store: store);
+    await Future.delayed(const Duration(milliseconds: 50));
+    ws.emit(WSMessage(
+      op: 0, t: 'MESSAGE_CREATE',
+      d: {
+        'id': 'agg-1', 'conversation_id': 'conv1',
+        'sender_type': 'agent', 'sender_id': 'a1',
+        'content': {
+          'msg_type': 'aggregate_card', 'silent': true,
+          'data': {'schema_ver': 1, 'state': 'generating', 'elements': []},
+        },
+        'created_at': '2026-07-05T10:00:00Z',
+      },
+    ));
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // append 增量 MESSAGE_UPDATE → 应合并进 live + 写回 DB
+    ws.emitUpdate(WSMessage(
+      op: 0, t: 'MESSAGE_UPDATE',
+      d: {
+        'conversation_id': 'conv1', 'message_id': 'agg-1',
+        'content': {
+          'msg_type': 'aggregate_card',
+          'data': {
+            'op': 'append',
+            'element': {
+              'type': 'markdown', 'element_id': 'markdown_1',
+              'data': {'text': '正文'},
+            },
+          },
+        },
+      },
+    ));
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // DB 应拿到合并后的完整 content(elements 含 markdown_1)
+    final dbMsgs = await store.getMessages(conversationId: 'conv1');
+    final agg = dbMsgs.where((m) => m.id == 'agg-1').toList();
+    expect(agg.length, 1, reason: '聚合卡写回 DB');
+    final elements =
+        ((agg.first.content['data'] as Map)['elements'] as List).toList();
+    expect(elements.length, 1, reason: 'DB content 是合并后的完整版');
+    expect((elements[0] as Map)['element_id'], 'markdown_1');
+    notifier.dispose();
+  });
+
+  test('d9603bc: eager 读到空聚合卡时过滤并从 DB 删除', () async {
+    // 预置 DB 空聚合卡快照(生成中空态)
+    await store.putMessage(ChatMessage(
+      id: 'empty-agg', conversationId: 'conv1',
+      senderType: 'agent', senderId: 'a1',
+      content: {
+        'msg_type': 'aggregate_card',
+        'data': {'schema_ver': 1, 'state': 'generating', 'elements': []},
+      },
+      isRead: true, createdAt: DateTime(2026, 7, 5), status: MessageStatus.sent,
+    ));
+    // 预置一条正常消息
+    await store.putMessage(mkMsg('normal-1', createdAt: DateTime(2026, 7, 6)));
+
+    final notifier = ChatNotifier(api, ws, 'conv1', null, 'me', store: store);
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // state 不应含空聚合卡
+    expect(notifier.state.displayMessages.any((m) => m.id == 'empty-agg'),
+        isFalse, reason: '空聚合卡不渲染');
+    // DB 空聚合卡被删除
+    final dbMsgs = await store.getMessages(conversationId: 'conv1');
+    expect(dbMsgs.any((m) => m.id == 'empty-agg'), isFalse,
+        reason: '空聚合卡脏记录被删除');
+    expect(dbMsgs.any((m) => m.id == 'normal-1'), isTrue);
+    notifier.dispose();
+  });
 }
+

@@ -19,7 +19,7 @@ void main() {
         home: Scaffold(body: QuotePreviewBar(quote: quote, onCancel: () {})),
       ));
 
-      expect(find.text('洛羽'), findsOneWidget);
+      expect(find.text('@洛羽'), findsOneWidget);
       expect(find.text('明天下午开个会吧,讨论 Q3 路线图'), findsOneWidget);
       expect(find.byIcon(Icons.close), findsOneWidget);
     });
@@ -65,7 +65,8 @@ void main() {
 
       // Container 装饰承载 B1 视觉(浅紫底 + 左竖线 + 圆角)
       expect(find.byType(Container), findsWidgets);
-      expect(find.byType(Row), findsOneWidget);  // 左右布局:文本 + 关闭按钮
+      // 内外两层 Row:外层(文本+关闭按钮)+ 内层(@昵称 + preview 单行)
+      expect(find.byType(Row), findsNWidgets(2));
     });
   });
 }

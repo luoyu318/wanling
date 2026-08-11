@@ -146,6 +146,23 @@ func (r *ParticipantRepo) IncrUnreadTx(ctx context.Context, tx *sql.Tx, convID, 
 	return err
 }
 
+// IncrUnread 非事务版 IncrUnreadTx:给非 exceptMember 全员 unread_count +1。
+//
+// 用于 PATCH silent 翻转(聚合卡回合结束)的补计数场景:消息已 commit,
+// 补计数不要求与任何写操作保持事务原子性,用非事务 r.exec 即可。
+// 复用 IncrUnreadTx 的 SQL,语义完全一致(sender 自身不加,其余全员 +1)。
+//
+// ctx 用于让 query 响应 cancel(exec 消费此 ctx)。
+func (r *ParticipantRepo) IncrUnread(ctx context.Context, convID, exceptMemberID, exceptMemberType string) error {
+	_, err := r.exec(ctx, `
+		UPDATE conversation_participants
+		SET unread_count = unread_count + 1
+		WHERE conv_id = $1
+		  AND NOT (member_id = $2 AND member_type = $3)
+	`, convID, exceptMemberID, exceptMemberType)
+	return err
+}
+
 // RecomputeUnreadForConvTx 按 conv 维度重算所有 participants 的 unread_count。
 //
 // 用途:撤回(message_handler Delete scope=recall)时,被撤回的消息应从未读计数里剔除。

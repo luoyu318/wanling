@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -220,12 +221,17 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 		return
 	}
 
-	// 保留原消息的 silent 字段:plugin 更新卡片 status 时 content 只带
-	// {msg_type,data,status},若直接整体替换会抹掉创建时的 silent=true,
-	// 导致 tool_card 等过程消息被后续未读重算误当"非 silent"计入(未读残留)。
-	// 语义:silent 是创建时确定的元数据,PATCH 只应改 data/status,不该动 silent。
-	// 新 content 显式带 silent 时以新值为准(尊重 caller 的显式意图)。
-	req.Content = mergePreservedSilent(msg.Content, req.Content)
+	// 聚合卡增量:content.data.op 存在 → 按 op 合并增量到原 content(DB 存全量,
+	// 广播带增量);data 无 op → 全量替换(旧 plugin / 非聚合)。
+	// 语义:silent 是创建时确定的元数据,全量替换 PATCH 只应改 data/status,不该动
+	// silent;增量 op 合并进原 content 天然保留 silent(set_silent 显式覆盖)。
+	delta := req.Content
+	merged, isDelta, err := applyContentOp(msg.Content, req.Content)
+	if err != nil {
+		Err(c, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	req.Content = merged
 
 	// 更新(repo WHERE 带 sender_id 兜底防 IDOR,handler 校验与 SQL 校验双保险)
 	if err := h.msgRepo.UpdateContent(c.Request.Context(), id, actorID, req.Content); err != nil {
@@ -238,8 +244,46 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 		return
 	}
 
-	// 广播 MESSAGE_UPDATE 给会话全员(APP 据此重渲染卡片)
-	h.hub.BroadcastMessageUpdate(msg.ConversationID, id, req.Content)
+	// 聚合卡回合结束:原消息 silent=true 且 PATCH 后 silent 翻转为 false 时,
+	// 该消息从"不计数"翻转为"计数",应对非 sender 全员 +1 unread。
+	// 与发消息时 IncrUnreadTx 的自增口径一致(silent=false 正常计数)。
+	// merged silent=false 只可能来自 caller 显式意图:全量替换显式带 silent=false,
+	// 或增量 op set_silent 显式传 false(其余路径保留原值,不会误触发翻转)。
+	// 计数放在 UpdateContent 成功之后:若更新失败(500 / 并发撤回 404),
+	// content 仍为 silent=true,不发生"内容未翻转却 +1"的假未读;
+	// silent 语义由 delivery 重算口径(content->>'silent' IS DISTINCT FROM 'true')
+	// 兜底,故计数失败不影响最终展示。
+	flipped := false
+	if origSilent, ok := contentSilent(msg.Content); ok && origSilent {
+		if mergedSilent, ok := contentSilent(req.Content); ok && !mergedSilent {
+			flipped = true
+			if err := h.participantRepo.IncrUnread(c.Request.Context(), msg.ConversationID, msg.SenderID, msg.SenderType); err != nil {
+				ErrMsg(c, http.StatusInternalServerError, "更新消息失败")
+				return
+			}
+		}
+	}
+
+	// 广播 MESSAGE_UPDATE 给会话全员(APP 据此重渲染卡片)。
+	// 增量 op:广播原始增量结构(APP 应用增量);全量替换:广播合并后全量。
+	// 聚合卡回合结束翻转(set_silent→false)时,merged 已写 data.preview
+	// (applyContentOp 提取最后 markdown 正文),增量广播本身无 elements,
+	// 需把 preview 注入广播 delta,让通知 body / 列表摘要直接可读。
+	// 翻转广播还附带会话 type/title(对齐 MESSAGE_CREATE payload),bg-service
+	// 据此识别 agent_session → 通知 title=会话标题(否则误走单聊 title=senderName)。
+	broadcastContent := merged
+	if isDelta {
+		broadcastContent = injectAggregatePreview(delta, merged)
+	}
+	if flipped {
+		var convType, convTitle string
+		if conv, err := h.convRepo.GetByID(c.Request.Context(), msg.ConversationID); err == nil && conv != nil {
+			convType, convTitle = conv.Type, conv.Title
+		}
+		h.hub.BroadcastMessageUpdateWithConvMeta(msg.ConversationID, id, broadcastContent, convType, convTitle)
+	} else {
+		h.hub.BroadcastMessageUpdate(msg.ConversationID, id, broadcastContent)
+	}
 
 	Ok(c, gin.H{"ok": true})
 }
@@ -492,4 +536,352 @@ func mergePreservedSilent(origContent, newContent json.RawMessage) json.RawMessa
 		return newContent
 	}
 	return merged
+}
+
+// contentSilent 解析 content JSON 的 silent 字段值。
+// 非 object / 无 silent 字段 / 解析失败 → (false, false),调用方据此跳过翻转判断。
+// 与 mergePreservedSilent 共用解析口径(silent 是 content 顶层的 bool)。
+func contentSilent(content json.RawMessage) (silent, ok bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(content, &m); err != nil || m == nil {
+		return false, false
+	}
+	raw, has := m["silent"]
+	if !has {
+		return false, false
+	}
+	if err := json.Unmarshal(raw, &silent); err != nil {
+		return false, false
+	}
+	return silent, true
+}
+
+// aggregateContentOp 聚合卡增量 op 参数(content.data 内的字段)。
+//   - op: append | update | remove | reorder | set_state | set_silent | set_segment
+//   - element: append 用,{type, element_id, data}
+//   - element_id: update / remove 用
+//   - data: update 用,整体替换目标元素 data
+//   - order: reorder 用,element_id 数组
+//   - state: set_state 用
+//   - silent: set_silent 用
+//   - segment: set_segment 用,分卡序列三态标记(first/middle/last)
+type aggregateContentOp struct {
+	Op        string                     `json:"op"`
+	Element   map[string]json.RawMessage `json:"element"`
+	ElementID string                     `json:"element_id"`
+	Data      json.RawMessage            `json:"data"`
+	Order     []string                   `json:"order"`
+	State     string                     `json:"state"`
+	Silent    *bool                      `json:"silent"`
+	Segment   string                     `json:"segment"`
+}
+
+// applyContentOp 应用 PATCH content 到原消息 content,返回写库用全量 merged:
+//
+//   - data 无 op(或 data 非 object)→ 全量替换,保留原 silent(兼容旧 plugin / 非聚合卡)
+//   - data 有 op → 聚合卡增量合并:在原 content 上应用 op,产出合并后全量
+//
+// 返回值:
+//   - merged: 写库 content(增量路径为合并后全量;无 op 路径为 mergePreservedSilent 结果)
+//   - isDelta: 是否为增量 op(为 true 时广播应带原始增量 reqContent 而非 merged)
+//   - err: 增量 op 参数缺失 / 目标元素不存在 / 结构解析失败(400 语义)
+//
+// 增量 op 语义:
+//   - append → elements 末尾追加 element
+//   - update → 按 element_id 整体替换元素 data(元素不存在 → 报错)
+//   - remove → 按 element_id 删除元素(不存在 → 幂等跳过,便于网络重试)
+//   - reorder → 按 order 数组重排 elements(order 含未知 id → 报错;未列出的元素保序追加尾部)
+//   - set_state → 改 data.state
+//   - set_segment → 改 data.segment(分卡序列三态标记 first/middle/last)
+//   - set_silent → 改顶层 content.silent(翻转 true→false 触达 IncrUnread 由调用方处理)
+//
+// 解析用 map[string]json.RawMessage 保留原 content 未知字段与未改动部分的原始字节。
+func applyContentOp(origContent, reqContent json.RawMessage) (merged json.RawMessage, isDelta bool, err error) {
+	// 解析入站增量:content.data 非 object / 无 op → 全量替换兼容路径
+	var delta aggregateContentOp
+	{
+		var top map[string]json.RawMessage
+		if e := json.Unmarshal(reqContent, &top); e != nil || top == nil {
+			return mergePreservedSilent(origContent, reqContent), false, nil
+		}
+		rawData, hasData := top["data"]
+		if !hasData {
+			return mergePreservedSilent(origContent, reqContent), false, nil
+		}
+		var dataHead struct {
+			Op string `json:"op"`
+		}
+		if e := json.Unmarshal(rawData, &dataHead); e != nil || dataHead.Op == "" {
+			return mergePreservedSilent(origContent, reqContent), false, nil
+		}
+		if e := json.Unmarshal(rawData, &delta); e != nil {
+			return nil, false, fmt.Errorf("解析 data.op 失败: %w", e)
+		}
+	}
+
+	// 解析原 content 为可修改 map(保留未知字段与原始字节)
+	var orig map[string]json.RawMessage
+	if e := json.Unmarshal(origContent, &orig); e != nil || orig == nil {
+		return nil, true, errors.New("原消息 content 解析失败")
+	}
+
+	var data map[string]json.RawMessage
+	if rawData, has := orig["data"]; has {
+		_ = json.Unmarshal(rawData, &data)
+	}
+	if data == nil {
+		data = map[string]json.RawMessage{}
+	}
+
+	switch delta.Op {
+	case "append":
+		if delta.Element == nil {
+			return nil, true, errors.New("append 需要 element")
+		}
+		elems, e := contentElements(data)
+		if e != nil {
+			return nil, true, e
+		}
+		elems = append(elems, delta.Element)
+		if e := setContentElements(data, elems); e != nil {
+			return nil, true, e
+		}
+	case "update":
+		if delta.ElementID == "" {
+			return nil, true, errors.New("update 需要 element_id")
+		}
+		if len(delta.Data) == 0 {
+			return nil, true, errors.New("update 需要 data")
+		}
+		elems, e := contentElements(data)
+		if e != nil {
+			return nil, true, e
+		}
+		found := false
+		for i := range elems {
+			if elementID(elems[i]) == delta.ElementID {
+				elems[i]["data"] = delta.Data
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, true, fmt.Errorf("update: 元素 %s 不存在", delta.ElementID)
+		}
+		if e := setContentElements(data, elems); e != nil {
+			return nil, true, e
+		}
+	case "remove":
+		if delta.ElementID == "" {
+			return nil, true, errors.New("remove 需要 element_id")
+		}
+		elems, e := contentElements(data)
+		if e != nil {
+			return nil, true, e
+		}
+		kept := make([]map[string]json.RawMessage, 0, len(elems))
+		for _, el := range elems {
+			if elementID(el) != delta.ElementID {
+				kept = append(kept, el)
+			}
+		}
+		if e := setContentElements(data, kept); e != nil {
+			return nil, true, e
+		}
+	case "reorder":
+		if len(delta.Order) == 0 {
+			return nil, true, errors.New("reorder 需要 order 数组")
+		}
+		elems, e := contentElements(data)
+		if e != nil {
+			return nil, true, e
+		}
+		byID := make(map[string]map[string]json.RawMessage, len(elems))
+		for _, el := range elems {
+			byID[elementID(el)] = el
+		}
+		seen := make(map[string]bool, len(delta.Order))
+		ordered := make([]map[string]json.RawMessage, 0, len(elems))
+		for _, id := range delta.Order {
+			el, ok := byID[id]
+			if !ok {
+				return nil, true, fmt.Errorf("reorder: order 中元素 %s 不存在", id)
+			}
+			if seen[id] {
+				continue // order 重复 id 幂等跳过
+			}
+			seen[id] = true
+			ordered = append(ordered, el)
+		}
+		// 未在 order 中列出的元素保序追加尾部(不丢数据)
+		for _, el := range elems {
+			if !seen[elementID(el)] {
+				ordered = append(ordered, el)
+			}
+		}
+		if e := setContentElements(data, ordered); e != nil {
+			return nil, true, e
+		}
+	case "set_state":
+		if delta.State == "" {
+			return nil, true, errors.New("set_state 需要 state")
+		}
+		rawState, e := json.Marshal(delta.State)
+		if e != nil {
+			return nil, true, e
+		}
+		data["state"] = rawState
+	case "set_segment":
+		if delta.Segment == "" {
+			return nil, true, errors.New("set_segment 需要 segment")
+		}
+		if delta.Segment != "first" && delta.Segment != "middle" && delta.Segment != "last" {
+			return nil, true, fmt.Errorf("set_segment 非法值: %s", delta.Segment)
+		}
+		rawSegment, e := json.Marshal(delta.Segment)
+		if e != nil {
+			return nil, true, e
+		}
+		data["segment"] = rawSegment
+	case "set_silent":
+		if delta.Silent == nil {
+			return nil, true, errors.New("set_silent 需要 silent")
+		}
+		rawSilent, e := json.Marshal(*delta.Silent)
+		if e != nil {
+			return nil, true, e
+		}
+		orig["silent"] = rawSilent
+		// 回合结束翻转(silent→false):从 elements 提取最后 markdown 正文写入
+		// data.preview。增量广播无 elements,通知 body / 会话列表摘要直接读 preview
+		// (单一真相源在 server 落库 merged,广播 delta 由调用方注入)。
+		if !*delta.Silent {
+			if p, err := lastMarkdownText(data); err == nil && p != "" {
+				rawPreview, merr := json.Marshal(p)
+				if merr != nil {
+					return nil, true, merr
+				}
+				data["preview"] = rawPreview
+			}
+		}
+	default:
+		return nil, true, fmt.Errorf("未知 op: %s", delta.Op)
+	}
+
+	rawData, e := json.Marshal(data)
+	if e != nil {
+		return nil, true, e
+	}
+	orig["data"] = rawData
+	merged, e = json.Marshal(orig)
+	if e != nil {
+		return nil, true, e
+	}
+	return merged, true, nil
+}
+
+// contentElements 取聚合卡 data.elements 数组(缺失 → 空数组)。
+func contentElements(data map[string]json.RawMessage) ([]map[string]json.RawMessage, error) {
+	raw, has := data["elements"]
+	if !has {
+		return nil, nil
+	}
+	var elems []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil, fmt.Errorf("解析 data.elements 失败: %w", err)
+	}
+	return elems, nil
+}
+
+// lastMarkdownText 取聚合卡 elements 中最后一个 markdown 元素的 text(用于
+// 回合结束翻转时写 data.preview)。与 APP _aggregateCardPreview 同口径:
+// 倒序遍历找最后一个 type=markdown 元素;无则返回空串。
+func lastMarkdownText(data map[string]json.RawMessage) (string, error) {
+	elems, err := contentElements(data)
+	if err != nil {
+		return "", err
+	}
+	for i := len(elems) - 1; i >= 0; i-- {
+		raw, err := json.Marshal(elems[i])
+		if err != nil {
+			continue
+		}
+		var elem struct {
+			Type string                     `json:"type"`
+			Data map[string]json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &elem); err != nil {
+			continue
+		}
+		if elem.Type != "markdown" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(elem.Data["text"], &text); err != nil {
+			continue
+		}
+		if text == "" {
+			continue
+		}
+		return text, nil
+	}
+	return "", nil
+}
+
+// injectAggregatePreview 把 merged(合并后全量)的 data.preview 注入广播 delta 的
+// data.preview。聚合卡回合结束翻转时,增量广播无 elements,通知/摘要直接读
+// preview。merged 无 preview(非翻转 / 无 markdown)→ 原样返回 delta。
+func injectAggregatePreview(delta, merged json.RawMessage) json.RawMessage {
+	var mm map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &mm); err != nil {
+		return delta
+	}
+	var mdata map[string]json.RawMessage
+	if raw, ok := mm["data"]; ok {
+		_ = json.Unmarshal(raw, &mdata)
+	}
+	preview, has := mdata["preview"]
+	if !has {
+		return delta
+	}
+
+	var dtop map[string]json.RawMessage
+	if err := json.Unmarshal(delta, &dtop); err != nil {
+		return delta
+	}
+	var ddata map[string]json.RawMessage
+	if raw, ok := dtop["data"]; ok {
+		_ = json.Unmarshal(raw, &ddata)
+	}
+	if ddata == nil {
+		ddata = map[string]json.RawMessage{}
+	}
+	ddata["preview"] = preview
+	rawData, err := json.Marshal(ddata)
+	if err != nil {
+		return delta
+	}
+	dtop["data"] = rawData
+	out, err := json.Marshal(dtop)
+	if err != nil {
+		return delta
+	}
+	return out
+}
+
+// setContentElements 回写聚合卡 data.elements。
+func setContentElements(data map[string]json.RawMessage, elems []map[string]json.RawMessage) error {
+	raw, err := json.Marshal(elems)
+	if err != nil {
+		return err
+	}
+	data["elements"] = raw
+	return nil
+}
+
+// elementID 取元素 element_id(缺失 / 解析失败 → 空串)。
+func elementID(elem map[string]json.RawMessage) string {
+	var id string
+	_ = json.Unmarshal(elem["element_id"], &id)
+	return id
 }

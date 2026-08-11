@@ -177,7 +177,7 @@ export class MetaSync {
     }
   }
 
-  public async loadCapabilities(): Promise<void> {
+  public   async loadCapabilities(): Promise<void> {
     try {
       const agentId = this.wanling.agentId
       if (!agentId) return
@@ -186,6 +186,18 @@ export class MetaSync {
       console.log(`[streamer] PLUGIN_CAPABILITIES 已上报: ${methods.length} methods`)
     } catch (err) {
       console.error(`[streamer] loadCapabilities 失败: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
+  // 回合结束 footer 快照读取:PartDispatcher 构造 footer 时把当时的 mode/model
+  // 写进 footer data(消息快照)。sessionMeta 是会话实时态会变动,提示条应读快照。
+  peekFullMeta(sessionID: string): { mode: string; modelId: string; modelName?: string } | undefined {
+    const meta = this.knownFullMeta.get(sessionID)
+    if (!meta) return undefined
+    return {
+      mode: meta.mode,
+      modelId: meta.modelId,
+      ...(meta.modelName !== undefined ? { modelName: meta.modelName } : {}),
     }
   }
 

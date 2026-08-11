@@ -97,12 +97,62 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   void _onMessageUpdate(WSMessage m) {
     final data = m.d as Map<String, dynamic>?;
     if (data == null) return;
+    final convId = data['conversation_id'] as String?;
+    if (convId == null) return;
     final content = data['content'] as Map<String, dynamic>?;
     final msgType = content?['msg_type'] as String?;
     if (msgType == 'permission_card' || msgType == 'question_card') {
       _pendingReloadTimer?.cancel();
       _pendingReloadTimer = Timer(const Duration(milliseconds: 200), load);
+      return;
     }
+    // 聚合卡回合结束翻转:silent true→false → 徽章+1 + 更新预览 + 置顶排序。
+    // generating 阶段(silent 仍 true)的 MESSAGE_UPDATE 只更新渲染(chatProvider),列表不动。
+    // 两种形态:
+    //   - 全量替换 PATCH(旧协议):silent 在 content 顶层,直接本地更新。
+    //   - 增量 set_silent op(新协议):silent 在 data 内,delta 无 elements,直接
+    //     覆盖 lastMessageContent 会让预览退化 → 走 load() 拉 server 全量
+    //     (server 已合并 + IncrUnread,last_message_content 即翻转后全量)。
+    if (msgType == 'aggregate_card' && content != null) {
+      final data = content['data'];
+      final isSetSilentDelta = data is Map && data['op'] == 'set_silent';
+      final flipped = isSetSilentDelta
+          ? data['silent'] == false
+          : content['silent'] == false;
+      if (flipped) {
+        if (isSetSilentDelta) {
+          _pendingReloadTimer?.cancel();
+          _pendingReloadTimer =
+              Timer(const Duration(milliseconds: 200), load);
+        } else {
+          _onAggregateCardFlip(convId, content);
+        }
+      }
+    }
+  }
+
+  /// 聚合卡回合结束(silent true→false)翻转:徽章+1 + lastMessageContent 更新为
+  /// 聚合卡 content(预览经 [Conversation.lastMessagePreview] → MsgTypeX.preview
+  /// 取最后 markdown 元素 text)+ 置顶排序。
+  ///
+  /// 会话不在列表时跳过:由 load()/下一次拉取兜底(server 已在翻转时 IncrUnread,
+  /// ListForUser 的 last_message_content 也是翻转后的聚合卡)。
+  void _onAggregateCardFlip(String convId, Map<String, dynamic> content) {
+    final idx = state.indexWhere((c) => c.id == convId);
+    if (idx == -1) return;
+    final item = state[idx];
+    // 与 _onMessageCreate 同口径:正在看该会话时不 +1(本地徽章 UX 优化,
+    // server 端已计未读,进会话时 markRead 归零)。
+    final isActive = convId == _activeConvId;
+    final newItem = item.copyWith(
+      lastMessageContent: content,
+      unreadCount: isActive ? item.unreadCount : item.unreadCount + 1,
+    );
+    state = [...state.where((c) => c.id != convId), newItem];
+    _resort();
+
+    // F5: 关键事件 fire-and-forget 落库
+    _persistConv(newItem, tag: 'MESSAGE_UPDATE_AGGREGATE_FLIP');
   }
 
   @override

@@ -34,9 +34,8 @@ bool _isInternalFileUrl(String url, String baseUrl) {
 /// 聊天气泡用的 markdown 渲染样式（极简墨白风格）。
 ///
 /// 特征:
-/// - 正文 17px、行高 1.6(受任务列表 checkbox WidgetSpan 约束下限,不能 < 1.6,
-///   否则触发 padding.isNonNegative 断言)
-/// - 标题墨黑/粗体,层级靠字号区分,**不带底部分割横线**
+/// - 正文 16px、行高 1.5(全元素统一字号,标题靠颜色区分层级)
+/// - 标题墨黑/粗体,层级靠颜色区分,**不带底部分割横线**
 /// - 代码块:浅灰底圆角 6 + flutter_highlight 高亮 + 右上角复制按钮(无语言标签)
 /// - 引用块灰条
 /// - 表格:只保留行下方浅灰细线(无外框/竖线),表头灰字不加粗、表内容黑字不加粗,
@@ -280,7 +279,7 @@ Widget _markdownImagePlaceholder(Map<String, String> attributes) {
         TextSpan(text: label),
       ],
       style: const TextStyle(
-        fontSize: 14,
+        fontSize: 16,
         fontStyle: FontStyle.italic,
         color: Color(0xFF888888),
       ),

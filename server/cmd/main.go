@@ -27,6 +27,7 @@ import (
 	"github.com/wanling/server/internal/ratelimit"
 	"github.com/wanling/server/internal/repository"
 	"github.com/wanling/server/internal/storage"
+	"github.com/wanling/server/internal/version"
 )
 
 func main() {
@@ -408,7 +409,13 @@ func main() {
 	r.GET("/ws", gin.WrapH(wsHandler))
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(200, gin.H{
+			"status": "ok",
+			// 版本号:编译时 ldflags 注入(见 internal/version),本地 go run 为默认值
+			"version": version.Version,
+			// git commit(短 hash),未注入时为空串
+			"commit": version.BuildCommit,
+		})
 	})
 
 	// /ready 验依赖连通性,供 docker / k8s healthcheck 区分进程存活 vs 依赖就绪。

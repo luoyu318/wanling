@@ -183,10 +183,13 @@ class _SessionMetaStripState extends State<SessionMetaStrip> {
       ));
     }
 
-    return Text.rich(
-      TextSpan(children: children),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
+    // 横向超出屏幕时水平滑动查看,不显示滚动条。
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Text.rich(
+        TextSpan(children: children),
+        maxLines: 1,
+      ),
     );
   }
 }

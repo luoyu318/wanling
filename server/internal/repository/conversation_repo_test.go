@@ -1097,10 +1097,10 @@ func TestListAgentSessionsForUser_FullFields(t *testing.T) {
 	}
 }
 
-// TestListAgentSessionsForUser_LastUserMessageContent 验证 last_user_message_content
-// 子查询:取当前用户最后一条 msg_type=text/tui_user 的消息文本,过滤 agent 消息和非文字类型。
-// tui_user 消息需带 [TUI] 前缀(与 APP MsgTypeX.preview 规则对齐)。
-func TestListAgentSessionsForUser_LastUserMessageContent(t *testing.T) {
+// TestListAgentSessionsForUser_LastAgentReplyContent 验证 last_agent_reply_content
+// 子查询:取 agent 最后一条非 silent 的 msg_type=text/markdown 消息文本,
+// 过滤 user 消息、过程消息(silent)和非文字类型。
+func TestListAgentSessionsForUser_LastAgentReplyContent(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewConversationRepo(db)
 	msgRepo := NewMessageRepo(db)
@@ -1116,7 +1116,20 @@ func TestListAgentSessionsForUser_LastUserMessageContent(t *testing.T) {
 	conv4, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s4", "")
 	conv5, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s5", "")
 	conv6, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s6", "")
+	conv7, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s7", "")
+	conv8, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s8", "")
 
+	mkMarkdown := func(s string, silent bool) json.RawMessage {
+		content := map[string]interface{}{
+			"msg_type": "markdown",
+			"data":     map[string]string{"text": s},
+		}
+		if silent {
+			content["silent"] = true
+		}
+		b, _ := json.Marshal(content)
+		return b
+	}
 	mkText := func(s string) json.RawMessage {
 		b, _ := json.Marshal(map[string]interface{}{
 			"msg_type": "text",
@@ -1124,55 +1137,43 @@ func TestListAgentSessionsForUser_LastUserMessageContent(t *testing.T) {
 		})
 		return b
 	}
-	mkImage := func() json.RawMessage {
+	mkReasoning := func(s string) json.RawMessage {
 		b, _ := json.Marshal(map[string]interface{}{
-			"msg_type": "image",
-			"data":     map[string]string{"url": "x.png"},
-		})
-		return b
-	}
-	mkTui := func(s string) json.RawMessage {
-		b, _ := json.Marshal(map[string]interface{}{
-			"msg_type": "tui_user",
+			"msg_type": "reasoning",
 			"data":     map[string]string{"text": s},
+			"silent":   true,
 		})
 		return b
 	}
 
-	// conv1: user 发两条 text + agent 回复 → 期望最后一条 user text
-	msgRepo.Create(t.Context(), conv1.ID, "user", user.ID, mkText("帮我修bug"))
+	// conv1: agent 发两条回复 → 期望最后一条 agent 回复
+	msgRepo.Create(t.Context(), conv1.ID, "agent", agent.ID, mkMarkdown("第一次回复", false))
 	time.Sleep(5 * time.Millisecond)
-	msgRepo.Create(t.Context(), conv1.ID, "user", user.ID, mkText("帮我改样式"))
-	time.Sleep(5 * time.Millisecond)
-	msgRepo.Create(t.Context(), conv1.ID, "agent", agent.ID, mkText("好的"))
+	msgRepo.Create(t.Context(), conv1.ID, "agent", agent.ID, mkMarkdown("最终回复", false))
 
-	// conv2: 只有 agent 消息 → 期望空
-	msgRepo.Create(t.Context(), conv2.ID, "agent", agent.ID, mkText("你好"))
+	// conv2: 只有 user 消息 → 期望空
+	msgRepo.Create(t.Context(), conv2.ID, "user", user.ID, mkText("你好"))
 
-	// conv3: user 发非文字(image) → 期望空
-	msgRepo.Create(t.Context(), conv3.ID, "user", user.ID, mkImage())
+	// conv3: agent 发 silent 过程消息(reasoning)→ 期望空
+	msgRepo.Create(t.Context(), conv3.ID, "agent", agent.ID, mkReasoning("思考中..."))
 
 	// conv4: 无消息 → 期望空
 
-	// conv5: user 只发 tui_user → 期望 [TUI] xxx
-	msgRepo.Create(t.Context(), conv5.ID, "user", user.ID, mkTui("在终端敲的"))
-
-	// conv6: user 先发 text 后发 tui_user → 期望取最新 tui_user
-	msgRepo.Create(t.Context(), conv6.ID, "user", user.ID, mkText("旧指令"))
+	// conv5: agent 中间步骤 silent markdown + 最终回复 → 期望取最终回复(过滤 silent)
+	msgRepo.Create(t.Context(), conv5.ID, "agent", agent.ID, mkMarkdown("中间步骤", true))
 	time.Sleep(5 * time.Millisecond)
-	msgRepo.Create(t.Context(), conv6.ID, "user", user.ID, mkTui("新指令"))
+	msgRepo.Create(t.Context(), conv5.ID, "agent", agent.ID, mkMarkdown("最终回复", false))
 
-	// conv7: plugin 代发 tui_user(真实场景:plugin 用 agent JWT 连 WS,
-	// sender_type='agent'/sender_id=agent_id) → 期望仍命中摘要且带 [TUI] 前缀。
-	conv7, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s7", "")
-	msgRepo.Create(t.Context(), conv7.ID, "agent", agent.ID, mkTui("plugin 代发的指令"))
+	// conv6: agent 只发 silent markdown(中间步骤,无最终回复)→ 期望空
+	msgRepo.Create(t.Context(), conv6.ID, "agent", agent.ID, mkMarkdown("中间步骤", true))
 
-	// conv8: user 先发 text,plugin 后代发 tui_user → 期望取最新 tui_user(OR 放宽后
-	// user text 与 agent 代发 tui_user 共同按 created_at DESC 竞争,取最新)。
-	conv8, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s8", "")
-	msgRepo.Create(t.Context(), conv8.ID, "user", user.ID, mkText("user 的旧问题"))
+	// conv7: agent 发 text 类型回复 → 期望命中 text
+	msgRepo.Create(t.Context(), conv7.ID, "agent", agent.ID, mkText("文字回复"))
+
+	// conv8: user 先发 text,agent 后发 markdown 最终回复 → 期望取 agent 回复
+	msgRepo.Create(t.Context(), conv8.ID, "user", user.ID, mkText("帮我改样式"))
 	time.Sleep(5 * time.Millisecond)
-	msgRepo.Create(t.Context(), conv8.ID, "agent", agent.ID, mkTui("plugin 代发的新指令"))
+	msgRepo.Create(t.Context(), conv8.ID, "agent", agent.ID, mkMarkdown("已经改好了", false))
 
 	got, err := repo.ListAgentSessionsForUser(t.Context(), user.ID, agent.ID)
 	if err != nil {
@@ -1183,29 +1184,109 @@ func TestListAgentSessionsForUser_LastUserMessageContent(t *testing.T) {
 		byID[c.ID] = c
 	}
 
-	if byID[conv1.ID].LastUserMessageContent != "帮我改样式" {
-		t.Errorf("conv1 期望「帮我改样式」, 实际 %q", byID[conv1.ID].LastUserMessageContent)
+	if byID[conv1.ID].LastAgentReplyContent != "最终回复" {
+		t.Errorf("conv1 期望「最终回复」, 实际 %q", byID[conv1.ID].LastAgentReplyContent)
 	}
-	if byID[conv2.ID].LastUserMessageContent != "" {
-		t.Errorf("conv2 只有 agent 消息, 期望空, 实际 %q", byID[conv2.ID].LastUserMessageContent)
+	if byID[conv2.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv2 只有 user 消息, 期望空, 实际 %q", byID[conv2.ID].LastAgentReplyContent)
 	}
-	if byID[conv3.ID].LastUserMessageContent != "" {
-		t.Errorf("conv3 user 发图非文字, 期望空, 实际 %q", byID[conv3.ID].LastUserMessageContent)
+	if byID[conv3.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv3 agent 只有 silent reasoning, 期望空, 实际 %q", byID[conv3.ID].LastAgentReplyContent)
 	}
-	if byID[conv4.ID].LastUserMessageContent != "" {
-		t.Errorf("conv4 无消息, 期望空, 实际 %q", byID[conv4.ID].LastUserMessageContent)
+	if byID[conv4.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv4 无消息, 期望空, 实际 %q", byID[conv4.ID].LastAgentReplyContent)
 	}
-	if byID[conv5.ID].LastUserMessageContent != "[TUI] 在终端敲的" {
-		t.Errorf("conv5 期望「[TUI] 在终端敲的」, 实际 %q", byID[conv5.ID].LastUserMessageContent)
+	if byID[conv5.ID].LastAgentReplyContent != "最终回复" {
+		t.Errorf("conv5 期望「最终回复」(过滤 silent 中间步骤), 实际 %q", byID[conv5.ID].LastAgentReplyContent)
 	}
-	if byID[conv6.ID].LastUserMessageContent != "[TUI] 新指令" {
-		t.Errorf("conv6 期望「[TUI] 新指令」(tui 比 text 新), 实际 %q", byID[conv6.ID].LastUserMessageContent)
+	if byID[conv6.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv6 agent 只有 silent markdown, 期望空, 实际 %q", byID[conv6.ID].LastAgentReplyContent)
 	}
-	if byID[conv7.ID].LastUserMessageContent != "[TUI] plugin 代发的指令" {
-		t.Errorf("conv7 期望「[TUI] plugin 代发的指令」(plugin 代发 sender=agent), 实际 %q", byID[conv7.ID].LastUserMessageContent)
+	if byID[conv7.ID].LastAgentReplyContent != "文字回复" {
+		t.Errorf("conv7 期望「文字回复」(agent text 也命中), 实际 %q", byID[conv7.ID].LastAgentReplyContent)
 	}
-	if byID[conv8.ID].LastUserMessageContent != "[TUI] plugin 代发的新指令" {
-		t.Errorf("conv8 期望「[TUI] plugin 代发的新指令」(tui 比 user text 新), 实际 %q", byID[conv8.ID].LastUserMessageContent)
+	if byID[conv8.ID].LastAgentReplyContent != "已经改好了" {
+		t.Errorf("conv8 期望「已经改好了」(agent 回复优先), 实际 %q", byID[conv8.ID].LastAgentReplyContent)
+	}
+}
+
+// TestListAgentSessionsForUser_LastAgentReplyContent_AggregateCard 验证
+// last_agent_reply_content 对 aggregate_card 的摘要:读 data.preview(回合结束
+// 翻转时 server 写入的最后 markdown 正文);无 preview 的聚合卡(生成中)不命中。
+func TestListAgentSessionsForUser_LastAgentReplyContent_AggregateCard(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewConversationRepo(db)
+	msgRepo := NewMessageRepo(db)
+	urepo := NewUserRepo(db)
+	arepo := NewAgentRepo(db)
+
+	user, _ := urepo.Create(t.Context(), uniqueShortName(t, "u"), "$2a$10$h")
+	agent, _ := arepo.Create(t.Context(), user.ID, uniqueShortName(t, "ag"), "sk", "opencode")
+
+	conv1, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s1", "")
+	conv2, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s2", "")
+	conv3, _ := repo.CreateAgentSession(t.Context(), user.ID, agent.ID, "s3", "")
+
+	mkAggregate := func(preview string, silent bool) json.RawMessage {
+		content := map[string]interface{}{
+			"msg_type": "aggregate_card",
+			"data": map[string]interface{}{
+				"state":    "done",
+				"elements": []map[string]interface{}{{"type": "markdown", "element_id": "m1", "data": map[string]string{"text": preview}}},
+			},
+		}
+		if silent {
+			content["silent"] = true
+		}
+		b, _ := json.Marshal(content)
+		return b
+	}
+	// 翻转后的聚合卡(silent=false + preview 由 server 写入)
+	mkFlipped := func(preview string) json.RawMessage {
+		b, _ := json.Marshal(map[string]interface{}{
+			"msg_type": "aggregate_card",
+			"data": map[string]interface{}{
+				"state":    "done",
+				"preview":  preview,
+				"elements": []map[string]interface{}{{"type": "markdown", "element_id": "m1", "data": map[string]string{"text": preview}}},
+			},
+			"silent": false,
+		})
+		return b
+	}
+
+	// conv1: 翻转后的聚合卡 → 摘要取 data.preview
+	msgRepo.Create(t.Context(), conv1.ID, "agent", agent.ID, mkFlipped("聚合回复正文"))
+
+	// conv2: silent 聚合卡(生成中) → 不命中,摘要空
+	msgRepo.Create(t.Context(), conv2.ID, "agent", agent.ID, mkAggregate("中间态", true))
+
+	// conv3: 翻转聚合卡 + 后续 text 回复 → 取最新(text 覆盖聚合卡摘要)
+	msgRepo.Create(t.Context(), conv3.ID, "agent", agent.ID, mkFlipped("聚合回复正文"))
+	time.Sleep(5 * time.Millisecond)
+	textContent, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"data":     map[string]string{"text": "最终文字回复"},
+	})
+	msgRepo.Create(t.Context(), conv3.ID, "agent", agent.ID, textContent)
+
+	got, err := repo.ListAgentSessionsForUser(t.Context(), user.ID, agent.ID)
+	if err != nil {
+		t.Fatalf("ListAgentSessionsForUser: %v", err)
+	}
+	byID := map[string]model.ConversationListItem{}
+	for _, c := range got {
+		byID[c.ID] = c
+	}
+
+	if byID[conv1.ID].LastAgentReplyContent != "聚合回复正文" {
+		t.Errorf("conv1 期望聚合卡摘要「聚合回复正文」, 实际 %q", byID[conv1.ID].LastAgentReplyContent)
+	}
+	if byID[conv2.ID].LastAgentReplyContent != "" {
+		t.Errorf("conv2 silent 聚合卡期望空, 实际 %q", byID[conv2.ID].LastAgentReplyContent)
+	}
+	if byID[conv3.ID].LastAgentReplyContent != "最终文字回复" {
+		t.Errorf("conv3 期望最新 text 覆盖聚合卡, 实际 %q", byID[conv3.ID].LastAgentReplyContent)
 	}
 }
 

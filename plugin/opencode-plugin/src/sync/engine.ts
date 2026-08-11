@@ -7,7 +7,7 @@ import type {
 import {
   upsertSessionMap,
   getSessionMap,
-  listSessionMaps
+  listSessionMaps,
 } from "./mapper.js"
 import { getCard, deleteCard } from "./card_store.js"
 import { EventEmitter } from "events"
@@ -53,6 +53,7 @@ export class SyncEngine extends EventEmitter {
   private async handleIncomingMessage(
     payload: MessageCreatePayload,
   ): Promise<void> {
+    console.log(`[sync] handleIncomingMessage msgId=${payload.id?.slice(0, 8)} sender=${payload.sender_type} conv=${payload.conversation_id?.slice(0, 8)}`)
     if (payload.sender_type !== "user") return
     if (!payload.sender_id) return
 
@@ -95,7 +96,7 @@ export class SyncEngine extends EventEmitter {
         upsertSessionMap(map)
       }
       this.wanling.sendTyping(convId)
-      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename)
+      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename, payload.id)
       upsertSessionMap({ ...map, lastSyncAt: new Date().toISOString() })
       return
     }
@@ -163,7 +164,7 @@ export class SyncEngine extends EventEmitter {
         const model = rawModel && rawModel.provider_id && rawModel.model_id
           ? { providerID: rawModel.provider_id, modelID: rawModel.model_id }
           : undefined
-        await this.promptWithRetry(map.opencodeSessionId, String(data.text || ""), agent, model)
+        await this.sendPromptWithInterrupt(map.opencodeSessionId, payload.id, String(data.text || ""), agent, model)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -192,6 +193,10 @@ export class SyncEngine extends EventEmitter {
     try {
       await this.opencode.abortSession(map.opencodeSessionId)
       console.log(`[sync] abort conv=${convId.slice(0, 8)}… session=${map.opencodeSessionId.slice(0, 12)}… 已发送中止信号`)
+      // 聚合卡主动收尾定格:abort 后 opencode 不再推 step-finish footer,
+      // 由 streamer 侧对主 session 聚合卡 finishCard("stop"),APP footer 显示「已停止」。
+      // 经事件解耦(engine 不持有 streamer),index.ts 接线到 streamer.finishCardForSession。
+      this.emit("aggregate_finish", { sessionId: map.opencodeSessionId, reason: "stop" as const })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[sync] abort conv=${convId.slice(0, 8)}… 失败: ${msg}`)
@@ -246,6 +251,19 @@ export class SyncEngine extends EventEmitter {
     throw lastErr ?? new Error("promptWithRetry: unreachable")
   }
 
+  // 发送 prompt:用户消息直接 v1 promptAsync 异步发送(不阻塞,opencode 自带排队)。
+  // 聚合卡分段由消息边界驱动:opencode 对连续消息每条 user→assistant 建独立
+  // message,subscriber 检测新回合(assistant_message_started)→ streamer 收尾旧卡。
+  private async sendPromptWithInterrupt(
+    sessionId: string,
+    wanlingMsgId: string,
+    text: string,
+    agent?: string,
+    model?: { providerID: string; modelID: string },
+  ): Promise<void> {
+    await this.promptWithRetry(sessionId, text, agent, model)
+  }
+
   // 从 media 消息 data 提取 file_id:mixed 优先 items[0].file_id,否则顶层 file_id。
   // mixed 类型携带 items 数组(图片+文件混合),当前只处理首项(单文件路径)。
   private extractFileId(data: Record<string, unknown>): string | undefined {
@@ -272,6 +290,7 @@ export class SyncEngine extends EventEmitter {
     msgType: string,
     fileId: string | undefined,
     filename?: string,
+    wanlingMsgId?: string,
   ): Promise<void> {
     if (!fileId) {
       console.warn("[sync] media message missing file_id, skip")
@@ -279,7 +298,7 @@ export class SyncEngine extends EventEmitter {
     }
     if (!this.downloader) {
       console.warn("[sync] downloader not configured, cannot handle media message")
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType))
+      await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
 
@@ -293,10 +312,10 @@ export class SyncEngine extends EventEmitter {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[sync] media download failed: ${msg}`)
-      await this.promptWithRetry(sessionId, this.fallbackText(msgType))
+      await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
-    await this.promptWithRetry(sessionId, this.mediaPromptText(msgType, result.path))
+    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
   }
 
   private mediaPromptText(msgType: string, path: string): string {
@@ -320,7 +339,11 @@ export class SyncEngine extends EventEmitter {
       const entry = await getCard(ocRequestId)
       await this.opencode.replyPermission(ocRequestId, reply, entry?.directory)
 
-      if (entry) {
+      // 聚合模式(entry.elementId 已存):独立 permission_card PATCH 会把聚合卡整个
+      // 改写坏(聚合卡是 aggregate_card 结构)。card 状态更新交给 OC 的 permission.replied
+      // 回声 → interaction.onPermissionReplied 更新聚合卡内元素;这里不 deleteCard,
+      // 保留 entry 供回声消费(回声幂等:interaction 更新后 deleteCard)。
+      if (entry && !entry.elementId) {
         const status = reply === "reject" ? "denied" : "approved"
         await this.wanling.updateMessageContent(entry.msgId, {
           msg_type: "permission_card",
@@ -361,7 +384,11 @@ export class SyncEngine extends EventEmitter {
         await this.opencode.replyQuestion(ocRequestId, answers || [], directory)
       }
 
-      if (entry) {
+      // 聚合模式(entry.elementId 已存):独立 question_card PATCH 会把聚合卡整个
+      // 改写坏。card 状态更新交给 OC 的 question.replied/question.rejected 回声 →
+      // interaction.onQuestionReplied/onQuestionRejected 更新聚合卡内元素;
+      // 这里不 deleteCard,保留 entry 供回声消费。
+      if (entry && !entry.elementId) {
         const status = rejected ? "rejected" : "answered"
         const result = rejected
           ? "rejected"

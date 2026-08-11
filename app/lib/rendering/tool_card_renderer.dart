@@ -5,6 +5,7 @@ import 'package:highlight/highlight.dart' show highlight;
 
 import '../models/message.dart';
 import '../utils/code_highlight.dart' show languageFromPath, highlightNodesToSpans;
+import '../utils/icon_font.dart';
 import 'message_content_renderer.dart';
 import 'permission_card_renderer.dart' show showPermissionReplySheet;
 import 'question_card_renderer.dart' show showQuestionReplySheet;
@@ -125,6 +126,21 @@ class ToolCardRenderer implements MessageContentRenderer {
       }
     }
 
+    // webfetch 特殊：无边框无背景的纯文字行(网络探索,不折叠不进工具卡容器)
+    if (name == 'webfetch') {
+      return _WebFetchRow(data: data);
+    }
+
+    // skill 特殊：无边框无背景的纯文字行(技能加载,星标橙 + 已加载技能 + 技能名)
+    if (name == 'skill') {
+      return _SkillRow(data: data);
+    }
+
+    // todowrite 特殊：无外壳纯折叠行(图标 + 已完成 x/y 项 + 箭头,展开任务列表)
+    if (name == 'todowrite') {
+      return _TodoFoldRow(data: data, rc: rc);
+    }
+
     // 普通 tool_card：原三态
     switch (status) {
       case 'completed':
@@ -150,6 +166,14 @@ Widget _wrapAnimated(Widget child) {
     child: child,
   );
 }
+
+/// task 卡跳转子 Agent 详情页用的 root_msg_id。
+///
+/// 聚合卡内元素优先取 rc.rootMessageId（= 聚合卡真实消息 id），子会话消息的
+/// root 指向该 id，用它才能拉到子树；非聚合场景 rootMessageId 为空时 fallback
+/// 到 rc.messageId（= task 消息自身，即根）。
+String _taskRootId(MessageRenderContext rc) =>
+    rc.rootMessageId.isNotEmpty ? rc.rootMessageId : rc.messageId;
 
 /// 从输入中提取当前操作的文件/目录上下文标签。
 (String, String) _toolContext(Map<String, dynamic> input) {
@@ -228,11 +252,12 @@ class _TruncatedOutput extends StatelessWidget {
       );
     }
 
-    // 其他工具:走通用截断组件
+    // 其他工具:走通用截断组件(限一行预览,点击弹抽屉看全文)
     return TruncatableTextBlock(
       text: output,
       sheetTitle: Text(capitalize(name), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
       textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+      maxLines: 1,
     );
   }
 
@@ -418,6 +443,325 @@ class _FileDiffRow extends StatelessWidget {
   }
 }
 
+// ── webfetch 行 ──
+/// webfetch 网络探索:无边框无背景的纯文字行(不折叠,独立平铺)。
+/// 对齐「思考块/折叠组」极简风格,与有容器的普通工具卡区分。
+/// 网址过长单行截断(ellipsis),点击弹抽屉展示完整 url / output / error。
+class _WebFetchRow extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _WebFetchRow({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = data['status'] as String? ?? 'running';
+    final statusText = switch (status) {
+      'completed' => '完成',
+      'error' => '失败',
+      _ => '访问中...',
+    };
+    final statusColor = switch (status) {
+      'completed' => const Color(0xFF07C160),
+      'error' => const Color(0xFFFA5151),
+      _ => const Color(0xFF999999),
+    };
+    final input = data['input'] as Map<String, dynamic>? ?? const {};
+    final url = (input['url'] as String?) ?? '';
+    return GestureDetector(
+      onTap: url.isNotEmpty || _hasDetail() ? () => _showDetail(context) : null,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
+          const SizedBox(width: 6),
+          const Text('WebFetch',
+              style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
+          if (url.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF999999),
+                  decoration: TextDecoration.underline,
+                  decorationColor: Color(0xFFBBBBBB),
+                ),
+              ),
+            ),
+          ],
+          if (statusText.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  bool _hasDetail() {
+    final output = data['output'] as String?;
+    final error = data['error'] as String?;
+    return (output != null && output.isNotEmpty) || (error != null && error.isNotEmpty);
+  }
+
+  void _showDetail(BuildContext context) {
+    final input = data['input'] as Map<String, dynamic>? ?? const {};
+    final url = (input['url'] as String?) ?? '';
+    final output = data['output'] as String? ?? '';
+    final error = data['error'] as String? ?? '';
+    showDetailSheet(
+      context,
+      title: const Row(
+        children: [
+          Text(IconFont.explore,
+              style: TextStyle(
+                  fontFamily: 'iconfont', fontSize: 18, color: Color(0xFFB388FF), height: 1)),
+          SizedBox(width: 6),
+          Text('WebFetch',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (url.isNotEmpty) ...[
+            const Text('网址', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(url,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF5B8BF7))),
+            const SizedBox(height: 12),
+          ],
+          if (error.isNotEmpty) ...[
+            const Text('错误', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(error,
+                style: const TextStyle(fontSize: 13, height: 1.5, color: Color(0xFFFA5151))),
+            const SizedBox(height: 12),
+          ],
+          if (output.isNotEmpty) ...[
+            const Text('搜索结果', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(output,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF555555))),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── skill 行 ──
+/// skill 技能卡片:无边框无背景的纯文字行(技能加载,对齐 webfetch 极简风格)。
+/// 星标橙图标 + 「已加载技能」+ 技能名(灰斜体),点击弹抽屉看技能内容。
+class _SkillRow extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _SkillRow({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final input = data['input'] as Map<String, dynamic>? ?? const {};
+    final name = (input['name'] as String?) ?? '';
+    final output = data['output'] as String? ?? '';
+    return GestureDetector(
+      onTap: name.isNotEmpty || output.isNotEmpty
+          ? () => _showDetail(context, name, output)
+          : null,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            const Icon(Icons.auto_awesome, size: 15, color: Color(0xFFFA8C16)),
+            const SizedBox(width: 6),
+            const Text('已加载技能',
+                style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
+            if (name.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF999999),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDetail(BuildContext context, String name, String output) {
+    showDetailSheet(
+      context,
+      title: const Row(
+        children: [
+          Icon(Icons.auto_awesome, size: 18, color: Color(0xFFFA8C16)),
+          SizedBox(width: 6),
+          Text('已加载技能',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (name.isNotEmpty) ...[
+            const Text('技能名', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(name,
+                style: const TextStyle(fontSize: 13, height: 1.5, color: Color(0xFF333333))),
+            const SizedBox(height: 12),
+          ],
+          if (output.isNotEmpty) ...[
+            const Text('技能内容', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+            const SizedBox(height: 4),
+            SelectableText(output,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5, color: Color(0xFF555555))),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── todowrite 折叠行 ──
+/// todowrite 任务清单:无外壳纯折叠行(对齐聚合卡折叠组风格)。
+/// 标题行 = 图标 + 「已完成 x/y 项」+ 箭头;点击展开/收起任务列表。
+/// 无边框无背景,不套工具卡外壳。
+/// 折叠展开沿用 [ToolGroupCard] 的同步滚动补偿机制(history 反向列表展开内容
+/// 向上顶,经 rc.onToolGroupToggle 上报 ChatPage 同帧 jumpTo 补偿)。
+class _TodoFoldRow extends StatefulWidget {
+  final Map<String, dynamic> data;
+  final MessageRenderContext rc;
+  const _TodoFoldRow({required this.data, required this.rc});
+
+  @override
+  State<_TodoFoldRow> createState() => _TodoFoldRowState();
+}
+
+class _TodoFoldRowState extends State<_TodoFoldRow> {
+  bool _expanded = false;
+
+  /// 折叠行自身 GlobalKey：展开/收起时上报 ChatPage 做滚动补偿。
+  final GlobalKey _key = GlobalKey();
+
+  /// 展开内容测量 key：内容**始终渲染**（收起时用 Align(heightFactor:0)
+  /// 视觉高度为 0 但仍参与布局），同步读取真实高度做滚动补偿。
+  final GlobalKey _contentKey = GlobalKey();
+
+  /// 展开状态切换并通知外部（ChatPage 做滚动补偿）。与 ToolGroupCard._toggle 同构。
+  void _toggle() {
+    final contentHeight = _contentKey.currentContext?.size?.height ?? 0;
+    // history 反向:展开内容向上长,折叠行 top 上移 contentHeight(delta 负);
+    // 收起则下移 contentHeight(delta 正)。
+    final delta = _expanded ? contentHeight : -contentHeight;
+    setState(() => _expanded = !_expanded);
+    widget.rc.onToolGroupToggle
+        ?.call(_key, _expanded, delta, widget.rc.isHistorySliver);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final input = widget.data['input'] as Map<String, dynamic>? ?? const {};
+    final todos = input['todos'] as List<dynamic>? ?? [];
+    if (todos.isEmpty) return const SizedBox.shrink();
+    final completed = todos.where((t) {
+      final todo = t as Map<String, dynamic>?;
+      return todo?['status'] == 'completed';
+    }).length;
+    return Padding(
+      key: _key,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: _toggle,
+            child: Row(
+              children: [
+                const Icon(Icons.checklist_rounded, size: 15, color: Color(0xFF07C160)),
+                const SizedBox(width: 6),
+                Text(
+                  '已完成 $completed/${todos.length} 项',
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                ),
+                const Spacer(),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: const Color(0xFFBBBBBB),
+                ),
+              ],
+            ),
+          ),
+          // 展开内容始终渲染:Align(heightFactor) 收起时视觉高度 0(不占位)但内容
+          // 仍参与布局(_contentKey 可测真实高度),配合同步 jumpTo 补偿零跳变。
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _expanded ? 1.0 : 0.0,
+              child: Padding(
+                key: _contentKey,
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final t in todos) _todoRow(t as Map<String, dynamic>?),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _todoRow(Map<String, dynamic>? todo) {
+    if (todo == null) return const SizedBox.shrink();
+    final status = (todo['status'] as String?) ?? 'pending';
+    final content = (todo['content'] as String?) ?? '';
+    final icon = switch (status) {
+      'completed' => const Icon(Icons.check_circle, size: 15, color: Color(0xFF07C160)),
+      'in_progress' => const Icon(Icons.radio_button_checked, size: 15, color: Color(0xFFFA8C16)),
+      _ => const Icon(Icons.radio_button_unchecked, size: 15, color: Color(0xFFCCCCCC)),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(padding: const EdgeInsets.only(top: 1), child: icon),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              content,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: status == 'completed'
+                    ? const Color(0xFF999999)
+                    : (status == 'in_progress'
+                        ? const Color(0xFF333333)
+                        : const Color(0xFFAAAAAA)),
+                decoration: status == 'completed' ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ── running card ──
 class _RunningToolCard extends StatelessWidget {
   final Map<String, dynamic> data;
@@ -436,7 +780,7 @@ class _RunningToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF5B8BF7), width: 3)),
       ),
@@ -537,7 +881,7 @@ class _CompletedToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF07C160), width: 3)),
       ),
@@ -561,7 +905,8 @@ class _CompletedToolCard extends StatelessWidget {
           if (displayOutput.isNotEmpty && name != ToolName.todowrite) ...[
             const SizedBox(height: 4),
             if (displayOutput.length <= 80)
-              Text(displayOutput, style: const TextStyle(fontSize: 12, color: Color(0xFF07C160)))
+              Text(displayOutput, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF07C160)))
             else
               _TruncatedOutput(name: name, output: displayOutput),
           ],
@@ -591,7 +936,7 @@ class _ErrorToolCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF5F5),
+        color: const Color(0xFFFFF1F1),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFFFA5151), width: 3)),
       ),
@@ -614,7 +959,8 @@ class _ErrorToolCard extends StatelessWidget {
           ],
           if (error.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(error, style: const TextStyle(fontSize: 12, color: Color(0xFFFA5151))),
+            Text(error, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Color(0xFFFA5151))),
           ],
         ],
       ),
@@ -640,7 +986,7 @@ class _StartingTaskCard extends StatelessWidget {
       statusText: '已启动',
       statusColor: const Color(0xFF5B8BF7),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: true,
@@ -662,7 +1008,7 @@ class _WorkingTaskCard extends StatelessWidget {
       statusText: '正在执行',
       statusColor: const Color(0xFFFA8C16),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: true,
@@ -686,7 +1032,7 @@ class _CompletedTaskCard extends StatelessWidget {
       statusText: statusText,
       statusColor: const Color(0xFF07C160),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: false,
@@ -718,7 +1064,7 @@ class _ErrorTaskCard extends StatelessWidget {
       statusText: statusText,
       statusColor: const Color(0xFFFA5151),
       subSessionId: (data['sub_session_id'] as String?) ?? '',
-      taskCardId: rc.messageId,
+      taskCardId: _taskRootId(rc),
       convId: rc.convId,
       conversationMessages: rc.conversationMessages,
       showPulse: false,
@@ -737,7 +1083,9 @@ class _ErrorTaskCard extends StatelessWidget {
 /// sub_session_id 只是 plugin 的子会话标识，server 不暴露按它查消息的接口。
 /// [subSessionId] 保留作为「是否可点击」的开关（仅 sub-session 已建立才允许跳转）。
 /// [convId] 来自 [MessageRenderContext.convId]，由 MessageBubble 从
-/// message.conversationId 注入；[taskCardId] 来自 [MessageRenderContext.messageId]。
+/// message.conversationId 注入；[taskCardId] 来自 [MessageRenderContext] 的
+/// rootMessageId（聚合卡内 = 聚合卡真实消息 id，非聚合场景 fallback messageId），
+/// 见 [_taskRootId]。
 class _TaskCardShell extends StatelessWidget {
   final String agentType;
   final String description;
@@ -772,7 +1120,7 @@ class _TaskCardShell extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
+        color: const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: Border(left: BorderSide(color: statusColor, width: 3)),
       ),

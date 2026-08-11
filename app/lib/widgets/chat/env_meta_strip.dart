@@ -148,12 +148,15 @@ class EnvMetaStrip extends StatelessWidget {
       }
     }
 
+    // 横向超出屏幕时水平滑动查看,不显示滚动条。
     return Padding(
-      padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-      child: Text.rich(
-        TextSpan(children: parts),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Text.rich(
+          TextSpan(children: parts),
+          maxLines: 1,
+        ),
       ),
     );
   }

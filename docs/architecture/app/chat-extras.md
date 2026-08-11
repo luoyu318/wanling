@@ -17,8 +17,7 @@ AgentSessionsPage 的目录聚合视图（Drawer / 侧栏共用）：
 agent_session 的 agent 状态可视化（平衡势能物理模型）：
 
 - **`ThreeBodyPhysics`**(`widgets/chat/`)— 三体物理模拟(`Body` 质点 + `TrailFrame` 轨迹帧)。三质点在平衡势能场中运动,按 agent 状态调参:idle 慢速回中 / busy 活跃运动 / retry 抖动。纯 Dart 物理,不依赖 Flutter
-- **`ThreeBodyIndicator`**(`widgets/chat/`)— 三体指示器 widget(StatefulWidget + `CustomPainter`)。`Ticker` 驱动 60fps 重绘,`_ThreeBodyPainter` 画三质点 + 拖尾。三青灵韵配色(青/蓝/紫)。用于 SessionTile 副标题 + chat_page agent 状态文案。读 `agentStatusProvider` 切态
-- **`AgentBusyBubble`**(`widgets/chat/`)— busy 态头像气泡(圆形 + 三体指示器叠加),二级会话列表未读位置用
+- **`ThreeBodyIndicator`**(`widgets/chat/`)— 三体指示器 widget(StatefulWidget + `CustomPainter`)。`Ticker` 驱动 60fps 重绘,`_ThreeBodyPainter` 画三质点 + 拖尾。三青灵韵配色(青/蓝/紫)。用于 SessionTile 副标题(列表页 busy 态) + chat_page agent 状态文案。读 `agentStatusProvider` 切态
 - **`ShimmerText`**(`widgets/chat/`)— 逐字符波浪扫光动效(StatefulWidget)。`Ticker` 驱动,每个字符错相位渐变扫光。用于品牌文案 / 状态提示
 
 ## 文件浏览套件

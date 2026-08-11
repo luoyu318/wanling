@@ -77,3 +77,4 @@ server/tmp/
 server/backups/
 # Flutter mockup 临时产物
 mockups/
+release/

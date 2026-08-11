@@ -124,20 +124,20 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
         (content?['msg_type'] == 'permission_card' ||
                 content?['msg_type'] == 'question_card') &&
             cardStatus == 'pending';
-    // 实时派生 lastUserMessageContent:仅 user 自己发的 text 消息更新
-    // (与 server ListAgentSessionsForUser SQL 的 msg_type IN ('text','tui_user')
-    // 规则对齐)。preview 函数对 tui_user 自带 [TUI] 前缀,与 server CASE 对齐。
-    // tui_user 由 plugin 用 agent JWT 代发(sender_id=agent),isOwn 为 false,
-    // 此处按 msg_type 归位为用户消息(与 chat page 的 effectiveIsMe = isMe || isTuiUser 同构)。
+    // 实时派生 lastAgentReplyContent:仅 agent 发的非 silent text/markdown 更新
+    // (与 server ListAgentSessionsForUser SQL 的
+    //  msg_type IN ('text','markdown') AND silent IS DISTINCT FROM 'true' 规则对齐)。
+    // reasoning/step_finish/tool_card 等过程消息(silent=true)不覆盖简介。
     final msgTypeStr = content?['msg_type'] as String?;
-    final isUserTextMsg =
-        (isOwn && msgTypeStr == 'text') || msgTypeStr == 'tui_user';
-    final newLastUserMsg = isUserTextMsg
+    final isAgentReply = senderId == _agentId &&
+        !isSilent &&
+        (msgTypeStr == 'text' || msgTypeStr == 'markdown');
+    final newLastAgentReply = isAgentReply
         ? (MsgTypeX.preview(
               MsgTypeX.fromString(msgTypeStr),
               content?['data'] as Map<String, dynamic>?,
-            ) ?? item.lastUserMessageContent)
-        : item.lastUserMessageContent;
+            ) ?? item.lastAgentReplyContent)
+        : item.lastAgentReplyContent;
     final newItem = item.copyWith(
       lastMessageContent: content,
       lastMessageAt: createdAtStr != null
@@ -145,7 +145,7 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
           : item.lastMessageAt,
       unreadCount: newUnread,
       pendingCount: isPendingCard ? item.pendingCount + 1 : item.pendingCount,
-      lastUserMessageContent: newLastUserMsg,
+      lastAgentReplyContent: newLastAgentReply,
     );
     final updated = List<Conversation>.from(s);
     updated[idx] = newItem;
@@ -168,16 +168,69 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
         (msgType == 'permission_card' || msgType == 'question_card') &&
             status != null &&
             status != 'pending';
-    if (!isTerminalCard) return;
+    if (isTerminalCard) {
+      final idx = s.indexWhere((c) => c.id == convId);
+      if (idx == -1) return;
+      final item = s[idx];
+      if (item.pendingCount <= 0) return;
 
+      final updated = List<Conversation>.from(s);
+      updated[idx] = item.copyWith(pendingCount: item.pendingCount - 1);
+      state = updated;
+      return;
+    }
+
+    // 聚合卡回合结束翻转:silent true→false → 徽章+1 + lastMessageContent 更新。
+    // generating 阶段(silent 仍 true)只更新渲染(chatProvider),列表不动。
+    // 增量 set_silent op 与全量替换统一走本地 _onAggregateCardFlip:
+    // 广播 delta 带 data.preview(server 翻转时写入最后 markdown 正文),
+    // 本地即可算摘要,无需 load() 拉 server 全量。
+    // 不走 load() 的原因:load() 与 (2.7) markRead 竞态——load 拉到的 server
+    // unread 可能是 markRead 生效前的旧值(1),diffMerge 用 fresh 覆盖本地
+    // 已被 MESSAGE_READ 清零的 state,导致列表徽章残留(需手动刷新才消失)。
+    if (msgType == 'aggregate_card' && content != null) {
+      final data = content['data'];
+      final isSetSilentDelta = data is Map && data['op'] == 'set_silent';
+      final flipped = isSetSilentDelta
+          ? data['silent'] == false
+          : content['silent'] == false;
+      if (flipped) {
+        _onAggregateCardFlip(convId, content);
+      }
+    }
+  }
+
+  /// 聚合卡回合结束(silent true→false)翻转:徽章+1 + lastMessageContent 更新为
+  /// 聚合卡 content(预览经 MsgTypeX.preview 取 preview 或最后 markdown 元素 text)
+  /// + lastAgentReplyContent 同步更新(对齐 server SQL 新口径:
+  /// aggregate_card 读 data.preview 也算「agent 回复摘要」)+ 排序。
+  ///
+  /// 全量替换与增量 set_silent 统一走本方法:set_silent 广播 delta 带
+  /// data.preview(server 翻转时写入),本地即可算摘要;不走 load() 避免与
+  /// MESSAGE_READ 竞态覆盖(见 _onMessageUpdate 注释)。delta 无 preview 时
+  /// preview 为 null,lastAgentReplyContent 保留旧值(不退化覆盖)。
+  void _onAggregateCardFlip(String convId, Map<String, dynamic> content) {
+    final s = state;
+    if (s == null) return;
     final idx = s.indexWhere((c) => c.id == convId);
     if (idx == -1) return;
     final item = s[idx];
-    if (item.pendingCount <= 0) return;
-
+    // 与 _onMessageCreate 同口径:正在看该会话时不 +1(本地徽章 UX 优化)。
+    final isActive = convId == _activeConvId;
+    final preview = MsgTypeX.preview(
+      MsgType.aggregateCard,
+      content['data'] as Map<String, dynamic>?,
+    );
     final updated = List<Conversation>.from(s);
-    updated[idx] = item.copyWith(pendingCount: item.pendingCount - 1);
-    state = updated;
+    updated[idx] = item.copyWith(
+      lastMessageContent: content,
+      lastAgentReplyContent:
+          (preview != null && preview.isNotEmpty)
+              ? preview
+              : item.lastAgentReplyContent,
+      unreadCount: isActive ? item.unreadCount : item.unreadCount + 1,
+    );
+    state = updated..sort(_compare);
   }
 
   void _onMessageRead(WSMessage m) {

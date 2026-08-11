@@ -6,11 +6,11 @@
 
 `MessageContentRenderer` 接口（`selectable`/`wrapInBubble`/`build`）+ `ContentRendererRegistry` 注册表（`MsgType → Renderer`）+ `MessageRenderContext`。MessageBubble 只管外壳，内容渲染委托给注册表查到的 renderer。扩展新类型只需写一个 renderer 并 `register`
 
-**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
+**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)/`onToolGroupToggle`(折叠展开滚动补偿回调,聚合卡内可折叠元素 todowrite/权限卡终态经它同帧上报 ChatPage jumpTo,history 反向列表展开内容向上顶时视觉锚点不动)/`isHistorySliver`(当前消息所属 sliver 是否 history 反向,由 ChatPage 双 sliver 构建时透传)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
 
 ## builtin_renderers
 
-内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调
+内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
 
 ### FileContentRenderer（v1.0.6 重写）
 
@@ -30,7 +30,7 @@
 9 个新渲染器，注册到 `MsgType` 枚举对应值。底部抽屉模式（`showModalBottomSheet`）替代内联展开：卡片固定高度 + 点击弹抽屉看全文。
 
 - **TuiUserRenderer**（msg_type=tui_user）— 紫色气泡 `#7C5CE7` + 📟 via TUI 标记。ChatPage 用 `MsgTypeX.fromString` 判断 `tui_user` 覆盖 isMe=true（归位「我」侧）
-- **ReasoningRenderer**（msg_type=reasoning）— `#DEDEDE` 底，1 行摘要 + ▸ 图标，点击抽屉看完整思考链
+- **ReasoningRenderer**（msg_type=reasoning）— 两态：流式(isStreaming=true 且 data.finished!=true)=✨ 闪烁 + 「正在思考...」固定文案;终态=真实 text 预览。元素级 `data.finished` 标记:聚合卡 generating 期间元素可能已终态(子 agent 并行),finished=true 显示真实内容而非思考中动画。点击抽屉看完整思考链
 - **StepFinishRenderer**（msg_type=step_finish）— 元信息行（⏱ 耗时 / tokens / $ 费用），`reason` 字段不展示
 - **ToolCallRenderer**（msg_type=tool_call）— `#FAFAFA` 底 + `#E8E8E8` 边框，按 `data.name` 分派图标（bash⚡/edit✏️/read📖/grep🔍/glob📂/todowrite📋/write📝/task🤖/question❓/默认🔧）；TodoBody 限 3 行 + 进度摘要 + 抽屉
 - **ToolResultRenderer**（msg_type=tool_result）— ✅ 工具名 + 短输出直显 / 长输出截断 + 抽屉。name=task 时切 SubagentBody 样式
@@ -41,7 +41,7 @@
 
 ### 交互事件渲染器（v1.0.8，opencode-plugin streamer 发，APP 底部抽屉处理）
 
-- **PermissionCardRenderer**（msg_type=permission_card）— `#FFF8F0` pending 暖色卡片 + 底部抽屉 radio 三选项（仅本次/始终允许/拒绝）。`save_rules` 只读展示。终态（resolved）灰阶。用户决策通过 PATCH /api/messages/:id 回传 `permission_reply`
+- **PermissionCardRenderer**（msg_type=permission_card）— `#FFF8F0` pending 暖色卡片 + 底部抽屉 radio 三选项（仅本次/始终允许/拒绝）。`save_rules` 只读展示。终态（resolved）灰阶。用户决策通过 PATCH /api/messages/:id 回传 `permission_reply`。**终态(2026-08-08 起)外包无边框折叠外壳**(对齐折叠组风格):折叠时只显示标题行(图标 + 「权限审批 · label」+ 结果 + 箭头,结果如已批准/已拒绝/会话已结束),展开显示完整原卡(绿/红/灰背景 + 左边框样式不变);折叠展开接入 ToolGroupCard 同构滚动补偿
 - **QuestionCardRenderer**（msg_type=question_card）— TabBar 横向切换题目，radio/checkbox/custom 输入，已答题标记绿色小圆点。单题退化隐藏 TabBar。提交按钮汇总后 PATCH /api/messages/:id 回传 `question_reply`
 
 **dm_user_agent 气泡宽度**: Agent 过程消息的 `widthRatio = 0.95`（两侧各 12px padding），渲染器不带自带 maxWidth。`BubbleWithTail` 颜色: `isMe ? #597BFF : #FFFFFF`
@@ -50,8 +50,11 @@
 
 `tool_card` msg_type 渲染器,把所有工具调用(bash/edit/read/write/task/...)统一为卡片视图 + 3 状态机 + 长输出抽屉。
 
-- **_ToolCardRenderer** 主分派:读 `data.status` 切换 starting/working/completed/error;task 工具(name=task)走 task 专属分支保留「子 Agent」身份(含 error 状态,与 _CompletedTaskCard 对称)。**所有返回统一包 `_wrapAnimated`(AnimatedSize, 250ms easeOut, alignment topCenter)**:卡片 PATCH running→completed 回写增高时高度平滑向下展开,消除瞬间增高跳动
+- **_ToolCardRenderer** 主分派:读 `data.status` 切换 starting/working/completed/error;task 工具(name=task)走 task 专属分支保留「子 Agent」身份(含 error 状态,与 _CompletedTaskCard 对称);webfetch/skill/todowrite 三类走无外壳纯文字行/折叠行(webfetch=explore 紫 + url 单行、skill=星标橙 + 「已加载技能」+ 技能名、todowrite=折叠行)。**所有返回统一包 `_wrapAnimated`(AnimatedSize, 250ms easeOut, alignment topCenter)**:卡片 PATCH running→completed 回写增高时高度平滑向下展开,消除瞬间增高跳动
 - **_TaskCardShell** 通用外壳:左边界色 + 子 Agent 徽章 + 描述 + 状态行(可注入 statusIcon,completed=check_circle/error=cancel);subSessionId 非空时整体包 GestureDetector 跳 `/chat/subagent/$taskCardId?convId=$convId`
 - **task 4 状态机**: starting(蓝灰脉冲)、working(蓝色脉冲)、completed(绿色对勾 + duration)、error(红色 cancel + 失败文案,对称 completed)
 - **_TruncatedOutput / _ReadCodeView**(read 工具特化):解析 read output 的 `<path>`/`<content>` XML,折叠态显示文件名+行数按钮,抽屉展开整段 highlight.parse 语法高亮(行号列 + 横向滚动)
 - **_RunningToolCard / _CompletedToolCard / _ErrorToolCard**(普通工具三态):非 task 工具的简化卡片
+- **input/output 双框限一行预览**(2026-08-08):所有工具卡 input body + output 下框统一 `maxLines:1` + ellipsis(超长点击弹抽屉看全文);EditBody 拆改前/改后两个独立预览框(红 `-` / 绿 `+`,各限一行);tool_result/tool_call/tool_error 旧版独立消息同步限行
+- **todowrite 折叠行**(2026-08-08):脱离工具卡外壳,直接折叠组风格(✓ 图标 + 「已完成 x/y 项」+ 箭头,点击展开任务列表,任务行带状态图标 completed=✓绿/in_progress=●橙/pending=○灰,已完成划线);聚合卡不再隐藏 todowrite(移除 isHiddenTool 跳过)
+- **skill 纯展示行**(2026-08-08):星标橙(Icons.auto_awesome) + 「已加载技能」+ 技能名(灰斜体),无折叠事件,点击弹抽屉看技能内容

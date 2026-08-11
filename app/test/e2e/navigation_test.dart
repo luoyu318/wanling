@@ -7,6 +7,7 @@
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
 import 'package:app/models/user.dart';
+import 'package:app/pages/profile_page.dart';
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/providers/chat_provider.dart' show wsProvider;
 import 'package:app/providers/saved_logins_provider.dart';
@@ -151,8 +152,14 @@ void main() {
       // 点击 我的 tab
       await tester.tap(find.text('我的'));
       await tester.pumpAndSettle();
-      // 应该看到 ProfilePage 顶部用户名
-      expect(find.text('kira'), findsOneWidget);
+      // 应该看到 ProfilePage 顶部用户名(侧边栏常驻也会显示用户名,限定在 ProfilePage 内查找)
+      expect(
+        find.descendant(
+          of: find.byType(ProfilePage),
+          matching: find.text('kira'),
+        ),
+        findsOneWidget,
+      );
     });
   });
 }

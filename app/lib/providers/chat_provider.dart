@@ -42,7 +42,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   StreamSubscription<Map<String, dynamic>>? _streamSub;
   Timer? _metaRefreshTimer;
 
-  static const int _pageSize = 100;
+  static const int _pageSize = 30;
 
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId,
       {this.store, this.currentUser})
@@ -187,7 +187,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
         final local = await store!.getMessages(
             conversationId: conversationId, limit: _pageSize);
         if (local.isNotEmpty) {
-          state = _mergeHistory(local).copyWith(
+          // 过滤 DB 缓存的空聚合卡快照:生成中(为空)被旧版本 putMessages 写入的
+          // 脏中间态,重进读到会显示空白且 server 拉取范围(hasUnread 分支)可能
+          // 覆盖不到 → 整条缺失。空卡由 WS 实时建卡/填充,DB 不需缓存空态。
+          // 过滤的同时从 DB 删除脏记录(server 有完整版,loadMore/重进可恢复),
+          // 避免每次进入都读到同一批空卡。
+          final validLocal = <ChatMessage>[];
+          for (final m in local) {
+            if (_isEmptyAggregateCard(m)) {
+              store!.deleteMessage(m.id).catchError((e) {
+                debugPrint('[localdb] _initialize delete empty agg fail: $e');
+              });
+            } else {
+              validLocal.add(m);
+            }
+          }
+          state = _mergeHistory(validLocal).copyWith(
             hasMore: true,
             isInitialLoading: false,
             convType: cachedConvType,
@@ -195,7 +210,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
           final nullNames =
               state.displayMessages.where((m) => m.senderName == null).length;
-          debugPrint('[chatInit] DB hit ${local.length} msgs, presented eagerly; '
+          debugPrint('[chatInit] DB hit ${local.length} msgs (agg-empty '
+              'filtered=${local.length - validLocal.length}), presented eagerly; '
               'null senderName=$nullNames/${state.displayMessages.length}');
         } else if (cachedConvType != null) {
           // 无消息但有 conversation 缓存(理论上不会发生,兜底)
@@ -279,22 +295,45 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         debugPrint('[chatInit] getMessagesAfter returned ${listAsc.length} msgs');
         // ListAfter 返回 ASC，reverse 成 newest first 配合 reverse ListView
-        final loaded = listAsc.reversed.toList();
+        final loadedAfter = listAsc.reversed.toList();
+
+        // 补拉 firstUnread 之前的最新上下文:hasUnread 分支只拉 firstUnread 之后,
+        // 但分卡序列的 first 卡必然在 last 卡(firstUnread)之前,若 DB 缓存又是旧态
+        // (后台 WS 断连时聚合卡停在生成中,增量未写 DB),first 卡会整条缺失。
+        // getMessagesBefore(limit) 拉最新 N 条覆盖 firstUnread 之前的分卡序列。
+        final loadedBefore = await api.getMessagesBefore(
+          conversationId,
+          limit: _pageSize,
+        );
+        debugPrint('[chatInit] hasUnread getMessagesBefore returned '
+            '${loadedBefore.length} msgs');
+
+        // 合并:before 提供 firstUnread 之前的上下文,after 提供未读。按 id 去重,
+        // 保留 createdAt 更新者,最终 _mergeHistory 升序。
+        final byId = <String, ChatMessage>{};
+        for (final m in [...loadedAfter, ...loadedBefore]) {
+          final existing = byId[m.id];
+          if (existing == null || m.createdAt.isAfter(existing.createdAt)) {
+            byId[m.id] = m;
+          }
+        }
+        final loaded = byId.values.toList();
         if (loaded.isEmpty) {
           debugPrint('[chatInit] WARNING: loaded is empty after reverse!');
         } else {
-          debugPrint('[chatInit] loaded after reverse: length=${loaded.length}, '
+          debugPrint('[chatInit] loaded after merge: length=${loaded.length}, '
               'first(=最新, messages[0])=${loaded.first.id} createdAt=${loaded.first.createdAt}, '
               'last(=最老, firstUnread expected)=${loaded.last.id} createdAt=${loaded.last.createdAt}');
         }
         // hasMore 必须综合判断：
-        // - ListAfter 取到 _pageSize 条 → 之后可能还有更新的消息
-        // - 服务端告知 firstUnread 之前有已读历史 → 之前还有更老的消息（上滑加载）
+        // - before 拉满 _pageSize 条 → 之前可能还有更老的历史（上滑加载）
+        // - 服务端告知 firstUnread 之前有已读历史 → 之前还有更老的消息
         // 二者之一为真就允许上滑加载历史。
         // 修复 Bug B：原来只看 loaded.length == _pageSize，导致 ListAfter
         // 取不满时（如总共只有 10 条未读）误判 hasMore=false，永远拉不到
-        // firstUnread 之前的已读历史。
-        final hasMore = loaded.length == _pageSize ||
+        // firstUnread 之前的已读历史。合并 after+before 后 length 可能超页,
+        // 用 before 是否拉满判断"还有更老"。
+        final hasMore = loadedBefore.length == _pageSize ||
             unread.hasMoreBeforeFirstUnread;
         state = _mergeHistory(loaded).copyWith(
           hasMore: hasMore,
@@ -363,13 +402,40 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // live 占位,由 _onMessageCreate 终态到达时清理(race fix 分支)。
       state.historyMessages.where((m) => !loadedIds.contains(m.id)),
     );
-    final merged = [...extra, ...filtered];
+
+    // 生成中聚合卡(generating,非空)归 live:agent 正在回复,应渲染到底部活跃区
+    // 而非历史区。只对「最新一条」应用判定——生成中的消息必是会话最后一条
+    // (agent 最后回复未结束),避免历史里残留的旧 generating 卡误入 live。
+    // 被剥离的卡不再进 history(displayMessages 按 id 去重防双显)。
+    // 注意:filtered 是 _filterDisplayable 结果但未排序,用 reduce 按 createdAt
+    // 取最新(不能直接用 filtered.first)。
+    ChatMessage? liveAgg;
+    if (filtered.isNotEmpty) {
+      final newest = filtered.reduce(
+          (a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);
+      if (_isLiveBoundGeneratingAggregate(newest)) {
+        liveAgg = newest;
+      }
+    }
+    final historyFromLoaded = liveAgg != null
+        ? filtered.where((m) => m.id != liveAgg!.id).toList()
+        : filtered;
+
+    final merged = [...extra, ...historyFromLoaded];
     merged.sort((a, b) => b.createdAt.compareTo(a.createdAt)); // newest first
     // 清理 live 中残留的 isStreaming 占位:_mergeHistory 由 _initialize / jumpToBottom
     // 触发,server 历史是真相源(只含终态)。窗口期内 STREAM 插的占位若终态已在 history
     // (或终态尚未入库的活跃流),此处统一移除;活跃流的下个 STREAM delta 会经
     // _listenStream 的 idx<0 分支重建占位,不丢内容(对齐旧架构 messages=merged 整体替换)。
-    final liveCleaned = state.liveMessages.where((m) => !m.isStreaming).toList();
+    var liveCleaned = state.liveMessages.where((m) => !m.isStreaming).toList();
+    final liveAggFinal = liveAgg;
+    if (liveAggFinal != null) {
+      // 追加生成中聚合卡到 live(去重:WS 已实时插入同 id 时不再重复)。
+      // 保持 isStreaming 占位恒在末尾。
+      if (!liveCleaned.any((m) => m.id == liveAggFinal.id)) {
+        liveCleaned = _insertLiveKeepingStreamingLast(liveCleaned, liveAggFinal);
+      }
+    }
     return state.copyWith(
       historyMessages: merged,
       liveMessages:
@@ -433,7 +499,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
             conversationId: conversationId,
             before: oldest.createdAt,
             limit: _pageSize,
-          ));
+          ))
+              .where((m) => !_isEmptyAggregateCard(m))
+              .toList();
           debugPrint('[loadMore] DB hit ${older.length} older msgs');
         } catch (e) {
           debugPrint('[localdb] loadMore getMessages fail: $e');
@@ -471,12 +539,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
           debugPrint('[localdb] loadMore putMessages fail: $e');
         }
       }
-      // server 拉的结果合并:对当前 state 去重(可能已含 DB older)
+      // server 拉的结果合并:对当前 state 去重(可能已含 DB older)。
+      // server 是真相源:若 state 已有同 id 的空白聚合卡(DB 脏快照),用 server
+      // 完整版覆盖,避免 dedup 跳过导致空白卡永久停留。
       final currentIds = state.displayMessages.map((m) => m.id).toSet();
       final dedupedRemote =
           remote.where((m) => !currentIds.contains(m.id)).toList();
+      final remoteById = {for (final m in remote) m.id: m};
+      // 覆盖:state 中同 id 且为空聚合卡的,用 server 版替换(history/live 都查)。
+      final historyCovered = state.historyMessages.map((m) {
+        final remoteVersion = remoteById[m.id];
+        return (remoteVersion != null && _isEmptyAggregateCard(m))
+            ? remoteVersion
+            : m;
+      }).toList();
+      final liveCovered = state.liveMessages.map((m) {
+        final remoteVersion = remoteById[m.id];
+        return (remoteVersion != null && _isEmptyAggregateCard(m))
+            ? remoteVersion
+            : m;
+      }).toList();
       state = state.copyWith(
-        historyMessages: [...state.historyMessages, ...dedupedRemote],
+        historyMessages: [...historyCovered, ...dedupedRemote],
+        liveMessages: liveCovered,
         hasMore: remoteRaw.length == _pageSize,
         isLoadingMore: false,
       );
@@ -678,6 +763,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
         return;
       }
 
+      // 聚合模式元素级流式:op=14 帧带 aggregate{message_id, element_id} 时,
+      // 不建独立占位,直接更新聚合卡消息内对应元素的 data.text(全量替换)。
+      // 元素最终内容仍由 plugin patchElements 的 MESSAGE_UPDATE 持久化兜底,
+      // 此处仅实时刷新正在观看会话的 user 端。无 aggregate 字段走旧占位逻辑。
+      final aggregate = d['aggregate'] as Map<String, dynamic>?;
+      if (aggregate != null) {
+        _applyAggregateStreamUpdate(aggregate, text);
+        return;
+      }
+
       final placeholderId = 'stream:$streamId';
       final idx = state.liveMessages.indexWhere((m) => m.id == placeholderId);
       final newContent = <String, dynamic>{
@@ -706,6 +801,76 @@ class ChatNotifier extends StateNotifier<ChatState> {
         debugPrint('[SSE-DBG] _listenStream 新建占位 sid=$streamId len=${text.length}');
       }
     });
+  }
+
+  /// 聚合卡元素级流式更新：定位聚合卡消息（id == aggregate.message_id 且
+  /// msg_type == aggregate_card），全量替换 element_id 匹配元素的 data.text。
+  ///
+  /// 找不到聚合卡（流式帧早于建卡 MESSAGE_CREATE 到达 / 元素未就绪）时静默丢弃：
+  /// 元素最终内容由 plugin patchElements 的 MESSAGE_UPDATE 持久化兜底，不丢数据。
+  /// 与 plugin patch 语义一致：全量替换 elements[]（非增量 diff）。
+  void _applyAggregateStreamUpdate(Map<String, dynamic> aggregate, String text) {
+    final messageId = aggregate['message_id'] as String?;
+    final elementId = aggregate['element_id'] as String?;
+    if (messageId == null ||
+        messageId.isEmpty ||
+        elementId == null ||
+        elementId.isEmpty) {
+      return;
+    }
+
+    // 定位聚合卡消息（live/history 双 list 任一命中即可）
+    ChatMessage? card;
+    for (final m in state.liveMessages) {
+      if (m.id == messageId &&
+          MsgTypeX.fromString(m.content['msg_type'] as String?) ==
+              MsgType.aggregateCard) {
+        card = m;
+        break;
+      }
+    }
+    if (card == null) {
+      for (final m in state.historyMessages) {
+        if (m.id == messageId &&
+            MsgTypeX.fromString(m.content['msg_type'] as String?) ==
+                MsgType.aggregateCard) {
+          card = m;
+          break;
+        }
+      }
+    }
+    if (card == null) return;
+
+    final data = card.content['data'] as Map<String, dynamic>? ?? const {};
+    final rawElements = data['elements'] as List?;
+    if (rawElements == null) return;
+
+    // 全量替换 elements[],element_id 匹配的元素 data.text 整体替换
+    final newElements = <Map<String, dynamic>>[];
+    var matched = false;
+    for (final raw in rawElements) {
+      if (raw is! Map) continue;
+      final e = Map<String, dynamic>.from(raw);
+      if (e['element_id'] == elementId) {
+        final eData = Map<String, dynamic>.from(e['data'] as Map? ?? const {});
+        eData['text'] = text;
+        e['data'] = eData;
+        matched = true;
+      }
+      newElements.add(e);
+    }
+    if (!matched) return;
+
+    final newContent = <String, dynamic>{
+      // 保留原 content 顶层字段(silent/preview 等):整体替换 elements 时若只带
+      // msg_type+data 会丢 silent → _findAggregateSilentFlip 检测不到后续翻转
+      // (prev.silent 从 true 变 null,翻转 true→false 无法识别)→ 未读残留。
+      ...card.content,
+      'msg_type': MsgType.aggregateCard.value,
+      'data': {...data, 'elements': newElements},
+    };
+    state = _updateMessageById(messageId, (m) => m.copyWith(content: newContent));
+    debugPrint('[SSE-DBG] _listenStream 聚合元素更新 msgId=$messageId element=$elementId len=${text.length}');
   }
 
   void _listenWS() {
@@ -746,6 +911,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 流式占位由 _listenStream append 到末尾(恒在底部);若普通新消息(卡片等)也
   /// append,思考中到达的卡片会排到 busy 占位下方,视觉上「先出现在底部再被校正
   /// 回弹」(闪烁)。正确语义:新消息插到第一个 isStreaming 占位之前(上方)。
+  /// 用户消息按实际时序 append(聚合卡下方)——聚合卡按用户消息拆分由 plugin
+  /// 侧负责(用户消息打断旧卡定格),APP 只保证 isStreaming 占位恒在末尾。
   List<ChatMessage> _insertLiveKeepingStreamingLast(
       List<ChatMessage> live, ChatMessage msg) {
     final streamIdx = live.indexWhere((m) => m.isStreaming);
@@ -779,6 +946,117 @@ class ChatNotifier extends StateNotifier<ChatState> {
       historyMessages:
           state.historyMessages.where((m) => !ids.contains(m.id)).toList(),
     );
+  }
+
+  /// 聚合卡 MESSAGE_UPDATE 增量 op 应用:delta(广播 content)形如
+  /// `{msg_type:"aggregate_card", data:{op, ...}}`,把 op 合并进本地 content:
+  ///   - append:     data.element 追加到 elements 末尾
+  ///   - update:     data.element_id 命中的元素 data 整体替换(data.data)
+  ///   - remove:     data.element_id 删除元素(不存在幂等跳过,便于网络重试)
+  ///   - reorder:    data.order 重排(未列出的元素保序追加尾部,不丢数据)
+  ///   - set_state:  data.state 改 data.state
+  ///   - set_silent: data.silent 改顶层 content.silent(注意 delta 的 silent
+  ///                 在 data 内,合并结果放 content 顶层,与 server 落库结构一致)
+  ///
+  /// 返回合并后的全量 content;返回 null 表示非增量(delta 无 op / 原消息非
+  /// aggregate_card),调用方走全量替换兼容路径(旧 plugin / 非聚合卡)。
+  /// 增量参数缺失 / 目标元素不存在时幂等跳过(返回原 content):本地状态可能
+  /// 滞后(断线漏 append),此时若用 delta 全量替换会清掉整卡元素。
+  /// schema_ver 守卫:本地 content.data.schema_ver 缺失视为 1,> 当前支持的
+  /// aggregateCardSchemaVer 时不应用增量(保持现状),防止新协议增量被旧 APP 误合并。
+  Map<String, dynamic>? _applyAggregateCardDelta(
+      Map<String, dynamic> content, Map<String, dynamic> delta) {
+    if (MsgTypeX.fromString(content['msg_type'] as String?) !=
+        MsgType.aggregateCard) {
+      return null;
+    }
+    final data = delta['data'];
+    if (data is! Map) return null;
+    final op = data['op'] as String?;
+    if (op == null || op.isEmpty) return null;
+
+    // schema_ver 守卫:本地 content 版本超前(新插件协议)→ 不应用增量,防误合并。
+    final localVer = (content['data'] as Map?)?['schema_ver'];
+    final localVerInt = localVer is int ? localVer : 1;
+    if (localVerInt > aggregateCardSchemaVer) return content;
+
+    final newData =
+        Map<String, dynamic>.from(content['data'] as Map? ?? const {});
+    final newContent = <String, dynamic>{...content, 'data': newData};
+
+    switch (op) {
+      case 'append':
+        final element = data['element'];
+        if (element is! Map) return content;
+        final raw = newData['elements'];
+        final elements = raw is List ? [...raw] : <Object>[];
+        elements.add(Map<String, dynamic>.from(element));
+        newData['elements'] = elements;
+      case 'update':
+        final elementId = data['element_id'] as String?;
+        final patchData = data['data'];
+        if (elementId == null || elementId.isEmpty || patchData is! Map) {
+          return content;
+        }
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        var matched = false;
+        final elements = raw.map((e) {
+          if (e is Map && e['element_id'] == elementId) {
+            matched = true;
+            return <String, dynamic>{...e, 'data': Map<String, dynamic>.from(patchData)};
+          }
+          return e;
+        }).toList();
+        if (!matched) return content;
+        newData['elements'] = elements;
+      case 'remove':
+        final elementId = data['element_id'] as String?;
+        if (elementId == null || elementId.isEmpty) return content;
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        newData['elements'] = raw
+            .where((e) => !(e is Map && e['element_id'] == elementId))
+            .toList();
+      case 'reorder':
+        final order = data['order'];
+        if (order is! List || order.isEmpty) return content;
+        final raw = newData['elements'];
+        if (raw is! List) return content;
+        final byId = <Object?, Object>{
+          for (final e in raw)
+            if (e is Map) e['element_id']: e,
+        };
+        final seen = <String>{};
+        final ordered = <Object>[];
+        for (final id in order) {
+          final e = byId[id];
+          if (e == null) continue; // 未知 id 幂等跳过(server 已校验,本地容错)
+          if (seen.contains(id)) continue; // order 重复 id 去重
+          seen.add(id);
+          ordered.add(e);
+        }
+        for (final e in raw) {
+          if (e is Map && seen.contains(e['element_id'])) continue;
+          ordered.add(e);
+        }
+        newData['elements'] = ordered;
+      case 'set_state':
+        final state = data['state'] as String?;
+        if (state == null || state.isEmpty) return content;
+        newData['state'] = state;
+      case 'set_segment':
+        final segment = data['segment'] as String?;
+        if (segment == null || segment.isEmpty) return content;
+        newData['segment'] = segment;
+      case 'set_silent':
+        final silent = data['silent'];
+        if (silent is! bool) return content;
+        return <String, dynamic>{...newContent, 'silent': silent};
+      default:
+        return content; // 未知 op:幂等跳过,不覆盖本地
+    }
+    return newContent;
   }
 
   void _listenUpdates() {
@@ -816,7 +1094,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
 
-      state = _updateMessageById(msgId, (m) => m.copyWith(content: newContent));
+      // 聚合卡增量 op:合并进本地 content,保持元素/state/silent 增量演进;
+      // 非增量(无 op / 非聚合卡)走全量替换兼容(旧 plugin / 历史消息)。
+      final newState = _updateMessageById(msgId, (m) {
+        final merged = _applyAggregateCardDelta(m.content, newContent);
+        return m.copyWith(content: merged ?? newContent);
+      });
+      state = newState;
+      // 聚合卡内容更新后写回 DB:避免 DB 只存 _initialize 时的旧快照(中间态/空态),
+      // 重进 eager 读到旧版导致缺消息/空白。写单条(insertOrReplace 幂等)。
+      if (MsgTypeX.fromString(newContent['msg_type'] as String?) ==
+          MsgType.aggregateCard && store != null) {
+        final idx =
+            newState.displayMessages.indexWhere((m) => m.id == msgId);
+        if (idx >= 0) {
+          store!.putMessage(newState.displayMessages[idx]).catchError((e) {
+            debugPrint('[localdb] _listenUpdates putMessage fail: $e');
+          });
+        }
+      }
     });
   }
 
@@ -1336,6 +1632,43 @@ List<ChatMessage> _filterDisplayable(Iterable<ChatMessage> msgs) {
         t != MsgType.questionReply &&
         !(t == MsgType.stepFinish && !_isMainLoopStepFinish(m.content));
   }).toList();
+}
+
+/// 生成中聚合卡判定:aggregate_card + state=generating + 非空卡。
+/// 用于 _mergeHistory 把正在生成的聚合卡归 live sliver(底部活跃区),
+/// 与实时场景(已在会话里收到 MESSAGE_CREATE)口径一致。
+/// - done 卡(state=done)归 history(含翻转后未读锚点场景)
+/// - 空卡(generating 无 elements)不进 live:数据拉慢/建卡瞬间的瞬态,
+///   靠后续 WS append 填充,避免空白卡渲染进 live
+bool _isLiveBoundGeneratingAggregate(ChatMessage m) {
+  if (MsgTypeX.fromString(m.content['msg_type'] as String?) !=
+      MsgType.aggregateCard) {
+    return false;
+  }
+  final data = m.content['data'];
+  if (data is! Map) return false;
+  if (data['state'] == 'done') return false;
+  if (_isEmptyAggregateCard(m)) return false;
+  return true;
+}
+
+/// 判定聚合卡是否为"空中间态"(generating + elements 为空/缺失)。
+///
+/// 这种状态是 plugin 建卡瞬间(空卡)的合法中间态,但**不应被 DB 缓存**:
+/// 生成中的聚合卡靠 WS 实时建卡/增量填充,DB 缓存空快照会导致重进时
+/// 读到空白卡(且 hasUnread 分支拉取范围可能覆盖不到,永久空白)。
+/// 用于 DB eager 读取后过滤,避免渲染空卡。server 历史(完整 content)不过滤。
+bool _isEmptyAggregateCard(ChatMessage m) {
+  if (MsgTypeX.fromString(m.content['msg_type'] as String?) !=
+      MsgType.aggregateCard) {
+    return false;
+  }
+  final data = m.content['data'];
+  if (data is! Map) return false;
+  if (data['state'] == 'done') return false; // done 卡必完整,不过滤
+  final raw = data['elements'];
+  if (raw is! List) return true; // generating 但缺 elements → 空
+  return raw.isEmpty;
 }
 
 /// step_finish 是否主循环结束汇总条(finished=true,plugin part_dispatcher 的 isLoopEnd)。

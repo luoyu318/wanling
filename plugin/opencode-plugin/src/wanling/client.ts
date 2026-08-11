@@ -15,6 +15,7 @@ import type {
 } from "./types.js"
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
+import type { AggregatePatchData } from "../sync/domains/aggregate_card.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -137,11 +138,18 @@ export class WanlingClient extends EventEmitter {
   // 流式输出:把生成中的文本全量快照推给"正在看本会话"的 user 连接。
   // op=14 绕过 dispatchBuffer/Resume,不带 seq、不落库、不计未读。
   // 终态仍由 sendTypedMessage 发 MESSAGE_CREATE(带 _stream_id 让 APP 替换占位)。
+  // aggregate(聚合模式):指向聚合卡内某元素(element_id),APP 把流式内容渲染到该元素,
+  // 不建独立流式占位气泡;无 aggregate 字段 = 非聚合模式,APP 走旧独立占位逻辑。
   // 与 sendTyping 一致:WS 未连接时 silently drop,不 emit error 不 warn
   // (流式为瞬态,终态消息兜底;agent 建会话期间短窗口掉帧可接受)。
   sendStream(
     convId: string,
-    payload: { stream_id: string; msg_type: string; text: string },
+    payload: {
+      stream_id: string
+      msg_type: string
+      text: string
+      aggregate?: { message_id: string; element_id: string }
+    },
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.log(`[SSE-DBG] sendStream DROP(ws未连接) sid=${payload.stream_id} len=${payload.text.length}`)
@@ -352,6 +360,22 @@ export class WanlingClient extends EventEmitter {
     return json.data.message_id as string
   }
 
+  // 聚合卡 PATCH:复用 updateMessageContent 的 REST PATCH 通道。
+  // data 带 op(append/update/remove/reorder/set_state/set_silent)→ 增量 op,
+  // server 合并到全量存储、广播带增量(长任务不再全量替换,解决 content 超限 + O(n²))。
+  // data 无 op 带 elements → 全量替换兼容路径(旧 plugin / 建卡兜底)。
+  // silent 翻转走 data {op:"set_silent"}(不再放 content 顶层)。
+  async patchAggregateMessage(
+    msgId: string,
+    data: AggregatePatchData,
+  ): Promise<void> {
+    const content: Record<string, unknown> = {
+      msg_type: "aggregate_card",
+      data,
+    }
+    await this.updateMessageContent(msgId, content as { msg_type: string; data: Record<string, unknown> })
+  }
+
   async updateMessageContent(
     msgId: string,
     content: { msg_type: string; data: Record<string, unknown>; silent?: boolean },
@@ -558,6 +582,7 @@ export class WanlingClient extends EventEmitter {
         }
         const t = msg.t
         if (t === EVENT_MESSAGE_CREATE) {
+          console.log(`[wanling] WS 收到 MESSAGE_CREATE sender_type=${(msg.d as unknown as { sender_type?: string })?.sender_type} id=${(msg.d as unknown as { id?: string })?.id?.slice(0, 8)}`)
           const payload = msg.d as unknown as MessageCreatePayload
           this.emit("message", payload)
         } else if (t === EVENT_TYPING_START) {

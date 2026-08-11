@@ -503,6 +503,33 @@ void main() {
       expect(ids, isNot(contains('dirty-qc')));
     });
   });
+
+// 聚合卡空中间态(generating + 无 elements)不缓存:重进读到会渲染空白。
+test('生成中空聚合卡也写库(避免整条缺失)', () async {
+  final emptyAgg = _mkAggregateCard('empty-agg', 'conv1',
+      createdAt: DateTime(2026, 7, 2), state: 'generating', elems: 0);
+  final fullAgg = _mkAggregateCard('full-agg', 'conv1',
+      createdAt: DateTime(2026, 7, 3), state: 'done', elems: 5);
+  final text = _mkMsg('txt', 'conv1', createdAt: DateTime(2026, 7, 1));
+
+  await db.putMessages([emptyAgg, fullAgg, text]);
+
+  final result = await db.getMessages(conversationId: 'conv1', limit: 100);
+  final ids = result.map((m) => m.id).toSet();
+  // 写入不过滤:生成中聚合卡也入库(done 后 DB 有完整记录,重进不缺失)。
+  expect(ids, contains('empty-agg'), reason: '生成中聚合卡也写库');
+  expect(ids, contains('full-agg'), reason: 'done 完整聚合卡写库');
+  expect(ids, contains('txt'));
+});
+
+// done 但 elements 空的聚合卡也要写(终态判定优先于空判定)。
+test('done 聚合卡即使 elements 空也写库', () async {
+  final doneEmpty = _mkAggregateCard('done-empty', 'conv1',
+      createdAt: DateTime(2026, 7, 1), state: 'done', elems: 0);
+  await db.putMessage(doneEmpty);
+  final result = await db.getMessages(conversationId: 'conv1');
+  expect(result.map((m) => m.id), contains('done-empty'));
+});
 }
 
 ChatMessage _mkMsg(String id, String convId, {required DateTime createdAt}) {
@@ -517,3 +544,34 @@ ChatMessage _mkMsg(String id, String convId, {required DateTime createdAt}) {
     status: MessageStatus.sent,
   );
 }
+
+ChatMessage _mkAggregateCard(String id, String convId,
+    {required DateTime createdAt,
+    required String state,
+    required int elems}) {
+  return ChatMessage(
+    id: id,
+    conversationId: convId,
+    senderType: 'agent',
+    senderId: 'agent-1',
+    content: {
+      'msg_type': 'aggregate_card',
+      'data': {
+        'state': state,
+        'elements': List.generate(
+          elems,
+          (i) => {
+            'type': 'markdown',
+            'element_id': 'markdown_${i + 1}',
+            'data': {'text': '内容 $i'},
+          },
+        ),
+      },
+    },
+    isRead: true,
+    createdAt: createdAt,
+    status: MessageStatus.sent,
+  );
+}
+
+

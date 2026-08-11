@@ -5,11 +5,37 @@ import 'package:app/rendering/message_content_renderer.dart' show ContentRendere
 import 'package:app/rendering/truncatable_text_block.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+
+/// 判断文本是否可命中(高度被裁剪为 0 时不可点,但 widget 仍在树里)。
+/// 折叠卡收起时内容用 Align(heightFactor:0)+ClipRect 裁剪,文本节点存在但
+/// 渲染面积 0,不能靠 findsNothing 断言。
+bool _isTextTappable(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  if (finder.evaluate().isEmpty) return false;
+  return finder.hitTestable().evaluate().isNotEmpty;
+}
 
 void main() {
   setUpAll(() {
     registerBuiltinRenderers();
   });
+
+  Map<String, dynamic> makeTaskContent({
+    required String status,
+    String subSessionId = 'ses-child-1',
+    double? duration,
+  }) {
+    return {
+      'data': {
+        'name': 'task',
+        'status': status,
+        'input': {'description': '调研一下', 'subagent_type': 'general'},
+        if (subSessionId.isNotEmpty) 'sub_session_id': subSessionId,
+        if (duration != null) 'duration': duration,
+      },
+    };
+  }
 
   group('ToolCardRenderer', () {
     Map<String, dynamic> makeContent({
@@ -155,6 +181,95 @@ void main() {
       expect(find.text('完成'), findsOneWidget);
     });
 
+    testWidgets('todowrite 渲染任务清单折叠卡(不隐藏)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'todowrite',
+                input: {
+                  'todos': [
+                    {'content': '任务A', 'status': 'completed'},
+                    {'content': '任务B', 'status': 'pending'},
+                  ],
+                },
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      // 无工具卡外壳,直接折叠行:已完成 x/y 项
+      expect(find.text('Todowrite'), findsNothing);
+      expect(find.text('已完成 1/2 项'), findsOneWidget);
+      // 折叠态:任务行被高度裁剪不可点
+      expect(_isTextTappable(tester, '任务A'), isFalse);
+      // 点击标题展开 → 任务列表可见(等 AnimatedSize 动画结束)
+      await tester.tap(find.text('已完成 1/2 项'));
+      await tester.pumpAndSettle();
+      expect(_isTextTappable(tester, '任务A'), isTrue);
+      expect(_isTextTappable(tester, '任务B'), isTrue);
+    });
+
+    testWidgets('edit input 拆上下两框:改前/改后各一容器且单行预览', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'edit',
+                input: {
+                  'filePath': 'main.go',
+                  'oldString': 'line1\nline2\nline3\nline4',
+                  'newString': 'new1\nnew2\nnew3\nnew4',
+                },
+                output: 'edited',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      // 改前框:单行 Text 含 - 前缀(红),改后框:单行 Text 含 + 前缀(绿)
+      final oldText = tester.widget<Text>(find.textContaining('- line1'));
+      final newText = tester.widget<Text>(find.textContaining('+ new1'));
+      expect(oldText.maxLines, 1);
+      expect(newText.maxLines, 1);
+      expect(oldText.overflow, TextOverflow.ellipsis);
+      expect(newText.overflow, TextOverflow.ellipsis);
+      // 两个框都存在(改前红 / 改后绿)
+      expect(find.textContaining('- line1'), findsOneWidget);
+      expect(find.textContaining('+ new1'), findsOneWidget);
+    });
+
+    testWidgets('completed output 短文本单行 + 长文本走截断', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(status: 'completed', name: 'bash', input: {'command': 'ls'}, output: 'total 100'),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      final outputText = tester.widget<Text>(find.text('total 100'));
+      expect(outputText.maxLines, 1);
+      expect(outputText.overflow, TextOverflow.ellipsis);
+    });
+
     testWidgets('未识别工具名 + 非空 input 走 TruncatableTextBlock fallback', (tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -240,25 +355,77 @@ void main() {
         findsOneWidget,
       );
     });
+    testWidgets('webfetch 渲染纯文字行(无工具卡容器)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(status: 'completed', name: 'webfetch'),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('WebFetch'), findsOneWidget);
+      expect(find.text('完成'), findsOneWidget);
+      // webfetch 走纯文字行,不产生灰底工具卡 Container
+      expect(find.text('\u{e600}'), findsOneWidget); // iconfont explore 图标
+    });
+
+    testWidgets('webfetch 显示 url 单行截断 + 状态', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'webfetch',
+                input: {'url': 'https://very-long-domain.example.com/path/to/resource'},
+                output: '搜索到的内容',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('WebFetch'), findsOneWidget);
+      expect(find.text('https://very-long-domain.example.com/path/to/resource'), findsOneWidget);
+      expect(find.text('完成'), findsOneWidget);
+    });
+
+    testWidgets('webfetch 点击弹抽屉展示 url/output', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              makeContent(
+                status: 'completed',
+                name: 'webfetch',
+                input: {'url': 'https://example.com'},
+                output: '搜索到的完整结果内容',
+              ),
+              ctx,
+              const MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: false),
+            ),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('WebFetch'));
+      await tester.pumpAndSettle();
+      expect(find.text('搜索结果'), findsOneWidget);
+      expect(find.text('搜索到的完整结果内容'), findsOneWidget);
+    });
   });
 
   group('ToolCardRenderer task 三态', () {
-    Map<String, dynamic> makeTaskContent({
-      required String status,
-      String subSessionId = 'ses-child-1',
-      double? duration,
-    }) {
-      return {
-        'data': {
-          'name': 'task',
-          'status': status,
-          'input': {'description': '调研一下', 'subagent_type': 'general'},
-          if (subSessionId.isNotEmpty) 'sub_session_id': subSessionId,
-          if (duration != null) 'duration': duration,
-        },
-      };
-    }
-
     testWidgets('starting 态显示已启动文案 + 子 Agent 徽章', (tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -615,6 +782,74 @@ void main() {
       expect(find.text('选择题'), findsOneWidget);
       // 题干
       expect(find.text('用哪个分支?'), findsOneWidget);
+    });
+  });
+
+  group('task 卡跳转子 Agent 详情页用 rootMessageId', () {
+    Widget hostWithRouter({
+      required String messageId,
+      String rootMessageId = '',
+      required void Function(String taskCardId) onSubagentRoute,
+    }) {
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => Scaffold(
+              body: Builder(
+                builder: (ctx) => ContentRendererRegistry.render(
+                  MsgType.toolCard,
+                  makeTaskContent(status: 'working'),
+                  ctx,
+                  MessageRenderContext(
+                    isMe: false, baseUrl: '', token: '', isDark: false,
+                    convId: 'conv-1',
+                    messageId: messageId,
+                    rootMessageId: rootMessageId,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/chat/subagent/:taskCardId',
+            builder: (_, state) {
+              onSubagentRoute(state.pathParameters['taskCardId']!);
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      );
+      return MaterialApp.router(routerConfig: router);
+    }
+
+    testWidgets('rootMessageId 非空时跳转用它而非 messageId（聚合卡场景）', (tester) async {
+      String? jumpedTo;
+      await tester.pumpWidget(hostWithRouter(
+        messageId: 'tool_card_5',
+        rootMessageId: 'agg-msg-real-1',
+        onSubagentRoute: (id) => jumpedTo = id,
+      ));
+
+      await tester.tap(find.text('general'));
+      await tester.pumpAndSettle();
+
+      expect(jumpedTo, 'agg-msg-real-1');
+    });
+
+    testWidgets('rootMessageId 缺省时 fallback 到 messageId（非聚合场景）', (tester) async {
+      String? jumpedTo;
+      await tester.pumpWidget(hostWithRouter(
+        messageId: 'task-msg-1',
+        rootMessageId: '',
+        onSubagentRoute: (id) => jumpedTo = id,
+      ));
+
+      await tester.tap(find.text('general'));
+      await tester.pumpAndSettle();
+
+      expect(jumpedTo, 'task-msg-1');
     });
   });
 
