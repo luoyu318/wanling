@@ -1057,7 +1057,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final historyItemCtx = itemCtx.copyWith(isHistorySliver: true);
 
     // PopScope:多选模式拦截返回键(优先退出多选,而非离开页面)。
-    return PopScope(
+    // 状态栏跟随 AppBar 模式:普通模式白底深色图标;多选模式深色底白色图标。
+    final selectionMode = _multiSelectController.isSelectionMode;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: selectionMode
+          ? SystemUiOverlayStyle.dark.copyWith(
+              statusBarColor: const Color(0xFF2A2A2A),
+            )
+          : SystemUiOverlayStyle.light.copyWith(
+              statusBarColor: Colors.white,
+              systemNavigationBarColor: Colors.white,
+            ),
+      child: PopScope(
       canPop: !_multiSelectController.isSelectionMode,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _multiSelectController.isSelectionMode) {
@@ -1396,8 +1407,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
           ],
         ), // Stack(body)
-      ),
-    );
+      ), // Scaffold
+      ), // PopScope
+    ); // AnnotatedRegion
   }
 }
 
