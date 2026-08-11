@@ -19,9 +19,16 @@ TokenProvider = Callable[[], Awaitable[str]]
 
 
 class WanlingRestClient:
-    def __init__(self, server_url: str, token_provider: TokenProvider) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        token_provider: TokenProvider,
+        max_upload_bytes: int = 32 * 1024 * 1024,
+    ) -> None:
         self._base_url = server_url.rstrip("/")
         self._token_provider = token_provider
+        # 上传上限默认对齐 server UPLOAD_MAX_BYTES(32MB),可由调用方收紧/放宽。
+        self._max_upload_bytes = max_upload_bytes
         self._client = httpx.AsyncClient()
 
     async def aclose(self) -> None:
@@ -110,8 +117,8 @@ class WanlingRestClient:
 
     async def upload_file(self, file_path: str, conv_id: str | None = None) -> str:
         size = os.path.getsize(file_path)
-        if size > 20 * 1024 * 1024:
-            raise ApiError(0, f"upload_file: {file_path} too large ({size} bytes > 20MB)")
+        if size > self._max_upload_bytes:
+            raise ApiError(0, f"upload_file: {file_path} too large ({size} bytes > {self._max_upload_bytes})")
         token = await self._token_provider()
         params = {"conversation_id": conv_id} if conv_id else {}
         try:

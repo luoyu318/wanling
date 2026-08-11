@@ -124,3 +124,42 @@ async def test_create_approval_auto_approved():
         {"card_type": "command", "title": "t", "preview": "rm -rf /x", "session_key": "sk-1", "allow_pattern": "rm *"},
     )
     assert res["auto_approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_exceeds_max_bytes():
+    import os
+    import tempfile
+
+    client = WanlingRestClient("http://localhost:18008/", lambda: _async_token(), max_upload_bytes=1024)
+    fd, path = tempfile.mkstemp()
+    try:
+        with open(path, "wb") as f:  # noqa: ASYNC230 - 一次性临时文件,同步写即可
+            f.write(b"x" * (2 * 1024 * 1024))
+        with pytest.raises(ApiError) as exc:
+            await client.upload_file(path)
+        assert "too large" in str(exc.value)
+    finally:
+        os.close(fd)
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_upload_default_max_bytes_allows_21mb():
+    import os
+    import tempfile
+
+    client = WanlingRestClient("http://localhost:18008/", lambda: _async_token())
+
+    def handler(request):
+        return httpx_response(200, {"ok": True, "data": {"id": "f1"}})
+
+    client._client = AsyncClient(transport=MockTransport(handler))
+    fd, path = tempfile.mkstemp()
+    try:
+        with open(path, "wb") as f:  # noqa: ASYNC230 - 一次性临时文件,同步写即可
+            f.write(b"y" * (21 * 1024 * 1024))  # 21MB(> 旧 20MB 限制)
+        assert await client.upload_file(path) == "f1"
+    finally:
+        os.close(fd)
+        os.unlink(path)
