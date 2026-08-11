@@ -48,10 +48,17 @@ export type CreateApprovalResult = {
 export class WanlingRestClient {
   private serverUrl: string
   private tokenProvider: () => Promise<string>
+  private maxUploadBytes: number
 
-  constructor(serverUrl: string, tokenProvider: () => Promise<string>) {
+  constructor(
+    serverUrl: string,
+    tokenProvider: () => Promise<string>,
+    opts?: { maxUploadBytes?: number },
+  ) {
     this.serverUrl = serverUrl.replace(/\/+$/, "")
     this.tokenProvider = tokenProvider
+    // 上传上限默认对齐 server UPLOAD_MAX_BYTES(32MB),可由调用方收紧/放宽。
+    this.maxUploadBytes = opts?.maxUploadBytes ?? 32 * 1024 * 1024
   }
 
   private apiUrl(p: string): string {
@@ -163,8 +170,8 @@ export class WanlingRestClient {
 
   async uploadFile(filePath: string, convId?: string): Promise<string> {
     const size = statSync(filePath).size
-    if (size > 20 * 1024 * 1024) {
-      throw new ApiError(0, `upload: ${filePath} too large (${size} bytes > 20MB)`)
+    if (size > this.maxUploadBytes) {
+      throw new ApiError(0, `upload: ${filePath} too large (${size} bytes > ${this.maxUploadBytes})`)
     }
     const token = await this.tokenProvider()
     const fd = new FormData()

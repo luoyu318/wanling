@@ -83,4 +83,29 @@ describe("WanlingRestClient", () => {
     })
     expect(res.auto_approved).toBe(true)
   })
+
+  it("uploadFile 超过 maxUploadBytes 抛 ApiError(可配置上限)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rest-test-"))
+    const file = join(dir, "big.txt")
+    writeFileSync(file, Buffer.alloc(2 * 1024 * 1024, 97)) // 2MB
+    try {
+      const small = new WanlingRestClient("http://x", async () => "t", { maxUploadBytes: 1024 })
+      await expect(small.uploadFile(file)).rejects.toThrow("too large")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("uploadFile 默认上限对齐 server 32MB(不抛)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rest-test-"))
+    const file = join(dir, "mid.txt")
+    writeFileSync(file, Buffer.alloc(21 * 1024 * 1024, 98)) // 21MB(> 旧 20MB 限制)
+    try {
+      fetchSpy.mockResolvedValue(okJson({ id: "f1" }))
+      const id = await client.uploadFile(file)
+      expect(id).toBe("f1")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
