@@ -29,57 +29,57 @@ class MessageQuoteBlock extends StatelessWidget {
           ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        // 单行布局:@昵称 [智能体] : preview(省略号截断)。
+        child: Row(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
           children: [
-            // sender 行(主题色 + 600 字重 + 9px,Agent 加紫色智能体标)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: Text(
-                    quote.senderName,
-                    style: const TextStyle(
-                      color: Color(0xFF597BFF),
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+            Flexible(
+              child: Text(
+                '@${quote.senderName}',
+                style: const TextStyle(
+                  color: Color(0xFF597BFF),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Agent 加紫色智能体小标(单行内联保留身份标识)
+            if (quote.senderType == 'agent') ...[
+              const SizedBox(width: 3),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 3, vertical: 0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEDE9FE),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                child: const Text(
+                  '智能体',
+                  style: TextStyle(
+                    color: Color(0xFF6D28D9),
+                    fontSize: 7,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                if (quote.senderType == 'agent') ...[
-                  const SizedBox(width: 3),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 3, vertical: 0),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEDE9FE),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: const Text(
-                      '智能体',
-                      style: TextStyle(
-                        color: Color(0xFF6D28D9),
-                        fontSize: 7,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            // preview 行(9px + 灰色 + 单行省略;isRevoked 时显示「原消息已撤回」)
-            Text(
-              isRevoked ? '原消息已撤回' : quote.preview,
-              style: TextStyle(
-                color: isRevoked
-                    ? const Color(0xFF999999)
-                    : const Color(0xFF555555),
-                fontSize: 9,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            ],
+            const SizedBox(width: 3),
+            // preview 单行(9px + 灰色;isRevoked 时显示「原消息已撤回」)
+            Expanded(
+              child: Text(
+                isRevoked ? '原消息已撤回' : quote.preview,
+                style: TextStyle(
+                  color: isRevoked
+                      ? const Color(0xFF999999)
+                      : const Color(0xFF555555),
+                  fontSize: 9,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),

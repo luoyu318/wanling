@@ -5,7 +5,7 @@ import 'package:app/widgets/chat/message_quote_block.dart';
 
 void main() {
   group('MessageQuoteBlock', () {
-    testWidgets('B1 视觉:浅紫底 + 左竖线 + sender + preview', (tester) async {
+    testWidgets('单行格式:@昵称 + preview 同行(冒号分隔)', (tester) async {
       final quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文预览',
@@ -15,8 +15,10 @@ void main() {
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 
-      expect(find.text('洛羽'), findsOneWidget);
+      expect(find.text('@洛羽'), findsOneWidget);
       expect(find.text('原文预览'), findsOneWidget);
+      // 昵称带 @ 前缀(不再是裸昵称)
+      expect(find.text('洛羽'), findsNothing);
     });
 
     testWidgets('Agent 名旁显示「智能体」小标', (tester) async {
@@ -29,7 +31,7 @@ void main() {
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 
-      expect(find.text('小灵'), findsOneWidget);
+      expect(find.text('@小灵'), findsOneWidget);
       expect(find.text('智能体'), findsOneWidget);
     });
 
