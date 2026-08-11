@@ -12,6 +12,7 @@ void main() {
     double tailOffsetX = 75,
     bool pointDown = true,
     bool canRecall = false,
+    bool showQuote = true,
     VoidCallback? onQuote,
     required VoidCallback onCopy,
     required VoidCallback onDelete,
@@ -25,6 +26,7 @@ void main() {
       tailOffsetX: tailOffsetX,
       pointDown: pointDown,
       canRecall: canRecall,
+      showQuote: showQuote,
       onCopy: onCopy,
       onQuote: onQuote,
       onDelete: onDelete,
@@ -352,6 +354,54 @@ void main() {
       ));
       final quoteIcon = tester.widget<Icon>(find.byIcon(Icons.format_quote));
       expect(quoteIcon.color, AppMenuStyle.darkFg);
+    });
+
+    testWidgets('showQuote=false 时不渲染「引用」项', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              buildMenu(
+                showQuote: false,
+                onCopy: () {},
+                onDelete: () {},
+                onRecall: () {},
+                onSelect: () {},
+                onDismiss: () {},
+              ),
+            ],
+          ),
+        ),
+      ));
+      expect(find.text('引用'), findsNothing);
+      expect(find.byIcon(Icons.format_quote), findsNothing);
+      // 其余项不受影响
+      expect(find.text('复制'), findsOneWidget);
+      expect(find.text('删除'), findsOneWidget);
+      expect(find.text('多选'), findsOneWidget);
+    });
+
+    testWidgets('showQuote=false + canRecall=true 时撤回仍渲染(两者独立控制)',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              buildMenu(
+                showQuote: false,
+                canRecall: true,
+                onCopy: () {},
+                onDelete: () {},
+                onRecall: () {},
+                onSelect: () {},
+                onDismiss: () {},
+              ),
+            ],
+          ),
+        ),
+      ));
+      expect(find.text('引用'), findsNothing);
+      expect(find.text('撤回'), findsOneWidget);
     });
   });
 }

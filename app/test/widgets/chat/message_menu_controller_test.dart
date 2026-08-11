@@ -14,6 +14,7 @@ MessageMenuContext _buildContext({
   Future<void> Function(List<String> ids, {bool recall})? onConfirmDelete,
   void Function(String msgId)? onEnterSelectionMode,
   VoidCallback? onMenuHide,
+  bool Function()? getIsAgentSession,
   BuildContext Function()? getContext,
   GlobalKey Function()? getListViewKey,
 }) {
@@ -27,6 +28,7 @@ MessageMenuContext _buildContext({
     onConfirmDelete: onConfirmDelete ?? (_, {bool recall = false}) async {},
     onEnterSelectionMode: onEnterSelectionMode ?? (_) {},
     onMenuHide: onMenuHide ?? () {},
+    getIsAgentSession: getIsAgentSession ?? () => false,
     chatKey: (convId: 'c1', agentId: null),
     ref: _DummyRef(),
   );
@@ -262,6 +264,128 @@ void main() {
       await tester.pump();
       expect(captured.isMenuOpen, isTrue);
       expect(hideCallCount, 2);
+    });
+  });
+
+  group('agent_session 场景(引用/撤回隐藏)', () {
+    testWidgets('agent_session + 消息在可见区 → 菜单只有复制/删除/多选,无引用/撤回',
+        (tester) async {
+      late MessageMenuController captured;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) {
+                captured = MessageMenuController(
+                  _buildContext(
+                    getContext: () => ctx,
+                    getIsAgentSession: () => true,
+                    bubbleGlobalRect: (_) => const Rect.fromLTWH(
+                      20,
+                      100,
+                      100,
+                      40,
+                    ),
+                  ),
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      // 自己发的 + sent + 5min 内,即使 canRecall=true 也因 agent_session 隐藏撤回。
+      captured.showMessageMenu(_msg(
+        id: 'm1',
+        senderId: 'me',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 1)),
+        status: MessageStatus.sent,
+      ));
+      await tester.pump();
+      expect(captured.isMenuOpen, isTrue);
+      expect(find.text('复制'), findsOneWidget);
+      expect(find.text('删除'), findsOneWidget);
+      expect(find.text('多选'), findsOneWidget);
+      expect(find.text('引用'), findsNothing);
+      expect(find.text('撤回'), findsNothing);
+    });
+
+    testWidgets('agent_session + 滚动重算后菜单仍不显示引用/撤回', (tester) async {
+      late MessageMenuController captured;
+      final messages = <ChatMessage>[_msg(id: 'm1', senderId: 'me')];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) {
+                captured = MessageMenuController(
+                  _buildContext(
+                    getContext: () => ctx,
+                    getIsAgentSession: () => true,
+                    bubbleGlobalRect: (_) => const Rect.fromLTWH(
+                      20,
+                      100,
+                      100,
+                      40,
+                    ),
+                    getMessages: () => messages,
+                  ),
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      captured.showMessageMenu(_msg(id: 'm1', senderId: 'me'));
+      await tester.pump();
+      expect(captured.isMenuOpen, isTrue);
+
+      captured.updateMenuOnScroll();
+      await tester.pump();
+      expect(captured.isMenuOpen, isTrue);
+      expect(find.text('复制'), findsOneWidget);
+      expect(find.text('删除'), findsOneWidget);
+      expect(find.text('多选'), findsOneWidget);
+      expect(find.text('引用'), findsNothing);
+      expect(find.text('撤回'), findsNothing);
+    });
+
+    testWidgets('普通会话(非 agent_session)仍显示引用/撤回', (tester) async {
+      late MessageMenuController captured;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) {
+                captured = MessageMenuController(
+                  _buildContext(
+                    getContext: () => ctx,
+                    getIsAgentSession: () => false,
+                    bubbleGlobalRect: (_) => const Rect.fromLTWH(
+                      20,
+                      100,
+                      100,
+                      40,
+                    ),
+                  ),
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      captured.showMessageMenu(_msg(
+        id: 'm1',
+        senderId: 'me',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 1)),
+        status: MessageStatus.sent,
+      ));
+      await tester.pump();
+      expect(captured.isMenuOpen, isTrue);
+      expect(find.text('引用'), findsOneWidget);
+      expect(find.text('撤回'), findsOneWidget);
     });
   });
 

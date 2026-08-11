@@ -453,6 +453,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       },
       onConfirmDelete: _confirmDelete,
       onEnterSelectionMode: _multiSelectController.enterSelection,
+      getIsAgentSession: () {
+        // convType 异步加载,菜单展示时动态判断(与 build 里 isAgentSession 同口径)。
+        final conv = ref
+            .read(conversationProvider)
+            .where((c) => c.id == widget.convId)
+            .firstOrNull;
+        if (conv?.isAgentSession ?? false) return true;
+        return ref
+                .read(chatProvider(
+                  (convId: widget.convId, agentId: widget.agentId),
+                ))
+                .convType ==
+            'agent_session';
+      },
       onMenuHide: () {
         // 菜单关闭 → 清选区(常驻 SelectableRegion)+ 清选中文本缓存。
         _selectionKey.currentState?.clearSelection();
