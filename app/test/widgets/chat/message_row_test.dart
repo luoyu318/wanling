@@ -175,8 +175,8 @@ void main() {
       )));
       // 引用块出现
       expect(find.byType(MessageQuoteBlock), findsOneWidget);
-      // 引用块的 sender 名 + preview 可见
-      expect(find.text('张三'), findsOneWidget);
+      // 引用块的 sender 名(@前缀)+ preview 可见
+      expect(find.text('@张三'), findsOneWidget);
       expect(find.text('被引用的内容'), findsOneWidget);
       // 气泡内容仍在
       expect(find.text('hello'), findsOneWidget);
