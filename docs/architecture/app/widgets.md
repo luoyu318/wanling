@@ -33,13 +33,16 @@ IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选�
 
 ## MessageContextMenu `[chat/]`
 
-长按消息浮动菜单（绝对定位 `Positioned left/top`，三角指向消息中心）。半透明深色（`#262626` 0.91）+ 圆角 12 + 阴影，3-4 项横向（默认复制/引用/删除/多选；`canRecall=true` 时加「撤回」= 5 项布局，icon 上文字下，删除/撤回红色）。`menuWidthFor(itemCount)` 按 item 数算总宽。外部空白用 `Listener`（pointer 层）做 tap 判定关闭，不消费拖拽 → 弹菜单时仍可上下滑动消息列表。ChatPage 滚动时重算 left/top 并重建 OverlayEntry（IM 式锚钉）。
+长按消息浮动菜单（绝对定位 `Positioned left/top`，三角指向消息中心）。半透明深色（`#262626` 0.91）+ 圆角 12 + 阴影，横向 icon 上文字下（删除/撤回红色）。**菜单项按场景变化**(2026-08-11)：
+- 普通会话：默认 4 项 复制/引用/删除/多选；`canRecall=true` 加「撤回」= 5 项
+- agent_session：3 项 复制/删除/多选（引用不适用、撤回由 StopBar 承载，`showQuote=false` + 强制 canRecall=false）
+- `menuWidthFor(itemCount)` 按 item 数算总宽。外部空白用 `Listener`（pointer 层）做 tap 判定关闭，不消费拖拽 → 弹菜单时仍可上下滑动消息列表。ChatPage 滚动时重算 left/top 并重建 OverlayEntry（IM 式锚钉）。
 
 ## MessageQuoteBlock / QuotePreviewBar `[chat/]`
 
 **引用功能组件**(2026-07-08):
-- **MessageQuoteBlock** — 气泡上方独立引用块(B1 紧凑左竖线样式)。浅紫底 `#1A597BFF` + 左 2px 主题色竖线 + 3px 圆角 + 内边距 4×7。sender 行 9px 主题色 600 字重(senderType='agent' 时旁加紫色「智能体」小标),preview 行 9px 灰色单行省略。`isRevoked=true` 时 preview 显示「原消息已撤回」(本地状态优先于 server snapshot,撤回 dispatch 可能在引用消息之后到达)。嵌入 MessageRow 的 Column 顶部(气泡上方,与气泡平级兄弟节点),点击触发 `onJumpToMessage` 跨页跳转。
-- **QuotePreviewBar** — 输入框上方引用预览条(V1 卡片式)。结构与 MessageQuoteBlock 视觉一致(浅紫底 + 左竖线),略大 + 右侧 × 关闭按钮。`ChatProvider.pendingQuote` 本地状态,发送时合到 outgoing content.data.quote(完整 snapshot,本地乐观渲染立即可见),发送完清空。
+- **MessageQuoteBlock** — 气泡上方独立引用块(B1 紧凑左竖线样式)。浅紫底 `#1A597BFF` + 左 2px 主题色竖线 + 3px 圆角 + 内边距 4×7。**单行样式**(2026-08-11)：`@昵称 [智能体] : preview` 一行排布(@昵称 9px 主题色 600 字重;Agent 旁紫色「智能体」小标;preview 9px 灰色单行省略)。`isRevoked=true` 时 preview 显示「原消息已撤回」(本地状态优先于 server snapshot,撤回 dispatch 可能在引用消息之后到达)。嵌入 MessageRow 的 Column 顶部(气泡上方,与气泡平级兄弟节点),点击触发 `onJumpToMessage` 跨页跳转。
+- **QuotePreviewBar** — 输入框上方引用预览条(V1 卡片式)。结构与 MessageQuoteBlock 视觉一致(浅紫底 + 左竖线),略大 + 右侧 × 关闭按钮。**同步单行化**(2026-08-11)：`@昵称 [智能体] : preview` 一行,Agent 智能体标内联保留。`ChatProvider.pendingQuote` 本地状态,发送时合到 outgoing content.data.quote(完整 snapshot,本地乐观渲染立即可见),发送完清空。
 
 ## BubbleWithTail
 
@@ -83,7 +86,7 @@ IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选�
 
 ## TypingBubble `[chat/]`
 
-对方"正在输入"动画气泡
+对方"正在输入"动画气泡(dots 循环)。**agent_session 会话不显示**(2026-08-11)：busy/typing 气泡整体移除,运行时状态由 AppBar subtitle「灵光涌动...」+ StopBar + 聚合卡 footer 承载;普通会话(dm_user_agent 等)仍显示
 
 ## StreamingText
 
@@ -175,4 +178,4 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## v1.0.9+ 新增组件
 
-二级会话目录面板(DirectoryPanel/Tile/PickerSheet + directory_utils)、三体状态指示器(ThreeBodyPhysics/Indicator + AgentBusyBubble + ShimmerText)、文件浏览套件(FileEntryIcon + DiffPatchViewer,双栏时代的 SplitView/Breadcrumb/FileListAside/FileViewer 等已废弃)、命令面板(SlashHandle + SlashCommandSheet + ModelPickerSheet)、LocalStoreBanner / ConvActionMenu。详见 [chat-extras.md](./chat-extras.md)
+二级会话目录面板(DirectoryPanel/Tile/PickerSheet + directory_utils)、三体状态指示器(ThreeBodyPhysics/Indicator + ShimmerText)、文件浏览套件(FileEntryIcon + DiffPatchViewer,双栏时代的 SplitView/Breadcrumb/FileListAside/FileViewer 等已废弃)、命令面板(SlashHandle + SlashCommandSheet + ModelPickerSheet)、LocalStoreBanner / ConvActionMenu。详见 [chat-extras.md](./chat-extras.md)
