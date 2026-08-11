@@ -72,6 +72,13 @@ class WanlingRestClient:
         data: dict,
         silent: bool = True,
     ) -> str:
+        """发一条卡片消息(HTTP 通道,agent 视角)。
+
+        注意:silent 默认 True,静默、不计未读、不弹通知,适合工具卡/过程消息。
+        发普通文本回复请改用 client.send_typed(WS,默认非 silent)或本方法显式
+        silent=False,否则 APP 端不响铃也不计未读。
+        对齐 server POST /api/conversations/:id/messages(SendAsAgent)。
+        """
         content = {"msg_type": msg_type, "data": data, "silent": silent}
         resp = await self.request("POST", f"/api/conversations/{conv_id}/messages", {"content": content})
         message_id = resp.get("data", {}).get("message_id")

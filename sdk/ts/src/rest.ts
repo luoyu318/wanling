@@ -120,6 +120,12 @@ export class WanlingRestClient {
     }
   }
 
+  // 发一条卡片消息(HTTP 通道,agent 视角)。
+  //
+  // ⚠️ silent 默认 true:静默、不计未读、不弹通知 —— 适合工具卡/过程消息。
+  //    发普通文本回复请改用 client.sendTypedMessage(WS,默认非 silent)
+  //    或本方法显式传 silent=false,否则 APP 端不响铃也不计未读。
+  // 对齐 server POST /api/conversations/:id/messages(SendAsAgent)。
   async sendCardMessage(
     convId: string,
     msgType: string,
