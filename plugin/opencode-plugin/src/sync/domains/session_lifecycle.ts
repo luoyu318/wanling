@@ -1,4 +1,5 @@
 import type { EventEmitter } from "events"
+import { logger } from "../../utils/logger.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionStatusPayload } from "../../opencode/subscriber.js"
 import type { SessionStore } from "../session_store.js"
@@ -47,7 +48,7 @@ export class SessionLifecycle {
     // 新会话首个 session.status 事件可能先于 message.part.updated 到达
     //（state 在 onPartUpdated→getOrCreateState 中异步创建，此时尚未存在）。
     const convId = state?.convId ?? this.store.peekConvId(payload.sessionID)
-    console.log(`[streamer] onSessionStatus session=${payload.sessionID.slice(0, 12)}… type=${payload.status.type} state=${!!state} convId=${convId?.slice(0, 8) ?? "miss"}`)
+    logger.info(`[streamer] onSessionStatus session=${payload.sessionID.slice(0, 12)}… type=${payload.status.type} state=${!!state} convId=${convId?.slice(0, 8) ?? "miss"}`)
     if (!convId) return
 
     switch (payload.status.type) {

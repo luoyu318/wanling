@@ -1,4 +1,5 @@
 import type { WanlingClient } from "../wanling/client.js"
+import { logger } from "../utils/logger.js"
 import type { MessageCreatePayload, GenerationAbortPayload, ConvUpdatePayload } from "../wanling/types.js"
 import type { OpencodeBridge } from "../opencode/bridge.js"
 import type { WanlingDownloader, DownloadResult } from "../storage/downloader.js"
@@ -53,7 +54,7 @@ export class SyncEngine extends EventEmitter {
   private async handleIncomingMessage(
     payload: MessageCreatePayload,
   ): Promise<void> {
-    console.log(`[sync] handleIncomingMessage msgId=${payload.id?.slice(0, 8)} sender=${payload.sender_type} conv=${payload.conversation_id?.slice(0, 8)}`)
+    logger.info(`[sync] handleIncomingMessage msgId=${payload.id?.slice(0, 8)} sender=${payload.sender_type} conv=${payload.conversation_id?.slice(0, 8)}`)
     if (payload.sender_type !== "user") return
     if (!payload.sender_id) return
 
@@ -117,7 +118,7 @@ export class SyncEngine extends EventEmitter {
       // plugin 不缓存,RPC 方法按需调 bridge.getSessionDirectory 拉。
       const directory = (data._directory as string) || this.defaultDirectory || undefined
       const sessionId = await this.opencode.createSession("万灵对话", directory)
-      console.log(`[sync] 为 conv ${convId.slice(0, 8)}… 创建新 session ${sessionId.slice(0, 12)}… (directory=${directory ?? "default"})`)
+      logger.info(`[sync] 为 conv ${convId.slice(0, 8)}… 创建新 session ${sessionId.slice(0, 12)}… (directory=${directory ?? "default"})`)
       map = {
         wanlingConvId: convId,
         opencodeSessionId: sessionId,
@@ -187,12 +188,12 @@ export class SyncEngine extends EventEmitter {
     const convId = payload.conversation_id
     const map = getSessionMap(convId)
     if (!map) {
-      console.log(`[sync] abort conv=${convId.slice(0, 8)}… 无 session 映射,跳过`)
+      logger.info(`[sync] abort conv=${convId.slice(0, 8)}… 无 session 映射,跳过`)
       return
     }
     try {
       await this.opencode.abortSession(map.opencodeSessionId)
-      console.log(`[sync] abort conv=${convId.slice(0, 8)}… session=${map.opencodeSessionId.slice(0, 12)}… 已发送中止信号`)
+      logger.info(`[sync] abort conv=${convId.slice(0, 8)}… session=${map.opencodeSessionId.slice(0, 12)}… 已发送中止信号`)
       // 聚合卡主动收尾定格:abort 后 opencode 不再推 step-finish footer,
       // 由 streamer 侧对主 session 聚合卡 finishCard("stop"),APP footer 显示「已停止」。
       // 经事件解耦(engine 不持有 streamer),index.ts 接线到 streamer.finishCardForSession。
@@ -217,7 +218,7 @@ export class SyncEngine extends EventEmitter {
     if (!map) return
     try {
       await this.opencode.renameSession(map.opencodeSessionId, title)
-      console.log(`[sync] 标题同步 conv=${convId.slice(0, 8)}… → session=${map.opencodeSessionId.slice(0, 12)}… title="${title}"`)
+      logger.info(`[sync] 标题同步 conv=${convId.slice(0, 8)}… → session=${map.opencodeSessionId.slice(0, 12)}… title="${title}"`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[sync] 标题同步 conv=${convId.slice(0, 8)}… 失败: ${msg}`)
@@ -355,7 +356,7 @@ export class SyncEngine extends EventEmitter {
       // 404: TUI 端已处理，静默跳过（双向去重不变量）
       if (isNotFound(err)) {
         const msg = (err as Error).message
-        console.log(`[sync] permission ${ocRequestId} already handled, skip (err: ${msg})`)
+        logger.info(`[sync] permission ${ocRequestId} already handled, skip (err: ${msg})`)
         await deleteCard(ocRequestId)
         return
       }
@@ -402,7 +403,7 @@ export class SyncEngine extends EventEmitter {
     } catch (err) {
       // 404: TUI 端已处理，静默跳过（双向去重不变量）
       if (isNotFound(err)) {
-        console.log(`[sync] question ${ocRequestId} already handled, skip`)
+        logger.info(`[sync] question ${ocRequestId} already handled, skip`)
         await deleteCard(ocRequestId)
         return
       }

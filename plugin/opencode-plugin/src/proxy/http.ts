@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { logger } from "../utils/logger.js"
 import { createServer, request as httpRequest } from "http"
 import type { WanlingClient } from "../wanling/client.js"
 import { findBySessionId, enqueuePendingTuiMessage } from "../sync/mapper.js"
@@ -29,7 +30,7 @@ export function startProxy(opts: ProxyOptions): Promise<{ close: () => void; por
     server.listen(opts.listenPort, "127.0.0.1", () => {
       const addr = server.address()
       const port = addr && typeof addr === "object" ? addr.port : opts.listenPort
-      console.log(`[proxy] listening on 127.0.0.1:${port} → :${opts.targetPort}`)
+      logger.info(`[proxy] listening on 127.0.0.1:${port} → :${opts.targetPort}`)
       resolve({ close: () => server.close(), port })
     })
   })
@@ -77,7 +78,7 @@ export function startProxy(opts: ProxyOptions): Promise<{ close: () => void; por
 
       if (sessionId) {
         const synced = trySyncPrompt(sessionId, reqBody, opts.wanling, opts.onUserSession)
-        if (synced) console.log(`[proxy] → POST ${url.pathname}`)
+        if (synced) logger.info(`[proxy] → POST ${url.pathname}`)
       }
 
       proxyReq = httpRequest(
@@ -147,12 +148,12 @@ export function trySyncPrompt(
     // session 群未建(ensureConversation 还在 flight):暂存待补发,
     // ensureConversation.doCreate 建群后 drain 队列补发,避免首条消息丢失。
     enqueuePendingTuiMessage(sessionId, userText)
-    console.log(`[proxy] session 群未建,暂存 tui_user 待补发: ${sessionId.slice(0, 12)}…`)
+    logger.info(`[proxy] session 群未建,暂存 tui_user 待补发: ${sessionId.slice(0, 12)}…`)
     return true
   }
 
   wanling.sendTypedMessage(map.wanlingConvId, "tui_user", { text: userText }, { silent: true })
-  console.log(`[proxy] synced user message (session: ${sessionId.slice(0, 12)}…)`)
+  logger.info(`[proxy] synced user message (session: ${sessionId.slice(0, 12)}…)`)
   return true
 }
 

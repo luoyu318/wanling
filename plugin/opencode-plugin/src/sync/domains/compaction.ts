@@ -1,4 +1,5 @@
 import type { WanlingClient } from "../../wanling/client.js"
+import { logger } from "../../utils/logger.js"
 import type { PartUpdatedPayload } from "../../opencode/subscriber.js"
 import type { SessionState } from "../types.js"
 import type { SessionStore } from "../session_store.js"
@@ -70,7 +71,7 @@ export class CompactionTracker {
       ([_, v]) => !v.done,
     )
     if (pending.length === 0) return
-    console.log(`[streamer] compaction 兜底切 done: session=${sessionID.slice(0, 12)}… count=${pending.length}`)
+    logger.info(`[streamer] compaction 兜底切 done: session=${sessionID.slice(0, 12)}… count=${pending.length}`)
     for (const [partId, entry] of pending) {
       entry.done = true
       try {

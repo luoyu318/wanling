@@ -1,4 +1,5 @@
 import type { WanlingClient } from "../../wanling/client.js"
+import { logger } from "../../utils/logger.js"
 import type { RPCDispatcher } from "../../rpc/dispatcher.js"
 import { OpencodeBridge } from "../../opencode/bridge.js"
 import type {
@@ -111,7 +112,7 @@ export class MetaSync {
         }
       }
 
-      console.log(`[streamer] providers 缓存: ${this.providerNames.size} models`)
+      logger.info(`[streamer] providers 缓存: ${this.providerNames.size} models`)
 
       // 上报给 server:构造 ModelInfo 数组(4 字段 snake_case,无 status)。
       // server AgentRegistry 缓存后供 APP GET /api/agents/:id/models 拉取。
@@ -136,7 +137,7 @@ export class MetaSync {
         }
       }
       this.wanling.sendAgentModels(this.wanling.agentId, reportModels)
-      console.log(`[streamer] AGENT_MODELS 已上报: ${reportModels.length} models`)
+      logger.info(`[streamer] AGENT_MODELS 已上报: ${reportModels.length} models`)
     } catch (err) {
       console.error(`[streamer] loadProviderNames 失败: ${err instanceof Error ? err.message : err}`)
     }
@@ -171,7 +172,7 @@ export class MetaSync {
         pluginPushedCompact = 1
       }
       this.wanling.sendAgentSlashCatalog(this.wanling.agentId, commands)
-      console.log(`[streamer] loadSlashCatalog: ${commands.length} commands (plugin-push compact=${pluginPushedCompact}), source=${commands.filter(c => c.source === "command").length} command / ${commands.filter(c => c.source === "skill").length} skill`)
+      logger.info(`[streamer] loadSlashCatalog: ${commands.length} commands (plugin-push compact=${pluginPushedCompact}), source=${commands.filter(c => c.source === "command").length} command / ${commands.filter(c => c.source === "skill").length} skill`)
     } catch (err) {
       console.error(`[streamer] loadSlashCatalog 失败: ${err instanceof Error ? err.message : err}`)
     }
@@ -183,7 +184,7 @@ export class MetaSync {
       if (!agentId) return
       const methods = this.dispatcher.listMethods()
       this.wanling.sendPluginCapabilities(agentId, methods)
-      console.log(`[streamer] PLUGIN_CAPABILITIES 已上报: ${methods.length} methods`)
+      logger.info(`[streamer] PLUGIN_CAPABILITIES 已上报: ${methods.length} methods`)
     } catch (err) {
       console.error(`[streamer] loadCapabilities 失败: ${err instanceof Error ? err.message : err}`)
     }
@@ -214,7 +215,7 @@ export class MetaSync {
       try {
         await this.wanling.updateConversationTitle(map.wanlingConvId, payload.title)
         this.knownTitles.set(payload.sessionID, payload.title)
-        console.log(`[streamer] 会话标题同步: ${map.wanlingConvId.slice(0, 8)}… ← "${payload.title}"`)
+        logger.info(`[streamer] 会话标题同步: ${map.wanlingConvId.slice(0, 8)}… ← "${payload.title}"`)
       } catch (err) {
         console.error(`[streamer] 会话标题同步失败: ${err instanceof Error ? err.message : err}`)
       }
@@ -270,7 +271,7 @@ export class MetaSync {
           contextUsed: 0,
           contextLimit,
         })
-        console.log(`[streamer] session meta 同步: ${map.wanlingConvId.slice(0, 8)}… ← ${metaKey}`)
+        logger.info(`[streamer] session meta 同步: ${map.wanlingConvId.slice(0, 8)}… ← ${metaKey}`)
       } catch (err) {
         console.error(`[streamer] session meta 同步失败: ${err instanceof Error ? err.message : err}`)
       }
@@ -309,7 +310,7 @@ export class MetaSync {
       if (full) {
         full.gitBranch = payload.branch
       }
-      console.log(`[streamer] vcs branch 同步: ${map.wanlingConvId.slice(0, 8)}… ← ${payload.branch}`)
+      logger.info(`[streamer] vcs branch 同步: ${map.wanlingConvId.slice(0, 8)}… ← ${payload.branch}`)
     } catch (err) {
       console.error(`[streamer] vcs branch 同步失败: ${err instanceof Error ? err.message : err}`)
     }
@@ -408,6 +409,6 @@ export class MetaSync {
     full.tokensTotal = tokensTotal
     full.contextUsed = reportedContextUsed
     full.contextLimit = contextLimit
-    console.log(`[streamer] step-finish meta 同步: ${map.wanlingConvId.slice(0, 8)}… ← branch=${gitBranch} tokens=${tokensTotal} used=${reportedContextUsed}/${contextLimit}`)
+    logger.info(`[streamer] step-finish meta 同步: ${map.wanlingConvId.slice(0, 8)}… ← branch=${gitBranch} tokens=${tokensTotal} used=${reportedContextUsed}/${contextLimit}`)
   }
 }

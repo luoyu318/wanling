@@ -1,4 +1,5 @@
 import type { EventEmitter } from "events"
+import { logger } from "../../utils/logger.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type {
   ApprovalRequestPayload,
@@ -298,7 +299,7 @@ export class InteractionCards {
     const stale = entries.filter(([, e]) => now - (e.createdAt ?? 0) > STALE_MS)
     if (stale.length === 0) return
 
-    console.log(`[streamer] 启动清理: ${stale.length}/${entries.length} 张超过 10min 的 pending 卡片 → expired`)
+    logger.info(`[streamer] 启动清理: ${stale.length}/${entries.length} 张超过 10min 的 pending 卡片 → expired`)
     for (const [requestId, entry] of stale) {
       try {
         if (entry.elementId) {
@@ -330,7 +331,7 @@ export class InteractionCards {
         // 不 deleteCard，保留本地记录供下次 cleanup 重试
       }
     }
-    console.log(`[streamer] 孤儿卡片清理完成`)
+    logger.info(`[streamer] 孤儿卡片清理完成`)
   }
 
   // 聚合卡是否对本 state 生效:开关开启且非子 session。
