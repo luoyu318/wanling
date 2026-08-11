@@ -30,7 +30,6 @@ import '../router_helpers.dart' show openFileBrowser;
 import '../widgets/chat/chat_app_bar.dart';
 import '../widgets/chat/chat_input_bar.dart';
 import '../widgets/chat/chat_list_overlays.dart';
-import '../widgets/chat/agent_busy_bubble.dart';
 import '../widgets/chat/typing_bubble.dart';
 import '../widgets/chat/env_meta_strip.dart' show EnvMetaStrip;
 import '../widgets/chat/model_picker_sheet.dart' show ModelPickerDialog;
@@ -661,15 +660,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   /// 重算打字态(busy/retry 也视作占位,与 typing 共用同一个 trailing 插槽)。
   /// generating 聚合卡存在时抑制气泡:聚合卡自身承载生成状态,无需重复 dots。
+  /// agent_session 会话恒不显示气泡:运行时状态已由 AppBar subtitle「灵光涌动...」
+  /// + StopBar 红色高亮 + 聚合卡生成状态承载,气泡提示多余。
   void _refreshExtraItems() {
     if (!mounted) return;
     final typing = ref.read(typingProvider)[widget.convId] ?? false;
     final agentStatus = ref.read(agentStatusProvider)[widget.convId];
-    final live = ref
-        .read(chatProvider((convId: widget.convId, agentId: widget.agentId)))
-        .liveMessages;
+    final chatState = ref
+        .read(chatProvider((convId: widget.convId, agentId: widget.agentId)));
+    final live = chatState.liveMessages;
     final hasGeneratingCard = hasGeneratingAggregateCard(live);
-    final showBubble = (typing || agentStatus != null) && !hasGeneratingCard;
+    final conv = ref.read(conversationProvider).where(
+          (c) => c.id == widget.convId,
+        ).firstOrNull;
+    final isAgentSession =
+        conv?.isAgentSession ?? (chatState.convType == 'agent_session');
+    // agent_session 恒不显示气泡;普通会话按 typing/busy 状态 + 聚合卡抑制决定。
+    final showBubble = !isAgentSession &&
+        (typing || agentStatus != null) &&
+        !hasGeneratingCard;
     if (_isTyping != showBubble) {
       _isTyping = showBubble;
       if (mounted) setState(() {});
