@@ -46,6 +46,10 @@ plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并�
 
 reasoning 元素 `data.finished`（流式占位 false / 终态 append true），APP 据此在卡片整体 generating 期间也显示真实思考内容（否则子 agent 并行阶段思考链不可见）。
 
+**多思考块**：工具循环的多轮 LLM 调用各自产生独立 reasoning 元素（`reasoning_1 / reasoning_2 / ...`，对齐 opencode）。hermes-plugin 经 `post_api_request` hook（每轮 LLM 调用后）段落级增量：首个 delta update 建卡占位，后续 delta 先标前块 `finished=true` 再 append 新块，回合末终态 reasoning 覆盖最后块为 finished=true。
+
+**审批响铃**：pending 交互元素（permission_card / question_card）append 时翻转 `silent=false`（需用户介入，响铃/未读）；终态（approved/denied/answered）翻转 `silent=true` 恢复安静。回合结束 finish 仍 `silent=false` 计最终未读。
+
 ## 元素类型表
 
 | 元素 type | data 字段 | 渲染（复用现有 renderer） |

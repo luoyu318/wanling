@@ -87,6 +87,40 @@ void main() {
       expect(categoryOfTool((groups[0] as ToolGroupSlot).cards.first), ToolCategory.explore);
     });
 
+    test('前缀通用规则:browser_* 新工具名自动折叠进 browser 组', () {
+      final groups = groupAggregateElements([
+        tool('t1', 'browser_click'), tool('t2', 'browser_type'),
+        tool('t3', 'browser_scroll'),
+      ]);
+      expect(groups.length, 1);
+      expect(groups.first, isA<ToolGroupSlot>());
+      expect((groups.first as ToolGroupSlot).cards.length, 3);
+      expect(groupTitle(groups.first as ToolGroupSlot, false), '已探索 3次搜索');
+    });
+
+    test('前缀通用规则:browser_* 与 read/search 连续同类合并', () {
+      final groups = groupAggregateElements([
+        tool('t1', 'browser_click'), tool('t2', 'browser_press'),
+        tool('t3', 'read_file'), tool('t4', 'search_remote'),
+      ]);
+      // browser+read+search 都归 explore 类别 → 连续合并成 1 组
+      expect(groups.length, 1);
+      expect((groups.first as ToolGroupSlot).cards.length, 4);
+    });
+
+    test('前缀通用规则:edit_*/write_* 折叠进编辑组', () {
+      final groups = groupAggregateElements([tool('t1', 'edit_file'), tool('t2', 'write_config')]);
+      expect(groups.length, 1);
+      expect(groups.first, isA<ToolGroupSlot>());
+      expect(categoryOfTool((groups[0] as ToolGroupSlot).cards.first), ToolCategory.edit);
+    });
+
+    test('前缀通用规则:terminal*/execute* 折叠进命令组', () {
+      final groups = groupAggregateElements([tool('t1', 'terminal_run'), tool('t2', 'execute_code')]);
+      expect(groups.length, 1);
+      expect(categoryOfTool((groups[0] as ToolGroupSlot).cards.first), ToolCategory.command);
+    });
+
     test('todowrite 平铺不折叠(不再隐藏)', () {
       final groups = groupAggregateElements([tool('t1', 'todowrite'), tool('t2', 'read')]);
       expect(groups.length, 2);

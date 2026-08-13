@@ -102,6 +102,10 @@ class AggregateCardManager:
         # 中间文本与最终正文都 update 到同一 markdown 元素（流式 build），
         # 避免「多条独立段 + 重复」。
         self._markdown_id: Optional[str] = None
+        # 元素归属卡：element_id → 所在聚合卡 message_id。分卡后旧卡元素
+        # update/reorder 仍能定位到正确消息（对齐 opencode aggregateElementCardIds），
+        # 否则旧卡元素操作会误打当前新卡 → server 400「元素不存在」。
+        self._element_card_ids: Dict[str, str] = {}
 
     # ── 串行队列：所有 REST PATCH 按序执行，防并发覆盖 ──────────────
 
@@ -200,11 +204,63 @@ class AggregateCardManager:
         return f"{type_}_{self._seq}"
 
     async def _seal_intermediate_card(self) -> None:
-        """分卡：旧卡 set_state done + set_segment middle（不翻 silent、不写 footer）。"""
+        """分卡：旧卡 set_state done + set_segment middle（不翻 silent、不写 footer）。
+
+        清空本卡元素累计（含 _markdown_id），保留 _element_card_ids 归属映射
+        （旧卡元素 update/reorder 仍定位旧卡），让后续 ensure_card 重开新卡。
+        对齐 opencode _sealIntermediateCard：不清累计会导致每次 append 再触发分卡。
+        清空前先 _settle_unfinished_elements 收尾旧卡未终态元素（否则脱离 finish 盲区）。
+        """
         if not self._card_msg_id:
             return
+        await self._settle_unfinished_elements()
         await self._patch({"op": "set_state", "state": "done"})
         await self._patch({"op": "set_segment", "segment": "middle"})
+        self._elements = []
+        self._markdown_id = None
+
+    async def _settle_unfinished_elements(self) -> None:
+        """收尾未终态元素（对齐 opencode 中断 flush 终态语义）：
+
+        - 空文本 reasoning 占位（未被任何思考 update）→ 删除，避免卡显示「思考中」空块
+        - 非空文本但仍 finished=false 的思考块 → 标 finished=true 保留内容
+        - running 工具卡（tool_end 未到，被中断/异常）→ 标 error，避免永久 pending
+        按元素归属卡 PATCH（分卡后旧卡元素仍定位正确）。
+        """
+        for e in list(self._elements):
+            if e.get("type") == "reasoning" and e.get("data", {}).get("finished") is False:
+                rid = e.get("element_id", "")
+                owner = self._element_card_ids.get(rid) or self._card_msg_id
+                rtext = str(e.get("data", {}).get("text") or "").strip()
+                if not rtext:
+                    await self._patch_msg(owner, {"op": "remove", "element_id": rid})
+                    self._elements = [
+                        x for x in self._elements if x.get("element_id") != rid
+                    ]
+                else:
+                    await self._patch_msg(owner, {
+                        "op": "update",
+                        "element_id": rid,
+                        "data": {**e.get("data", {}), "finished": True},
+                    })
+                    self._elements = [
+                        {**x, "data": {**x.get("data", {}), "finished": True}}
+                        if x.get("element_id") == rid else x
+                        for x in self._elements
+                    ]
+            elif e.get("type") == "tool_card" and e.get("data", {}).get("status") == "running":
+                eid = e.get("element_id", "")
+                owner = self._element_card_ids.get(eid) or self._card_msg_id
+                await self._patch_msg(owner, {
+                    "op": "update",
+                    "element_id": eid,
+                    "data": {**e.get("data", {}), "status": "error", "error": "interrupted"},
+                })
+                self._elements = [
+                    x if x.get("element_id") != eid
+                    else {**x, "data": {**x.get("data", {}), "status": "error", "error": "interrupted"}}
+                    for x in self._elements
+                ]
 
     async def append_element(
         self,
@@ -233,13 +289,21 @@ class AggregateCardManager:
         else:
             self._elements.append(element)
             await self.ensure_card()
+            # 记录元素归属卡：分卡后旧卡元素 update 仍能定位（工具终态/reasoning 终态）。
+            self._element_card_ids[eid] = self._card_msg_id or ""
             await self._patch({"op": "append", "element": element})
 
     async def update_element(self, element_id: str, data: Dict[str, Any]) -> None:
-        """按 element_id 整体替换元素 data（工具终态/状态推进）。"""
+        """按 element_id 整体替换元素 data（工具终态/状态推进）。
+
+        分卡后旧卡元素已不在 _elements 累计（_seal_intermediate_card 清空），
+        但 _element_card_ids 归属映射保留：按归属 PATCH 到正确消息
+        （对齐 opencode aggregateElementCardIds），避免误打当前新卡 → 400。
+        """
         if self._finalized:
             return
-        if not any(e.get("element_id") == element_id for e in self._elements):
+        owner = self._element_card_ids.get(element_id)
+        if owner is None:
             logger.debug(
                 "Wanling aggregate update unknown element %s (skipped)", element_id
             )
@@ -248,7 +312,7 @@ class AggregateCardManager:
             e if e.get("element_id") != element_id else {**e, "data": data}
             for e in self._elements
         ]
-        await self._patch({"op": "update", "element_id": element_id, "data": data})
+        await self._patch_msg(owner, {"op": "update", "element_id": element_id, "data": data})
 
     async def append_or_merge_markdown(self, text: str, *, final: bool = False) -> None:
         """追加 markdown 元素；相邻前缀重叠则合并（防重复），否则独立元素。
@@ -284,21 +348,39 @@ class AggregateCardManager:
         await self.append_element("markdown", {"text": text}, element_id=eid)
         self._markdown_id = eid
 
+    def _current_card_element_ids(self) -> set:
+        """当前卡（_card_msg_id）上的元素 id 集合（分卡后旧卡元素不在此列）。"""
+        current = self._card_msg_id
+        if not current:
+            return set()
+        return {
+            eid for eid, mid in self._element_card_ids.items() if mid == current
+        }
+
     async def reorder_markdown_to_end(self) -> None:
         """reorder：把正文（markdown）元素移到末尾（reasoning/工具卡之后、footer 前）。
 
         生成中正文元素可能因中间文本先到而落在工具卡之间；回合末最终正文后
         reorder 归位：[工具卡/审批/reasoning..., markdown..., footer]。
+        仅作用于当前卡元素（分卡后旧卡已 seal，元素顺序定格）。
         """
         if self._finalized:
             return
-        markdown_ids = [e.get("element_id", "") for e in self._elements if e.get("type") == "markdown"]
+        current_ids = self._current_card_element_ids()
+        if not current_ids:
+            return
+        markdown_ids = [
+            e.get("element_id", "")
+            for e in self._elements
+            if e.get("type") == "markdown" and e.get("element_id", "") in current_ids
+        ]
         if not markdown_ids:
             return
         ordered: List[str] = [
             e.get("element_id", "")
             for e in self._elements
-            if e.get("element_id", "") not in markdown_ids
+            if e.get("element_id", "") in current_ids
+            and e.get("element_id", "") not in markdown_ids
         ]
         ordered.extend(markdown_ids)
         await self._patch({"op": "reorder", "order": ordered})
@@ -309,11 +391,17 @@ class AggregateCardManager:
         hermes 中间文本（send 触发）先于 reasoning 进卡，导致 markdown 在
         reasoning 前；回合末 append reasoning 后，重排为
         [工具卡..., reasoning, markdown..., footer]。
+        仅作用于当前卡元素（分卡后旧卡已 seal，元素顺序定格）。
         """
+        current_ids = self._current_card_element_ids()
+        if not current_ids:
+            return
         ordered: List[str] = []
         markdown_ids: List[str] = []
         for e in self._elements:
             eid = e.get("element_id", "")
+            if eid not in current_ids:
+                continue  # 旧卡元素不参与当前卡 reorder
             if eid == reasoning_id:
                 continue
             if e.get("type") == "markdown":
@@ -343,35 +431,9 @@ class AggregateCardManager:
         if self._finalized:
             return
         self._finalized = True
-        # 移除假思考占位：建卡时 append 的 reasoning(finished=false) 若未被真实
-        # 思考 update（回合被打断/无思考），收尾时删掉，避免卡一直显示「思考中」。
-        for e in list(self._elements):
-            if (
-                e.get("type") == "reasoning"
-                and e.get("data", {}).get("finished") is False
-            ):
-                rid = e.get("element_id", "")
-                await self._patch({"op": "remove", "element_id": rid})
-                self._elements = [
-                    x for x in self._elements if x.get("element_id") != rid
-                ]
-        # 兜底：running 工具卡（tool_end 未到，被中断/异常）标 error，避免永久 pending。
-        for e in list(self._elements):
-            if (
-                e.get("type") == "tool_card"
-                and e.get("data", {}).get("status") == "running"
-            ):
-                eid = e.get("element_id", "")
-                await self._patch({
-                    "op": "update",
-                    "element_id": eid,
-                    "data": {**e.get("data", {}), "status": "error", "error": "interrupted"},
-                })
-                self._elements = [
-                    x if x.get("element_id") != eid
-                    else {**x, "data": {**x.get("data", {}), "status": "error", "error": "interrupted"}}
-                    for x in self._elements
-                ]
+        # reasoning 收尾 + running 工具兜底：抽到 _settle_unfinished_elements 共用
+        # （分卡 seal 也调用），未终态元素按归属卡 PATCH，避免旧卡元素脱离收尾盲区。
+        await self._settle_unfinished_elements()
         footer_data: Dict[str, Any] = {"reason": reason, "finished": True}
         if stopped:
             footer_data["stopped"] = True
@@ -413,16 +475,21 @@ class AggregateCardManager:
     # ── 底层 PATCH ───────────────────────────────────────────────────
 
     async def _patch(self, data: Dict[str, Any]) -> None:
-        if not self._card_msg_id:
+        """对当前卡（_card_msg_id）发增量 PATCH。"""
+        await self._patch_msg(self._card_msg_id, data)
+
+    async def _patch_msg(self, msg_id: Optional[str], data: Dict[str, Any]) -> None:
+        """对指定聚合卡消息发增量 PATCH（分卡后旧卡元素操作定位用）。"""
+        if not msg_id:
             return
         content = {"msg_type": "aggregate_card", "data": data}
         resp = await self._rest(
-            "PATCH", f"/api/messages/{self._card_msg_id}", {"content": content}
+            "PATCH", f"/api/messages/{msg_id}", {"content": content}
         )
         if not isinstance(resp, dict) or not resp.get("ok"):
             logger.warning(
                 "Wanling aggregate PATCH failed conv=%s msg=%s op=%s",
-                self.conv_id, self._card_msg_id, data.get("op"),
+                self.conv_id, msg_id, data.get("op"),
             )
 
 
@@ -681,6 +748,9 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                 },
                 element_id=eid,
             )
+            # pending 审批元素出现 → 翻转整卡 silent=false 响铃（需用户介入）。
+            # 对齐 opencode：aggregate 模式下审批卡同样翻转（用户要被提醒才处理）。
+            await manager._patch({"op": "set_silent", "silent": False})
             # 记录持久映射（回合结束后 manager 可能注销，决策时仍能定位 PATCH）
             sk = event.get("session_key") or ""
             if sk:
@@ -704,6 +774,9 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                     break
             if eid:
                 await manager.update_element(eid, patch_data)
+                # 审批解决 → 翻转 silent=true 恢复安静（对齐 opencode：终态后不打扰）。
+                owner = manager._element_card_ids.get(eid) or manager._card_msg_id
+                await manager._patch_msg(owner, {"op": "set_silent", "silent": True})
             else:
                 # 回合结束后 manager 已注销：用持久映射直接 PATCH 该消息
                 record = get_permission_card(oc_request_id)
@@ -720,6 +793,15 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                         "PATCH",
                         f"/api/messages/{record['msg_id']}",
                         {"content": content},
+                    )
+                    # 审批解决 → silent=true 恢复安静（不再响铃/未读）
+                    await manager._rest(
+                        "PATCH",
+                        f"/api/messages/{record['msg_id']}",
+                        {"content": {
+                            "msg_type": "aggregate_card",
+                            "data": {"op": "set_silent", "silent": True},
+                        }},
                     )
                 else:
                     logger.warning(
@@ -837,21 +919,21 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
             data["duration"] = float(event["duration_ms"]) / 1000.0
         await manager.update_element(eid, data)
     elif kind == "reasoning":
+        # 终态思考（post_llm_call 回合末）：把最后一个未终态思考块（当前思考）
+        # 标为 finished=true；无未终态块则 append 新终态元素。
         text = event.get("text") or ""
         if text.strip():
-            # 若已有 reasoning 占位（建卡时 finished=false），update 为终态；
-            # 否则 append 新 reasoning 元素。
-            placeholder_id = ""
-            for e in manager._elements:
+            target_id = ""
+            for e in reversed(manager._elements):
                 if (
                     e.get("type") == "reasoning"
                     and e.get("data", {}).get("finished") is False
                 ):
-                    placeholder_id = e.get("element_id", "")
+                    target_id = e.get("element_id", "")
                     break
-            if placeholder_id:
+            if target_id:
                 await manager.update_element(
-                    placeholder_id, {"text": text, "finished": True}
+                    target_id, {"text": text, "finished": True}
                 )
             else:
                 eid = manager.next_element_id("reasoning")
@@ -862,6 +944,37 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                 # markdown 元素之前（工具卡之后）。hermes 中间文本先进卡导致
                 # markdown 在 reasoning 前，reorder 纠正时序。
                 await manager.reorder_reasoning_before_markdown(eid)
+    elif kind == "reasoning_delta":
+        # 段落级实时思考（post_api_request 每轮 LLM 调用后触发）：对齐 opencode，
+        # 每轮思考独立 reasoning 元素（多块渲染）。状态机：
+        # - 最后一个 reasoning 是空文本占位（建卡）→ update 为当前思考（首块）
+        # - 最后一个 reasoning 已有内容（前一块思考）→ 先标 finished=true 结束前块，
+        #   再 append 新块（finished=false，当前思考中）
+        # - 最后一个 reasoning 已终态 / 不存在 → append 新块
+        text = event.get("text") or ""
+        if not text.strip():
+            return
+        last_id, last_text, last_finished = "", "", False
+        for e in reversed(manager._elements):
+            if e.get("type") == "reasoning":
+                last_id = e.get("element_id", "")
+                last_text = str(e.get("data", {}).get("text") or "").strip()
+                last_finished = bool(e.get("data", {}).get("finished"))
+                break
+        if last_id and not last_finished:
+            if not last_text:
+                # 建卡占位（空文本）：首块，update 为当前思考（保持 finished=false）
+                await manager.update_element(last_id, {"text": text, "finished": False})
+                return
+            # 前一块已有内容：新思考到达 = 前块结束，标终态
+            await manager.update_element(
+                last_id, {"text": last_text, "finished": True}
+            )
+        eid = manager.next_element_id("reasoning")
+        await manager.append_element(
+            "reasoning", {"text": text, "finished": False}, element_id=eid,
+        )
+        await manager.reorder_reasoning_before_markdown(eid)
     elif kind == "markdown":
         # 最终正文（post_llm_call）：累积到单一正文元素（覆盖中间快照），
         # 随后 reorder 把正文移到末尾（reasoning 后、footer 前）。

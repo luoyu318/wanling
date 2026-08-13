@@ -33,8 +33,15 @@ enum ToolCategory { explore, command, edit }
 
 /// 工具名归一化:把 hermes/opencode 不同命名映射到统一类别名(read/search/command/edit)。
 /// 返回类别 + 归一化名(供 groupTitle 计数用)。不折叠的返回 null。
+///
+/// 策略分两层:
+/// 1. 精确白名单(opencode 官方 + hermes 已知工具)
+/// 2. 前缀通用规则(hermes 工具族以 *_ 前缀扩展,如 browser_click/read_file 等,
+///    新增工具名无需逐个维护即可按同类折叠)
+/// 折叠是「同类 + 连续」分组,未知/交互性工具(webfetch/task/todowrite)保持平铺。
 (String, String)? normalizeToolName(Map<String, dynamic> card) {
   final name = ((card['data'] as Map?)?['name'] as String?) ?? '';
+  // ── 1. 精确白名单(opencode 官方 / hermes 已知) ──
   switch (name) {
     // 探索:read 族
     case 'read':
@@ -55,11 +62,10 @@ enum ToolCategory { explore, command, edit }
     case 'skill_manage':
       return (ToolCategory.explore.name, 'search');
     // 探索:browser 族(hermes 浏览器操作)
+    case 'browser':
     case 'browser_navigate':
     case 'browser_snapshot':
-    case 'browser':
       return (ToolCategory.explore.name, 'browser');
-    // webfetch 保持平铺(协议:不折叠,独立网络探索行),不在此处折叠。
     // 命令
     case 'bash':
     case 'terminal':
@@ -70,10 +76,39 @@ enum ToolCategory { explore, command, edit }
     case 'write':
     case 'write_file':
     case 'apply_patch':
+    case 'patch':
       return (ToolCategory.edit.name, 'edit');
-    default:
-      return null; // task/todowrite/未知工具不折叠
   }
+  // ── 2. 前缀通用规则(hermes 工具族,新工具名自动归类) ──
+  // browser 族:browser_click / browser_press / browser_type / browser_scroll /
+  // browser_cdp / browser_console / browser_vision / browser_pointer /
+  // browser_screenshots / browser_get_images / browser_back 等 → 浏览器操作
+  if (name.startsWith('browser_')) {
+    return (ToolCategory.explore.name, 'browser');
+  }
+  // 读/列目录:read_* / file_* 读取类
+  if (name.startsWith('read_') || name == 'file' || name.startsWith('file_')) {
+    return (ToolCategory.explore.name, 'read');
+  }
+  // 搜索:search_* / 含 search
+  if (name.startsWith('search_') || name.contains('search')) {
+    return (ToolCategory.explore.name, 'search');
+  }
+  // 技能/记忆检索:skill* / skills* / memory
+  if (name.startsWith('skill') || name.startsWith('memory')) {
+    return (ToolCategory.explore.name, 'search');
+  }
+  // 命令:terminal* / shell* / *term* / execute*
+  if (name.startsWith('terminal') || name.startsWith('shell') ||
+      name.startsWith('execute') || name.contains('_term')) {
+    return (ToolCategory.command.name, 'command');
+  }
+  // 编辑:write_* / edit_* / apply_*
+  if (name.startsWith('write_') || name.startsWith('edit_') ||
+      name.startsWith('apply_')) {
+    return (ToolCategory.edit.name, 'edit');
+  }
+  return null; // webfetch/task/todowrite/完全未知保持平铺
 }
 
 ToolCategory? categoryOfTool(Map<String, dynamic> card) {

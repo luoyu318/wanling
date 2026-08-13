@@ -172,12 +172,16 @@ class _PendingPermissionCard extends StatelessWidget {
                 IconFont.icon(IconFont.permission,
                     size: 15, color: const Color(0xFFB45F06)),
                 const SizedBox(width: 5),
-                Text(
-                  '权限审批 · $label',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFB45F06),
+                Expanded(
+                  child: Text(
+                    '权限审批 · $label',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFB45F06),
+                    ),
                   ),
                 ),
               ],
@@ -291,13 +295,17 @@ class _PermissionTerminalFoldState extends State<_PermissionTerminalFold> {
                   color: accent,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  '权限审批 · $label',
-                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                Expanded(
+                  child: Text(
+                    '权限审批 · $label',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Text(resultText, style: TextStyle(fontSize: 12, color: accent)),
-                const Spacer(),
+                const SizedBox(width: 4),
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
@@ -384,12 +392,16 @@ class _TerminalPermissionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text(
-                  '权限审批 · $label',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: accent,
+                Expanded(
+                  child: Text(
+                    '权限审批 · $label',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: accent,
+                    ),
                   ),
                 ),
               ],

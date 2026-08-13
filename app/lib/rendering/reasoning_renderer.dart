@@ -20,7 +20,8 @@ final List<SpanNodeGeneratorWithTag> _markdownGenerators = [
 ];
 
 /// AI 思考链渲染器：读 [MessageRenderContext.isStreaming] 分发到两态子 widget。
-/// - 流式态(isStreaming=true 且 data.finished != true)：✨ 闪烁动画 + 「正在思考...」固定文案
+/// - 流式态(isStreaming=true 且 data.finished != true)：✨ 闪烁动画 + text 非空时
+///   显示真实思考文本（post_api_request 段落级增量），空文本才显示「正在思考...」
 /// - 终态(isStreaming=false 或 data.finished == true)：✨ 淡化 + 真实 text 预览
 ///
 /// data.finished(元素级终态标记,方案 B):聚合卡整体 generating 期间(isStreaming=true)
@@ -105,7 +106,7 @@ class _StaticReasoningCard extends StatelessWidget {
   }
 }
 
-/// 流式卡:✨ 闪烁动画 + 「正在思考...」固定文案。
+/// 流式卡:✨ 闪烁动画 + 真实思考文本(text 非空时显示;空文本显示「正在思考...」)。
 ///
 /// 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 之间平滑往返,周期 1800ms。
 class _StreamingReasoningCard extends StatefulWidget {
@@ -167,10 +168,14 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
               ),
             ),
             const SizedBox(width: 6),
-            const Expanded(
+            Expanded(
               child: Text(
-                '正在思考...',
-                style: TextStyle(fontSize: 14, color: Color(0xFF999999)),
+                // 增量思考(text 非空,post_api_request 每轮更新)显示真实内容;
+                // 空文本(建卡占位瞬时态)显示「正在思考...」。单行截断 + 抽屉看全文。
+                widget.text.isNotEmpty ? widget.text : '正在思考...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF999999)),
               ),
             ),
             const Text('▸', style: TextStyle(fontSize: 11, color: Color(0xFFBBBBBB))),

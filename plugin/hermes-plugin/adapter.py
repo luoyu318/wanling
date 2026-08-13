@@ -1572,12 +1572,16 @@ def register(ctx):
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     ctx.register_hook("post_llm_call", _on_post_llm_call)
+    # post_api_request：每次 LLM 调用完成后触发（非回合末），kwargs 直接透传
+    # 原始 assistant_message（NormalizedResponse，含该轮 reasoning）。用它把
+    # 真实思考增量 PATCH 到聚合卡 reasoning 元素（段落级实时，不等回合结束）。
+    ctx.register_hook("post_api_request", _on_post_api_request)
     # on_session_end：post_llm_call 的兜底——用户 /stop 中断时 hermes 的
     # post_llm_call 不触发（interrupted 守卫），但 on_session_end 每次回合都触发
     # （带 interrupted 标志），用它收尾活跃聚合卡（避免卡 generating + silent）。
     ctx.register_hook("on_session_end", _on_session_end)
     logger.info(
-        "Wanling[DBG]: register() 完成，已注册 4 个 lifecycle hook (register_hook 支持=%s)",
+        "Wanling[DBG]: register() 完成，已注册 5 个 lifecycle hook (register_hook 支持=%s)",
         hasattr(ctx, "register_hook"),
     )
 
@@ -1628,6 +1632,46 @@ def _on_pre_llm_call(**kwargs) -> None:
         "session_id": session_id,
         "turn_id": kwargs.get("turn_id") or "",
         "sender_id": sender_id,
+    })
+
+
+def _on_post_api_request(**kwargs) -> None:
+    """每次 LLM 调用完成：把该轮真实思考增量更新到聚合卡 reasoning 元素。
+
+    段落级实时（非逐 token）：post_api_request 在每轮 LLM API 调用返回后触发
+    （conversation_loop 工具循环内），kwargs 直接透传原始 assistant_message
+    （NormalizedResponse 对象），其 reasoning / reasoning_content 含该轮完整思考。
+    回合末 post_llm_call 仍会用完整 reasoning 覆盖定稿（finished=true）。
+    """
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if not _platform_is_wanling(**kwargs):
+        return
+    if _is_review_turn(kwargs.get("turn_id") or ""):
+        return
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    am = kwargs.get("assistant_message")
+    if am is None:
+        return
+    # reasoning 提取兼容各 provider/路径（getattr 兼容对象与 dict）：
+    # - 非流式 chat_completions / anthropic / codex / bedrock → 顶层 reasoning
+    # - 流式 chat_completions → 仅 reasoning_content（provider_data）
+    reasoning = (
+        getattr(am, "reasoning", None)
+        or getattr(am, "reasoning_content", None)
+        or ""
+    )
+    if not isinstance(reasoning, str):
+        reasoning = str(reasoning)
+    if not reasoning.strip():
+        return  # 纯工具轮无思考（或非思考模型），跳过
+    _aggregate_card.emit_event({
+        "kind": "reasoning_delta",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "text": reasoning,
     })
 
 
@@ -1947,11 +1991,13 @@ if __name__ == "__main__":
             ops = [p[1]["content"]["data"] for p in _srv.patches]
             pc = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "permission_card"]
             _check(len(pc) == 1 and pc[0]["element"]["data"]["status"] == "pending" and pc[0]["element"]["data"]["oc_request_id"] == "sk-1", "审批卡嵌入 permission_card 元素（pending）")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is False for d in ops), "审批 pending 翻转 silent=false 响铃（需用户介入）")
             # 审批决策（permission_reply once → approved）
             await agg._dispatch_event(object(), {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "once"}, "http://localhost:18008")
             ops = [p[1]["content"]["data"] for p in _srv.patches]
             upd = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("permission_card")]
             _check(len(upd) == 1 and upd[0]["data"]["status"] == "approved", "审批决策后 permission_card 状态 approved")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is True for d in ops), "审批终态翻转 silent=true 恢复安静")
             # markdown：不同中间文本独立元素；相邻前缀重叠（最终正文=中间文本展开）合并
             await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "刚抓的页面已经有 8月12日 的新内容了。提取一下："}, "http://localhost:18008")
             await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（"}, "http://localhost:18008")
@@ -1961,11 +2007,27 @@ if __name__ == "__main__":
             md_updates = [d for d in ops if d.get("op") == "update" and str(d.get("element_id", "")).startswith("markdown")]
             _check(len(md_appends) == 2, f"不同中间文本独立元素（实际 {len(md_appends)}）")
             _check(len(md_updates) == 1 and md_updates[-1]["data"]["text"].startswith("8月12日 的热点来了（AIHOT 已更新）"), "最终正文与相邻中间文本前缀合并（update 展开版）")
-            # reasoning 时序：建卡时占位（finished=false）被真实 reasoning update 为终态
-            await agg._dispatch_event(object(), {"kind": "reasoning", "session_id": "sess", "turn_id": "t1", "text": "思考内容"}, "http://localhost:18008")
+            # reasoning 增量（post_api_request 每轮触发）：对齐 opencode 多思考块。
+            # 首块 update 空文本占位（无新增 append）；第二轮思考到达前块标终态 + append 新块。
+            ops_before = [p[1]["content"]["data"] for p in _srv.patches]
+            append_before = len([d for d in ops_before if d.get("op") == "append" and d["element"]["type"] == "reasoning"])
+            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第一轮思考"}, "http://localhost:18008")
             ops = [p[1]["content"]["data"] for p in _srv.patches]
             reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
-            _check(len(reasoning_updates) == 1 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "思考内容", "建卡占位 reasoning 被真实思考 update 为终态")
+            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            _check(len(reasoning_updates) == 1 and reasoning_updates[-1]["data"]["finished"] is False and reasoning_updates[-1]["data"]["text"] == "第一轮思考" and len(reasoning_appends) == append_before, "首块 delta update 空占位(无新 append)")
+            # 第二轮思考：前块标终态 + append 新块（finished=false）
+            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第二轮思考"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            _check(len(reasoning_updates) == 2 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "第一轮思考", "第二轮 delta 前块标终态")
+            _check(len(reasoning_appends) == append_before + 1 and reasoning_appends[-1]["element"]["data"]["finished"] is False and reasoning_appends[-1]["element"]["data"]["text"] == "第二轮思考", "第二轮 delta append 新块(finished=false)")
+            # reasoning 终态（post_llm_call 回合末）：update 最后一个未终态块为 finished=true
+            await agg._dispatch_event(object(), {"kind": "reasoning", "session_id": "sess", "turn_id": "t1", "text": "最终思考"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            _check(len(reasoning_updates) == 3 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "最终思考", "终态 reasoning 覆盖最后思考块为 finished=true")
             # 正文归位：最终正文后 reorder，markdown 移到末尾（reasoning/工具卡后）
             await agg._dispatch_event(object(), {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "总结"}, "http://localhost:18008")
             ops = [p[1]["content"]["data"] for p in _srv.patches]
@@ -2022,6 +2084,39 @@ if __name__ == "__main__":
             await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s4", "turn_id": "t4", "model": "gpt-4o"}, "http://localhost:18008")
             _check(len(_srv.deletes) == 1 and "scope=recall" in _srv.deletes[0], "空卡（仅占位）finish 后 DELETE recall 撤回")
             _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for p in _srv.patches for d in [p[1]["content"]["data"]]), "空卡占位 reasoning 被 remove")
+            # 分卡 + 跨卡元素定位：元素超 20 自动切卡；旧卡元素 update 走归属映射 PATCH 旧卡
+            _srv.cards.clear(); _srv.patches.clear()
+            agg.unregister_session("sess")
+            _m5 = agg.AggregateCardManager("s5", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m5)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s5", "turn_id": "t5", "sender_id": "u"}, "http://localhost:18008")
+            for _i in range(21):  # 21 个 markdown 段(建卡占位 reasoning_1 + markdown_2..markdown_22)
+                await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s5", "turn_id": "t5", "text": f"段{_i}"}, "http://localhost:18008")
+            _check(len(_srv.cards) == 2, f"元素超 20 分卡(建 {len(_srv.cards)} 张卡,应为 2)")
+            # 分卡后旧卡元素(reasoning_1 落 msg-1)update → PATCH 到旧卡 msg-1(而非新卡 msg-2)
+            _pb = len(_srv.patches)
+            await _m5.update_element("reasoning_1", {"text": "x", "finished": True})
+            _cross = _srv.patches[_pb:]
+            _cu = [(mid, p) for mid, p in _cross if p["content"]["data"].get("op") == "update"]
+            _check(len(_cu) == 1 and _cu[0][0] == _m5._element_card_ids.get("reasoning_1") and _cu[0][1]["content"]["data"]["element_id"] == "reasoning_1", f"分卡后旧卡元素 update 定位归属卡(实际 {_cu[0][0] if _cu else '无'})")
+            # 分卡后 reorder 只作用于当前卡元素(旧卡元素不参与,不 400)。
+            # 新卡先 append 一个 tool_card,验证 reorder 后 markdown 归位且旧卡元素排除。
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s5", "turn_id": "t5", "tool_name": "browser_click", "args": {}}, "http://localhost:18008")
+            _pb = len(_srv.patches)
+            await _m5.reorder_markdown_to_end()
+            _ro = _srv.patches[_pb:]
+            _ro_ops = [p for p in _ro if p[1]["content"]["data"].get("op") == "reorder"]
+            if _ro_ops:
+                _order = _ro_ops[-1][1]["content"]["data"]["order"]
+                _check(
+                    any(eid.startswith("tool_card") for eid in _order)
+                    and _order[-1].startswith("markdown")
+                    and "reasoning_1" not in _order,
+                    f"分卡后 reorder 当前卡元素归位、旧卡元素排除(order={_order})",
+                )
+            else:
+                _check(False, "分卡后 reorder 应只作用当前卡")
+            agg.unregister_session("s5")
             # 审批映射兜底：回合结束后（manager 已注销）审批决策仍 PATCH 历史消息
             agg.unregister_session("sess")
             _patch_before = len(_srv.patches)
