@@ -62,6 +62,31 @@ void main() {
       expect((groups.first as ToolGroupSlot).cards.length, 1);
     });
 
+    test('hermes 工具名折叠:terminal/read_file/search_files 映射到对应类别', () {
+      final groups = groupAggregateElements([
+        tool('t1', 'terminal'), tool('t2', 'terminal'),
+        tool('t3', 'read_file'), tool('t4', 'search_files'),
+      ]);
+      expect(groups.length, 2); // 命令组(2) + 探索组(2)
+      final t0 = groups[0] as ToolGroupSlot;
+      final t1 = groups[1] as ToolGroupSlot;
+      expect(t0.cards.length, 2);
+      expect(t1.cards.length, 2);
+    });
+
+    test('hermes read_file/search_files 标题计数读取/搜索', () {
+      final g = groupAggregateElements([tool('t1', 'read_file'), tool('t2', 'search_files')]);
+      expect(g.length, 1);
+      expect(groupTitle(g.single as ToolGroupSlot, false), '已探索 1次读取, 1次搜索');
+    });
+
+    test('hermes browser_navigate 折叠进探索组', () {
+      final groups = groupAggregateElements([tool('t1', 'browser_navigate'), tool('t2', 'browser_snapshot')]);
+      expect(groups.length, 1);
+      expect(groups.first, isA<ToolGroupSlot>());
+      expect(categoryOfTool((groups[0] as ToolGroupSlot).cards.first), ToolCategory.explore);
+    });
+
     test('todowrite 平铺不折叠(不再隐藏)', () {
       final groups = groupAggregateElements([tool('t1', 'todowrite'), tool('t2', 'read')]);
       expect(groups.length, 2);

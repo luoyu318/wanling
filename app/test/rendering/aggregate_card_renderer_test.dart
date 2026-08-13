@@ -85,6 +85,7 @@ void main() {
     String state = 'generating',
     List<Map<String, dynamic>> elements = const [],
     String? segment,
+    Map<String, dynamic>? quote,
   }) {
     return {
       'msg_type': MsgType.aggregateCard.value,
@@ -92,6 +93,7 @@ void main() {
         'state': state,
         'elements': elements,
         if (segment != null) 'segment': segment,
+        if (quote != null) 'quote': quote,
       },
     };
   }
@@ -597,6 +599,30 @@ void main() {
       await tester.pumpWidget(host(content(state: 'generating')));
       expect(find.text('回复中'), findsNothing);
       expect(find.text('完成'), findsNothing);
+    });
+  });
+
+  group('引用块', () {
+    testWidgets('data.quote 存在时顶部渲染引用行(| 回复 名字：内容)', (tester) async {
+      await tester.pumpWidget(host(content(
+        state: 'done',
+        quote: {
+          'message_id': 'm-1',
+          'sender_type': 'user',
+          'sender_id': 'u1',
+          'sender_name': '洛羽',
+          'msg_type': 'text',
+          'preview': '查到了吗？',
+        },
+      )));
+      expect(find.textContaining('回复'), findsOneWidget);
+      expect(find.textContaining('洛羽'), findsOneWidget);
+      expect(find.textContaining('查到了吗？'), findsOneWidget);
+    });
+
+    testWidgets('无 quote 时不渲染引用行', (tester) async {
+      await tester.pumpWidget(host(content(state: 'done')));
+      expect(find.textContaining('回复'), findsNothing);
     });
   });
 }

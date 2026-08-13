@@ -1,6 +1,6 @@
 # 聚合卡协议
 
-聚合卡（aggregate_card）：一次问答一条消息，elements[] 按时序承载全部步骤。由 opencode-plugin 聚合模式产生，本文件被各子 CLAUDE.md 通过 @import 引用。
+聚合卡（aggregate_card）：一次问答一条消息，elements[] 按时序承载全部步骤。由 opencode-plugin 聚合模式 / hermes-plugin 聚合模式产生，本文件被各子 CLAUDE.md 通过 @import 引用。
 
 ## 消息结构
 

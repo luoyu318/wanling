@@ -92,6 +92,7 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 
 [[ -f "$SCRIPT_DIR/plugin.yaml" ]] || die "未找到 plugin.yaml，请在 plugin/hermes-plugin/ 目录下运行"
 [[ -f "$SCRIPT_DIR/adapter.py" ]] || die "未找到 adapter.py"
+[[ -f "$SCRIPT_DIR/aggregate_card.py" ]] || die "未找到 aggregate_card.py"
 [[ -f "$SCRIPT_DIR/__init__.py" ]] || die "未找到 __init__.py"
 [[ -d "$HERMES_HOME" ]] || die "$HERMES_HOME 不存在，请先安装 hermes-agent"
 command -v curl >/dev/null 2>&1 || die "未找到 curl"
@@ -144,6 +145,7 @@ sync_plugin_files() {
     run "cp '$SCRIPT_DIR/plugin.yaml' '$target/'"
     run "cp '$SCRIPT_DIR/__init__.py' '$target/'"
     run "cp '$SCRIPT_DIR/adapter.py' '$target/'"
+    run "cp '$SCRIPT_DIR/aggregate_card.py' '$target/'"
 }
 
 # ─── 交互式补全参数 ────────────────────────────────────────────────────────

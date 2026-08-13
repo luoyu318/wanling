@@ -225,7 +225,7 @@ class MessageRow extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (message.quote != null)
+                  if (message.quote != null && !isAggregateCard)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
                       child: MessageQuoteBlock(
@@ -273,7 +273,7 @@ class MessageRow extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (message.quote != null)
+              if (message.quote != null && !isAggregateCard)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: MessageQuoteBlock(

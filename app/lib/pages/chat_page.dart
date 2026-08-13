@@ -292,6 +292,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (d == null) return;
       if (d['conversation_id'] == widget.convId &&
           d['sender_type'] == 'agent') {
+        // 聚合卡 silent 建卡（content.silent=true，回合进行中）不清 typing。
+        final content = d['content'];
+        if (content is Map && content['silent'] == true) return;
         _typingNotifier.clearTyping(widget.convId);
       }
     });

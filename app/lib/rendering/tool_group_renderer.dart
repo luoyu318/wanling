@@ -26,24 +26,60 @@ class ToolGroupSlot extends ElementSlot {
 /// 折叠类别:探索(read/grep/glob)/命令(bash)/编辑(edit/write)。
 /// 对齐 opencode `CONTEXT_GROUP_TOOLS` 扩展:官方折叠 read/glob/grep/list,
 /// 我们扩展 bash(命令)与 edit/write(编辑)也按同类折叠。
+/// 同时兼容 hermes-plugin 工具名(terminal/read_file/search_files/browser_* 等):
+/// hermes 的 read_file→探索、search_files/glob/grep→搜索、terminal→命令、
+/// write/edit→编辑、browser_*→探索。
 enum ToolCategory { explore, command, edit }
 
-/// tool_card.data.name → 折叠类别;不折叠的返回 null。
-ToolCategory? categoryOfTool(Map<String, dynamic> card) {
+/// 工具名归一化:把 hermes/opencode 不同命名映射到统一类别名(read/search/command/edit)。
+/// 返回类别 + 归一化名(供 groupTitle 计数用)。不折叠的返回 null。
+(String, String)? normalizeToolName(Map<String, dynamic> card) {
   final name = ((card['data'] as Map?)?['name'] as String?) ?? '';
   switch (name) {
+    // 探索:read 族
     case 'read':
-    case 'glob':
+    case 'read_file':
+    case 'list':
+      return (ToolCategory.explore.name, 'read');
+    // 探索:search 族
     case 'grep':
-      return ToolCategory.explore;
+    case 'glob':
+    case 'search_files':
+    case 'search':
+    case 'session_search':
+      return (ToolCategory.explore.name, 'search');
+    // 探索:记忆/技能检索
+    case 'memory':
+    case 'skill_view':
+    case 'skills_list':
+    case 'skill_manage':
+      return (ToolCategory.explore.name, 'search');
+    // 探索:browser 族(hermes 浏览器操作)
+    case 'browser_navigate':
+    case 'browser_snapshot':
+    case 'browser':
+      return (ToolCategory.explore.name, 'browser');
+    // webfetch 保持平铺(协议:不折叠,独立网络探索行),不在此处折叠。
+    // 命令
     case 'bash':
-      return ToolCategory.command;
+    case 'terminal':
+    case 'shell':
+      return (ToolCategory.command.name, 'command');
+    // 编辑
     case 'edit':
     case 'write':
-      return ToolCategory.edit;
+    case 'write_file':
+    case 'apply_patch':
+      return (ToolCategory.edit.name, 'edit');
     default:
-      return null; // webfetch/task/todowrite 及未知工具不折叠
+      return null; // task/todowrite/未知工具不折叠
   }
+}
+
+ToolCategory? categoryOfTool(Map<String, dynamic> card) {
+  final norm = normalizeToolName(card);
+  if (norm == null) return null;
+  return ToolCategory.values.byName(norm.$1);
 }
 
 /// 分组器(纯函数):把聚合卡平铺 elements 按「折叠类别 + 连续性」切组。
@@ -97,11 +133,19 @@ List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
 String groupTitle(ToolGroupSlot slot, bool streaming) {
   var read = 0, search = 0, command = 0, edit = 0;
   for (final c in slot.cards) {
-    final name = ((c['data'] as Map?)?['name'] as String?) ?? '';
-    if (name == 'read') read++;
-    if (name == 'glob' || name == 'grep') search++;
-    if (name == 'bash') command++;
-    if (name == 'edit' || name == 'write') edit++;
+    final norm = normalizeToolName(c);
+    if (norm == null) continue;
+    switch (norm.$2) {
+      case 'read':
+        read++;
+      case 'search':
+      case 'browser':
+        search++;
+      case 'command':
+        command++;
+      case 'edit':
+        edit++;
+    }
   }
   final prefix = switch (categoryOfTool(slot.cards.first)) {
     ToolCategory.command => streaming ? '正在执行' : '已执行',

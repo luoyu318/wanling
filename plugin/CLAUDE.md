@@ -39,6 +39,7 @@ flowchart TB
     subgraph hermes
         HINSTALL[install.sh<br/>4 模式]
         HADAPTER[adapter.py<br/>WS 协议对齐]
+        HAGG[aggregate_card.py<br/>hook 事件 → REST 聚合卡]
     end
     subgraph opencode
         OPROXY[proxy/http.ts]
@@ -49,6 +50,8 @@ flowchart TB
     
     HINSTALL --> HADAPTER
     HADAPTER <-->|WS| SERVER[万灵 Server]
+    HERMES[hermes 端] -- lifecycle hook --> HAGG
+    HAGG -. REST 建卡/PATCH .- SERVER
     OPROXY -. WS .- SERVER
     OSTREAMER -. WS .- SERVER
     OSYNC -. WS .- SERVER
@@ -59,7 +62,7 @@ flowchart TB
 
 ## 测试规约
 
-- **hermes-plugin**: 当前无自动化测试，靠 hermes 端 dry-run。install.sh 改动后，在测试 profile 跑 4 模式回归（默认 / `--update` / `--config` / `--pair`）
+- **hermes-plugin**: 自检脚本 `~/.hermes/hermes-agent/venv/bin/python plugin/hermes-plugin/adapter.py`（含 `_rewrite_remote_images` + 聚合卡 mock REST 全流程）。install.sh 改动后，在测试 profile 跑 4 模式回归（默认 / `--update` / `--config` / `--pair`）
 - **opencode-plugin**: `cd plugin/opencode-plugin && npx tsc` 零 error + `npx eslint src/` 零 error + `npx vitest run` 全绿。改动后重启 systemd 服务 `systemctl --user restart opencode-wanling`
 - **Lint**: `cd plugin/opencode-plugin && npx eslint src/`（配置见 `plugin/opencode-plugin/eslint.config.js`，flat config + typed linting）
 
