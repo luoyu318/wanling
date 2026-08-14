@@ -2158,7 +2158,7 @@ if __name__ == "__main__":
         import threading as _th
         agg = _aggregate_card
 
-        state = {"conns": 0, "patch_calls": 0, "first_401_done": False}
+        state = {"conns": 0, "patch_calls": 0}
 
         class _H(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"  # keep-alive
@@ -2182,8 +2182,9 @@ if __name__ == "__main__":
             def do_PATCH(self):
                 self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 state["patch_calls"] += 1
-                if self.headers.get("Authorization") == "Bearer old" and not state["first_401_done"]:
-                    state["first_401_done"] = True
+                # 恒 401「old」token：若重试未携带新 token，第二次仍 401 → ok:False，
+                # 锁死「刷新后必须用新 token 重试」的实现（不留 flag 豁免第二次）。
+                if self.headers.get("Authorization") == "Bearer old":
                     self._send(401, {"ok": False, "error": {"code": "unauthorized"}})
                     return
                 self._send(200, {"ok": True})
@@ -2195,16 +2196,20 @@ if __name__ == "__main__":
         port = srv.server_address[1]
         _th.Thread(target=srv.serve_forever, daemon=True).start()
 
-        tokens = iter(["old", "new", "new", "new", "new", "new", "new", "new"])
+        tokens = iter(["new", "new", "new", "new", "new", "new", "new", "new"])
         refreshes = {"n": 0}
+        # 可变 cell 作 token 源：模拟真实 adapter 的 refresh 写回 self._token、
+        # getter 重读闭环。固定 lambda 会让弱实现（重试仍读旧值）也通过。
+        tok = {"cur": "old"}
 
         def _refresh():
             refreshes["n"] += 1
-            return next(tokens)
+            tok["cur"] = next(tokens)
+            return tok["cur"]
 
         try:
             m = agg.AggregateCardManager(
-                "s", "c", f"http://127.0.0.1:{port}", lambda: "old", token_refresher=_refresh,
+                "s", "c", f"http://127.0.0.1:{port}", lambda: tok["cur"], token_refresher=_refresh,
             )
             r1 = await m._rest("POST", "/api/conversations/c/messages", {"content": {}})
             _check(isinstance(r1, dict) and r1.get("ok"), "keep-alive POST 成功")

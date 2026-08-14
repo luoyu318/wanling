@@ -121,6 +121,9 @@ class AggregateCardManager:
     # ── REST 通道（agent JWT 鉴权，对齐 opencode-plugin client） ────
 
     def _ensure_conn(self) -> http.client.HTTPConnection:
+        # 部署契约：server_url 无 path 前缀（urlparse 只取 host/port，请求行直接用
+        # 传入的绝对 path）。若未来出现带 path 前缀的反代部署（如 https://h/wanling），
+        # 需改造此处与各调用点的 path 拼接。
         if self._conn is None:
             cls = http.client.HTTPSConnection if self._http_is_tls else http.client.HTTPConnection
             self._conn = cls(self._http_host, self._http_port, timeout=REST_TIMEOUT_S)
@@ -159,10 +162,17 @@ class AggregateCardManager:
                 continue
             # 401：agent JWT 过期（WS 长连跨 72h TTL）→ 刷新 token 重试一次
             if resp.status == 401 and attempt == 1 and self.token_refresher is not None:
-                self.token_refresher()
-                continue
+                try:
+                    self.token_refresher()
+                except Exception as e:
+                    # 刷新失败：旧 token 重试无意义，不 continue，落到下方解析
+                    # 该 401 body（ok:False）返回，维持「_rest_sync 从不抛异常」契约
+                    logger.warning("Wanling aggregate refresh token failed — %s", e)
+                else:
+                    continue
             if not raw:
-                return {"ok": True}  # 204 等空响应（如 DELETE recall）
+                # 空 body 仅 2xx 视为成功（204 等）；反代裸 5xx 空 body 不能误判 ok
+                return {"ok": 200 <= resp.status < 300}
             try:
                 return json.loads(raw)
             except Exception:
