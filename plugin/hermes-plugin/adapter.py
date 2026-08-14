@@ -2117,12 +2117,30 @@ if __name__ == "__main__":
             else:
                 _check(False, "分卡后 reorder 应只作用当前卡")
             agg.unregister_session("s5")
-            # 审批映射兜底：回合结束后（manager 已注销）审批决策仍 PATCH 历史消息
+            # 审批映射兜底：回合结束后（manager 已注销）审批决策仍 PATCH 历史消息。
+            # sk-1 已在回合内决策时被终态清理（drop），重新落一条映射模拟
+            # 「回合已收尾、审批仍 pending」场景。
             agg.unregister_session("sess")
+            agg.remember_permission_card("sk-1", "conv", "msg-1", "permission_card_3")
             _patch_before = len(_srv.patches)
             await agg._dispatch_event(_mock_adapter, {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "reject"}, "http://localhost:18008")
             _check(len(_srv.patches) > _patch_before, "manager 注销后审批决策仍发 PATCH（映射兜底）")
             _check(any(p[1]["content"]["data"].get("op") == "update" and p[1]["content"]["data"].get("element_id", "").startswith("permission_card") and p[1]["content"]["data"]["data"]["status"] == "denied" for p in _srv.patches), "映射兜底 PATCH 更新 permission_card 为 denied")
+            # 审批终态后清理持久映射（防泄漏）
+            _rec = agg.get_permission_card("sk-1")
+            _check(_rec is None, "审批终态后持久映射被清理（drop_permission_card）")
+            # reorder 短路：markdown 已在末尾时不再发 reorder PATCH
+            agg.unregister_session("sess")
+            _m6 = agg.AggregateCardManager("s6", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m6)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s6", "turn_id": "t6", "sender_id": "u"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s6", "turn_id": "t6", "tool_name": "bash", "args": {}}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"}, "http://localhost:18008")
+            _p6 = len(_srv.patches)
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"}, "http://localhost:18008")
+            _ro6 = [p for p in _srv.patches[_p6:] if p[1]["content"]["data"].get("op") == "reorder"]
+            _check(len(_ro6) == 0, "markdown 已在末尾时 reorder 短路（不发 PATCH）")
+            agg.unregister_session("s6")
         finally:
             agg.AggregateCardManager._rest_sync = _orig
 

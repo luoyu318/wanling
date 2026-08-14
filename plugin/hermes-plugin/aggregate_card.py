@@ -94,7 +94,6 @@ class AggregateCardManager:
         self._elements: List[Dict[str, Any]] = []
         self._segment_index = 0
         self._inflight: Optional[asyncio.Future] = None
-        self._queue: Optional[asyncio.Future] = None
         self._finalized = False
         # 建卡引用锚点：触发本次回复的用户消息 id（建卡 POST 带 data.quote）。
         self.quote_message_id: Optional[str] = None
@@ -106,19 +105,6 @@ class AggregateCardManager:
         # update/reorder 仍能定位到正确消息（对齐 opencode aggregateElementCardIds），
         # 否则旧卡元素操作会误打当前新卡 → server 400「元素不存在」。
         self._element_card_ids: Dict[str, str] = {}
-
-    # ── 串行队列：所有 REST PATCH 按序执行，防并发覆盖 ──────────────
-
-    async def _enqueue(self, coro) -> Any:
-        prev = self._queue
-        done = asyncio.ensure_future(coro)
-        self._queue = done
-        if prev is not None:
-            try:
-                await prev
-            except Exception:
-                pass
-        return await done
 
     # ── REST 通道（agent JWT 鉴权，对齐 opencode-plugin client） ────
 
@@ -383,6 +369,14 @@ class AggregateCardManager:
             and e.get("element_id", "") not in markdown_ids
         ]
         ordered.extend(markdown_ids)
+        # 已末尾短路：卡内影子副本顺序与目标一致时跳过 PATCH（避免无谓请求）
+        current_order = [
+            e.get("element_id", "")
+            for e in self._elements
+            if e.get("element_id", "") in current_ids
+        ]
+        if ordered == current_order:
+            return  # markdown 已在末尾，无需 reorder
         await self._patch({"op": "reorder", "order": ordered})
 
     async def reorder_reasoning_before_markdown(self, reasoning_id: str) -> None:
@@ -732,6 +726,8 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
             # 独立临时 manager 持有 token/server_url，直接 PATCH 历史消息
             tmp = AggregateCardManager("", record["conv_id"], server_url, adapter.aggregate_token)
             await tmp._rest("PATCH", f"/api/messages/{record['msg_id']}", {"content": content})
+            # 审批终态落地 → 清理持久映射（防泄漏）
+            drop_permission_card(oc_request_id)
             return
         if manager is None:
             return
@@ -777,6 +773,8 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                 # 审批解决 → 翻转 silent=true 恢复安静（对齐 opencode：终态后不打扰）。
                 owner = manager._element_card_ids.get(eid) or manager._card_msg_id
                 await manager._patch_msg(owner, {"op": "set_silent", "silent": True})
+                # 审批终态落地 → 清理持久映射（防泄漏）
+                drop_permission_card(oc_request_id)
             else:
                 # 回合结束后 manager 已注销：用持久映射直接 PATCH 该消息
                 record = get_permission_card(oc_request_id)
@@ -803,6 +801,8 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                             "data": {"op": "set_silent", "silent": True},
                         }},
                     )
+                    # 审批终态落地 → 清理持久映射（防泄漏）
+                    drop_permission_card(oc_request_id)
                 else:
                     logger.warning(
                         "Wanling: permission_decided 无定位 record session=%s", oc_request_id
