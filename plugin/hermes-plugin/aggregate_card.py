@@ -230,6 +230,9 @@ class AggregateCardManager:
             return None
         self._card_msg_id = msg_id
         self._state = "generating"
+        # 新卡 server 状态 = 创建全量，天然干净；复位 degraded 防跨卡泄漏
+        # （分卡自愈失败后旧标记残留，会让新卡下一 op 前发无谓全量替换）
+        self._degraded = False
         return msg_id
 
     # ── 元素操作 ─────────────────────────────────────────────────────
@@ -556,6 +559,18 @@ class AggregateCardManager:
         if self._degraded and msg_id == self._card_msg_id:
             if await self._sync_full_replace(msg_id):
                 self._degraded = False
+                # 自愈全量已含本次新元素（append 前影子副本先入列），server
+                # append 无 upsert（直接追加），照发会同 element_id 双条 →
+                # APP 双渲染。改写为幂等 update：element_id 命中整体替换，
+                # 全量刚推上去必命中。全量替换失败则保持原 append 不改写
+                # （新元素从未落地不可能重复）。
+                if data.get("op") == "append":
+                    element = data.get("element") or {}
+                    data = {
+                        "op": "update",
+                        "element_id": element.get("element_id", ""),
+                        "data": element.get("data", {}),
+                    }
         content = {"msg_type": "aggregate_card", "data": data}
         resp = await self._rest(
             "PATCH", f"/api/messages/{msg_id}", {"content": content}

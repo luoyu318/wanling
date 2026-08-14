@@ -2171,6 +2171,11 @@ if __name__ == "__main__":
             _ops7 = [p[1]["content"]["data"] for p in _srv.patches[_pb7:]]
             _full = [d for d in _ops7 if "op" not in d and "elements" in d]
             _check(len(_full) == 1, "degraded 后下次 op 前发全量替换")
+            # M4 顺序锁定：全量替换必须是该窗口内第一个 PATCH
+            _check(
+                bool(_ops7) and "op" not in _ops7[0] and "elements" in _ops7[0],
+                "全量替换是自愈窗口内第一个 PATCH（顺序锁定）",
+            )
             if _full:
                 _felem = _full[0]["elements"]
                 _check(
@@ -2178,8 +2183,32 @@ if __name__ == "__main__":
                     and _full[0].get("state") == "generating",
                     "全量替换含失败窗口内的元素（影子副本覆盖）",
                 )
+            # C1 回归：server append 无 upsert（直接追加），自愈全量已含新元素，
+            # 再发 append 会同 element_id 双条 → APP 双渲染。窗口内禁止 append。
+            _check(
+                not any(d.get("op") == "append" for d in _ops7),
+                "C1 回归：自愈成功后窗口内无 append（防重复元素双渲染）",
+            )
+            # C1 回归：原 append 改写为幂等 update，命中本窗口新元素（grep 工具卡）
+            _check(
+                any(
+                    d.get("op") == "update"
+                    and str(d.get("element_id", "")).startswith("tool_card")
+                    and d.get("data", {}).get("name") == "grep"
+                    for d in _ops7
+                ),
+                "C1 回归：新元素 append 被改写为幂等 update 命中该元素",
+            )
             _check(_m7._degraded is False, "自愈成功后 degraded 复位")
             agg.unregister_session("s7")
+            # I2 回归：degraded 不跨卡泄漏 —— 分卡自愈失败后旧标记残留，
+            # 新卡创建成功即复位（新卡 server 状态 = 创建全量，天然干净）
+            _m8 = agg.AggregateCardManager("s8", "conv", "http://localhost:18008", lambda: "t")
+            _m8._degraded = True  # 模拟旧卡 PATCH 失败残留
+            _m8._card_msg_id = None  # 模拟分卡后重开新卡
+            await _m8.ensure_card()
+            _check(_m8._degraded is False, "I2 回归：新卡创建成功后 degraded 复位（不跨卡泄漏）")
+            agg.unregister_session("s8")
         finally:
             agg.AggregateCardManager._rest_sync = _orig
 
