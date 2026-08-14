@@ -279,26 +279,29 @@ class AggregateCardManager:
             self._element_card_ids[eid] = self._card_msg_id or ""
             await self._patch({"op": "append", "element": element})
 
-    async def update_element(self, element_id: str, data: Dict[str, Any]) -> None:
+    async def update_element(self, element_id: str, data: Dict[str, Any]) -> bool:
         """按 element_id 整体替换元素 data（工具终态/状态推进）。
+
+        返回 True 表示 PATCH 落地；finalized 早退、无归属映射或
+        PATCH 失败返回 False。
 
         分卡后旧卡元素已不在 _elements 累计（_seal_intermediate_card 清空），
         但 _element_card_ids 归属映射保留：按归属 PATCH 到正确消息
         （对齐 opencode aggregateElementCardIds），避免误打当前新卡 → 400。
         """
         if self._finalized:
-            return
+            return False
         owner = self._element_card_ids.get(element_id)
         if owner is None:
             logger.debug(
                 "Wanling aggregate update unknown element %s (skipped)", element_id
             )
-            return
+            return False
         self._elements = [
             e if e.get("element_id") != element_id else {**e, "data": data}
             for e in self._elements
         ]
-        await self._patch_msg(owner, {"op": "update", "element_id": element_id, "data": data})
+        return await self._patch_msg(owner, {"op": "update", "element_id": element_id, "data": data})
 
     async def append_or_merge_markdown(self, text: str, *, final: bool = False) -> None:
         """追加 markdown 元素；相邻前缀重叠则合并（防重复），否则独立元素。
@@ -472,10 +475,14 @@ class AggregateCardManager:
         """对当前卡（_card_msg_id）发增量 PATCH。"""
         await self._patch_msg(self._card_msg_id, data)
 
-    async def _patch_msg(self, msg_id: Optional[str], data: Dict[str, Any]) -> None:
-        """对指定聚合卡消息发增量 PATCH（分卡后旧卡元素操作定位用）。"""
+    async def _patch_msg(self, msg_id: Optional[str], data: Dict[str, Any]) -> bool:
+        """对指定聚合卡消息发增量 PATCH（分卡后旧卡元素操作定位用）。
+
+        返回 True 表示 PATCH 落地（server 返回 ok）；msg_id 为空或
+        请求失败/被拒返回 False，调用方可据此决定是否保留恢复通道。
+        """
         if not msg_id:
-            return
+            return False
         content = {"msg_type": "aggregate_card", "data": data}
         resp = await self._rest(
             "PATCH", f"/api/messages/{msg_id}", {"content": content}
@@ -485,6 +492,8 @@ class AggregateCardManager:
                 "Wanling aggregate PATCH failed conv=%s msg=%s op=%s",
                 self.conv_id, msg_id, data.get("op"),
             )
+            return False
+        return True
 
 
 # ── 会话上下文注册表（session_id → manager） ────────────────────────
@@ -712,7 +721,10 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                 return
             record = get_permission_card(oc_request_id)
             if not record or not record.get("msg_id"):
-                logger.warning("Wanling: permission_decided 无定位 record session=%s", oc_request_id)
+                logger.info(
+                    "Wanling: permission_decided 无定位映射（已清理的重复决策或未知 session）%s",
+                    oc_request_id,
+                )
                 return
             status = "approved" if decision in ("allow_once", "allow_always", "once", "always") else "denied"
             content = {
@@ -723,11 +735,13 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                     "data": {"oc_request_id": oc_request_id, "status": status, "result": decision},
                 },
             }
-            # 独立临时 manager 持有 token/server_url，直接 PATCH 历史消息
+            # 独立临时 manager 持有 token/server_url，直接 PATCH 历史消息。
+            # PATCH 落地才清理持久映射（防泄漏）；失败保留映射，
+            # 重复决策可重试恢复，避免审批卡永停 pending。
             tmp = AggregateCardManager("", record["conv_id"], server_url, adapter.aggregate_token)
-            await tmp._rest("PATCH", f"/api/messages/{record['msg_id']}", {"content": content})
-            # 审批终态落地 → 清理持久映射（防泄漏）
-            drop_permission_card(oc_request_id)
+            resp = await tmp._rest("PATCH", f"/api/messages/{record['msg_id']}", {"content": content})
+            if isinstance(resp, dict) and resp.get("ok"):
+                drop_permission_card(oc_request_id)
             return
         if manager is None:
             return
@@ -769,14 +783,18 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                     eid = e.get("element_id", "")
                     break
             if eid:
-                await manager.update_element(eid, patch_data)
-                # 审批解决 → 翻转 silent=true 恢复安静（对齐 opencode：终态后不打扰）。
-                owner = manager._element_card_ids.get(eid) or manager._card_msg_id
-                await manager._patch_msg(owner, {"op": "set_silent", "silent": True})
-                # 审批终态落地 → 清理持久映射（防泄漏）
-                drop_permission_card(oc_request_id)
+                # update 与 set_silent 均落地才 drop 映射；任一失败保留映射，
+                # 让重复决策能重走整条路径恢复 silent（否则审批卡永停 pending）。
+                if await manager.update_element(eid, patch_data):
+                    # 审批解决 → 翻转 silent=true 恢复安静（对齐 opencode：终态后不打扰）。
+                    owner = manager._element_card_ids.get(eid) or manager._card_msg_id
+                    if await manager._patch_msg(owner, {"op": "set_silent", "silent": True}):
+                        # 审批终态落地 → 清理持久映射（防泄漏）
+                        drop_permission_card(oc_request_id)
             else:
-                # 回合结束后 manager 已注销：用持久映射直接 PATCH 该消息
+                # 回合结束后 manager 已注销：用持久映射直接 PATCH 该消息。
+                # update 与 set_silent 均落地才 drop 映射；任一失败保留映射
+                # 供重复决策重试恢复。
                 record = get_permission_card(oc_request_id)
                 if record and record.get("msg_id"):
                     content = {
@@ -787,13 +805,13 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                             "data": patch_data,
                         },
                     }
-                    await manager._rest(
+                    resp_update = await manager._rest(
                         "PATCH",
                         f"/api/messages/{record['msg_id']}",
                         {"content": content},
                     )
                     # 审批解决 → silent=true 恢复安静（不再响铃/未读）
-                    await manager._rest(
+                    resp_silent = await manager._rest(
                         "PATCH",
                         f"/api/messages/{record['msg_id']}",
                         {"content": {
@@ -801,11 +819,16 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
                             "data": {"op": "set_silent", "silent": True},
                         }},
                     )
-                    # 审批终态落地 → 清理持久映射（防泄漏）
-                    drop_permission_card(oc_request_id)
+                    if (
+                        isinstance(resp_update, dict) and resp_update.get("ok")
+                        and isinstance(resp_silent, dict) and resp_silent.get("ok")
+                    ):
+                        # 审批终态落地 → 清理持久映射（防泄漏）
+                        drop_permission_card(oc_request_id)
                 else:
-                    logger.warning(
-                        "Wanling: permission_decided 无定位 record session=%s", oc_request_id
+                    logger.info(
+                        "Wanling: permission_decided 无定位映射（已清理的重复决策或未知 session）%s",
+                        oc_request_id,
                     )
         return
 
