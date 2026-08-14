@@ -2149,6 +2149,37 @@ if __name__ == "__main__":
             _ro6 = [p for p in _srv.patches[_p6:] if p[1]["content"]["data"].get("op") == "reorder"]
             _check(len(_ro6) == 0, "markdown 已在末尾时 reorder 短路（不发 PATCH）")
             agg.unregister_session("s6")
+            # 失败自愈：PATCH 失败置 degraded → 下次 op 前发全量替换（影子副本覆盖）
+            agg.unregister_session("sess")
+            _m7 = agg.AggregateCardManager("s7", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m7)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s7", "turn_id": "t7", "sender_id": "u"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_end", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}, "result": "ok", "status": "ok"}, "http://localhost:18008")
+            # 注入一次传输失败（返回 None）
+            _orig_rest = _m7._rest
+            async def _fail_once(m, p, b):
+                if not getattr(_fail_once, "used", False):
+                    _fail_once.used = True  # type: ignore[attr-defined]
+                    return None
+                return await _orig_rest(m, p, b)
+            _m7._rest = _fail_once  # type: ignore[method-assign]
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s7", "turn_id": "t7", "text": "正文A"}, "http://localhost:18008")
+            _check(_m7._degraded is True, "PATCH 传输失败置 degraded")
+            _pb7 = len(_srv.patches)
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "grep", "args": {}}, "http://localhost:18008")
+            _ops7 = [p[1]["content"]["data"] for p in _srv.patches[_pb7:]]
+            _full = [d for d in _ops7 if "op" not in d and "elements" in d]
+            _check(len(_full) == 1, "degraded 后下次 op 前发全量替换")
+            if _full:
+                _felem = _full[0]["elements"]
+                _check(
+                    any(e.get("type") == "markdown" and e.get("data", {}).get("text") == "正文A" for e in _felem)
+                    and _full[0].get("state") == "generating",
+                    "全量替换含失败窗口内的元素（影子副本覆盖）",
+                )
+            _check(_m7._degraded is False, "自愈成功后 degraded 复位")
+            agg.unregister_session("s7")
         finally:
             agg.AggregateCardManager._rest_sync = _orig
 

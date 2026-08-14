@@ -111,6 +111,10 @@ class AggregateCardManager:
         # 否则旧卡元素操作会误打当前新卡 → server 400「元素不存在」。
         self._element_card_ids: Dict[str, str] = {}
         self.token_refresher = token_refresher
+        # 卡状态跟踪（自愈全量替换需带正确 state）
+        self._state = "generating"
+        # 当前卡 PATCH 失败标记：置位后下一个 op 前先发全量替换收敛
+        self._degraded = False
         # keep-alive 连接（消费者单 task 串行调用，无并发共享问题）
         _parsed = urlparse(self.server_url)
         self._http_is_tls = _parsed.scheme == "https"
@@ -225,6 +229,7 @@ class AggregateCardManager:
             logger.warning("Wanling aggregate create: 响应缺 message_id conv=%s", self.conv_id)
             return None
         self._card_msg_id = msg_id
+        self._state = "generating"
         return msg_id
 
     # ── 元素操作 ─────────────────────────────────────────────────────
@@ -245,6 +250,7 @@ class AggregateCardManager:
             return
         await self._settle_unfinished_elements()
         await self._patch({"op": "set_state", "state": "done"})
+        self._state = "done"
         await self._patch({"op": "set_segment", "segment": "middle"})
         self._elements = []
         self._markdown_id = None
@@ -425,6 +431,12 @@ class AggregateCardManager:
         if ordered == current_order:
             return  # markdown 已在末尾，无需 reorder
         await self._patch({"op": "reorder", "order": ordered})
+        # 意图即真相：无论 PATCH 成败都同步重排影子副本（自愈全量按此顺序推）
+        self._elements = sorted(
+            self._elements,
+            key=lambda e: ordered.index(e.get("element_id", ""))
+            if e.get("element_id", "") in ordered else len(ordered),
+        )
 
     async def reorder_reasoning_before_markdown(self, reasoning_id: str) -> None:
         """reorder：把 reasoning 元素移到所有 markdown 元素之前（工具卡之后）。
@@ -455,6 +467,12 @@ class AggregateCardManager:
         ordered.extend(markdown_ids)
         if ordered:
             await self._patch({"op": "reorder", "order": ordered})
+            # 意图即真相：无论 PATCH 成败都同步重排影子副本（自愈全量按此顺序推）
+            self._elements = sorted(
+                self._elements,
+                key=lambda e: ordered.index(e.get("element_id", ""))
+                if e.get("element_id", "") in ordered else len(ordered),
+            )
 
     # ── 收尾 ─────────────────────────────────────────────────────────
 
@@ -491,6 +509,7 @@ class AggregateCardManager:
         self._elements.append(element)
         await self._patch({"op": "append", "element": element})
         await self._patch({"op": "set_state", "state": "done"})
+        self._state = "done"
         await self._patch({"op": "set_silent", "silent": False})
 
         # 空卡清理：回合结束卡里只有 footer（无工具/思考/正文实际内容）时，
@@ -525,20 +544,53 @@ class AggregateCardManager:
 
         返回 True 表示 PATCH 落地（server 返回 ok）；msg_id 为空或
         请求失败/被拒返回 False，调用方可据此决定是否保留恢复通道。
+
+        失败自愈：当前卡此前有 op 失败（degraded）→ 先发全量替换（影子副本
+        覆盖 server 状态），成功后恢复增量模式。全量替换走协议既有「无 op
+        整体替换」路径（server mergePreservedSilent 仅保顶层 silent），
+        故 data 自带 segment/quote/schema_ver/state/elements。旧卡（已 seal）
+        失败无影子副本，不做自愈（接受限制：旧卡失败窗口极小）。
         """
         if not msg_id:
             return False
+        if self._degraded and msg_id == self._card_msg_id:
+            if await self._sync_full_replace(msg_id):
+                self._degraded = False
         content = {"msg_type": "aggregate_card", "data": data}
         resp = await self._rest(
             "PATCH", f"/api/messages/{msg_id}", {"content": content}
         )
         if not isinstance(resp, dict) or not resp.get("ok"):
+            if msg_id == self._card_msg_id:
+                self._degraded = True
             logger.warning(
                 "Wanling aggregate PATCH failed conv=%s msg=%s op=%s",
                 self.conv_id, msg_id, data.get("op"),
             )
             return False
         return True
+
+    async def _sync_full_replace(self, msg_id: str) -> bool:
+        """全量替换自愈：把当前卡影子副本整体推上 server（无 op 路径）。"""
+        full: Dict[str, Any] = {
+            "schema_ver": 1,
+            "state": self._state,
+            "elements": self._elements,
+        }
+        if self._segment_index > 0:
+            full["segment"] = "last"
+        if self.quote_message_id:
+            # server 全量替换不保留已富化 quote，重建原始引用（引用块可能退化，
+            # 可接受：仅自愈路径触达）
+            full["quote"] = {"message_id": self.quote_message_id}
+        resp = await self._rest(
+            "PATCH", f"/api/messages/{msg_id}",
+            {"content": {"msg_type": "aggregate_card", "data": full}},
+        )
+        ok = isinstance(resp, dict) and bool(resp.get("ok"))
+        if ok:
+            logger.info("Wanling aggregate: degraded 自愈全量替换成功 msg=%s", msg_id)
+        return ok
 
 
 # ── 会话上下文注册表（session_id → manager） ────────────────────────
@@ -766,6 +818,8 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
         manager._markdown_id = None
         manager._card_msg_id = None
         manager._elements = []
+        manager._degraded = False
+        manager._state = "generating"
         return
 
     # 审批卡特殊路由：permission_card / permission_decided 的 session_id 字段是
