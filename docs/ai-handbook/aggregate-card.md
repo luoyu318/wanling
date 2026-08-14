@@ -36,6 +36,8 @@ plugin → server 的 `PATCH /api/messages/:id` `data` 带 `op` 走增量合并�
 | `set_state` | 改 data.state |
 | `set_silent` | 改顶层 content.silent（翻转 true→false 触发 IncrUnread + 广播附 `data.preview`） |
 
+**失败自愈（hermes-plugin）**：plugin 对当前卡的增量 PATCH 传输失败时置 degraded，下一个 op 前先经「无 op 全量替换」路径把影子副本整体推上 server 收敛（自带 schema_ver/state/segment/quote），成功后恢复增量；若该 op 为 append 则改写为幂等 update（全量已含新元素，防重复）。协议 op 语义不变，自愈是 plugin 侧传输层行为。
+
 ## data.preview（回合结束摘要）
 
 `set_silent` 翻转(false)时 server 写 `data.preview`（落库 merged + 注入广播 delta）。用途：通知 body（bg-service 无本地累计，增量广播无 elements）+ agent_session 二级列表摘要（server SQL `last_agent_reply_content` 对 aggregate_card 读 `data.preview`）。取值优先级（server `aggregatePreviewText`，APP `_aggregateCardPreview` 同口径）：
