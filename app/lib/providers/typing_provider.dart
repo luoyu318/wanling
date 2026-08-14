@@ -67,12 +67,28 @@ StateNotifierProvider<TypingNotifier, Map<String, bool>>((ref) {
   });
 
   // 收到 agent 的真实消息即清掉对应 conv 的 typing(无论用户当前在哪个页面)。
+  // 例外：聚合卡 silent 建卡（content.silent=true，回合进行中）不视为回复完成，
+  // 保留 typing 直到回合结束翻转。非 silent 消息照常清。
   final msgSub = ws.messages.where((m) => m.t == 'MESSAGE_CREATE').listen((m) {
     final d = m.d as Map<String, dynamic>?;
     if (d == null) return;
     if (d['sender_type'] != 'agent') return;
     final convId = d['conversation_id'] as String?;
-    if (convId != null && convId.isNotEmpty) {
+    if (convId == null || convId.isEmpty) return;
+    final content = d['content'];
+    if (content is Map && content['silent'] == true) return;
+    notifier.clearTyping(convId);
+  });
+
+  // 聚合卡回合结束：MESSAGE_UPDATE 翻转 silent=true→false 时清 typing（回复完成）。
+  final updSub = ws.messages.where((m) => m.t == 'MESSAGE_UPDATE').listen((m) {
+    final d = m.d as Map<String, dynamic>?;
+    if (d == null) return;
+    final convId = d['conversation_id'] as String?;
+    if (convId == null || convId.isEmpty) return;
+    final content = d['content'];
+    final silent = content is Map ? content['silent'] : null;
+    if (silent == false) {
       notifier.clearTyping(convId);
     }
   });
@@ -80,6 +96,7 @@ StateNotifierProvider<TypingNotifier, Map<String, bool>>((ref) {
   ref.onDispose(() {
     typingSub.cancel();
     msgSub.cancel();
+    updSub.cancel();
   });
 
   return notifier;

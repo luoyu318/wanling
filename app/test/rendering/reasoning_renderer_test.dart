@@ -100,11 +100,11 @@ void main() {
   });
 
   group('ReasoningRenderer 流式态 (isStreaming=true)', () {
-    testWidgets('显示「正在思考...」固定文案', (tester) async {
-      await tester.pumpWidget(host(text: '累积的流式文本', isStreaming: true));
-      expect(find.text('正在思考...'), findsOneWidget);
-      // 流式态不显示累积 text(避免半截文本抖动)
-      expect(find.text('累积的流式文本'), findsNothing);
+    testWidgets('text 非空显示真实增量思考文本(段落级实时)', (tester) async {
+      await tester.pumpWidget(host(text: '第一轮思考内容', isStreaming: true));
+      // 增量思考(post_api_request 每轮更新)流式态直接显示真实文本,不再固定「正在思考...」
+      expect(find.text('第一轮思考内容'), findsOneWidget);
+      expect(find.text('正在思考...'), findsNothing);
     });
 
     testWidgets('iconfont 深度思考图标存在', (tester) async {
@@ -154,11 +154,11 @@ void main() {
       expect(find.text('正在思考...'), findsNothing);
     });
 
-    testWidgets('isStreaming=true 且 finished=false → 仍显示「正在思考...」动画', (tester) async {
+    testWidgets('isStreaming=true 且 finished=false → 非空 text 显示真实思考文本', (tester) async {
       await tester.pumpWidget(
-          host(text: '流式累积', isStreaming: true, finished: false));
-      expect(find.text('正在思考...'), findsOneWidget);
-      expect(find.text('流式累积'), findsNothing);
+          host(text: '流式增量思考', isStreaming: true, finished: false));
+      expect(find.text('流式增量思考'), findsOneWidget);
+      expect(find.text('正在思考...'), findsNothing);
     });
   });
 

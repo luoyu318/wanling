@@ -1,7 +1,7 @@
 name: wanling-platform
 label: Wanling
 kind: platform
-version: 0.3.0
+version: 0.4.0
 description: >
   Wanling platform adapter for Hermes Agent.
   Connects to a Wanling server (Go/Gin IM server with standard IM Bot-style
@@ -26,6 +26,10 @@ optional_env:
   - name: WANLING_HOME_USER
     description: "User ID for cron / notification delivery (one-on-one)"
     prompt: "Home user ID"
+    password: false
+  - name: WANLING_AGGREGATE_CARD_ENABLED
+    description: "Aggregate one question-answer turn into a single card (default: true)"
+    prompt: "Aggregate card enabled? (true/false)"
     password: false
   - name: WANLING_ALLOWED_USERS
     description: "Comma-separated user IDs allowed to talk to the agent"

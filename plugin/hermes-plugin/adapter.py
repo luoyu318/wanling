@@ -37,6 +37,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -57,6 +58,13 @@ from gateway.platforms.base import (
     cache_image_from_url,
 )
 from gateway.config import Platform
+
+# 聚合卡核心（本插件聚合模式）：hook 事件 → REST 建卡/PATCH。
+# 兼容两种加载：hermes 插件包内（相对导入）/ 自检脚本直接运行（绝对导入）。
+try:
+    from . import aggregate_card as _aggregate_card  # noqa: E402
+except ImportError:  # pragma: no cover
+    import aggregate_card as _aggregate_card  # noqa: E402,F401
 
 # websockets is a Hermes runtime dependency (used by other adapters)
 import websockets
@@ -209,6 +217,21 @@ class WanlingAdapter(BasePlatformAdapter):
         # Typing debounce: chat_id → last TYPING_START timestamp (epoch seconds)
         self._typing_sent_at: Dict[str, float] = {}
 
+        # 聚合卡：本 adapter 的事件队列（hook 侧 emit_event 分发进来）。
+        import queue as _queue
+
+        self.aggregate_events: "queue.Queue" = _queue.Queue(maxsize=1024)
+        self._aggregate_consumer_task: Optional[asyncio.Task] = None
+        # 聚合卡会话停止事件：消费者 task 在 stop 时退出。
+        self._aggregate_stop: Optional[threading.Event] = None
+        # user_id → conv_id 缓存（聚合卡 hook 反查 conv_id 用）。
+        # 入站 MESSAGE_CREATE 高频填充；miss 时 POST /api/agents/me/conversations 兜底。
+        self._user_conv: Dict[str, str] = {}
+        self._user_conv_lock = threading.Lock()
+        # conv_id → 最近用户消息 id（聚合卡建卡引用锚点）。agent 回复聚合卡时，
+        # 建卡 POST 带 data.quote={message_id: last_user_msg_id}，server 富化引用块。
+        self._last_user_msg: Dict[str, str] = {}
+
         # user_id → conv_id 缓存。双向来源：
         #   1. 入站 MESSAGE_CREATE 的 conversation_id 字段（高频路径，命中即可零开销）
         #   2. POST /api/agents/me/conversations（agent 视角 findOrCreate）HTTP 兜底，
@@ -248,10 +271,27 @@ class WanlingAdapter(BasePlatformAdapter):
 
         # 启动 _receive_loop：内部自己建 WS + 重连 + 启动 heartbeat task
         self._recv_task = asyncio.create_task(self._receive_loop())
+
+        # 启动聚合卡消费者 task：hook 事件（worker 线程）→ 本 adapter 队列 → REST。
+        self._aggregate_stop = threading.Event()
+        self._aggregate_consumer_task = asyncio.create_task(
+            _aggregate_card.run_event_consumer(self, stop_event=self._aggregate_stop)
+        )
+        _aggregate_card.register_adapter(self)
         return True
 
     async def disconnect(self) -> None:
         self._stopping = True  # 通知 _receive_loop 退出
+        if self._aggregate_consumer_task is not None:
+            if self._aggregate_stop is not None:
+                self._aggregate_stop.set()
+            self._aggregate_consumer_task.cancel()
+            try:
+                await self._aggregate_consumer_task
+            except Exception:
+                pass
+            self._aggregate_consumer_task = None
+        _aggregate_card.unregister_adapter(self)
         await self._cleanup_ws()
         logger.info("Wanling: disconnected")
 
@@ -441,6 +481,15 @@ class WanlingAdapter(BasePlatformAdapter):
         # Discord channel_id / ...),值 = conversation_id(server dispatch payload 含此字段)。
         conv_id = d.get("conversation_id") or ""
 
+        # 聚合卡：入站记录 user_id → conv_id（hook 侧 sender_id 反查 conv_id 建卡）。
+        if conv_id:
+            with self._user_conv_lock:
+                self._user_conv[user_id] = conv_id
+            # 记录最近用户消息 id（聚合卡引用锚点）
+            msg_id = d.get("id") or ""
+            if msg_id:
+                self._last_user_msg[conv_id] = msg_id
+
         # Authorization
         if not self.allow_all and self.allowed_users:
             if user_id not in self.allowed_users:
@@ -452,6 +501,21 @@ class WanlingAdapter(BasePlatformAdapter):
         msg_type = content.get("msg_type", "text") if isinstance(content, dict) else "text"
         data_raw = content.get("data") if isinstance(content, dict) else None
         data = data_raw if isinstance(data_raw, dict) else {}
+
+        # 审批回复（APP 聚合卡内 permission_card 按钮）→ 直接唤醒 hermes 审批队列，
+        # 不进入 agent 对话流。reply: once | always | reject（APP 端选项值）。
+        if msg_type == "permission_reply":
+            await self._on_permission_reply(conv_id, data)
+            return
+
+        # 断卡：Agent 执行中用户发新消息 → 结束当前聚合卡段落（interrupt footer），
+        # 下一条回复开新卡（对齐 opencode 消息边界分段）。仅文本/图片/文件类用户消息。
+        if conv_id and msg_type in ("text", "markdown", "image", "file", "mixed"):
+            if _aggregate_card.get_active_by_conv(conv_id) is not None:
+                _aggregate_card.emit_event({
+                    "kind": "interrupt",
+                    "conv_id": conv_id,
+                })
 
         # 按 msg_type 分支处理。image/file 走下载 + media_urls 让 vision LLM 看到。
         text = ""
@@ -539,7 +603,96 @@ class WanlingAdapter(BasePlatformAdapter):
 
         await self.handle_message(event)
 
+    # ── 聚合卡 adapter 接口（aggregate_card 模块回调） ───────────────
+
+    def enqueue_aggregate_event(self, event: dict) -> None:
+        """线程安全入队一个聚合卡事件（hook worker 线程调用）。"""
+        try:
+            self.aggregate_events.put_nowait(event)
+        except Exception:
+            logger.debug("Wanling aggregate event queue full, dropped %s", event.get("kind"))
+
+    def lookup_conv_by_user(self, user_id: str) -> str:
+        """user_id → conv_id 反查（聚合卡建卡定位会话用）。"""
+        with self._user_conv_lock:
+            conv_id = self._user_conv.get(user_id, "")
+        if conv_id:
+            return conv_id
+        # miss 兜底：agent 视角 findOrCreate（对齐 send_exec_approval 注释的双来源）。
+        try:
+            conv_id = self._find_or_create_conv_sync(user_id)
+            if conv_id:
+                with self._user_conv_lock:
+                    self._user_conv[user_id] = conv_id
+        except Exception as e:
+            logger.debug("Wanling lookup_conv_by_user HTTP fallback failed: %s", e)
+        return conv_id
+
+    def aggregate_token(self) -> str:
+        """最新 agent JWT（每次 REST 请求取最新，防 TTL 过期）。"""
+        return self._token or ""
+
+    def last_user_msg_id(self, conv_id: str) -> str:
+        """最近用户消息 id（聚合卡建卡引用锚点）。"""
+        return self._last_user_msg.get(conv_id, "")
+
+    def _find_or_create_conv_sync(self, user_id: str) -> str:
+        """POST /api/agents/me/conversations（agent 视角 findOrCreate）→ conv_id。"""
+        if not self._token:
+            return ""
+        req = urllib.request.Request(
+            f"{self.server_url.rstrip('/')}/api/agents/me/conversations",
+            data=json.dumps({"user_id": user_id}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        data = _safe_request(req, "find_or_create_conv", timeout=15)
+        if isinstance(data, dict):
+            return str(data.get("conversation_id") or data.get("id") or "")
+        return ""
+
     # ── Approval (agent → user 卡片决策) ─────────────────────────────────
+
+    async def _on_permission_reply(self, conv_id: str, data: dict) -> None:
+        """APP 聚合卡内 permission_card 按钮点击（permission_reply 消息）。
+
+        reply 选项（APP 端）：once | always | reject。
+        - 映射 hermes choice：once→once, always→always, reject→deny
+        - 调 resolve_gateway_approval 唤醒 hermes 审批队列（session_key=oc_request_id）
+        - emit permission_decided 更新聚合卡内 permission_card 元素状态
+        """
+        if not _aggregate_card._aggregate_enabled():
+            return
+        oc_request_id = str(data.get("oc_request_id") or "")
+        reply = str(data.get("reply") or "")
+        if not oc_request_id or not reply:
+            logger.warning("Wanling: permission_reply 缺字段 conv=%s data=%s", conv_id, data)
+            return
+
+        choice = {"once": "once", "always": "always", "reject": "deny"}.get(reply)
+        if choice is None:
+            logger.warning("Wanling: permission_reply 未知 reply %r", reply)
+            return
+
+        try:
+            from tools.approval import resolve_gateway_approval
+            count = resolve_gateway_approval(oc_request_id, choice)
+            logger.info(
+                "Wanling: permission_reply resolved %d approval(s) session=%s (reply=%s)",
+                count, oc_request_id, reply,
+            )
+        except Exception as e:
+            logger.error("Wanling: permission_reply resolve failed session=%s: %s", oc_request_id, e)
+
+        _aggregate_card.emit_event({
+            "kind": "permission_decided",
+            "conv_id": conv_id,
+            "session_key": oc_request_id,
+            "decision": reply,
+        })
 
     async def _on_approval_decided(self, d: dict) -> None:
         """APPROVAL_DECIDED 事件处理：按 card_type 分流唤醒 hermes 的等待。
@@ -665,6 +818,21 @@ class WanlingAdapter(BasePlatformAdapter):
 
         # chat_id 就是 conv_id(单轨化)
         conv_id = chat_id
+
+        # 聚合卡激活：审批卡嵌入聚合卡（permission_card 元素），不建独立审批卡。
+        # 纯 plugin 端实现（server/APP 协议不变）：跳过 server 审批创建（避免独立
+        # 卡消息），emit permission_card 元素 → hermes queue 等待；用户点 APP 按钮
+        # 发 permission_reply → _on_message_create 调 resolve_gateway_approval 唤醒。
+        if _aggregate_card._aggregate_enabled() and _aggregate_card.get_active_by_conv(conv_id) is not None:
+            _aggregate_card.emit_event({
+                "kind": "permission_card",
+                "conv_id": conv_id,
+                "session_key": session_key,  # oc_request_id 用 session_key 定位
+                "action": description or "command",
+                "resources": [command],
+                "title": "命令执行审批",
+            })
+            return SendResult(success=True, message_id=session_key)
 
         # 2. 构造审批请求体（命令审批独有 allow_pattern，由 metadata 传入）
         allow_pattern = None
@@ -808,6 +976,31 @@ class WanlingAdapter(BasePlatformAdapter):
 
         # 上传 + 发送图片后可能只剩空白（LLM 整段都在描述图片），跳过 markdown 发送
         if not content.strip():
+            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+
+        # 聚合卡接管正文：post_llm_call hook 已把正文追加为聚合卡 markdown 元素，
+        # gateway 稍后调 send() 发同一正文 → 抑制独立气泡防双发（图片已在上方发出）。
+        # 命中即清除标记（一次性），非聚合卡场景标记不存在 → 照常发送。
+        if _aggregate_card.take_conv_text(chat_id):
+            logger.debug("Wanling: aggregate card 接管正文，抑制独立气泡 conv=%s", chat_id)
+            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+
+        # 聚合卡激活期间的中间文本（hermes commentary/interim，如「我来看看」）：
+        # 实时进聚合卡 markdown 元素（strip 流式 cursor），让卡片逐步构建。
+        # 最终正文由 post_llm_call 的 assistant_response 追加（上面 take_conv_text 抑制）。
+        _active = _aggregate_card.get_active_by_conv(chat_id)
+        if _active is not None:
+            text = content.rstrip()
+            # strip 流式 cursor（hermes DEFAULT_STREAMING_CURSOR = " ▉"）
+            if text.endswith("\u2589"):
+                text = text.rstrip().rstrip("\u2589").rstrip()
+            if text.strip():
+                _aggregate_card.emit_event({
+                    "kind": "markdown_update",
+                    "session_id": _active.session_id,
+                    "turn_id": "",
+                    "text": text,
+                })
             return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
 
         # reply_to 由 hermes 上游 _reply_anchor_for_event 自动填 = 触发本次回复的
@@ -1372,6 +1565,267 @@ def register(ctx):
         ),
     )
 
+    # 聚合卡：注册 hermes 生命周期 hook（raft 插件同款机制，不碰主程序）。
+    # hook 在 agent worker 线程同步执行，仅入队事件；建卡/PATCH 由 adapter
+    # 事件循环的消费者 task 串行执行（aggregate_card.run_event_consumer）。
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
+    ctx.register_hook("post_tool_call", _on_post_tool_call)
+    ctx.register_hook("post_llm_call", _on_post_llm_call)
+    # post_api_request：每次 LLM 调用完成后触发（非回合末），kwargs 直接透传
+    # 原始 assistant_message（NormalizedResponse，含该轮 reasoning）。用它把
+    # 真实思考增量 PATCH 到聚合卡 reasoning 元素（段落级实时，不等回合结束）。
+    ctx.register_hook("post_api_request", _on_post_api_request)
+    # on_session_end：post_llm_call 的兜底——用户 /stop 中断时 hermes 的
+    # post_llm_call 不触发（interrupted 守卫），但 on_session_end 每次回合都触发
+    # （带 interrupted 标志），用它收尾活跃聚合卡（避免卡 generating + silent）。
+    ctx.register_hook("on_session_end", _on_session_end)
+    logger.info(
+        "Wanling[DBG]: register() 完成，已注册 5 个 lifecycle hook (register_hook 支持=%s)",
+        hasattr(ctx, "register_hook"),
+    )
+
+
+# ── 聚合卡 hook（模块级，worker 线程同步执行，仅入队事件） ──────────
+
+# hermes 后台 review 回合（memory/skill 回顾，非用户主动发起）的 user_message 前缀。
+# 这些回合不应产生聚合卡（review 输出走 hermes 原本的独立消息路径，不影响其功能）。
+_REVIEW_TURN_PREFIX = "Review the conversation above"
+# turn_id → True（review 回合标记，供工具/收尾事件跳过）。
+_REVIEW_TURNS: set = set()
+_REVIEW_TURNS_LOCK = threading.Lock()
+
+
+def _is_review_turn(turn_id: str) -> bool:
+    if not turn_id:
+        return False
+    with _REVIEW_TURNS_LOCK:
+        return turn_id in _REVIEW_TURNS
+
+
+def _platform_is_wanling(**kwargs) -> bool:
+    return str(kwargs.get("platform") or "") == "wanling"
+
+
+def _on_pre_llm_call(**kwargs) -> None:
+    """LLM 调用前：回合开始信号。建卡由消费者处理（首个事件幂等建卡）。
+
+    hermes 后台 review 回合（memory/skill 回顾，user_message 以
+    "Review the conversation above" 开头）不建聚合卡：标记该 turn，
+    后续工具/收尾事件跳过；review 输出走 hermes 原本的独立消息路径。
+    """
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if not _platform_is_wanling(**kwargs):
+        return
+    session_id = kwargs.get("session_id") or ""
+    user_message = str(kwargs.get("user_message") or "")
+    if user_message.startswith(_REVIEW_TURN_PREFIX):
+        turn_id = kwargs.get("turn_id") or ""
+        with _REVIEW_TURNS_LOCK:
+            _REVIEW_TURNS.add(turn_id)
+        return
+    sender_id = kwargs.get("sender_id") or ""
+    _aggregate_card.remember_session_sender(session_id, sender_id)
+    _aggregate_card.emit_event({
+        "kind": "pre_llm_call",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "sender_id": sender_id,
+    })
+
+
+def _on_post_api_request(**kwargs) -> None:
+    """每次 LLM 调用完成：把该轮真实思考增量更新到聚合卡 reasoning 元素。
+
+    段落级实时（非逐 token）：post_api_request 在每轮 LLM API 调用返回后触发
+    （conversation_loop 工具循环内），kwargs 直接透传原始 assistant_message
+    （NormalizedResponse 对象），其 reasoning / reasoning_content 含该轮完整思考。
+    回合末 post_llm_call 仍会用完整 reasoning 覆盖定稿（finished=true）。
+    """
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if not _platform_is_wanling(**kwargs):
+        return
+    if _is_review_turn(kwargs.get("turn_id") or ""):
+        return
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    am = kwargs.get("assistant_message")
+    if am is None:
+        return
+    # reasoning 提取兼容各 provider/路径（getattr 兼容对象与 dict）：
+    # - 非流式 chat_completions / anthropic / codex / bedrock → 顶层 reasoning
+    # - 流式 chat_completions → 仅 reasoning_content（provider_data）
+    reasoning = (
+        getattr(am, "reasoning", None)
+        or getattr(am, "reasoning_content", None)
+        or ""
+    )
+    if not isinstance(reasoning, str):
+        reasoning = str(reasoning)
+    if not reasoning.strip():
+        return  # 纯工具轮无思考（或非思考模型），跳过
+    _aggregate_card.emit_event({
+        "kind": "reasoning_delta",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "text": reasoning,
+    })
+
+
+def _on_pre_tool_call(**kwargs) -> None:
+    """工具调用开始：tool_card 元素 starting。"""
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if _is_review_turn(kwargs.get("turn_id") or ""):
+        return
+    # pre_tool_call 无 platform 字段（raft 用 session 记忆；我们只认 wanling
+    # 会话已注册的 session_id，非 wanling 会话不会出现在我们的注册表）。
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    if _aggregate_card.get_session(session_id) is None and not _aggregate_card.get_session_sender(session_id):
+        return
+    _aggregate_card.emit_event({
+        "kind": "tool_start",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "tool_name": kwargs.get("tool_name") or "",
+        "args": kwargs.get("args"),
+        "sender_id": _aggregate_card.get_session_sender(session_id),
+    })
+
+
+def _on_post_tool_call(**kwargs) -> None:
+    """工具调用结束：tool_card 元素终态（含 output/error/duration）。"""
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if _is_review_turn(kwargs.get("turn_id") or ""):
+        return
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    # 定位对应 tool_card 元素：pre_tool_call 已建卡，这里按工具名 + 序号
+    # 匹配。pre/post 成对，且同一会话内按序出现，用单调计数区分同名工具。
+    manager = _aggregate_card.get_session(session_id)
+    if manager is None:
+        return
+    _aggregate_card.emit_event({
+        "kind": "tool_end",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "tool_name": kwargs.get("tool_name") or "",
+        "args": kwargs.get("args"),
+        "result": kwargs.get("result"),
+        "status": kwargs.get("status") or "",
+        "error_type": kwargs.get("error_type") or "",
+        "error_message": kwargs.get("error_message") or "",
+        "duration_ms": kwargs.get("duration_ms") or 0,
+        "sender_id": _aggregate_card.get_session_sender(session_id),
+    })
+
+
+def _on_post_llm_call(**kwargs) -> None:
+    """回合结束：追加 markdown 正文 + footer + 翻转 silent（计未读）。"""
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if not _platform_is_wanling(**kwargs):
+        return
+    if _is_review_turn(kwargs.get("turn_id") or ""):
+        # review 回合不建聚合卡：释放 turn 标记（回合结束），不 emit 收尾。
+        with _REVIEW_TURNS_LOCK:
+            _REVIEW_TURNS.discard(kwargs.get("turn_id") or "")
+        return
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    assistant_response = kwargs.get("assistant_response") or ""
+    model = kwargs.get("model") or ""
+    mode = kwargs.get("mode") or ""
+
+    # 0) 回合末补全思考链：从 conversation_history 提取当前回合最后 assistant
+    #    消息的 reasoning（对齐 hermes turn_finalizer 的 last_reasoning 逻辑，
+    #    倒序遇 user 消息停，取最近的 reasoning 字段）。
+    history = kwargs.get("conversation_history") or []
+    reasoning_text = ""
+    if isinstance(history, list):
+        for _msg in reversed(history):
+            if not isinstance(_msg, dict):
+                continue
+            if _msg.get("role") == "user":
+                break
+            if _msg.get("role") == "assistant" and _msg.get("reasoning"):
+                reasoning_text = str(_msg["reasoning"])
+                break
+
+    # 正文已由聚合卡接管：标记 conv，让 gateway 后续的 adapter.send() 抑制独立气泡。
+    # 仅当确实有正文时才接管（图片消息聚合卡元素不支持，走独立 image 气泡）。
+    if str(assistant_response).strip():
+        manager = _aggregate_card.get_session(session_id)
+        logger.info(
+            "Wanling[DBG]: post_llm_call session=%s manager=%s resp_len=%d reasoning_len=%d",
+            session_id, "Y" if manager else "N", len(str(assistant_response)),
+            len(reasoning_text),
+        )
+        if manager is not None:
+            _aggregate_card.mark_conv_text_taken(manager.conv_id)
+            # 0.1) 思考链 → 聚合卡 reasoning 元素
+            if reasoning_text.strip():
+                _aggregate_card.emit_event({
+                    "kind": "reasoning",
+                    "session_id": session_id,
+                    "turn_id": kwargs.get("turn_id") or "",
+                    "text": reasoning_text,
+                })
+            # 1) 正文 markdown → 聚合卡元素
+            _aggregate_card.emit_event({
+                "kind": "markdown",
+                "session_id": session_id,
+                "turn_id": kwargs.get("turn_id") or "",
+                "text": str(assistant_response),
+            })
+    # 2) 回合收尾：footer + silent 翻转
+    _aggregate_card.emit_event({
+        "kind": "finish",
+        "session_id": session_id,
+        "turn_id": kwargs.get("turn_id") or "",
+        "reason": "stop",
+        "model": model or "",
+        "mode": mode or "",
+    })
+
+
+def _on_session_end(**kwargs) -> None:
+    """回合结束兜底（post_llm_call 不触发时）：用户 /stop 中断等场景。
+
+    hermes 的 post_llm_call 在 interrupted 时不触发（`if final_response and not
+    interrupted` 守卫），导致聚合卡收不了尾（卡 generating + silent）。on_session_end
+    每次回合都触发（带 interrupted 标志），用它收尾活跃聚合卡：
+    - interrupted=True → finish(reason="stop", stopped=True)（APP 显示「已停止」）
+    - 正常结束但 post_llm_call 已处理 → 幂等跳过（finish 内部守卫）
+    """
+    if not _aggregate_card._aggregate_enabled():
+        return
+    if not _platform_is_wanling(**kwargs):
+        return
+    session_id = kwargs.get("session_id") or ""
+    if not session_id:
+        return
+    manager = _aggregate_card.get_session(session_id)
+    if manager is None or manager._finalized:
+        return
+    interrupted = bool(kwargs.get("interrupted"))
+    if interrupted:
+        _aggregate_card.emit_event({
+            "kind": "finish",
+            "session_id": session_id,
+            "turn_id": kwargs.get("turn_id") or "",
+            "reason": "stop",
+            "stopped": True,
+        })
+
 
 # ---------------------------------------------------------------------------
 # 自检脚本：python plugin/hermes-plugin/adapter.py
@@ -1483,8 +1937,198 @@ if __name__ == "__main__":
             "多张图串行处理各自替换",
         )
 
+    async def _run_aggregate_tests():
+        """聚合卡核心自检：mock REST server，验证建卡/工具/正文/收尾全流程。"""
+        agg = _aggregate_card
+
+        class _MockServer:
+            def __init__(self):
+                self.cards, self.patches, self.counter = [], [], 0
+                self.deletes = []
+            def handle(self, method, path, body):
+                if method == "POST" and "/messages" in path:
+                    self.counter += 1
+                    self.cards.append((path, body))
+                    return {"ok": True, "data": {"message_id": f"msg-{self.counter}"}}
+                if method == "PATCH":
+                    self.patches.append((path.split("/")[-1], body))
+                    return {"ok": True}
+                if method == "DELETE":
+                    self.deletes.append(path)
+                    return {"ok": True}
+                return {"ok": False}
+        _srv = _MockServer()
+        _orig = agg.AggregateCardManager._rest_sync
+        agg.AggregateCardManager._rest_sync = lambda self, m, p, b: _srv.handle(m, p, b)
+
+        class _MockAdapter:
+            def aggregate_token(self):
+                return "t"
+            def lookup_conv_by_user(self, user_id):
+                return "conv"
+        _mock_adapter = _MockAdapter()
+        try:
+            print("== 聚合卡自检 ==")
+            _manager = agg.AggregateCardManager(
+                "sess", "conv", "http://localhost:18008", lambda: "t"
+            )
+            agg.register_session(_manager)
+            # 建卡
+            await agg._dispatch_event(object(), {"kind": "pre_llm_call", "session_id": "sess", "turn_id": "t1", "sender_id": "u"}, "http://localhost:18008")
+            _check(len(_srv.cards) == 1, "回合开始建 1 张卡")
+            _check(_srv.cards[0][1]["content"]["data"]["state"] == "generating", "建卡 state=generating")
+            # 工具开始
+            await agg._dispatch_event(object(), {"kind": "tool_start", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "tool_card" for d in ops), "工具开始 append tool_card")
+            # 工具结束
+            await agg._dispatch_event(object(), {"kind": "tool_end", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}, "result": "out", "status": "ok", "duration_ms": 500}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            upd = [d for d in ops if d.get("op") == "update"]
+            _check(len(upd) == 1 and upd[0]["data"]["status"] == "completed" and upd[0]["data"]["output"] == "out", "工具结束 update tool_card（output/status）")
+            # 审批卡嵌入聚合卡（特殊路由：按 conv_id 定位活跃 manager）
+            await agg._dispatch_event(object(), {"kind": "permission_card", "conv_id": "conv", "session_key": "sk-1", "action": "dangerous command", "resources": ["rm -rf /"]}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            pc = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "permission_card"]
+            _check(len(pc) == 1 and pc[0]["element"]["data"]["status"] == "pending" and pc[0]["element"]["data"]["oc_request_id"] == "sk-1", "审批卡嵌入 permission_card 元素（pending）")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is False for d in ops), "审批 pending 翻转 silent=false 响铃（需用户介入）")
+            # 审批决策（permission_reply once → approved）
+            await agg._dispatch_event(object(), {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "once"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            upd = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("permission_card")]
+            _check(len(upd) == 1 and upd[0]["data"]["status"] == "approved", "审批决策后 permission_card 状态 approved")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is True for d in ops), "审批终态翻转 silent=true 恢复安静")
+            # markdown：不同中间文本独立元素；相邻前缀重叠（最终正文=中间文本展开）合并
+            await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "刚抓的页面已经有 8月12日 的新内容了。提取一下："}, "http://localhost:18008")
+            await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（"}, "http://localhost:18008")
+            await agg._dispatch_event(object(), {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（AIHOT 已更新）：\n\n**🔥 头条**..."}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            md_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "markdown"]
+            md_updates = [d for d in ops if d.get("op") == "update" and str(d.get("element_id", "")).startswith("markdown")]
+            _check(len(md_appends) == 2, f"不同中间文本独立元素（实际 {len(md_appends)}）")
+            _check(len(md_updates) == 1 and md_updates[-1]["data"]["text"].startswith("8月12日 的热点来了（AIHOT 已更新）"), "最终正文与相邻中间文本前缀合并（update 展开版）")
+            # reasoning 增量（post_api_request 每轮触发）：对齐 opencode 多思考块。
+            # 首块 update 空文本占位（无新增 append）；第二轮思考到达前块标终态 + append 新块。
+            ops_before = [p[1]["content"]["data"] for p in _srv.patches]
+            append_before = len([d for d in ops_before if d.get("op") == "append" and d["element"]["type"] == "reasoning"])
+            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第一轮思考"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            _check(len(reasoning_updates) == 1 and reasoning_updates[-1]["data"]["finished"] is False and reasoning_updates[-1]["data"]["text"] == "第一轮思考" and len(reasoning_appends) == append_before, "首块 delta update 空占位(无新 append)")
+            # 第二轮思考：前块标终态 + append 新块（finished=false）
+            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第二轮思考"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            _check(len(reasoning_updates) == 2 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "第一轮思考", "第二轮 delta 前块标终态")
+            _check(len(reasoning_appends) == append_before + 1 and reasoning_appends[-1]["element"]["data"]["finished"] is False and reasoning_appends[-1]["element"]["data"]["text"] == "第二轮思考", "第二轮 delta append 新块(finished=false)")
+            # reasoning 终态（post_llm_call 回合末）：update 最后一个未终态块为 finished=true
+            await agg._dispatch_event(object(), {"kind": "reasoning", "session_id": "sess", "turn_id": "t1", "text": "最终思考"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            _check(len(reasoning_updates) == 3 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "最终思考", "终态 reasoning 覆盖最后思考块为 finished=true")
+            # 正文归位：最终正文后 reorder，markdown 移到末尾（reasoning/工具卡后）
+            await agg._dispatch_event(object(), {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "总结"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            reorder_ops = [d for d in ops if d.get("op") == "reorder"]
+            _check(len(reorder_ops) >= 1, "最终正文后发 reorder 归位")
+            if reorder_ops:
+                order = reorder_ops[-1]["order"]
+                mcount = sum(1 for eid in order if eid.startswith("markdown"))
+                last = order[-1]
+                _check(
+                    last.startswith("markdown")
+                    and all(
+                        (eid.startswith("tool_card") or eid.startswith("reasoning") or eid.startswith("permission_card"))
+                        for eid in order[: len(order) - mcount]
+                    ),
+                    f"reorder 后 markdown 全部在末尾（order={order}）",
+                )
+            # 收尾
+            await agg._dispatch_event(object(), {"kind": "finish", "session_id": "sess", "turn_id": "t1", "model": "gpt-4o"}, "http://localhost:18008")
+            ops = [p[1]["content"]["data"] for p in _srv.patches]
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" for d in ops), "正文 append markdown")
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "footer" for d in ops), "收尾 append footer")
+            _check(any(d.get("op") == "set_state" and d["state"] == "done" for d in ops), "收尾 set_state done")
+            _check(any(d.get("op") == "set_silent" and d["silent"] is False for d in ops), "收尾 set_silent false（计未读）")
+            # 断卡（interrupt）：Agent 执行中用户发新消息 → 旧卡 finish interrupt + 下回合开新卡
+            await agg._dispatch_event(_mock_adapter, {"kind": "interrupt", "conv_id": "conv"}, "http://localhost:18008")
+            cards_before = len(_srv.cards)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "sess", "turn_id": "t2", "sender_id": "u"}, "http://localhost:18008")
+            _check(len(_srv.cards) > cards_before, "interrupt 后下回合新建卡")
+            new_card = _srv.cards[-1][1]["content"]["data"]
+            _check(new_card["state"] == "generating", "新卡 state=generating")
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "sess", "turn_id": "t2", "text": "第二条回复"}, "http://localhost:18008")
+            ops2 = [p[1]["content"]["data"] for p in _srv.patches]
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" and d["element"]["data"]["text"] == "第二条回复" for d in ops2), "新卡承载第二条回复")
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "sess", "turn_id": "t2", "model": "gpt-4o"}, "http://localhost:18008")
+            # finish 收尾兜底：假思考占位被 remove、running 工具卡标 error
+            agg.unregister_session("sess")
+            _m3 = agg.AggregateCardManager("s3", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m3)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s3", "turn_id": "t3", "sender_id": "u"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s3", "turn_id": "t3", "tool_name": "browser_snapshot", "args": {}}, "http://localhost:18008")
+            _p_before = len(_srv.patches)
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s3", "turn_id": "t3", "model": "gpt-4o"}, "http://localhost:18008")
+            ops3 = [p[1]["content"]["data"] for p in _srv.patches]
+            _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for d in ops3), "finish 移除假思考占位")
+            _check(any(d.get("op") == "update" and d.get("element_id", "").startswith("tool_card") and d.get("data", {}).get("status") == "error" for d in ops3), "finish 兜底 running 工具卡标 error")
+            _check(len(_srv.patches) > _p_before, "finish 兜底发 PATCH")
+            # 空卡清理：回合只有占位（无内容），finish 后 DELETE 隐藏
+            _srv.deletes.clear()
+            agg.unregister_session("s3")
+            _m4 = agg.AggregateCardManager("s4", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m4)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s4", "turn_id": "t4", "sender_id": "u"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s4", "turn_id": "t4", "model": "gpt-4o"}, "http://localhost:18008")
+            _check(len(_srv.deletes) == 1 and "scope=recall" in _srv.deletes[0], "空卡（仅占位）finish 后 DELETE recall 撤回")
+            _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for p in _srv.patches for d in [p[1]["content"]["data"]]), "空卡占位 reasoning 被 remove")
+            # 分卡 + 跨卡元素定位：元素超 20 自动切卡；旧卡元素 update 走归属映射 PATCH 旧卡
+            _srv.cards.clear(); _srv.patches.clear()
+            agg.unregister_session("sess")
+            _m5 = agg.AggregateCardManager("s5", "conv", "http://localhost:18008", lambda: "t")
+            agg.register_session(_m5)
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s5", "turn_id": "t5", "sender_id": "u"}, "http://localhost:18008")
+            for _i in range(21):  # 21 个 markdown 段(建卡占位 reasoning_1 + markdown_2..markdown_22)
+                await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s5", "turn_id": "t5", "text": f"段{_i}"}, "http://localhost:18008")
+            _check(len(_srv.cards) == 2, f"元素超 20 分卡(建 {len(_srv.cards)} 张卡,应为 2)")
+            # 分卡后旧卡元素(reasoning_1 落 msg-1)update → PATCH 到旧卡 msg-1(而非新卡 msg-2)
+            _pb = len(_srv.patches)
+            await _m5.update_element("reasoning_1", {"text": "x", "finished": True})
+            _cross = _srv.patches[_pb:]
+            _cu = [(mid, p) for mid, p in _cross if p["content"]["data"].get("op") == "update"]
+            _check(len(_cu) == 1 and _cu[0][0] == _m5._element_card_ids.get("reasoning_1") and _cu[0][1]["content"]["data"]["element_id"] == "reasoning_1", f"分卡后旧卡元素 update 定位归属卡(实际 {_cu[0][0] if _cu else '无'})")
+            # 分卡后 reorder 只作用于当前卡元素(旧卡元素不参与,不 400)。
+            # 新卡先 append 一个 tool_card,验证 reorder 后 markdown 归位且旧卡元素排除。
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s5", "turn_id": "t5", "tool_name": "browser_click", "args": {}}, "http://localhost:18008")
+            _pb = len(_srv.patches)
+            await _m5.reorder_markdown_to_end()
+            _ro = _srv.patches[_pb:]
+            _ro_ops = [p for p in _ro if p[1]["content"]["data"].get("op") == "reorder"]
+            if _ro_ops:
+                _order = _ro_ops[-1][1]["content"]["data"]["order"]
+                _check(
+                    any(eid.startswith("tool_card") for eid in _order)
+                    and _order[-1].startswith("markdown")
+                    and "reasoning_1" not in _order,
+                    f"分卡后 reorder 当前卡元素归位、旧卡元素排除(order={_order})",
+                )
+            else:
+                _check(False, "分卡后 reorder 应只作用当前卡")
+            agg.unregister_session("s5")
+            # 审批映射兜底：回合结束后（manager 已注销）审批决策仍 PATCH 历史消息
+            agg.unregister_session("sess")
+            _patch_before = len(_srv.patches)
+            await agg._dispatch_event(_mock_adapter, {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "reject"}, "http://localhost:18008")
+            _check(len(_srv.patches) > _patch_before, "manager 注销后审批决策仍发 PATCH（映射兜底）")
+            _check(any(p[1]["content"]["data"].get("op") == "update" and p[1]["content"]["data"].get("element_id", "").startswith("permission_card") and p[1]["content"]["data"]["data"]["status"] == "denied" for p in _srv.patches), "映射兜底 PATCH 更新 permission_card 为 denied")
+        finally:
+            agg.AggregateCardManager._rest_sync = _orig
+
     async def _main():
         await _run_tests()
+        await _run_aggregate_tests()
         print()
         if failures:
             print(f"== 自检失败：{len(failures)} 项 ==")

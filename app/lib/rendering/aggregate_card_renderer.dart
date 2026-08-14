@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/msg_type.dart';
+import '../models/quote.dart';
 import 'footer_status_bar.dart';
 import 'message_content_renderer.dart';
 import 'tool_group_renderer.dart';
@@ -91,6 +92,14 @@ class AggregateCardRenderer implements MessageContentRenderer {
           children: [
             // 顶栏去除后顶部留白:首元素自带上边距 4,补 6 让卡片顶部视觉不挤
             const SizedBox(height: 6),
+            // 引用行:聚合卡 data.quote(server 富化引用锚点)顶部展示「| 回复 xx：内容」
+            if (data['quote'] is Map<String, dynamic>)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: _QuoteLine(
+                  quote: Quote.fromJson(data['quote'] as Map<String, dynamic>),
+                ),
+              ),
             for (final slot in slots)
               switch (slot) {
                 ToolGroupSlot(:final cards) => Padding(
@@ -226,5 +235,54 @@ class AggregateCardRenderer implements MessageContentRenderer {
       }
     }
     return const {};
+  }
+}
+
+/// 聚合卡内引用行：`| 引用线，无背景色`（区别于独立消息的浅紫底引用块）。
+/// 示例：`| 回复 洛羽：查到了吗？`
+class _QuoteLine extends StatelessWidget {
+  final Quote quote;
+  const _QuoteLine({required this.quote});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = quote.senderName.isNotEmpty ? quote.senderName : quote.senderId;
+    // 边框竖线：IntrinsicHeight 让竖线拉伸到内容高度（居中于引用内容），
+    // 2px 主题色左竖线 + 无背景色，对齐「| 引用线」样式。
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 2,
+            margin: const EdgeInsets.only(right: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF597BFF),
+              borderRadius: BorderRadius.circular(1),
+            ),
+          ),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                children: [
+                  const TextSpan(text: '回复 '),
+                  TextSpan(
+                    text: name,
+                    style: const TextStyle(
+                      color: Color(0xFF597BFF),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  TextSpan(text: '：${quote.preview}'),
+                ],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

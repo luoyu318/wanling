@@ -9,6 +9,7 @@ flowchart TB
     subgraph hermes-plugin
         HINSTALL[install.sh<br/>4 模式]
         HADAPTER[adapter.py<br/>WS 协议对齐]
+        HAGG[aggregate_card.py<br/>hook 事件 → REST 聚合卡]
     end
     subgraph opencode-plugin
         OPROXY[proxy/http.ts<br/>TUI 请求拦截]
@@ -24,6 +25,8 @@ flowchart TB
 
     HINSTALL --> HADAPTER
     HADAPTER <-->|WS| SERVER
+    HERMES -- lifecycle hook --> HAGG
+    HAGG -. REST 建卡/PATCH .- SERVER
     HINSTALL --> HERMES
     OPROXY --> OC
     OSTREAMER -- SSE /event --> OC
@@ -42,6 +45,7 @@ flowchart TB
 - **hermes-plugin/adapter.py** — WS 协议对齐 + `send_exec_approval` / `send_slash_confirm` + `_on_approval_decided` / `_on_approval_expired`。**chat_id 概念 = conversation_id**(对齐 hermes 上游 18 平台),所有 WS payload 走新协议 `{conversation_id, content}`,无 user_id 路由。**引用消息双向**(对齐飞书):
   - **入站** `_on_message_create`:抽 `content.data.quote` 子对象 → 填 `MessageEvent.reply_to_message_id`(quote.message_id) + `MessageEvent.reply_to_text`(quote.preview),让 LLM 通过 reply_to_text 拿到被引用消息作为上下文
   - **出站** `send` **透传 `reply_to`**:hermes 上游 `_reply_anchor_for_event(event)` 默认每次回复都传 reply_to = 触发消息的 message_id(对齐飞书 / Telegram 等 18 平台的「回复锚点」语义)。adapter 把 reply_to 注入 `content.data.quote = {"message_id": reply_to}`,server `enrichQuote` 富化 sender_name / preview 后,APP 端在 agent 回复气泡上方渲染引用块。LLM **不需要知道 message_id**,hermes 全栈无暴露消息 id 给 LLM 的机制,这是 IM 标准交互
+- **hermes-plugin/aggregate_card.py** — 聚合卡核心(聚合模式):一次问答一条聚合卡,对齐 opencode-plugin 聚合卡协议(docs/ai-handbook/aggregate-card.md)。**完全走 hermes 官方插件 hook 机制(raft 先例),不改 hermes 主程序**:`register()` 同时注册平台 + `pre_llm_call`/`pre_tool_call`/`post_tool_call`/`post_llm_call` 四个 lifecycle hook(raft 插件同款 `ctx.register_hook`)。hook 在 agent worker 线程同步执行,仅把事件入队(模块级 `emit_event` 分发到活跃 adapter);adapter 事件循环的消费者 task(`run_event_consumer`)串行消费,经 REST 建卡 + 增量 PATCH 发送。数据流: `pre_llm_call`(回合开始建卡) → `pre_tool_call`/`post_tool_call`(tool_card 元素 starting/终态,post 带完整 result/output) → `post_llm_call`(回合结束: append markdown 正文 + footer + 翻转 `silent:false` 计未读)。**turn 切换**:`turn_id` 变化即新回合,旧 manager 收尾(异常中断补 `finish("interrupt")`)后注销,新回合重建新卡。**分卡**:元素达 20 上限自动切卡,旧卡 `set_state done` + `set_segment middle`,末卡建卡带 `segment:last`。**session 映射**:入站 `_on_message_create` 记录 `user_id→conv_id`(chat_id=conv_id 单轨化),hook 侧 `sender_id` 反查 conv_id;`_SESSION_SENDERS` 记忆 session→sender 供无 platform 字段的 tool hook 兜底。**正文防双发**:post_llm_call 同步标记 `mark_conv_text_taken(conv_id)`,adapter.send() 命中 `take_conv_text` 即抑制独立正文气泡(图片仍在 send() 前独立发出)。开关 `WANLING_AGGREGATE_CARD_ENABLED`(默认 true)置 false 回退旧逐条发送。自检脚本合并进 adapter.py `__main__`(mock REST server 验证建卡/工具/正文/收尾全流程)
 
 ### opencode-plugin
 
