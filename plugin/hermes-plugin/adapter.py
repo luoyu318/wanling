@@ -632,6 +632,14 @@ class WanlingAdapter(BasePlatformAdapter):
         """最新 agent JWT（每次 REST 请求取最新，防 TTL 过期）。"""
         return self._token or ""
 
+    def refresh_aggregate_token(self) -> str:
+        """重换 agent JWT（聚合卡 REST 401 重试用）。失败沿用旧 token。"""
+        try:
+            self._token = _exchange_token(self.server_url, self.agent_id, self.secret_key)
+        except Exception as e:
+            logger.warning("Wanling: refresh agent token failed — %s", e)
+        return self._token or ""
+
     def last_user_msg_id(self, conv_id: str) -> str:
         """最近用户消息 id（聚合卡建卡引用锚点）。"""
         return self._last_user_msg.get(conv_id, "")
@@ -2144,9 +2152,76 @@ if __name__ == "__main__":
         finally:
             agg.AggregateCardManager._rest_sync = _orig
 
+    async def _run_rest_channel_tests():
+        """REST 通道自检：keep-alive 连接复用 + 401 刷新重试 + 超时 5s。"""
+        import http.server
+        import threading as _th
+        agg = _aggregate_card
+
+        state = {"conns": 0, "patch_calls": 0, "first_401_done": False}
+
+        class _H(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # keep-alive
+
+            def setup(self):
+                state["conns"] += 1
+                super().setup()
+
+            def _send(self, code, obj):
+                body = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self._send(200, {"ok": True, "data": {"message_id": "m1"}})
+
+            def do_PATCH(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                state["patch_calls"] += 1
+                if self.headers.get("Authorization") == "Bearer old" and not state["first_401_done"]:
+                    state["first_401_done"] = True
+                    self._send(401, {"ok": False, "error": {"code": "unauthorized"}})
+                    return
+                self._send(200, {"ok": True})
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _H)
+        port = srv.server_address[1]
+        _th.Thread(target=srv.serve_forever, daemon=True).start()
+
+        tokens = iter(["old", "new", "new", "new", "new", "new", "new", "new"])
+        refreshes = {"n": 0}
+
+        def _refresh():
+            refreshes["n"] += 1
+            return next(tokens)
+
+        try:
+            m = agg.AggregateCardManager(
+                "s", "c", f"http://127.0.0.1:{port}", lambda: "old", token_refresher=_refresh,
+            )
+            r1 = await m._rest("POST", "/api/conversations/c/messages", {"content": {}})
+            _check(isinstance(r1, dict) and r1.get("ok"), "keep-alive POST 成功")
+            r2 = await m._rest("PATCH", "/api/messages/m1", {"content": {}})
+            _check(isinstance(r2, dict) and r2.get("ok"), "401 后刷新 token 重试成功")
+            _check(refreshes["n"] == 1, "401 触发恰好一次 token 刷新")
+            await m._rest("PATCH", "/api/messages/m1", {"content": {}})
+            await m._rest("PATCH", "/api/messages/m1", {"content": {}})
+            _check(state["conns"] == 1, f"4 次请求仅 1 条 TCP 连接（实际 {state['conns']}）")
+            m.close()
+        finally:
+            srv.shutdown()
+
     async def _main():
         await _run_tests()
         await _run_aggregate_tests()
+        await _run_rest_channel_tests()
         print()
         if failures:
             print(f"== 自检失败：{len(failures)} 项 ==")

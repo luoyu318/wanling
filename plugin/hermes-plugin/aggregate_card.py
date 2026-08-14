@@ -18,18 +18,22 @@ adapter 需实现：
 """
 
 import asyncio
+import http.client
 import json
 import logging
 import os
 import threading
-import urllib.request
 import weakref
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 # 单张聚合卡元素上限（对齐 opencode-plugin MAX_AGGREGATE_ELEMENTS_PER_CARD）。
 MAX_AGGREGATE_ELEMENTS_PER_CARD = 20
+
+# REST 单请求超时：缩短队头阻塞窗口（失败由全量替换自愈兜底，无需长等）。
+REST_TIMEOUT_S = 5.0
 
 # 开关：false 回退旧逐条发送（协议不变，仅不发聚合卡）。
 def _aggregate_enabled() -> bool:
@@ -84,6 +88,7 @@ class AggregateCardManager:
         conv_id: str,
         server_url: str,
         token_getter: Callable[[], str],
+        token_refresher: Optional[Callable[[], str]] = None,
     ):
         self.session_id = session_id
         self.conv_id = conv_id
@@ -105,35 +110,64 @@ class AggregateCardManager:
         # update/reorder 仍能定位到正确消息（对齐 opencode aggregateElementCardIds），
         # 否则旧卡元素操作会误打当前新卡 → server 400「元素不存在」。
         self._element_card_ids: Dict[str, str] = {}
+        self.token_refresher = token_refresher
+        # keep-alive 连接（消费者单 task 串行调用，无并发共享问题）
+        _parsed = urlparse(self.server_url)
+        self._http_is_tls = _parsed.scheme == "https"
+        self._http_host = _parsed.hostname or "localhost"
+        self._http_port = _parsed.port or (443 if self._http_is_tls else 80)
+        self._conn: Optional[http.client.HTTPConnection] = None
 
     # ── REST 通道（agent JWT 鉴权，对齐 opencode-plugin client） ────
 
-    def _rest_sync(self, method: str, path: str, body: Optional[dict]) -> Optional[Dict[str, Any]]:
-        token = self.token_getter()
-        req = urllib.request.Request(
-            f"{self.server_url}{path}",
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}" if token else "",
-            },
-            method=method,
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = resp.read()
-                if not raw:
-                    return {"ok": True}  # 204 等空响应（如 DELETE recall）
-                payload = json.loads(raw)
-        except urllib.error.HTTPError as e:
+    def _ensure_conn(self) -> http.client.HTTPConnection:
+        if self._conn is None:
+            cls = http.client.HTTPSConnection if self._http_is_tls else http.client.HTTPConnection
+            self._conn = cls(self._http_host, self._http_port, timeout=REST_TIMEOUT_S)
+        return self._conn
+
+    def close(self) -> None:
+        """关闭 keep-alive 连接（finish / 消费者退出时调）。"""
+        if self._conn is not None:
             try:
-                payload = json.loads(e.read())
+                self._conn.close()
             except Exception:
-                payload = {"ok": False}
-        except Exception as e:
-            logger.error("Wanling aggregate REST %s %s failed — %s", method, path, e)
-            return None
-        return payload
+                pass
+            self._conn = None
+
+    def _rest_sync(self, method: str, path: str, body: Optional[dict]) -> Optional[Dict[str, Any]]:
+        payload = json.dumps(body).encode() if body is not None else None
+        for attempt in (1, 2):
+            conn = self._ensure_conn()
+            token = self.token_getter()
+            try:
+                conn.request(
+                    method, path, body=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        **({"Authorization": f"Bearer {token}"} if token else {}),
+                    },
+                )
+                resp = conn.getresponse()
+                raw = resp.read()  # 必须读干才能复用连接
+            except (http.client.HTTPException, OSError) as e:
+                # keep-alive 被对端关闭 / 网络抖动 → 重建连接重试一次
+                self.close()
+                if attempt == 2:
+                    logger.error("Wanling aggregate REST %s %s failed — %s", method, path, e)
+                    return None
+                continue
+            # 401：agent JWT 过期（WS 长连跨 72h TTL）→ 刷新 token 重试一次
+            if resp.status == 401 and attempt == 1 and self.token_refresher is not None:
+                self.token_refresher()
+                continue
+            if not raw:
+                return {"ok": True}  # 204 等空响应（如 DELETE recall）
+            try:
+                return json.loads(raw)
+            except Exception:
+                return {"ok": False}
+        return None
 
     async def _rest(self, method: str, path: str, body: Optional[dict]) -> Optional[Dict[str, Any]]:
         return await asyncio.to_thread(self._rest_sync, method, path, body)
@@ -468,6 +502,7 @@ class AggregateCardManager:
                     "Wanling aggregate: 空卡已撤回 conv=%s msg=%s",
                     self.conv_id, self._card_msg_id,
                 )
+        self.close()
 
     # ── 底层 PATCH ───────────────────────────────────────────────────
 
@@ -642,6 +677,20 @@ def _is_new_turn(session_id: str, turn_id: str) -> bool:
 
 # ── 事件消费者（adapter 事件循环内运行）────────────────────────────
 
+def _close_all_sessions() -> None:
+    """消费者退出兜底：关闭所有已注册 manager 的 keep-alive 连接。
+
+    tmp manager（_dispatch_event 内创建、用后即 close）不在此列。
+    """
+    with _SESSIONS_LOCK:
+        managers = list(_SESSIONS.values())
+    for m in managers:
+        try:
+            m.close()
+        except Exception:
+            pass
+
+
 async def run_event_consumer(adapter: Any, stop_event: Optional[threading.Event] = None) -> None:
     """adapter 事件循环内消费自己的事件队列，路由到 session manager。
 
@@ -660,9 +709,11 @@ async def run_event_consumer(adapter: Any, stop_event: Optional[threading.Event]
             event = await asyncio.to_thread(q.get, True, 0.2)
         except _queue.Empty:
             if stop_event is not None and stop_event.is_set():
+                _close_all_sessions()
                 return
             continue
         except Exception:
+            _close_all_sessions()
             return
         try:
             await _dispatch_event(adapter, event, server_url)
@@ -738,8 +789,12 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
             # 独立临时 manager 持有 token/server_url，直接 PATCH 历史消息。
             # PATCH 落地才清理持久映射（防泄漏）；失败保留映射，
             # 重复决策可重试恢复，避免审批卡永停 pending。
-            tmp = AggregateCardManager("", record["conv_id"], server_url, adapter.aggregate_token)
+            tmp = AggregateCardManager(
+                "", record["conv_id"], server_url, adapter.aggregate_token,
+                token_refresher=getattr(adapter, "refresh_aggregate_token", None),
+            )
             resp = await tmp._rest("PATCH", f"/api/messages/{record['msg_id']}", {"content": content})
+            tmp.close()
             if isinstance(resp, dict) and resp.get("ok"):
                 drop_permission_card(oc_request_id)
             return
@@ -875,6 +930,7 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
             return
         manager = AggregateCardManager(
             session_id, conv_id, server_url, adapter.aggregate_token,
+            token_refresher=getattr(adapter, "refresh_aggregate_token", None),
         )
         remember_session_conv(session_id, conv_id)
         register_session(manager)
@@ -1019,3 +1075,5 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any], server_url: str) 
         )
         unregister_session(session_id)
         forget_session_sender(session_id)
+        if manager is not None:
+            manager.close()
