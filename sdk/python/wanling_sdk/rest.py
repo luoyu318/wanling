@@ -19,9 +19,16 @@ TokenProvider = Callable[[], Awaitable[str]]
 
 
 class WanlingRestClient:
-    def __init__(self, server_url: str, token_provider: TokenProvider) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        token_provider: TokenProvider,
+        max_upload_bytes: int = 32 * 1024 * 1024,
+    ) -> None:
         self._base_url = server_url.rstrip("/")
         self._token_provider = token_provider
+        # 上传上限默认对齐 server UPLOAD_MAX_BYTES(32MB),可由调用方收紧/放宽。
+        self._max_upload_bytes = max_upload_bytes
         self._client = httpx.AsyncClient()
 
     async def aclose(self) -> None:
@@ -65,6 +72,13 @@ class WanlingRestClient:
         data: dict,
         silent: bool = True,
     ) -> str:
+        """发一条卡片消息(HTTP 通道,agent 视角)。
+
+        注意:silent 默认 True,静默、不计未读、不弹通知,适合工具卡/过程消息。
+        发普通文本回复请改用 client.send_typed(WS,默认非 silent)或本方法显式
+        silent=False,否则 APP 端不响铃也不计未读。
+        对齐 server POST /api/conversations/:id/messages(SendAsAgent)。
+        """
         content = {"msg_type": msg_type, "data": data, "silent": silent}
         resp = await self.request("POST", f"/api/conversations/{conv_id}/messages", {"content": content})
         message_id = resp.get("data", {}).get("message_id")
@@ -72,7 +86,29 @@ class WanlingRestClient:
             raise ApiError(0, "send_card_message: missing message_id")
         return message_id
 
+    async def create_approval(self, conv_id: str, body: dict) -> dict[str, Any]:
+        """发起审批卡(approvals 状态机通道,含 allow_pattern 会话白名单)。
+
+        对齐 server POST /api/conversations/:id/approvals(CreateApproval):
+        - card_type 仅 command/tool/file/slash_confirm,slash_confirm 必带 confirm_id
+        - allow_pattern 仅 command 生效,命中白名单服务端返 auto_approved=true(不再发卡)
+        响应 data 正常含 approval_id;白名单命中含 state/auto_approved/matched_pattern。
+        """
+        resp = await self.request("POST", f"/api/conversations/{conv_id}/approvals", body)
+        return resp.get("data", {}) or {}
+
     async def update_message_content(self, msg_id: str, content: dict) -> None:
+        await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
+
+    async def patch_aggregate_message(self, msg_id: str, op: dict) -> None:
+        """聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)。
+
+        对齐 docs/ai-handbook/aggregate-card.md 增量协议:
+        - append/update/remove/reorder 维护 elements
+        - set_state / set_segment / set_silent 改卡状态与 silent(翻转 false 触发未读+通知)
+        与 update_message_content(全量替换)互补,聚合卡流式增量用本方法。
+        """
+        content = {"msg_type": "aggregate_card", "data": op}
         await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
 
     async def create_group_as_agent(
@@ -99,8 +135,8 @@ class WanlingRestClient:
 
     async def upload_file(self, file_path: str, conv_id: str | None = None) -> str:
         size = os.path.getsize(file_path)
-        if size > 20 * 1024 * 1024:
-            raise ApiError(0, f"upload_file: {file_path} too large ({size} bytes > 20MB)")
+        if size > self._max_upload_bytes:
+            raise ApiError(0, f"upload_file: {file_path} too large ({size} bytes > {self._max_upload_bytes})")
         token = await self._token_provider()
         params = {"conversation_id": conv_id} if conv_id else {}
         try:

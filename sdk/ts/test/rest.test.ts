@@ -56,4 +56,82 @@ describe("WanlingRestClient", () => {
     await expect(client.downloadFile("f1")).rejects.toThrow(ApiError)
     await expect(client.downloadFile("f1")).rejects.toThrow("request failed: The operation was aborted.")
   })
+
+  it("createApproval POST /api/conversations/:id/approvals 返 approval_id", async () => {
+    fetchSpy.mockResolvedValue(okJson({ approval_id: "appr-1" }))
+    const res = await client.createApproval("conv-1", {
+      card_type: "command",
+      title: "命令执行审批",
+      preview: "rm -rf /tmp/x",
+      session_key: "sk-1",
+      timeout_sec: 300,
+    })
+    expect(res.approval_id).toBe("appr-1")
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:18008/api/conversations/conv-1/approvals")
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(String(init.body))).toEqual({
+      card_type: "command", title: "命令执行审批", preview: "rm -rf /tmp/x",
+      session_key: "sk-1", timeout_sec: 300,
+    })
+  })
+
+  it("createApproval 白名单命中返 auto_approved", async () => {
+    fetchSpy.mockResolvedValue(okJson({ state: "approved", auto_approved: true, matched_pattern: "rm *" }))
+    const res = await client.createApproval("conv-1", {
+      card_type: "command", title: "t", preview: "rm -rf /x", session_key: "sk-1", allow_pattern: "rm *",
+    })
+    expect(res.auto_approved).toBe(true)
+  })
+
+  it("uploadFile 超过 maxUploadBytes 抛 ApiError(可配置上限)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rest-test-"))
+    const file = join(dir, "big.txt")
+    writeFileSync(file, Buffer.alloc(2 * 1024 * 1024, 97)) // 2MB
+    try {
+      const small = new WanlingRestClient("http://x", async () => "t", { maxUploadBytes: 1024 })
+      await expect(small.uploadFile(file)).rejects.toThrow("too large")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("uploadFile 默认上限对齐 server 32MB(不抛)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rest-test-"))
+    const file = join(dir, "mid.txt")
+    writeFileSync(file, Buffer.alloc(21 * 1024 * 1024, 98)) // 21MB(> 旧 20MB 限制)
+    try {
+      fetchSpy.mockResolvedValue(okJson({ id: "f1" }))
+      const id = await client.uploadFile(file)
+      expect(id).toBe("f1")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("patchAggregateMessage PATCH 增量 op(append)", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    await client.patchAggregateMessage("m1", {
+      op: "append",
+      element: { type: "markdown", element_id: "m1", data: { text: "hi" } },
+    })
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:18008/api/messages/m1")
+    expect(init.method).toBe("PATCH")
+    expect(JSON.parse(String(init.body))).toEqual({
+      content: {
+        msg_type: "aggregate_card",
+        data: { op: "append", element: { type: "markdown", element_id: "m1", data: { text: "hi" } } },
+      },
+    })
+  })
+
+  it("patchAggregateMessage set_silent 翻转", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    await client.patchAggregateMessage("m1", { op: "set_silent", silent: false })
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({
+      content: { msg_type: "aggregate_card", data: { op: "set_silent", silent: false } },
+    })
+  })
 })

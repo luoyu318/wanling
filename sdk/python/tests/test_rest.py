@@ -89,3 +89,115 @@ async def test_aclose_releases_client():
     client = build_client(handler)
     async with client:
         assert await client.create_group_as_agent("u1", "agent_session", "t") == "conv-9"
+
+
+@pytest.mark.asyncio
+async def test_create_approval():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True, "data": {"approval_id": "appr-1"}})
+
+    client = build_client(handler)
+    res = await client.create_approval(
+        "conv-1",
+        {"card_type": "command", "title": "命令执行审批", "preview": "rm -rf /tmp/x", "session_key": "sk-1", "timeout_sec": 300},
+    )
+    assert res["approval_id"] == "appr-1"
+    assert seen["url"] == "http://localhost:18008/api/conversations/conv-1/approvals"
+    assert seen["body"] == {
+        "card_type": "command", "title": "命令执行审批", "preview": "rm -rf /tmp/x",
+        "session_key": "sk-1", "timeout_sec": 300,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_approval_auto_approved():
+    def handler(request):
+        return httpx_response(200, {"ok": True, "data": {"state": "approved", "auto_approved": True, "matched_pattern": "rm *"}})
+
+    client = build_client(handler)
+    res = await client.create_approval(
+        "conv-1",
+        {"card_type": "command", "title": "t", "preview": "rm -rf /x", "session_key": "sk-1", "allow_pattern": "rm *"},
+    )
+    assert res["auto_approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_exceeds_max_bytes():
+    import os
+    import tempfile
+
+    client = WanlingRestClient("http://localhost:18008/", lambda: _async_token(), max_upload_bytes=1024)
+    fd, path = tempfile.mkstemp()
+    try:
+        with open(path, "wb") as f:  # noqa: ASYNC230 - 一次性临时文件,同步写即可
+            f.write(b"x" * (2 * 1024 * 1024))
+        with pytest.raises(ApiError) as exc:
+            await client.upload_file(path)
+        assert "too large" in str(exc.value)
+    finally:
+        os.close(fd)
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_upload_default_max_bytes_allows_21mb():
+    import os
+    import tempfile
+
+    client = WanlingRestClient("http://localhost:18008/", lambda: _async_token())
+
+    def handler(request):
+        return httpx_response(200, {"ok": True, "data": {"id": "f1"}})
+
+    client._client = AsyncClient(transport=MockTransport(handler))
+    fd, path = tempfile.mkstemp()
+    try:
+        with open(path, "wb") as f:  # noqa: ASYNC230 - 一次性临时文件,同步写即可
+            f.write(b"y" * (21 * 1024 * 1024))  # 21MB(> 旧 20MB 限制)
+        assert await client.upload_file(path) == "f1"
+    finally:
+        os.close(fd)
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_patch_aggregate_message_append():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["method"] = request.method
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True})
+
+    client = build_client(handler)
+    await client.patch_aggregate_message(
+        "m1",
+        {"op": "append", "element": {"type": "markdown", "element_id": "m1", "data": {"text": "hi"}}},
+    )
+    assert seen["url"] == "http://localhost:18008/api/messages/m1"
+    assert seen["method"] == "PATCH"
+    assert seen["body"] == {
+        "content": {
+            "msg_type": "aggregate_card",
+            "data": {"op": "append", "element": {"type": "markdown", "element_id": "m1", "data": {"text": "hi"}}},
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_patch_aggregate_message_set_silent():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx_response(200, {"ok": True})
+
+    client = build_client(handler)
+    await client.patch_aggregate_message("m1", {"op": "set_silent", "silent": False})
+    assert seen["body"] == {"content": {"msg_type": "aggregate_card", "data": {"op": "set_silent", "silent": False}}}

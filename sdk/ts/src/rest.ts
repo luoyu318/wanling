@@ -22,13 +22,61 @@ export type SessionMeta = {
   contextLimit?: number
 }
 
+export type ApprovalCardType = "command" | "tool" | "file" | "slash_confirm"
+
+export type CreateApprovalBody = {
+  card_type: ApprovalCardType
+  title: string
+  preview?: string
+  preview_language?: string
+  tool_name?: string
+  file?: { id: string }
+  meta?: Array<{ icon?: string; text?: string; warn?: boolean }>
+  session_key: string
+  allow_pattern?: string
+  confirm_id?: string
+  timeout_sec?: number
+}
+
+export type CreateApprovalResult = {
+  approval_id?: string
+  state?: string
+  auto_approved?: boolean
+  matched_pattern?: string
+}
+
+// 聚合卡增量 op,对齐 docs/ai-handbook/aggregate-card.md。
+// 与 updateMessageContent(全量替换)互补:聚合卡流式增量用本方法,避免全量替换
+// 触发 server mergePreservedSilent 保留 silent 造成翻转不生效。
+export type AggregateElement = {
+  type: string
+  element_id: string
+  data: Record<string, unknown>
+}
+
+export type AggregatePatchOp =
+  | { op: "append"; element: AggregateElement }
+  | { op: "update"; element_id: string; data: Record<string, unknown> }
+  | { op: "remove"; element_id: string }
+  | { op: "reorder"; order: string[] }
+  | { op: "set_state"; state: "generating" | "done" }
+  | { op: "set_segment"; segment: "first" | "middle" | "last" }
+  | { op: "set_silent"; silent: boolean }
+
 export class WanlingRestClient {
   private serverUrl: string
   private tokenProvider: () => Promise<string>
+  private maxUploadBytes: number
 
-  constructor(serverUrl: string, tokenProvider: () => Promise<string>) {
+  constructor(
+    serverUrl: string,
+    tokenProvider: () => Promise<string>,
+    opts?: { maxUploadBytes?: number },
+  ) {
     this.serverUrl = serverUrl.replace(/\/+$/, "")
     this.tokenProvider = tokenProvider
+    // 上传上限默认对齐 server UPLOAD_MAX_BYTES(32MB),可由调用方收紧/放宽。
+    this.maxUploadBytes = opts?.maxUploadBytes ?? 32 * 1024 * 1024
   }
 
   private apiUrl(p: string): string {
@@ -72,6 +120,12 @@ export class WanlingRestClient {
     }
   }
 
+  // 发一条卡片消息(HTTP 通道,agent 视角)。
+  //
+  // ⚠️ silent 默认 true:静默、不计未读、不弹通知 —— 适合工具卡/过程消息。
+  //    发普通文本回复请改用 client.sendTypedMessage(WS,默认非 silent)
+  //    或本方法显式传 silent=false,否则 APP 端不响铃也不计未读。
+  // 对齐 server POST /api/conversations/:id/messages(SendAsAgent)。
   async sendCardMessage(
     convId: string,
     msgType: string,
@@ -87,8 +141,33 @@ export class WanlingRestClient {
     return resp.data.message_id
   }
 
+  // 发起审批卡(approvals 状态机通道,含 allow_pattern 会话白名单)。
+  // 对齐 server POST /api/conversations/:id/approvals(CreateApproval):
+  // - card_type=slash_confirm 必带 confirm_id
+  // - allow_pattern 仅 command 生效,命中白名单服务端返 auto_approved=true(不再发卡)
+  // 响应 data 正常含 approval_id;白名单命中含 state/auto_approved/matched_pattern。
+  async createApproval(convId: string, body: CreateApprovalBody): Promise<CreateApprovalResult> {
+    const resp = await this.request<{ ok: boolean; data?: CreateApprovalResult }>(
+      "POST", `/api/conversations/${convId}/approvals`, body,
+    )
+    this.envelopeOk(resp)
+    return resp.data ?? {}
+  }
+
   async updateMessageContent(msgId: string, content: MessageContent): Promise<void> {
     const resp = await this.request<{ ok: boolean }>("PATCH", `/api/messages/${msgId}`, { content })
+    this.envelopeOk(resp)
+  }
+
+  // 聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)。
+  // 语义对齐 aggregate-card.md 的增量协议:
+  // - append/update/remove/reorder 维护 elements
+  // - set_state / set_segment / set_silent 改卡状态与 silent(翻转 false 触发未读+通知)
+  async patchAggregateMessage(msgId: string, op: AggregatePatchOp): Promise<void> {
+    const resp = await this.request<{ ok: boolean }>(
+      "PATCH", `/api/messages/${msgId}`,
+      { content: { msg_type: "aggregate_card", data: op as unknown as Record<string, unknown> } },
+    )
     this.envelopeOk(resp)
   }
 
@@ -127,8 +206,8 @@ export class WanlingRestClient {
 
   async uploadFile(filePath: string, convId?: string): Promise<string> {
     const size = statSync(filePath).size
-    if (size > 20 * 1024 * 1024) {
-      throw new ApiError(0, `upload: ${filePath} too large (${size} bytes > 20MB)`)
+    if (size > this.maxUploadBytes) {
+      throw new ApiError(0, `upload: ${filePath} too large (${size} bytes > ${this.maxUploadBytes})`)
     }
     const token = await this.tokenProvider()
     const fd = new FormData()
