@@ -32,6 +32,7 @@ Or via environment variables (overrides config.yaml):
 
 import asyncio
 import glob
+import http.client
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ import urllib.request
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +209,13 @@ class WanlingAdapter(BasePlatformAdapter):
         self._token: Optional[str] = None
         self._recv_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        # 流式编辑 REST 通道：send() 建消息 / edit_message() PATCH 共用 keep-alive 连接
+        # （对齐 aggregate_card 的传输层：连接复用 + 401 刷新重试）。
+        self._rest_conn: Optional[http.client.HTTPConnection] = None
+        # message_id → 建消息时的 data（quote 等元数据）。PATCH 是全量替换，
+        # 编辑时回填防引用块丢失。值为 None 表示虚拟 id（正文被聚合卡接管，
+        # 续帧路由进聚合卡 markdown 元素而非 PATCH）。容量上限防长连泄漏。
+        self._edit_meta: Dict[str, Optional[Dict[str, Any]]] = {}
         # Resume：本连接最后收到的 dispatch seq（来自服务端 WSMessage.s）。
         # 重连时若 >0 发 OpResume 让服务端补发断线期间的消息，避免丢消息。
         # 注意：seq 是 per-client 的，必须记录本 adapter 实例自己收到的最后值。
@@ -292,6 +301,8 @@ class WanlingAdapter(BasePlatformAdapter):
                 pass
             self._aggregate_consumer_task = None
         _aggregate_card.unregister_adapter(self)
+        self._rest_close()
+        self._edit_meta.clear()
         await self._cleanup_ws()
         logger.info("Wanling: disconnected")
 
@@ -644,6 +655,77 @@ class WanlingAdapter(BasePlatformAdapter):
         """最近用户消息 id（聚合卡建卡引用锚点）。"""
         return self._last_user_msg.get(conv_id, "")
 
+    # ── 流式编辑 REST 通道（对齐 aggregate_card 传输层） ──────────────────
+
+    def _ensure_rest_conn(self) -> http.client.HTTPConnection:
+        # 部署契约与 aggregate_card 相同：server_url 无 path 前缀。
+        if self._rest_conn is None:
+            parsed = urlparse(self.server_url)
+            is_tls = parsed.scheme == "https"
+            cls = http.client.HTTPSConnection if is_tls else http.client.HTTPConnection
+            self._rest_conn = cls(
+                parsed.hostname or "localhost",
+                parsed.port or (443 if is_tls else 80),
+                timeout=_aggregate_card.REST_TIMEOUT_S,
+            )
+        return self._rest_conn
+
+    def _rest_close(self) -> None:
+        """关闭 keep-alive 连接（disconnect / 传输错误重建时调）。"""
+        if self._rest_conn is not None:
+            try:
+                self._rest_conn.close()
+            except Exception:
+                pass
+            self._rest_conn = None
+
+    def _rest_sync(self, method: str, path: str, body: Optional[dict]) -> Optional[Dict[str, Any]]:
+        """同步 REST（从不抛异常）：keep-alive 断连重建重试一次 + 401 刷新 token 重试一次。"""
+        payload = json.dumps(body).encode() if body is not None else None
+        for attempt in (1, 2):
+            conn = self._ensure_rest_conn()
+            token = self.aggregate_token()
+            try:
+                conn.request(
+                    method, path, body=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        **({"Authorization": f"Bearer {token}"} if token else {}),
+                    },
+                )
+                resp = conn.getresponse()
+                raw = resp.read()  # 必须读干才能复用连接
+            except (http.client.HTTPException, OSError) as e:
+                self._rest_close()
+                if attempt == 2:
+                    logger.error("Wanling REST %s %s failed — %s", method, path, e)
+                    return None
+                continue
+            if resp.status == 401 and attempt == 1:
+                try:
+                    self.refresh_aggregate_token()
+                except Exception as e:
+                    logger.warning("Wanling REST refresh token failed — %s", e)
+                else:
+                    continue
+            if not raw:
+                return {"ok": 200 <= resp.status < 300}
+            try:
+                return json.loads(raw)
+            except Exception:
+                return {"ok": False}
+        return None
+
+    async def _rest(self, method: str, path: str, body: Optional[dict]) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self._rest_sync, method, path, body)
+
+    def _remember_edit_meta(self, msg_id: str, data: Optional[Dict[str, Any]]) -> None:
+        """登记 message_id → data（虚拟 id 存 None）。超容量淘汰最旧条目。"""
+        self._edit_meta[msg_id] = data
+        while len(self._edit_meta) > 200:
+            oldest = next(iter(self._edit_meta))
+            self._edit_meta.pop(oldest, None)
+
     def _find_or_create_conv_sync(self, user_id: str) -> str:
         """POST /api/agents/me/conversations（agent 视角 findOrCreate）→ conv_id。"""
         if not self._token:
@@ -984,14 +1066,24 @@ class WanlingAdapter(BasePlatformAdapter):
 
         # 上传 + 发送图片后可能只剩空白（LLM 整段都在描述图片），跳过 markdown 发送
         if not content.strip():
-            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+            virtual = uuid.uuid4().hex[:12]
+            self._remember_edit_meta(virtual, None)
+            return SendResult(success=True, message_id=virtual)
+
+        # 对齐 hermes 落库行为(conversation_loop 最终响应 strip):流式帧原样转发
+        # 会带上模型 reasoning→正文 的前导空行(如 deepseek 系 "\n\n正文"),
+        # 发送前整体 strip,避免 APP 消息/聚合卡正文顶部出现多余空行。
+        # 仅清理两端空白,不影响 markdown 语义(引号块/代码块内空格保留)。
+        content = content.strip()
 
         # 聚合卡接管正文：post_llm_call hook 已把正文追加为聚合卡 markdown 元素，
         # gateway 稍后调 send() 发同一正文 → 抑制独立气泡防双发（图片已在上方发出）。
         # 命中即清除标记（一次性），非聚合卡场景标记不存在 → 照常发送。
         if _aggregate_card.take_conv_text(chat_id):
             logger.debug("Wanling: aggregate card 接管正文，抑制独立气泡 conv=%s", chat_id)
-            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+            virtual = uuid.uuid4().hex[:12]
+            self._remember_edit_meta(virtual, None)
+            return SendResult(success=True, message_id=virtual)
 
         # 聚合卡激活期间的中间文本（hermes commentary/interim，如「我来看看」）：
         # 实时进聚合卡 markdown 元素（strip 流式 cursor），让卡片逐步构建。
@@ -1009,7 +1101,9 @@ class WanlingAdapter(BasePlatformAdapter):
                     "turn_id": "",
                     "text": text,
                 })
-            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+            virtual = uuid.uuid4().hex[:12]
+            self._remember_edit_meta(virtual, None)
+            return SendResult(success=True, message_id=virtual)
 
         # reply_to 由 hermes 上游 _reply_anchor_for_event 自动填 = 触发本次回复的
         # user 消息 id(对齐飞书 / Telegram 等 18 平台的「回复锚点」语义)。注入到
@@ -1019,19 +1113,86 @@ class WanlingAdapter(BasePlatformAdapter):
         if reply_to:
             data["quote"] = {"message_id": reply_to}
 
-        try:
-            await self._ws.send(json.dumps({
-                "op": OP_DISPATCH,
-                "t": EVENT_MESSAGE_CREATE,
-                "d": {
-                    "conversation_id": chat_id,
-                    "content": {"msg_type": "markdown", "data": data},
-                },
-            }))
-        except Exception as e:
-            return SendResult(success=False, error=str(e))
+        # 走 REST 同步建消息（对齐聚合卡/审批卡的 SendAsAgent 通道）：
+        # 拿到 server 分配的真实 message_id 返回给 hermes stream consumer，
+        # 后续流式帧经 edit_message() PATCH 同一条消息（原地更新）。
+        # 旧 WS 路径 fire-and-forget 无回执，consumer 只拿到假 id 无法编辑，
+        # edit 失败后 fallback 只能发「续文新消息」→ 一条回复被拆成两条
+        # （首帧带 ▉ + 续文，引用块也随首帧滞留）。
+        resp = await self._rest(
+            "POST", f"/api/conversations/{chat_id}/messages",
+            {"content": {"msg_type": "markdown", "data": data}},
+        )
+        if not (resp and resp.get("ok")):
+            return SendResult(success=False, error=f"REST create 失败: {resp}")
+        msg_id = str((resp.get("data") or {}).get("message_id") or "")
+        if not msg_id:
+            return SendResult(success=False, error="REST create 响应缺 message_id")
+        # 登记建消息时的 data：edit_message PATCH 全量替换时回填 quote 等元数据
+        self._remember_edit_meta(msg_id, dict(data))
+        return SendResult(success=True, message_id=msg_id)
 
-        return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        *,
+        finalize: bool = False,
+    ) -> SendResult:
+        """流式续帧：PATCH 同一条消息原地更新（consumer 每 ~0.8s 一次全量快照）。
+
+        依赖 send() 走 REST 建消息拿到的真实 id + _edit_meta 映射：
+        - 真实 id → PATCH /api/messages/:id 全量替换（回填建消息时的 quote），
+          消息不再被拆成「首帧 + 续文」两条，▉ cursor 随终稿消失。
+        - 虚拟 id（meta=None，正文被聚合卡接管）→ 续帧实时进聚合卡 markdown
+          元素（流式 build），不 PATCH。
+        - 未知 id（adapter 重启丢映射）→ 显式失败，consumer 走 fallback。
+        """
+        text = (content or "").strip()
+        # 每帧都是全量替换快照，strip 必须每帧做：否则首个 PATCH 会把首帧
+        # send() 已清掉的前导空行（reasoning→正文 \n\n）带回来。
+        if finalize:
+            # 终稿防御性去流式 cursor + 尾部空白（中间帧保留 cursor 作输入中指示）
+            text = text.rstrip().rstrip("\u2589").rstrip()
+        meta = self._edit_meta.get(message_id)
+
+        if message_id not in self._edit_meta:
+            return SendResult(success=False, error=f"unknown message_id: {message_id}")
+
+        if meta is None:
+            # 虚拟 id：聚合卡接管正文 → 续帧进卡（markdown 元素流式 build）
+            _active = _aggregate_card.get_active_by_conv(chat_id)
+            if _active is not None and text:
+                _aggregate_card.emit_event({
+                    "kind": "markdown_update",
+                    "session_id": _active.session_id,
+                    "turn_id": "",
+                    "text": text,
+                })
+            if finalize:
+                self._edit_meta.pop(message_id, None)
+            return SendResult(success=True, message_id=message_id)
+
+        if not text:
+            # 空白终稿（不应发生，consumer 已前置过滤）→ 不发空 PATCH
+            if finalize:
+                self._edit_meta.pop(message_id, None)
+            return SendResult(success=True, message_id=message_id)
+
+        # PATCH 全量替换：回填建消息时的元数据（quote 引用块），text 换新快照
+        data = {**meta, "text": text}
+        resp = await self._rest(
+            "PATCH", f"/api/messages/{message_id}",
+            {"content": {"msg_type": "markdown", "data": data}},
+        )
+        ok = bool(resp and resp.get("ok"))
+        if finalize:
+            # 终稿后不再编辑：清理映射防泄漏
+            self._edit_meta.pop(message_id, None)
+        if not ok:
+            return SendResult(success=False, error=f"PATCH 失败: {resp}")
+        return SendResult(success=True, message_id=message_id)
 
     # 匹配本地图片绝对路径（/...jpg|png|gif|webp|bmp）。不匹配 http(s):// URL
     # （远程图片由下方 _REMOTE_IMAGE_RE + _rewrite_remote_images 处理）。
@@ -1882,6 +2043,38 @@ if __name__ == "__main__":
         adapter._upload_file = _asyncify(sync_upload)  # type: ignore[method-assign]
         return adapter
 
+    def _make_send_adapter():
+        """构造带假 REST 通道的 adapter，验证 send()/edit_message() 行为。
+
+        calls 捕获 (method, path, body)；POST 返回递增真实 id（m1/m2/...），
+        PATCH 返回 ok。聚合卡开关/活跃态默认不介入（fallback 直发路径）。
+        媒体处理保持原样返回。
+        """
+        calls = []
+        seq = {"n": 0}
+
+        async def _fake_rest(method, path, body):
+            calls.append((method, path, body))
+            if method == "POST":
+                seq["n"] += 1
+                return {"ok": True, "data": {"message_id": f"m{seq['n']}"}}
+            return {"ok": True}
+
+        adapter = WanlingAdapter.__new__(WanlingAdapter)
+        adapter._ws = object()  # 过 Not connected guard，不走 WS
+        adapter._edit_meta = {}
+        adapter._rest = _fake_rest  # type: ignore[method-assign]
+
+        async def _identity_images(chat_id, content):
+            return content
+
+        async def _identity_rewrite(content):
+            return content
+
+        adapter._strip_and_send_local_images = _identity_images  # type: ignore[method-assign]
+        adapter._rewrite_remote_images = _identity_rewrite  # type: ignore[method-assign]
+        return adapter, calls
+
     async def _run_tests():
         print("== _rewrite_remote_images 自检 ==")
 
@@ -1944,6 +2137,88 @@ if __name__ == "__main__":
             "/api/files/id_a" in out and "/api/files/id_b" in out,
             "多张图串行处理各自替换",
         )
+
+        # ── send()/edit_message() 流式直发路径（REST 建消息 + PATCH 原地更新） ──
+        print("== send()/edit_message() 自检 ==")
+
+        # 用例 7：前导 \n\n 清除 + 返回真实 message_id（REST 同步建消息）
+        adapter, calls = _make_send_adapter()
+        r = await adapter.send("conv-1", "\n\n2026年8月17日，周一", reply_to="msg-1")
+        method, path, body = calls[0]
+        _check(
+            r.success and r.message_id == "m1"
+            and method == "POST" and path == "/api/conversations/conv-1/messages",
+            "REST 建消息返回真实 message_id",
+        )
+        _check(
+            body["content"]["data"]["text"] == "2026年8月17日，周一",
+            "前导 \\n\\n 被清除（reasoning→正文分段空行）",
+        )
+
+        # 用例 8：reply_to 注入 quote，且 strip 不影响
+        _check(
+            body["content"]["data"]["quote"] == {"message_id": "msg-1"},
+            "reply_to 正常注入 quote（strip 不破坏引用）",
+        )
+
+        # 用例 9：内部空行保留、仅尾部空白清理
+        adapter, calls = _make_send_adapter()
+        await adapter.send("conv-2", "第一行\n\n第二行  ")
+        _check(
+            calls[0][2]["content"]["data"]["text"] == "第一行\n\n第二行",
+            "内部空行保留、仅尾部空白清理",
+        )
+
+        # 用例 10：纯空白（图片处理后）不建消息（虚拟 id 不落 REST）
+        adapter, calls = _make_send_adapter()
+        r = await adapter.send("conv-3", "\n  \n")
+        _check(
+            calls == [] and r.success and r.message_id in adapter._edit_meta
+            and adapter._edit_meta[r.message_id] is None,
+            "纯空白正文不建消息（虚拟 id）",
+        )
+
+        # 用例 11：续帧 PATCH 同一条消息（quote 回填 + 前导空行每帧清理）
+        adapter, calls = _make_send_adapter()
+        r = await adapter.send("conv-4", "在呢", reply_to="msg-4")
+        await adapter.edit_message("conv-4", r.message_id, "\n\n在呢\n\n（刚 ▉")
+        method, path, body = calls[1]
+        _check(
+            method == "PATCH" and path == f"/api/messages/{r.message_id}"
+            and body["content"]["data"]["text"] == "在呢\n\n（刚 ▉"
+            and body["content"]["data"]["quote"] == {"message_id": "msg-4"},
+            "续帧 PATCH 原消息：前导空行清理、中间帧保留 cursor、quote 回填",
+        )
+
+        # 用例 12：finalize 终稿去 cursor + 清理映射
+        _in_edit_meta = r.message_id in adapter._edit_meta
+        await adapter.edit_message("conv-4", r.message_id, "在呢\n\n（刚问你——要我修吗？） ▉", finalize=True)
+        body = calls[2][2]
+        _check(
+            _in_edit_meta
+            and body["content"]["data"]["text"] == "在呢\n\n（刚问你——要我修吗？）"
+            and r.message_id not in adapter._edit_meta,
+            "finalize 去 cursor/尾空白并清理映射",
+        )
+
+        # 用例 13：未知 id（重启丢映射）→ 显式失败让 consumer 走 fallback
+        adapter, calls = _make_send_adapter()
+        r = await adapter.edit_message("conv-5", "nonexistent", "文本")
+        _check(
+            not r.success and calls == [],
+            "未知 message_id 显式失败（不盲 PATCH）",
+        )
+
+        # 用例 14：REST 建消息失败 → send 显式失败（consumer 下帧重试）
+        adapter, calls = _make_send_adapter()
+
+        async def _fail_rest(method, path, body):
+            calls.append((method, path, body))
+            return {"ok": False, "error": "boom"}
+
+        adapter._rest = _fail_rest  # type: ignore[method-assign]
+        r = await adapter.send("conv-6", "hello")
+        _check(not r.success, "REST 建消息失败 → send 显式失败")
 
     async def _run_aggregate_tests():
         """聚合卡核心自检：mock REST server，验证建卡/工具/正文/收尾全流程。"""
