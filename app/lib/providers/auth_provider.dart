@@ -17,6 +17,8 @@ import 'settings_provider.dart';
 /// - 测试环境：原生平台未注册，FlutterBackgroundServicePlatform.instance
 ///   抛 'supported for Android and iOS only'，这里吞掉。
 void _notifyService(String method, [Map<String, dynamic>? args]) {
+  // 桌面平台无 bg-service(仅 Android/iOS),跳过 IPC
+  if (!Platform.isAndroid && !Platform.isIOS) return;
   try {
     FlutterBackgroundService().invoke(method, args);
   } catch (e) {

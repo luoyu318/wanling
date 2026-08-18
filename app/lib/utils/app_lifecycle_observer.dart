@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
@@ -21,6 +23,8 @@ class AppLifecycleObserver extends WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 桌面平台无 bg-service(见 attach 注释),跳过 IPC
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     final isForeground = state == AppLifecycleState.resumed;
     _service.invoke('setAppLifecycle', {
       'state': isForeground ? 'foreground' : 'background',
@@ -40,6 +44,9 @@ class AppLifecycleObserver extends WidgetsBindingObserver {
   /// 注册到 WidgetsBinding。
   void attach() {
     WidgetsBinding.instance.addObserver(this);
+    // 桌面平台无 bg-service(flutter_background_service 仅 Android/iOS),
+    // 桌面进程常驻,前台同步无意义,跳过所有 service IPC。
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     // 立即把当前 lifecycle 状态 IPC 给 bg-service isolate,作为初始同步。
     // observer.didChangeAppLifecycleState 只在状态变化时触发,APP 启动后
     // 一直前台(没切过后台)的话 isolate 的 _appInForeground 永远是默认值,
