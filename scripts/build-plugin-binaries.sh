@@ -7,7 +7,6 @@
 #
 # 用法:
 #   ./scripts/build-plugin-binaries.sh            # 打当前平台(linux-x64)
-#   ./scripts/build-plugin-binaries.sh --arm64    # 打 linux-arm64(交叉/需对应平台 bun)
 #   ./scripts/build-plugin-binaries.sh --out=/path  # 指定输出目录(默认 scripts/../release/)
 #
 # 产物命名:wanling-opencode-plugin-<os>-<arch>(如 wanling-opencode-plugin-linux-x64)
@@ -25,10 +24,9 @@ TARGET="linux-x64"
 # ─── 参数 ──────────────────────────────────────────────────────────────────
 for arg in "$@"; do
     case "$arg" in
-        --arm64) TARGET="linux-arm64" ;;
         --out=*) OUT_DIR="${arg#*=}" ;;
         --help|-h)
-            echo "用法: $0 [--arm64] [--out=目录]"; exit 0 ;;
+            echo "用法: $0 [--out=目录]"; exit 0 ;;
         *) echo "未知参数: $arg"; exit 1 ;;
     esac
 done
@@ -71,13 +69,10 @@ fi
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/wanling-opencode-plugin-$TARGET"
 echo "[INFO] 编译 $TARGET → $OUT ..."
-# --compile 单文件可执行;默认打当前平台。--arm64 时用 bun 交叉编译语法
-# (--target=bun-linux-arm64)。交叉编译需目标平台,本机 linux-x64 打 arm64
-# 产物需 bun 交叉支持(bun compile 从 bun 1.1+ 支持部分交叉)。
+# --compile 单文件可执行;默认打当前平台。
+# arm64 产物已停发(v1.4.1 起仅 linux-x64):无 arm 部署场景,省 90MB 附件体积。
+# 如需恢复:加 --arm64 参数 + BUN_TARGET_ARGS=(--target=bun-linux-arm64) 交叉编译。
 BUN_TARGET_ARGS=()
-if [[ "$TARGET" != "linux-x64" ]]; then
-    BUN_TARGET_ARGS=(--target="bun-$TARGET")
-fi
 (cd "$PLUGIN_DIR" && "$BUN" build --compile "${BUN_TARGET_ARGS[@]}" --outfile "$OUT" src/index.ts)
 chmod +x "$OUT"
 

@@ -103,12 +103,11 @@ if [[ "$PLUGIN_NAME" == "opencode-plugin" ]]; then
         download "$RAW_BASE/opencode-plugin/scripts/$script" "$TMP_DIR/scripts/$script"
     done
 
-    # 平台推导(uname -m):x86_64 → x64, aarch64 → arm64
+    # 平台推导(uname -m):x86_64 → x64(v1.4.1 起 arm64 产物已停发,仅 linux-x64)
     local_arch="$(uname -m)"
     case "$local_arch" in
         x86_64|amd64) arch="x64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        *) die "不支持的平台: $local_arch（当前仅提供 linux-x64 / linux-arm64 产物）" ;;
+        *) die "不支持的平台: $local_arch（当前仅提供 linux-x64 产物,arm64 已停发）" ;;
     esac
     bin_name="wanling-opencode-plugin-linux-$arch"
     if [[ -z "$BIN_VERSION" ]]; then
