@@ -47,10 +47,18 @@ class NotificationService {
     const linuxInit = LinuxInitializationSettings(
       defaultActionName: 'Open notification',
     );
+    // Windows 必填(缺省抛 "Windows settings must be set" Unhandled Exception,
+    // 直接炸掉 runApp 前的 main → 有进程无窗口)。
+    const windowsInit = WindowsInitializationSettings(
+      appName: 'wanling',
+      appUserModelId: 'com.wanling.app',
+      guid: '5f6d8b2e-3c4a-4e9f-9b7d-1a2c3e4f5b60',
+    );
     const initSettings = InitializationSettings(
       android: androidInit,
       iOS: iosInit,
       linux: linuxInit,
+      windows: windowsInit,
     );
 
     await _plugin.initialize(
@@ -147,9 +155,15 @@ class NotificationService {
       presentBadge: true,
       presentSound: true,
     );
+    // Windows/Linux desktop 通知明细(与移动端 title/body/payload 同构,
+    // 点击路由统一走 onDidReceiveNotificationResponse)。
+    const windowsDetails = WindowsNotificationDetails();
+    const linuxDetails = LinuxNotificationDetails(defaultActionName: 'Open notification');
     final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
+      windows: windowsDetails,
+      linux: linuxDetails,
     );
     // notification id 用 convId.hashCode 保证同一会话覆盖更新(不堆叠)
     final id = payload.convId.hashCode;

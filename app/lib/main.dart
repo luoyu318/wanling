@@ -36,8 +36,30 @@ void _configureImageCache() {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
 }
 
+/// 桌面启动诊断日志(spike 调试用,定位 Windows「有进程无窗口」):
+/// 逐里程碑追加写 exe 同目录 wanling-startup.log,GUI 应用无控制台可看,
+/// 文件日志是唯一线索源。IO 失败静默吞(诊断工具绝不影响主流程)。
+/// Android/iOS 跳过(有 adb logcat,且避免写存储权限)。
+void _desktopStartupLog(String msg) {
+  if (Platform.isAndroid || Platform.isIOS) return;
+  try {
+    final dir = File(Platform.resolvedExecutable).parent;
+    final f = File('${dir.path}${Platform.pathSeparator}wanling-startup.log');
+    f.writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $msg\n',
+      mode: FileMode.append,
+    );
+  } catch (_) {}
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _desktopStartupLog('main: binding initialized');
+
+  // 首帧里程碑:区分「卡在 runApp 前」vs「渲染后无窗口/被遮」。
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => _desktopStartupLog('main: first frame rendered'),
+  );
 
   // 调优全局图片内存缓存上限（runApp 前设置才生效）。
   _configureImageCache();
@@ -76,11 +98,13 @@ Future<void> main() async {
 
   // 2. 配置 + 启动 background service（前台服务）
   _setupBackgroundService();
+  _desktopStartupLog('main: bg-service setup done');
 
   // 3. ProviderContainer：settingsProvider 必须 await 后再 restoreSession
   // 否则 settingsProvider 默认 localhost，apiProvider 用错误 baseUrl，
   // restoreSession 的 /me 会失败导致 token 被清/丢登录态。
   final prefs = await SharedPreferences.getInstance();
+  _desktopStartupLog('main: prefs loaded');
   final container = ProviderContainer(
     overrides: [
       // 注入已 load 的 SharedPreferences,savedLoginsProvider 用同步接口
