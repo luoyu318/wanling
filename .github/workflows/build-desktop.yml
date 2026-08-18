@@ -1,0 +1,74 @@
+name: 桌面版构建测试
+
+# spike 分支测试用:手动触发 + push 到 spike 分支自动触发
+# 验证 Windows/macOS 桌面构建可行性,产物上传到 workflow artifact(不碰 release)
+on:
+  push:
+    branches: [spike/**]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 依赖
+        run: flutter pub get
+
+      - name: 构建 Windows
+        run: flutter build windows --release
+
+      - name: 打包产物
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath wanling-windows-x64.zip
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wanling-windows-x64
+          path: app/wanling-windows-x64.zip
+          retention-days: 7
+
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 依赖
+        run: flutter pub get
+
+      - name: 构建 macOS
+        run: flutter build macos --release
+
+      - name: 打包产物
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r -y "$GITHUB_WORKSPACE/app/wanling-macos-universal.zip" "万灵.app" || \
+            zip -r -y "$GITHUB_WORKSPACE/app/wanling-macos-universal.zip" *.app
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wanling-macos-universal
+          path: app/wanling-macos-universal.zip
+          retention-days: 7
