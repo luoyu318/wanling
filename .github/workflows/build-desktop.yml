@@ -26,6 +26,10 @@ jobs:
         run: flutter pub get
 
       - name: 构建 Windows
+        env:
+          # windows-latest 的 VS 18 MSVC 已移除 /await 旧协程语法,permission_handler_windows
+          # 等插件仍触发 STL1011。CL 环境变量全局注入抑制宏(微软官方推荐的过渡方案)。
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: flutter build windows --release
 
       - name: 打包产物
