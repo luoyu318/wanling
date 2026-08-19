@@ -10,7 +10,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:wanling_core/models/ws_message.dart';
 import '../utils/avatar_bitmap.dart';
 import 'package:wanling_core/utils/debug_log.dart';
-import 'notification_service.dart';
+import 'package:wanling_core/services/notification_service.dart';
 import 'package:wanling_core/utils/notification_payload.dart';
 import 'package:wanling_core/utils/reconnect_backoff.dart';
 

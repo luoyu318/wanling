@@ -1,4 +1,4 @@
-import 'package:app/services/local_message_store.dart';
+import 'package:wanling_core/services/local_message_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sqlite3/common.dart';

@@ -9,7 +9,7 @@ import 'package:wanling_core/models/file_entry.dart';
 import 'package:app/pages/chat/file_preview_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/file_browser_provider.dart';
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 
 class _MockApi extends Mock implements ApiService {}
 

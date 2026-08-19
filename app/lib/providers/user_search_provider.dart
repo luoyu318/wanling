@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/user_summary.dart';
-import '../services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 
 /// 用户搜索状态。

@@ -1,5 +1,5 @@
 import 'package:wanling_core/models/message.dart';
-import 'package:app/services/websocket_service.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/fake_local_message_store.dart';

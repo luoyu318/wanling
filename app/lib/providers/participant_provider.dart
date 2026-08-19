@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/participant.dart';
-import '../services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 
 /// 单会话参与者列表 provider(family by convId)。

@@ -9,7 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/file_content.dart';
 import 'package:wanling_core/models/file_entry.dart';
 import '../../providers/file_browser_provider.dart';
-import '../../services/api_service.dart' show RpcException;
+import 'package:wanling_core/services/api_service.dart' show RpcException;
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType, showAppSnackBar;
 import '../../widgets/chat/code_highlight_view.dart';
 

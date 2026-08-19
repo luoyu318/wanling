@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/services/file_download_service.dart';
+import 'package:wanling_core/services/file_download_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -1,7 +1,7 @@
 import 'package:wanling_core/models/pairing.dart';
 import 'package:app/pages/pair_select_agent_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

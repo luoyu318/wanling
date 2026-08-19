@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/file_content.dart';
 import 'package:wanling_core/models/file_entry.dart';
-import '../services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 
 typedef FileBrowserKey = ({String agentId, String convId});

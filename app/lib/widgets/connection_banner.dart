@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
-import '../services/websocket_service.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 
 /// 顶部断线提示 banner。
 ///

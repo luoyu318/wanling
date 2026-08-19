@@ -6,7 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 
 // 临时桥接:core→app 仅存在于中间态,Task 5 services 挪入后 sed 自动收敛为 wanling_core 路径
-import 'package:app/services/secure_storage.dart';
+import 'package:wanling_core/services/secure_storage.dart';
 
 /// AES-256-GCM 加解密 + TokenVault 密钥管理。
 ///

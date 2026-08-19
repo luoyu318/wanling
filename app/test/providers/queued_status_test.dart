@@ -7,7 +7,7 @@ import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/models/ws_message.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart';
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 
 import '../helpers/fake_ws.dart';
 

@@ -2,7 +2,7 @@ import 'package:wanling_core/models/agent.dart';
 import 'package:app/providers/agent_provider.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';

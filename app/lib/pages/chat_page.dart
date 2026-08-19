@@ -21,8 +21,8 @@ import '../providers/chat_provider.dart'
 import '../providers/conversation_provider.dart';
 import '../providers/friend_provider.dart';
 import '../providers/typing_provider.dart';
-import '../services/file_download_service.dart';
-import '../services/websocket_service.dart';
+import 'package:wanling_core/services/file_download_service.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/chat/message_preview.dart' show extractMessageText;
 import 'package:wanling_core/utils/chat/render_box_utils.dart' show globalRectOf;
 import 'package:wanling_core/utils/aggregate_card_state.dart' show hasGeneratingAggregateCard;

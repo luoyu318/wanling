@@ -3,7 +3,7 @@ import 'package:wanling_core/models/conversation.dart' as model;
 import 'package:wanling_core/models/friendship.dart' as model;
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/user_summary.dart';
-import 'package:app/services/local_message_store.dart';
+import 'package:wanling_core/services/local_message_store.dart';
 import 'package:drift/drift.dart' show Variable, driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';

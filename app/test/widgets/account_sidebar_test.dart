@@ -7,7 +7,7 @@ import 'package:wanling_core/models/saved_login.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/providers/saved_logins_provider.dart';
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
 import 'package:app/widgets/account_sidebar.dart';
 

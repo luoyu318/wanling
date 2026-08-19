@@ -16,7 +16,7 @@ import 'package:app/pages/subagent_detail_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;
 import 'package:app/rendering/builtin_renderers.dart';
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:app/widgets/chat/jump_to_bottom_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

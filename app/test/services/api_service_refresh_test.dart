@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wanling_core/models/agent.dart';
-import 'package:app/services/api_service.dart';
-import 'package:app/services/api_response.dart';
+import 'package:wanling_core/services/api_service.dart';
+import 'package:wanling_core/services/api_response.dart';
 
 /// 按 (path, attempt) 分发的状态化 mock adapter,用于 refresh 重试场景测试。
 ///

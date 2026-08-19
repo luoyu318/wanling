@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart' show DioException, DioExceptionType;
 
-import '../services/api_response.dart' show ApiException;
+import 'package:wanling_core/services/api_response.dart' show ApiException;
 
 /// 从异常中提取用户可读的错误信息。
 ///

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:app/services/file_download_service.dart'
+import 'package:wanling_core/services/file_download_service.dart'
     show DownloadProgress, FileDownloadService;
 import 'package:app/widgets/chat/file_download_controller.dart';
 import 'package:flutter/material.dart';

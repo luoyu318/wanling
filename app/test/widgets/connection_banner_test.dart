@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/providers/chat_provider.dart';
-import 'package:app/services/api_service.dart';
-import 'package:app/services/websocket_service.dart';
+import 'package:wanling_core/services/api_service.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 import 'package:app/widgets/connection_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

@@ -17,7 +17,7 @@ import 'rendering/builtin_renderers.dart';
 import 'router.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';
-import 'services/notification_service.dart';
+import 'package:wanling_core/services/notification_service.dart';
 import 'utils/app_lifecycle_observer.dart';
 import 'utils/permission_helper.dart';
 

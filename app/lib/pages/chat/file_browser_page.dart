@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/file_entry.dart';
 import '../../providers/file_browser_provider.dart';
-import '../../services/api_service.dart' show RpcException;
+import 'package:wanling_core/services/api_service.dart' show RpcException;
 import '../../widgets/chat/file_entry_icon.dart';
 
 class FileBrowserPage extends ConsumerStatefulWidget {

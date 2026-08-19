@@ -4,7 +4,7 @@ import 'package:wanling_core/models/participant.dart';
 import 'package:app/pages/conversation_detail_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:app/widgets/agent_badge.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:flutter/material.dart';

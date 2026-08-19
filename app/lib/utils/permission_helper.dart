@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../services/notification_service.dart';
+import 'package:wanling_core/services/notification_service.dart';
 import '../widgets/feedback/app_dialog.dart';
 
 /// 权限相关 helper：通知权限申请、电池优化白名单、应用详情跳转。

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/services/websocket_service.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 
 void main() {
   group('WebSocketService connectionState', () {

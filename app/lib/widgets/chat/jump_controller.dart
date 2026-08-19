@@ -7,7 +7,7 @@ import 'package:scrollview_observer/scrollview_observer.dart';
 
 import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/chat_provider.dart' show chatProvider;
-import '../../services/api_service.dart'
+import 'package:wanling_core/services/api_service.dart'
     show ApiService, MessageContext, MessageNotFoundException, NoAccessException;
 import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 

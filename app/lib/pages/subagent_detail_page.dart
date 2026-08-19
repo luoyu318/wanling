@@ -11,7 +11,7 @@ import 'package:wanling_core/models/ws_message.dart';
 import '../providers/auth_provider.dart' show apiProvider, authProvider;
 import '../providers/chat_provider.dart' show wsProvider;
 import '../rendering/message_content_renderer.dart';
-import '../services/file_download_service.dart' show FileDownloadService;
+import 'package:wanling_core/services/file_download_service.dart' show FileDownloadService;
 import '../utils/chat/gallery_opener.dart' show openGallery;
 import '../widgets/chat/file_download_controller.dart'
     show FileDownloadContext, FileDownloadController;

@@ -7,7 +7,7 @@ import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart';
 import 'package:app/providers/chat_state.dart' show ModelOverride;
 import 'package:app/rendering/card_renderer.dart';
-import 'package:app/services/api_service.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';

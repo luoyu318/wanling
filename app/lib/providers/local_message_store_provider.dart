@@ -6,8 +6,8 @@ import 'package:wanling_core/models/conversation.dart' as model;
 import 'package:wanling_core/models/friendship.dart' as model;
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/user_summary.dart';
-import '../services/local_message_store.dart';
-import '../services/local_message_store_abstract.dart';
+import 'package:wanling_core/services/local_message_store.dart';
+import 'package:wanling_core/services/local_message_store_abstract.dart';
 import 'auth_provider.dart';
 
 /// 本地消息持久化 Provider。
