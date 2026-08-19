@@ -4,12 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
+import 'package:wanling_desktop/widgets/chat/desktop_input_bar.dart';
 import 'chat_app_bar.dart';
 import 'chat_message_list.dart';
 
 /// 桌面聊天区:core chatProvider((convId, agentId)) 驱动,
-/// ChatAppBar(会话名 + gitBranch 徽标 + 详情开关)+ ChatMessageList。
-/// 输入栏由 Task 6 接入。
+/// ChatAppBar(会话名 + gitBranch 徽标 + 详情开关)+ ChatMessageList +
+/// DesktopInputBar(Task 6:工具栏上置 + slash/提及面板 + 文件图片)。
 class ChatView extends ConsumerWidget {
   final String convId;
   final String? agentId;
@@ -52,6 +53,7 @@ class ChatView extends ConsumerWidget {
                   token: token,
                 ),
         ),
+        DesktopInputBar(convId: convId, agentId: agentId),
       ],
     );
   }
