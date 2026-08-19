@@ -7,12 +7,12 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/services/background_bridge.dart'
-    show backgroundServiceIpc;
+    show backgroundServiceIpc, backgroundServiceOn;
 
-import 'providers/auth_provider.dart';
-import 'providers/local_message_store_provider.dart';
-import 'providers/saved_logins_provider.dart';
-import 'providers/settings_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/local_message_store_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
 import 'package:wanling_core/theme/app_colors.dart';
@@ -104,6 +104,11 @@ Future<void> main() async {
 
   // 注入 bg-service IPC 桥接(core 层 providers 经 notifyService 调用)
   backgroundServiceIpc = (method, [args]) => _notifyBgServiceIpc(method, args);
+  // 注入 bg-service 事件流桥接(core 层 authProvider 经此订阅 requestTokenRefresh)。
+  // 桌面无 bg-service,不注入(订阅跳过)。
+  if (Platform.isAndroid || Platform.isIOS) {
+    backgroundServiceOn = (method) => FlutterBackgroundService().on(method);
+  }
 
   // 3. ProviderContainer：settingsProvider 必须 await 后再 restoreSession
   // 否则 settingsProvider 默认 localhost，apiProvider 用错误 baseUrl，

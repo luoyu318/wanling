@@ -10,8 +10,8 @@
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:app/pages/messages_page.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

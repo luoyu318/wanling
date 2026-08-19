@@ -1,6 +1,6 @@
-import 'package:app/providers/agent_status_provider.dart';
-import 'package:app/providers/chat_provider.dart' show wsProvider;
-import 'package:app/providers/typing_provider.dart';
+import 'package:wanling_core/providers/agent_status_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/typing_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

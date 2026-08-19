@@ -1,6 +1,6 @@
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/ws_message.dart';
-import 'package:app/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';

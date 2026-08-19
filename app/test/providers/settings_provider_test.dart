@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:app/providers/settings_provider.dart';
+import 'package:wanling_core/providers/settings_provider.dart';
 
 void main() {
   group('SettingsNotifier.setBaseUrl', () {

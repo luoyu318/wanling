@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:wanling_core/models/login_result.dart';
 import 'package:wanling_core/models/register_result.dart';
 import 'package:wanling_core/models/user.dart';
-import 'package:app/providers/auth_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 import 'package:dio/dio.dart';

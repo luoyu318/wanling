@@ -15,9 +15,9 @@ import 'package:app/pages/agent_sessions_page.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/chat/three_body_indicator.dart';
 import 'package:app/widgets/directory_tile.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/chat_provider.dart' show wsProvider;
-import 'package:app/providers/saved_logins_provider.dart'
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/saved_logins_provider.dart'
     show sharedPrefsProvider;
 import 'package:wanling_core/services/api_service.dart';
 import 'package:app/utils/directory_utils.dart' show pathLastTwoSegments;

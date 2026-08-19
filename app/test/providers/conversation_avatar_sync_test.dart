@@ -1,6 +1,6 @@
 import 'package:wanling_core/models/agent.dart' show Agent, AgentStatus, AgentSummary;
 import 'package:wanling_core/models/conversation.dart';
-import 'package:app/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

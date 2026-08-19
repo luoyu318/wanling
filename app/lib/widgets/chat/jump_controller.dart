@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 
-import '../../providers/auth_provider.dart' show apiProvider;
-import '../../providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'package:wanling_core/services/api_service.dart'
     show ApiService, MessageContext, MessageNotFoundException, NoAccessException;
 import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 
-import '../../providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'package:wanling_core/utils/debug_log.dart';
 import 'package:wanling_core/utils/chat/render_box_utils.dart' show globalRectOf, listViewRect;
 import 'jump_controller.dart' show dualSliverBottomTarget;

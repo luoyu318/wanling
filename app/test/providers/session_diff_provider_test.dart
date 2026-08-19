@@ -1,6 +1,6 @@
 import 'package:wanling_core/models/session_diff.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/session_diff_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/session_diff_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

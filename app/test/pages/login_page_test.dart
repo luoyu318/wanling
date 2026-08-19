@@ -1,7 +1,7 @@
 import 'package:app/pages/login_page.dart';
 import 'package:app/pages/select_account_page.dart';
-import 'package:app/providers/saved_logins_provider.dart';
-import 'package:app/providers/settings_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

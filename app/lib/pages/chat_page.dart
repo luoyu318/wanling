@@ -11,16 +11,16 @@ import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:wanling_core/models/agent.dart' show AgentCategory, AgentStatus;
 import 'package:wanling_core/models/slash_command.dart';
 import 'package:wanling_core/models/ws_message.dart' show WSMessage;
-import '../providers/agent_provider.dart';
-import '../providers/agent_sessions_provider.dart';
-import '../providers/agent_status_provider.dart'
+import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart';
+import 'package:wanling_core/providers/agent_status_provider.dart'
     show AgentStatusType, agentStatusProvider;
-import '../providers/auth_provider.dart';
-import '../providers/chat_provider.dart'
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart'
     show ChatNotifier, chatProvider, wsProvider;
-import '../providers/conversation_provider.dart';
-import '../providers/friend_provider.dart';
-import '../providers/typing_provider.dart';
+import 'package:wanling_core/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/friend_provider.dart';
+import 'package:wanling_core/providers/typing_provider.dart';
 import 'package:wanling_core/services/file_download_service.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/chat/message_preview.dart' show extractMessageText;

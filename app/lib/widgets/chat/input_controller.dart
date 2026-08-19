@@ -6,8 +6,8 @@ import 'package:wechat_camera_picker/wechat_camera_picker.dart';
 
 import 'package:wanling_core/models/msg_type.dart' show MsgType;
 import 'package:wanling_core/models/slash_command.dart' show SlashCommand;
-import '../../providers/auth_provider.dart' show apiProvider;
-import '../../providers/chat_provider.dart' show ChatNotifier;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show ChatNotifier;
 import '../../utils/dio_error.dart' show extractDioErrorMessage;
 import 'package:wanling_core/utils/file_format.dart' show mimeFromExt;
 import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;

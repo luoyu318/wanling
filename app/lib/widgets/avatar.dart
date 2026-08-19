@@ -1,8 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/auth_provider.dart';
-import '../providers/settings_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/utils/gallery_image.dart' show thumbUrl;
 import 'unread_badge.dart';
 

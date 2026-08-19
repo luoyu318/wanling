@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/chat_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart';
 
 /// 本地存储异常提示 banner。
 ///

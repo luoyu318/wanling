@@ -4,8 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/friendship.dart';
 import 'package:wanling_core/models/user_summary.dart';
-import '../providers/auth_provider.dart' show apiProvider;
-import '../providers/friend_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/friend_provider.dart';
 import '../router_helpers.dart' show chatRoute;
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';

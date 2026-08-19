@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
-import '../../providers/auth_provider.dart' show apiProvider;
-import '../../providers/chat_provider.dart' show chatProvider;
-import '../../providers/conversation_provider.dart' show conversationProvider;
+import 'package:wanling_core/providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/conversation_provider.dart' show conversationProvider;
 import 'package:wanling_core/utils/debug_log.dart';
 import 'package:wanling_core/utils/chat/unread_tracker.dart' show computeNewlySeenUnread;
 

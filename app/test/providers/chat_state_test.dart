@@ -1,4 +1,4 @@
-import 'package:app/providers/chat_state.dart';
+import 'package:wanling_core/providers/chat_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -25,7 +25,7 @@ import 'pages/session_diff_page.dart';
 import 'pages/splash_page.dart';
 import 'pages/subagent_detail_page.dart';
 import 'pages/user_detail_page.dart';
-import 'providers/auth_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/services/notification_service.dart';
 
 /// 全局 navigator key：通知点击回调需要拿到 navigator 做 push（无 BuildContext）。

@@ -8,9 +8,9 @@
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
 import 'package:wanling_core/models/user.dart';
 import 'package:app/pages/profile_page.dart';
-import 'package:app/providers/auth_provider.dart';
-import 'package:app/providers/chat_provider.dart' show wsProvider;
-import 'package:app/providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:app/router.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';

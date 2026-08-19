@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/user_summary.dart';
-import '../providers/friend_provider.dart';
-import '../providers/user_search_provider.dart';
+import 'package:wanling_core/providers/friend_provider.dart';
+import 'package:wanling_core/providers/user_search_provider.dart';
 import '../widgets/avatar.dart';
 
 /// 添加好友页:按 username 搜索 + 加好友按钮。

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/quote.dart';
-import '../../providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'package:wanling_core/utils/chat/message_preview.dart' show extractLocalPreview;
 import 'package:wanling_core/utils/chat/render_box_utils.dart' show listViewRect;
 import '../../widgets/feedback/app_dialog.dart' show showAppDialog;

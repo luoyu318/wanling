@@ -3,28 +3,13 @@ import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/foundation.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
+import '../services/background_bridge.dart' show notifyService, backgroundServiceOn;
 import 'settings_provider.dart';
-
-/// 向 background service isolate 发 IPC。
-/// 失败不阻塞主流程（登录/登出/会话恢复），仅记录日志：
-/// - 生产环境：平台插件已注册，invoke 走原生通道，不会进 catch。
-/// - 测试环境：原生平台未注册，FlutterBackgroundServicePlatform.instance
-///   抛 'supported for Android and iOS only'，这里吞掉。
-void _notifyService(String method, [Map<String, dynamic>? args]) {
-  // 桌面平台无 bg-service(仅 Android/iOS),跳过 IPC
-  if (!Platform.isAndroid && !Platform.isIOS) return;
-  try {
-    FlutterBackgroundService().invoke(method, args);
-  } catch (e) {
-    debugPrint('[auth] service IPC "$method" 失败: $e');
-  }
-}
 
 /// 同步当前账号 user_id 给 bg-service isolate。
 ///
@@ -35,7 +20,7 @@ void _notifyService(String method, [Map<String, dynamic>? args]) {
 /// 调用时机:login / restoreSession / logout 完成后,以及切换账号中。
 /// 空字符串 = logout,bg-service 收到后置 _myUserId=null(不让旧账号残留)。
 void _syncMyUserIdToBgService(String? userId) {
-  _notifyService('setMyUserId', {'user_id': userId ?? ''});
+  notifyService('setMyUserId', {'user_id': userId ?? ''});
 }
 
 /// 模块级 token 缓存：所有 ApiService 实例创建时同步注入。
@@ -129,7 +114,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(user: state.user, token: access);
     }
     // 通知 bg-service 用新 token 重连 WS(若已连接则切到新 token)
-    _notifyService('start', {
+    notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': access,
     });
@@ -166,7 +151,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // 同步 user_id 给 bg-service(防 SharedPreferences 跨 isolate cache 陈旧)
       _syncMyUserIdToBgService(result.user.id);
       // 通知 service isolate 启动 WS
-      _notifyService('start', {
+      notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': result.token,
       });
@@ -195,7 +180,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         user: user,
         token: result.token,
       );
-      // 同步 user_id 给 bg-service(register 不调 _notifyService('start'),
+      // 同步 user_id 给 bg-service(register 不调 notifyService('start'),
       // 但 bg-service 可能下个 dispatch 就到,提前同步避免 echo 误弹通知)
       _syncMyUserIdToBgService(user.id);
     } finally {
@@ -216,7 +201,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (state.user != null) {
       state = AuthState(user: state.user, token: result.token);
     }
-    _notifyService('start', {
+    notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': result.token,
     });
@@ -342,13 +327,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // 非 Dio 异常（如 JSON 解析错误）也保留 token，下次再试。
       state = AuthState(isRestoring: false);
     }
-    // 通知 service isolate 启动 WS。放在 try-catch 外，避免 _notifyService 自身
+    // 通知 service isolate 启动 WS。放在 try-catch 外，避免 notifyService 自身
     // 抛出的异常被上面的 catch-all 误吞导致 state 被回滚为未登录。
     if (ok) {
-      // ok 路径的 user_id 同步放这里(在 _notifyService('start') 前调,
+      // ok 路径的 user_id 同步放这里(在 notifyService('start') 前调,
       // 确保 bg-service 收到 start 时 _myUserId 已是最新,首个 dispatch 即可正确判断 echo)
       _syncMyUserIdToBgService(resolvedUserId);
-      _notifyService('start', {
+      notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': token,
       });
@@ -369,9 +354,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     // 注意：必须在 await 之前抢先标记，否则单线程事件循环下后续调用仍能越过 if 检查。
     if (!state.isAuthenticated) return;
     // 通知 service isolate 停止 WS（保留进程，下次登录直接重启 WS）
-    _notifyService('stop');
+    notifyService('stop');
     // 同步清 bg-service 的 _myUserId(防残留干扰下次账号 / 切换中间态)。
-    // 跟 _notifyService('stop') 顺序无关(stop 只断 WS,不读 _myUserId)。
+    // 跟 notifyService('stop') 顺序无关(stop 只断 WS,不读 _myUserId)。
     _syncMyUserIdToBgService(null);
     // 立即标记为已登出，让后续并发调用短路返回；
     // prefs 中的 token 异步清理，但内存 state 已变，业务侧已感知登出。
@@ -428,17 +413,17 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   // bg-service 重连失败时通过 IPC 请求主 isolate 刷新 token。
   // bg-service 是独立 isolate,不能直接调 ApiService。主 isolate refresh 成功后
   // _onTokenRefreshed 会通过 'start' IPC 把新 token 传回 bg-service。
-  if (Platform.isAndroid || Platform.isIOS) {
-    FlutterBackgroundService().on('requestTokenRefresh').listen((_) {
-      debugPrint('[auth] bg-service 请求 token 刷新');
-      api.tryRefreshToken().then((newToken) {
-        if (newToken != null) {
-          debugPrint('[auth] bg-service 请求的 token 刷新成功');
-        } else {
-          debugPrint('[auth] bg-service 请求的 token 刷新失败(无 refresh token 或 refresh 失败)');
-        }
-      });
+  // 经 receive 桥接订阅:壳在移动端注入 FlutterBackgroundService().on,
+  // 桌面/测试未注入(null)时跳过订阅。
+  backgroundServiceOn?.call('requestTokenRefresh')?.listen((_) {
+    debugPrint('[auth] bg-service 请求 token 刷新');
+    api.tryRefreshToken().then((newToken) {
+      if (newToken != null) {
+        debugPrint('[auth] bg-service 请求的 token 刷新成功');
+      } else {
+        debugPrint('[auth] bg-service 请求的 token 刷新失败(无 refresh token 或 refresh 失败)');
+      }
     });
-  }
+  });
   return notifier;
 });

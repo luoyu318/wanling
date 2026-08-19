@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
-import '../../providers/auth_provider.dart' show apiProvider;
-import '../../providers/conversation_provider.dart' show conversationProvider;
+import 'package:wanling_core/providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/conversation_provider.dart' show conversationProvider;
 import 'package:wanling_core/utils/debug_log.dart';
 
 /// [ConvSyncController] 的依赖注入容器。

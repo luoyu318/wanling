@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'crop_avatar_page.dart';
-import '../providers/auth_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/avatar.dart';
 import '../widgets/avatar_picker.dart';

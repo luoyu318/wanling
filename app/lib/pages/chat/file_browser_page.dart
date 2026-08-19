@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/file_entry.dart';
-import '../../providers/file_browser_provider.dart';
+import 'package:wanling_core/providers/file_browser_provider.dart';
 import 'package:wanling_core/services/api_service.dart' show RpcException;
 import '../../widgets/chat/file_entry_icon.dart';
 

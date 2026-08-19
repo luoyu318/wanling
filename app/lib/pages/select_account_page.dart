@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:wanling_core/models/saved_login.dart';
-import '../providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/theme/account_palette.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../utils/dio_error.dart';

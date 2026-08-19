@@ -1,6 +1,6 @@
 import 'package:wanling_core/models/user_summary.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/user_search_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/user_search_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

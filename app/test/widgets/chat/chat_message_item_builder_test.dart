@@ -1,7 +1,7 @@
 import 'package:wanling_core/models/message.dart';
-import 'package:app/providers/auth_provider.dart';
-import 'package:app/providers/chat_state.dart';
-import 'package:app/providers/settings_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/chat_state.dart';
+import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:app/widgets/chat/chat_message_item_builder.dart';
 import 'package:app/widgets/chat/enter_expand.dart';
 import 'package:app/widgets/chat/file_download_controller.dart';

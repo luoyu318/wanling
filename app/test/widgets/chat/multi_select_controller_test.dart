@@ -1,5 +1,5 @@
 import 'package:wanling_core/models/message.dart';
-import 'package:app/providers/chat_state.dart';
+import 'package:wanling_core/providers/chat_state.dart';
 import 'package:app/widgets/chat/multi_select_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

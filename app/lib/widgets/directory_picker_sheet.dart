@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 
 typedef DirectoryPickerResult = ({String? directory, bool cancelled});
 

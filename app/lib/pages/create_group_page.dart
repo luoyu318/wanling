@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/user_summary.dart';
-import '../providers/conversation_provider.dart';
-import '../providers/friend_provider.dart';
+import 'package:wanling_core/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/friend_provider.dart';
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';

@@ -2,7 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/conversation.dart';
-import '../../providers/chat_state.dart' show ModelOverride;
+import 'package:wanling_core/providers/chat_state.dart' show ModelOverride;
 
 /// agent_session 输入栏下方的副标题条:
 /// 「mode icon + Build · model icon + glm-5.2 zhipuai · max」

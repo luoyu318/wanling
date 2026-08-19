@@ -8,9 +8,9 @@ import 'package:go_router/go_router.dart';
 
 import 'crop_avatar_page.dart';
 import 'package:wanling_core/models/agent.dart';
-import '../providers/agent_provider.dart';
-import '../providers/auth_provider.dart' show apiProvider;
-import '../providers/conversation_provider.dart';
+import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/conversation_provider.dart';
 import '../router_helpers.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/agent_badge.dart';

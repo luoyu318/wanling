@@ -3,8 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:wanling_core/models/file_entry.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/file_browser_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/file_browser_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 
 class _MockApi extends Mock implements ApiService {}

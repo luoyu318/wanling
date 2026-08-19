@@ -5,8 +5,8 @@ import 'package:mocktail/mocktail.dart';
 
 import 'package:app/pages/chat/file_browser_page.dart';
 import 'package:app/pages/chat/file_preview_page.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
-import 'package:app/providers/file_browser_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/file_browser_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 
 class _MockApi extends Mock implements ApiService {}

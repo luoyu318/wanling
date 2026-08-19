@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:app/pages/select_account_page.dart';
-import 'package:app/providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
 
 void main() {

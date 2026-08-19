@@ -1,4 +1,4 @@
-import 'package:app/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/services/api_service.dart';
 import 'package:app/widgets/directory_picker_sheet.dart';
 import 'package:flutter/material.dart';

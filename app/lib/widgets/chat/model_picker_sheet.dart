@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart' show SessionMeta;
-import '../../providers/chat_state.dart' show ModelOverride;
+import 'package:wanling_core/providers/chat_state.dart' show ModelOverride;
 
 /// 模型选择弹出框（紧凑列表 + 搜索 + provider 过滤 pill）。
 /// 列表按 provider 分段，radio 选中标记，搜索同时匹配 name 和 id。

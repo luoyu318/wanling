@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show visibleForTesting, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/participant.dart';
@@ -12,6 +11,7 @@ import 'package:wanling_core/services/local_message_store_abstract.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/diff_merge.dart';
+import '../services/background_bridge.dart' show notifyService;
 // 复用现有 provider，避免重复定义导致状态分裂。
 import 'auth_provider.dart' show apiProvider, authProvider;
 import 'chat_provider.dart' show wsProvider;
@@ -165,15 +165,11 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   /// 前台且正在看该会话时不弹通知（用户已直接看到）。
   void setActiveConv(String? convId) {
     _activeConvId = convId;
-    // 同步给 bg-service。原生平台未注册时 invoke 可能抛异常（测试环境），
-    // 不应影响主流程，吞掉即可。
-    try {
-      FlutterBackgroundService().invoke('setActiveConv', {
-        'conv_id': convId ?? '',
-      });
-    } catch (_) {
-      // 测试环境无原生平台注册，忽略
-    }
+    // 同步给 bg-service(经桥接,桌面/测试为 no-op),用于本地通知过滤:
+    // 前台且正在看该会话时不弹通知(用户已直接看到)。
+    notifyService('setActiveConv', {
+      'conv_id': convId ?? '',
+    });
   }
 
   /// F5 fix helper: 单条 fire-and-forget 落库。
@@ -630,22 +626,16 @@ final totalUnreadProvider = Provider<int>((ref) {
 
 /// 同步所有 agent 的 avatar_url 到 bg-service isolate(供通知下载头像)。
 ///
-/// 在拉会话列表成功后调。原生平台未注册时 invoke 抛异常(测试环境),
-/// 用 try-catch 兜底不阻塞 UI。
+/// 在拉会话列表成功后调。经桥接发送,桌面/测试为 no-op,不阻塞 UI。
 @visibleForTesting
 void syncAgentAvatarsToBgService(List<Conversation> conversations) {
-  try {
-    final service = FlutterBackgroundService();
-    for (final c in conversations) {
-      // dm_user_user / 群聊 agent=null，跳过（无 agent 头像可同步）。
-      final agentId = c.agent?.id;
-      if (agentId == null || agentId.isEmpty) continue;
-      service.invoke('syncAgentAvatar', {
-        'agentId': agentId,
-        'avatarUrl': c.agent!.avatarUrl,
-      });
-    }
-  } catch (_) {
-    // 原生平台未注册(测试环境)静默,不阻塞 UI
+  for (final c in conversations) {
+    // dm_user_user / 群聊 agent=null，跳过（无 agent 头像可同步）。
+    final agentId = c.agent?.id;
+    if (agentId == null || agentId.isEmpty) continue;
+    notifyService('syncAgentAvatar', {
+      'agentId': agentId,
+      'avatarUrl': c.agent!.avatarUrl,
+    });
   }
 }

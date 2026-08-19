@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:app/providers/auth_provider.dart';
-import 'package:app/providers/chat_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:app/widgets/connection_banner.dart';

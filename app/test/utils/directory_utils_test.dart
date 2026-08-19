@@ -1,5 +1,5 @@
 import 'package:wanling_core/models/conversation.dart';
-import 'package:app/providers/agent_status_provider.dart';
+import 'package:wanling_core/providers/agent_status_provider.dart';
 import 'package:app/utils/directory_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

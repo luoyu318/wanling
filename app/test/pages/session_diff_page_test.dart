@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:app/pages/session_diff_page.dart';
-import 'package:app/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

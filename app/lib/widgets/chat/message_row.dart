@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
-import '../../providers/agent_provider.dart';
-import '../../providers/auth_provider.dart';
+import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/rendering/message_content_renderer.dart' show FileDownloadSnapshot;
 import '../avatar.dart';
 import 'message_bubble.dart';

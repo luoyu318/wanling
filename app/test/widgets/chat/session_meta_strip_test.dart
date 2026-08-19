@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wanling_core/models/conversation.dart';
-import 'package:app/providers/chat_state.dart' show ModelOverride;
+import 'package:wanling_core/providers/chat_state.dart' show ModelOverride;
 import 'package:app/widgets/chat/session_meta_strip.dart';
 
 SessionMeta mkMeta({

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'message_input_bar.dart';
 import 'quote_preview_bar.dart' show QuotePreviewBar;
 import 'input_controller.dart' show InputController;

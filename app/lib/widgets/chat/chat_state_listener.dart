@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
-import '../../providers/chat_provider.dart' show ChatNotifier, chatProvider;
-import '../../providers/chat_state.dart' show ChatState;
-import '../../providers/conversation_provider.dart' show conversationProvider;
+import 'package:wanling_core/providers/agent_sessions_provider.dart' show AgentSessionsNotifier;
+import 'package:wanling_core/providers/chat_provider.dart' show ChatNotifier, chatProvider;
+import 'package:wanling_core/providers/chat_state.dart' show ChatState;
+import 'package:wanling_core/providers/conversation_provider.dart' show conversationProvider;
 import 'package:wanling_core/utils/debug_log.dart';
 import 'conv_sync_controller.dart' show ConvSyncController;
 import 'jump_controller.dart' show JumpController, dualSliverBottomTarget;

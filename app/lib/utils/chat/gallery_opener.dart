@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/message.dart' show ChatMessage;
-import '../../providers/auth_provider.dart' show authProvider;
-import '../../providers/settings_provider.dart' show settingsProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show authProvider;
+import 'package:wanling_core/providers/settings_provider.dart' show settingsProvider;
 import 'package:wanling_core/utils/gallery_image.dart' show collectConversationImages;
 import '../../widgets/gallery/zoomable_gallery.dart' show ZoomableGallery;
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'jump_to_bottom_button.dart';
 import 'unread_nav_badge.dart';
 

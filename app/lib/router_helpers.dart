@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/agent.dart';
-import 'providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/utils/snackbar.dart';
 
 /// 拼接 chat 路由路径：convId 走 path 参数，agentId 走 query（可空）。
