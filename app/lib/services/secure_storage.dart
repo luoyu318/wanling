@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import '../models/user.dart';
+import 'package:wanling_core/models/user.dart';
 
 /// JWT token + 用户资料的安全存储封装(Android Keystore 加密)。
 ///

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../models/message.dart' show ChatMessage;
+import 'package:wanling_core/models/message.dart' show ChatMessage;
 import '../../providers/auth_provider.dart' show authProvider;
 import '../../providers/settings_provider.dart' show settingsProvider;
-import '../gallery_image.dart' show collectConversationImages;
+import 'package:wanling_core/utils/gallery_image.dart' show collectConversationImages;
 import '../../widgets/gallery/zoomable_gallery.dart' show ZoomableGallery;
 
 /// 打开会话级图片画廊。

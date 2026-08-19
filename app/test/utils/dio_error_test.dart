@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/services/api_response.dart';
-import 'package:wanling_core/utils/dio_error.dart';
+import 'package:app/utils/dio_error.dart';
 
 void main() {
   group('extractDioErrorMessage', () {
