@@ -4,11 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
+import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/services/notification_service.dart';
 import 'app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 消息内容渲染注册表:Text/Markdown/Image/File/Card/Aggregate 等内置 renderer。
+  registerBuiltinRenderers();
   // 桌面通知初始化(Windows/Linux settings 由 core notification_service 处理)
   await NotificationService.instance.init();
   // 注入已 load 的 SharedPreferences(savedLogins 依赖同步实例),

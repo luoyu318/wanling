@@ -2,12 +2,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
+import 'package:wanling_desktop/pages/chat/chat_view.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
 import 'package:wanling_desktop/providers/selected_conv_provider.dart';
 
@@ -43,11 +48,42 @@ class _SeededConvNotifier extends ConversationListNotifier {
   }
 }
 
+/// 空会话 stub api:点击会话后 ChatView 挂载,chatProvider._initialize
+/// 走此 stub(无消息),避免测试环境真实网络请求。
+class _EmptyChatApi extends ApiService {
+  _EmptyChatApi() : super(baseUrl: '');
+
+  @override
+  Future<Conversation> getConversation(String convId) async =>
+      _conv(convId, '测试会话');
+
+  @override
+  Future<UnreadInfo> getUnreadInfo(String convId) async =>
+      const UnreadInfo(unreadCount: 0);
+
+  @override
+  Future<List<ChatMessage>> getMessagesBefore(
+    String conversationId, {
+    DateTime? before,
+    int limit = 20,
+  }) async => const [];
+}
+
 List<Override> _overrides(List<Conversation> seed) => [
   conversationProvider.overrideWith((ref) => _SeededConvNotifier(seed)),
   // messages_page 渲染摘要需要 currentUserId(撤回文案),override 掉
   // authProvider 避免拉进 settingsProvider→SharedPreferences 链。
   authProvider.overrideWith((ref) => AuthNotifier(ApiService(baseUrl: ''))),
+  // 右侧聊天区:ChatView 挂载后 watch chatProvider,stub 掉网络链。
+  chatProvider.overrideWith(
+    (ref, key) => ChatNotifier(
+      _EmptyChatApi(),
+      WebSocketService(),
+      key.convId,
+      key.agentId,
+      'test-user',
+    ),
+  ),
 ];
 
 /// 读列表项根 Container 的背景色(null=未选中)。
@@ -55,6 +91,11 @@ Color? _itemColor(WidgetTester tester, String convId) =>
     tester.widget<Container>(find.byKey(ValueKey('conv_$convId'))).color;
 
 void main() {
+  setUp(() {
+    // ChatView 直接 watch settingsProvider(→SharedPreferences),mock 掉插件链。
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets('会话列表渲染:多条会话+摘要+未读角标+点击选中高亮', (tester) async {
     final convs = [_conv('c1', 'M2 桌面开发'), _conv('c2', '部署问题', unread: 3)];
     final container = ProviderContainer(overrides: _overrides(convs));
@@ -83,6 +124,9 @@ void main() {
     expect(container.read(selectedConvProvider), 'c2');
     expect(_itemColor(tester, 'c2'), isNotNull);
     expect(_itemColor(tester, 'c1'), isNull);
+    // 右侧聊天区接线:选中后 ChatView 挂载(stub api → 空消息占位)。
+    expect(find.byType(ChatView), findsOneWidget);
+    expect(find.text('暂无消息'), findsOneWidget);
   });
 
   testWidgets('搜索过滤:输入关键词后仅显示匹配会话', (tester) async {
