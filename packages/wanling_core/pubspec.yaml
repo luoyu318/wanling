@@ -29,3 +29,5 @@ dependencies:
   flutter_math_fork: ^0.7.3
   cached_network_image: ^3.4.1
   url_launcher: ^6.3.1
+  markdown: ^7.3.1
+  path: ^1.9.0
