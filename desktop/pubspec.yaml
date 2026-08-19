@@ -1,0 +1,27 @@
+name: wanling_desktop
+description: 万灵桌面客户端（Windows/macOS/Linux），复用 wanling_core 业务层。
+publish_to: none
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+  wanling_core:
+    path: ../packages/wanling_core
+  flutter_riverpod: ^2.5.0
+  go_router: ^14.0.0
+  shared_preferences: ^2.2.0
+  file_picker: ^11.0.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+hooks:
+  user_defines:
+    sqlite3:
+      source: sqlcipher
+      url_pattern: "https://cors.isteed.cc/https://github.com/simolus3/sqlite3.dart/releases/download/$RELEASE_TAG/$FILENAME"
