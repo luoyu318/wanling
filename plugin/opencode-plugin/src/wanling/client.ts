@@ -608,7 +608,13 @@ export class WanlingClient extends EventEmitter {
           // "dispatch 异常" 误导日志(Task 7 review MINOR)。
           if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
           const out: WSMessage = { op: OP_PLUGIN_RESULT, d: resp as Record<string, unknown> }
-          this.ws.send(JSON.stringify(out))
+          const frame = JSON.stringify(out)
+          // 发送侧帧体积警告:server WS 帧上限 512KB,超 400KB 先预警(留缓冲)。
+          // 便于定位 session.diff 等大 payload 方法(数据侧截断防护见 git/diff.ts)。
+          if (frame.length > 400 * 1024) {
+            logger.warn(`[wanling] RPC 响应超大: method=${call.method} bytes=${frame.length}(server 帧上限 512KB,可能被断连)`)
+          }
+          this.ws.send(frame)
         }).catch((err) => {
           // dispatcher.dispatch 内部已对 handler 抛错做了 try/catch 并返回 error 响应,
           // 走到这里说明 dispatch 自身有 bug(或 ws.send 同步抛错),记录后吞掉,

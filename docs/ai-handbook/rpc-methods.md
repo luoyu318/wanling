@@ -50,6 +50,11 @@ plugin 端各 RPC method 的 params/result/error schema。从 [rpc-protocol.md](
 
 **binary 文件**:numstat 行是 `-\t-\t<path>` 时跳过(不进 files 数组)。
 
+**二进制/超大文件防护**(2026-08-19):
+- untracked 二进制(前 8000 字节含 NUL):`binary: true`,patch 为空串,additions/deletions 为 0
+- 单文件 patch 超 256KB:截断至 256KB 内(按行边界),`truncated: true`,末行 `…(已截断,共 N 行)`
+- 两个字段均为可选,旧 APP 忽略无影响
+
 **触发场景**:APP 会话页点「+ 变更」入口,展示本次 session 改了哪些文件。
 
 ## file.list
