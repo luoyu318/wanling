@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/foundation.dart';
@@ -413,7 +412,7 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   // bg-service 重连失败时通过 IPC 请求主 isolate 刷新 token。
   // bg-service 是独立 isolate,不能直接调 ApiService。主 isolate refresh 成功后
   // _onTokenRefreshed 会通过 'start' IPC 把新 token 传回 bg-service。
-  // 经 receive 桥接订阅:壳在移动端注入 FlutterBackgroundService().on,
+  // 经 receive 桥接订阅:壳在移动端注入移动前台服务的事件流,
   // 桌面/测试未注入(null)时跳过订阅。
   backgroundServiceOn?.call('requestTokenRefresh')?.listen((_) {
     debugPrint('[auth] bg-service 请求 token 刷新');

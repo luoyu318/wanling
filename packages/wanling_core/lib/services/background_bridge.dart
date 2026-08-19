@@ -4,7 +4,7 @@ typedef ServiceIpc = void Function(String method, [Map<String, dynamic>? args]);
 
 ServiceIpc? backgroundServiceIpc;
 
-/// bg-service → 主 isolate 事件流桥接(壳注入 FlutterBackgroundService().on)。
+/// bg-service → 主 isolate 事件流桥接(壳注入移动专属前台服务插件的事件流)。
 /// null = 无后台服务(桌面/测试),订阅跳过。
 Stream<dynamic>? Function(String method)? backgroundServiceOn;
 
