@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 /// 聊天页内的未读消息导航浮标（统一胶囊）。
 /// 仅当 ChatState.unreadCount > 0 且不在底部时显示（由 ChatPage build 内 Positioned 控制）。

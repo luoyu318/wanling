@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 /// 自定义块级元素的上下间距（标题 / 分割线）。
 ///

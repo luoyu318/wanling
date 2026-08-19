@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/agent.dart' show AgentCategory;
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/models/conversation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart';

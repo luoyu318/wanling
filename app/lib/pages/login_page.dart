@@ -6,7 +6,7 @@ import 'package:wanling_core/models/saved_login.dart';
 import '../providers/auth_provider.dart';
 import '../providers/saved_logins_provider.dart';
 import '../providers/settings_provider.dart';
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/password_text_field.dart';

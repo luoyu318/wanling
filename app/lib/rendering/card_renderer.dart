@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/approval.dart';
 import 'package:wanling_core/utils/snackbar.dart';
-import '../widgets/card_button.dart';
-import '../widgets/card_state_badge.dart';
-import '../widgets/countdown_timer.dart';
+import 'package:wanling_core/widgets/card_button.dart';
+import 'package:wanling_core/widgets/card_state_badge.dart';
+import 'package:wanling_core/widgets/countdown_timer.dart';
 import 'message_content_renderer.dart';
 
 /// 卡片渲染器。渲染审批卡片（命令/工具/文件）+ 按钮 + 状态。

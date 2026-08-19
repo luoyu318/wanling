@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/conversation_provider.dart';
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/app_dropdown_field.dart';
 import '../widgets/avatar.dart';

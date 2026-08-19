@@ -1,6 +1,6 @@
 import 'package:app/rendering/message_content_renderer.dart';
 import 'package:app/rendering/tool_group_renderer.dart';
-import 'package:app/widgets/chat/shimmer_text.dart';
+import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

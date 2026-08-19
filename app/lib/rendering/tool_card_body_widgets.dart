@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 // ─── bash ─────────────────────────────────────────
 class BashBody extends StatelessWidget {

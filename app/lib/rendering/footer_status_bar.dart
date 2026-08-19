@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/chat/shimmer_text.dart';
+import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import 'footer_info_bar.dart';
 
 /// 聚合卡底部状态条:承接原顶栏 + busy 气泡的动态状态职责。

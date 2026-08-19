@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../theme/app_menu_style.dart';
+import 'package:wanling_core/theme/app_menu_style.dart';
 
 /// 单个菜单项预估宽度(含左右 padding 14×2 + icon 22)。
 const double kMenuItemWidth = 50;

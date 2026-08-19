@@ -34,7 +34,7 @@ import '../widgets/chat/typing_bubble.dart';
 import '../widgets/chat/env_meta_strip.dart' show EnvMetaStrip;
 import '../widgets/chat/model_picker_sheet.dart' show ModelPickerDialog;
 import '../widgets/chat/session_meta_strip.dart' show SessionMetaStrip;
-import '../widgets/chat/shimmer_text.dart';
+import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import '../widgets/chat/slash_command_sheet.dart';
 import '../widgets/chat/slash_handle.dart';
 import '../widgets/chat/stop_bar.dart' show StopBar;

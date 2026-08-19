@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 /// 关于页：静态信息（应用名 + 版本号 + 简介）。
 /// 版本号从原生层读取（pubspec.yaml → build.gradle → PackageInfo），

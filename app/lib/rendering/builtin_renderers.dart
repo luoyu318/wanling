@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
 import 'package:wanling_core/models/msg_type.dart';
-import '../pages/text_preview_page.dart';
+import 'package:wanling_core/widgets/text_preview_page.dart';
 import 'package:wanling_core/utils/emoji_span.dart';
 import 'package:wanling_core/utils/file_format.dart';
 import 'package:wanling_core/utils/gallery_image.dart' show thumbUrl;

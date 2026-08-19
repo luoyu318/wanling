@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 /// 自定义 Bold (strong) 节点:覆盖 markdown_widget 默认的 FontWeight.bold (w700),
 /// 改用 w400(regular) + 墨蓝色,对齐 IM 简洁风格。

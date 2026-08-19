@@ -10,7 +10,7 @@ import '../pages/profile_page.dart';
 import '../providers/agent_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart' show totalUnreadProvider;
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/app_action_menu.dart';
 import '../widgets/avatar.dart';

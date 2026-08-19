@@ -1,4 +1,4 @@
-import 'package:app/widgets/card_button.dart';
+import 'package:wanling_core/widgets/card_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show BoxDecoration;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/theme/app_menu_style.dart';
+import 'package:wanling_core/theme/app_menu_style.dart';
 import 'package:app/widgets/chat/message_context_menu.dart';
 
 void main() {

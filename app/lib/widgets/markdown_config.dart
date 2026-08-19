@@ -4,7 +4,7 @@ import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import 'image_thumb.dart';
 import 'markdown_code_wrapper.dart';
 import 'select_all_container.dart';

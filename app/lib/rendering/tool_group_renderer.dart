@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/utils/icon_font.dart';
-import '../widgets/chat/shimmer_text.dart';
+import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import 'message_content_renderer.dart';
 
 /// 聚合卡元素分派槽位:单个非折叠元素(平铺)或一组同类工具(折叠)。

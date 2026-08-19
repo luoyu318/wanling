@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
-import '../theme/app_colors.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import '../utils/dio_error.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/password_text_field.dart';
