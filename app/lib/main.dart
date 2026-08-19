@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wanling_core/services/background_bridge.dart'
+    show backgroundServiceIpc;
 
 import 'providers/auth_provider.dart';
 import 'providers/local_message_store_provider.dart';
@@ -99,6 +101,9 @@ Future<void> main() async {
   // 2. 配置 + 启动 background service（前台服务）
   _setupBackgroundService();
   _desktopStartupLog('main: bg-service setup done');
+
+  // 注入 bg-service IPC 桥接(core 层 providers 经 notifyService 调用)
+  backgroundServiceIpc = (method, [args]) => _notifyBgServiceIpc(method, args);
 
   // 3. ProviderContainer：settingsProvider 必须 await 后再 restoreSession
   // 否则 settingsProvider 默认 localhost，apiProvider 用错误 baseUrl，
@@ -246,5 +251,15 @@ class _MyAppState extends ConsumerState<MyApp> {
       ),
       routerConfig: router,
     );
+  }
+}
+
+/// bg-service IPC 壳侧实现:桌面跳过,移动端 invoke,失败仅日志。
+void _notifyBgServiceIpc(String method, [Map<String, dynamic>? args]) {
+  if (!Platform.isAndroid && !Platform.isIOS) return;
+  try {
+    FlutterBackgroundService().invoke(method, args);
+  } catch (e) {
+    debugPrint('[bg-bridge] IPC "$method" 失败: $e');
   }
 }

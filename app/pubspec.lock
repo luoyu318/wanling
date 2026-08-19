@@ -1594,6 +1594,13 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "15.2.0"
+  wanling_core:
+    dependency: "direct main"
+    description:
+      path: "../packages/wanling_core"
+      relative: true
+    source: path
+    version: "0.0.0"
   watcher:
     dependency: transitive
     description:

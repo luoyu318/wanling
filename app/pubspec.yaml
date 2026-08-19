@@ -28,6 +28,9 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  # 业务核心层(monorepo path 依赖)
+  wanling_core:
+    path: ../packages/wanling_core
   flutter:
     sdk: flutter
   # 国际化：提供 GlobalMaterialLocalizations/GlobalWidgetsLocalizations，
