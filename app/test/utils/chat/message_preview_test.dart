@@ -3,7 +3,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wanling_core/models/message.dart';
-import 'package:app/utils/chat/message_preview.dart';
+import 'package:wanling_core/utils/chat/message_preview.dart';
 
 ChatMessage mkMsg({
   required String msgType,

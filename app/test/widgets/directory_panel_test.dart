@@ -1,5 +1,5 @@
 import 'package:wanling_core/models/agent.dart';
-import 'package:app/utils/directory_utils.dart';
+import 'package:wanling_core/utils/directory_utils.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/directory_panel.dart';
 import 'package:app/widgets/directory_tile.dart';

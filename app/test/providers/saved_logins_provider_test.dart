@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:wanling_core/models/saved_login.dart';
 import 'package:app/providers/saved_logins_provider.dart';
-import 'package:app/utils/secure_storage.dart';
+import 'package:wanling_core/utils/secure_storage.dart';
 
 void main() {
   late SharedPreferences prefs;

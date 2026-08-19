@@ -1,4 +1,4 @@
-import 'package:app/utils/gallery_image.dart';
+import 'package:wanling_core/utils/gallery_image.dart';
 import 'package:app/widgets/gallery/zoomable_gallery.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

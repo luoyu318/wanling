@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:app/services/notification_service.dart';
-import 'package:app/utils/notification_payload.dart';
+import 'package:wanling_core/utils/notification_payload.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 

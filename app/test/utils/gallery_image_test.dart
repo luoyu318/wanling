@@ -1,7 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:app/utils/gallery_saver.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/utils/gallery_image.dart';
+import 'package:wanling_core/utils/gallery_image.dart';
 import 'package:wanling_core/models/message.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';

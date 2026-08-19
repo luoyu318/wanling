@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/utils/notification_payload.dart';
+import 'package:wanling_core/utils/notification_payload.dart';
 
 void main() {
   group('NotificationPayload', () {

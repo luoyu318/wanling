@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/utils/chat/render_box_utils.dart';
+import 'package:wanling_core/utils/chat/render_box_utils.dart';
 
 void main() {
   group('globalRectOf', () {

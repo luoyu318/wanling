@@ -1,6 +1,6 @@
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
-import 'package:app/utils/aggregate_card_state.dart';
+import 'package:wanling_core/utils/aggregate_card_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ChatMessage msg(String id, Map<String, dynamic> content) {

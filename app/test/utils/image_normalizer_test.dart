@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
-import 'package:app/utils/image_normalizer.dart';
+import 'package:wanling_core/utils/image_normalizer.dart';
 
 void main() {
   // dart:ui 需 binding 初始化才能解码

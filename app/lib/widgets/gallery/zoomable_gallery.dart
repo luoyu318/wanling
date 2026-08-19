@@ -3,8 +3,9 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:wanling_core/utils/gallery_image.dart';
 
-import '../../utils/gallery_image.dart';
+import '../../utils/gallery_saver.dart';
 import '../../utils/image_cache_key.dart';
 import '../../utils/snackbar.dart';
 import '../long_press_detector.dart';

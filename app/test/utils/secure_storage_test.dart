@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/utils/secure_storage.dart';
+import 'package:wanling_core/utils/secure_storage.dart';
 
 void main() {
   group('SecureStorage', () {

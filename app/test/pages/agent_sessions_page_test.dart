@@ -20,7 +20,7 @@ import 'package:app/providers/chat_provider.dart' show wsProvider;
 import 'package:app/providers/saved_logins_provider.dart'
     show sharedPrefsProvider;
 import 'package:app/services/api_service.dart';
-import 'package:app/utils/directory_utils.dart' show pathLastTwoSegments;
+import 'package:wanling_core/utils/directory_utils.dart' show pathLastTwoSegments;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

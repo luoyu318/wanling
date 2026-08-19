@@ -1,4 +1,4 @@
-import 'package:app/utils/diff_merge.dart';
+import 'package:wanling_core/utils/diff_merge.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Item {

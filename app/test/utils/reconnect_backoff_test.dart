@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/utils/reconnect_backoff.dart';
+import 'package:wanling_core/utils/reconnect_backoff.dart';
 
 void main() {
   group('ReconnectBackoff', () {

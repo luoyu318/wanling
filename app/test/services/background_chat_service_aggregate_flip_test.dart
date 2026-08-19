@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:app/services/background_chat_service.dart';
-import 'package:app/utils/notification_payload.dart';
+import 'package:wanling_core/utils/notification_payload.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';

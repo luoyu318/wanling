@@ -1,4 +1,4 @@
-import 'package:app/utils/avatar_bitmap.dart';
+import 'package:wanling_core/utils/avatar_bitmap.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

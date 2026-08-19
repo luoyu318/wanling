@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:highlight/highlight.dart' show Node;
 
-import 'package:app/utils/code_highlight.dart';
+import 'package:wanling_core/utils/code_highlight.dart';
 
 void main() {
   group('languageFromPath', () {
