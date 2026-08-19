@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/utils/gallery_image.dart';
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 

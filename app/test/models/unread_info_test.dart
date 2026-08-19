@@ -1,4 +1,4 @@
-import 'package:app/models/unread_info.dart';
+import 'package:wanling_core/models/unread_info.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -1,5 +1,5 @@
-import 'package:app/models/conversation.dart';
-import 'package:app/models/user_summary.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'package:app/pages/create_group_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;

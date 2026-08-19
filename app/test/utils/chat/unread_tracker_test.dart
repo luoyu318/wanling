@@ -7,7 +7,7 @@
 // 本测试会 fail。
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:app/utils/chat/unread_tracker.dart';
 
 void main() {

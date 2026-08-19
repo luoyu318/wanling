@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/models/file_entry.dart';
+import 'package:wanling_core/models/file_entry.dart';
 import 'package:app/widgets/chat/file_entry_icon.dart';
 
 void main() {

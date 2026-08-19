@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:app/models/file_entry.dart';
+import 'package:wanling_core/models/file_entry.dart';
 import 'package:app/pages/chat/file_preview_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/file_browser_provider.dart';

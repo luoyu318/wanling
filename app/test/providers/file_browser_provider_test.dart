@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:app/models/file_entry.dart';
+import 'package:wanling_core/models/file_entry.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/file_browser_provider.dart';
 import 'package:app/services/api_service.dart';

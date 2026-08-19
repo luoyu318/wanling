@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:app/models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import 'package:app/providers/chat_provider.dart' show ChatNotifier;
 import 'package:app/services/api_service.dart';
 import 'package:app/widgets/chat/input_controller.dart';

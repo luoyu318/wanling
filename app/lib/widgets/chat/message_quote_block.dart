@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:app/models/quote.dart';
+import 'package:wanling_core/models/quote.dart';
 
 /// 引用块 widget(B1 紧凑左竖线样式)。
 /// 显示被引用消息的 sender + preview,放在气泡上方(独立结构,与气泡同级)。

@@ -1,4 +1,4 @@
-import 'package:app/models/file_content.dart';
+import 'package:wanling_core/models/file_content.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

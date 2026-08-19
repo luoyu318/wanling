@@ -1,4 +1,4 @@
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:app/services/websocket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 

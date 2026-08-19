@@ -1,6 +1,6 @@
 import 'package:app/rendering/builtin_renderers.dart';
 import 'package:app/rendering/message_content_renderer.dart';
-import 'package:app/models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

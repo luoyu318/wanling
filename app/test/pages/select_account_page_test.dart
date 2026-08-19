@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:app/models/account_mark.dart';
+import 'package:wanling_core/models/account_mark.dart';
 import 'package:app/pages/select_account_page.dart';
 import 'package:app/providers/saved_logins_provider.dart';
 import 'package:app/utils/secure_storage.dart';

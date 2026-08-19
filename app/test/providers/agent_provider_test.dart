@@ -1,5 +1,5 @@
-import 'package:app/models/agent.dart';
-import 'package:app/models/ws_message.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import 'package:app/providers/agent_provider.dart';
 import 'package:app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';

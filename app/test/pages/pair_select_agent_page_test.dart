@@ -1,4 +1,4 @@
-import 'package:app/models/pairing.dart';
+import 'package:wanling_core/models/pairing.dart';
 import 'package:app/pages/pair_select_agent_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/services/api_service.dart';

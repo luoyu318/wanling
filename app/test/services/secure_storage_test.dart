@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:app/models/user.dart';
+import 'package:wanling_core/models/user.dart';
 import 'package:app/services/secure_storage.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';

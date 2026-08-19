@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/rpc_method.dart';
+import 'package:wanling_core/models/rpc_method.dart';
 
 void main() {
   group('RpcMethod', () {

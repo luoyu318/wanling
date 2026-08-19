@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 
 void main() {
   group('MsgTypeX', () {

@@ -1,5 +1,5 @@
-import 'package:app/models/msg_type.dart';
-import 'package:app/models/quote.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/models/quote.dart';
 
 /// 单条聊天消息。
 ///

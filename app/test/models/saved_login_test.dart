@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/saved_login.dart';
-import 'package:app/models/account_mark.dart';
+import 'package:wanling_core/models/saved_login.dart';
+import 'package:wanling_core/models/account_mark.dart';
 
 void main() {
   group('SavedLogin', () {

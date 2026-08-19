@@ -1,7 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:app/rendering/builtin_renderers.dart';
 import 'package:app/rendering/message_content_renderer.dart';
 import 'package:app/widgets/markdown_view.dart';

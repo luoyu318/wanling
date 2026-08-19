@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/approval.dart';
+import 'package:wanling_core/models/approval.dart';
 import 'package:app/services/api_service.dart';
 import 'package:app/services/api_response.dart';
 

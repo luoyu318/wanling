@@ -6,7 +6,7 @@
 //   wsProvider 在 auth.isAuthenticated 时会调用 connect()，连真实 WS 会失败/超时；
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
-import 'package:app/models/user.dart';
+import 'package:wanling_core/models/user.dart';
 import 'package:app/pages/profile_page.dart';
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/providers/chat_provider.dart' show wsProvider;

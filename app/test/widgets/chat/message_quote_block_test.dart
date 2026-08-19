@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/quote.dart';
+import 'package:wanling_core/models/quote.dart';
 import 'package:app/widgets/chat/message_quote_block.dart';
 
 void main() {

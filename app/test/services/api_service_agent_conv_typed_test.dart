@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/agent.dart';
-import 'package:app/models/conversation.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:app/services/api_service.dart';
 
 import '../helpers/mock_adapter.dart';

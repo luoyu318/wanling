@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/message.dart';
-import 'package:app/models/quote.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/quote.dart';
 
 void main() {
   group('Quote', () {

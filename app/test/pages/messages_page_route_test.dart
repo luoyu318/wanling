@@ -7,8 +7,8 @@
 // 策略:widget test,直接 pump MessagesPage,通过 stub getConversations
 // 注入两条可控会话(opencode + 普通),用 GoRouter 注册 marker 页面,
 // 点击行后通过 marker 文案断言跳转目标。
-import 'package:app/models/agent.dart';
-import 'package:app/models/conversation.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:app/pages/messages_page.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/login_result.dart';
-import 'package:app/models/user.dart';
+import 'package:wanling_core/models/login_result.dart';
+import 'package:wanling_core/models/user.dart';
 
 void main() {
   test('fromJson 解析 token + user', () {

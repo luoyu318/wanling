@@ -1,6 +1,6 @@
-import 'package:app/models/message.dart';
-import 'package:app/models/msg_type.dart';
-import 'package:app/models/unread_info.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/models/unread_info.dart';
 import 'package:app/providers/chat_provider.dart';
 import 'package:app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:app/models/account_mark.dart';
-import 'package:app/models/saved_login.dart';
+import 'package:wanling_core/models/account_mark.dart';
+import 'package:wanling_core/models/saved_login.dart';
 import 'package:app/providers/saved_logins_provider.dart';
 import 'package:app/utils/secure_storage.dart';
 

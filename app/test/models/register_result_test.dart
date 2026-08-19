@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/register_result.dart';
+import 'package:wanling_core/models/register_result.dart';
 
 void main() {
   test('fromJson 解析 token', () {

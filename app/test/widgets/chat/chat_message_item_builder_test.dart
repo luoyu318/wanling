@@ -1,4 +1,4 @@
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/providers/chat_state.dart';
 import 'package:app/providers/settings_provider.dart';

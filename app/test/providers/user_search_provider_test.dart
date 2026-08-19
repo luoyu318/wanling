@@ -1,4 +1,4 @@
-import 'package:app/models/user_summary.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/user_search_provider.dart';
 import 'package:app/services/api_service.dart';

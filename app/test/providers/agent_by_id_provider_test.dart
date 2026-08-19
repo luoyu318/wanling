@@ -1,4 +1,4 @@
-import 'package:app/models/agent.dart';
+import 'package:wanling_core/models/agent.dart';
 import 'package:app/providers/agent_provider.dart';
 import 'package:app/providers/auth_provider.dart' show apiProvider;
 import 'package:app/providers/chat_provider.dart' show wsProvider;

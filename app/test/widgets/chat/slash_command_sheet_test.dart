@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/models/slash_command.dart';
+import 'package:wanling_core/models/slash_command.dart';
 import 'package:app/widgets/chat/slash_command_sheet.dart';
 
 void main() {

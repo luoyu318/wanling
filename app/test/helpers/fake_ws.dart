@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:app/models/ws_message.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import 'package:app/services/websocket_service.dart';
 
 /// 测试用 WebSocketService 替身：用 StreamController 模拟 messages 流。

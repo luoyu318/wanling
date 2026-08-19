@@ -1,5 +1,5 @@
-import 'package:app/models/message.dart';
-import 'package:app/models/unread_info.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/unread_info.dart';
 import 'package:app/providers/chat_provider.dart';
 import 'package:app/providers/chat_state.dart' show ModelOverride;
 import 'package:app/services/api_service.dart';

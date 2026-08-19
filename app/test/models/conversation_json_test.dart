@@ -1,7 +1,7 @@
-import 'package:app/models/agent.dart';
-import 'package:app/models/conversation.dart';
-import 'package:app/models/participant.dart';
-import 'package:app/models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/participant.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

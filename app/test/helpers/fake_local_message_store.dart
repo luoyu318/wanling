@@ -1,8 +1,8 @@
-import 'package:app/models/agent.dart' as model;
-import 'package:app/models/conversation.dart' as model;
-import 'package:app/models/friendship.dart' as model;
-import 'package:app/models/message.dart';
-import 'package:app/models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart' as model;
+import 'package:wanling_core/models/conversation.dart' as model;
+import 'package:wanling_core/models/friendship.dart' as model;
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'package:app/services/local_message_store_abstract.dart';
 
 /// 测试用 fake。内存维护,支持 throwOnNextOp 注入失败。

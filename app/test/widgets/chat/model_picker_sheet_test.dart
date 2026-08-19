@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/models/agent.dart';
+import 'package:wanling_core/models/agent.dart';
 import 'package:app/providers/chat_state.dart';
 import 'package:app/widgets/chat/model_picker_sheet.dart';
 

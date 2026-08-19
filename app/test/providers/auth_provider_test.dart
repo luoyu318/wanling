@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:app/models/login_result.dart';
-import 'package:app/models/register_result.dart';
-import 'package:app/models/user.dart';
+import 'package:wanling_core/models/login_result.dart';
+import 'package:wanling_core/models/register_result.dart';
+import 'package:wanling_core/models/user.dart';
 import 'package:app/providers/auth_provider.dart';
 import 'package:app/services/api_service.dart';
 import 'package:app/services/secure_storage.dart';

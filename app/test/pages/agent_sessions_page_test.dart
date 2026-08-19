@@ -9,8 +9,8 @@
 //
 // 策略:widget test,直接 pump AgentSessionsPage,通过 stub api 注入可控结果,
 // GoRouter 注册 marker 页面,点击后用 marker 文案 + SnackBar 文本断言。
-import 'package:app/models/agent.dart';
-import 'package:app/models/conversation.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:app/pages/agent_sessions_page.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/chat/three_body_indicator.dart';

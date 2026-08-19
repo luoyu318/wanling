@@ -1,4 +1,4 @@
-import 'package:app/models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// MsgTypeX.preview 是消息预览的单一真相源,notification 与 conversation 列表共用。

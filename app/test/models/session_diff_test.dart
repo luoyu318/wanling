@@ -1,4 +1,4 @@
-import 'package:app/models/session_diff.dart';
+import 'package:wanling_core/models/session_diff.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

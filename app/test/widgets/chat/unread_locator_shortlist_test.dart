@@ -1,4 +1,4 @@
-import 'package:app/models/message.dart';
+import 'package:wanling_core/models/message.dart';
 import 'package:app/providers/chat_provider.dart';
 import 'package:app/providers/chat_state.dart';
 import 'package:app/widgets/chat/unread_locator_controller.dart';
