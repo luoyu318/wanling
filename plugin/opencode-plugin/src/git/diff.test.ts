@@ -71,7 +71,12 @@ describe("computeDiff", () => {
       { stdout: "@@ -1 +1,2 @@\n+new line\n" },
       { stdout: " M main.go\n?? new.txt\n" },
     ])
-    vi.mocked(readFileSync).mockReturnValue("hello\nworld\n")
+    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
+      if (typeof opts === "string" || opts?.encoding) {
+        return "hello\nworld\n"
+      }
+      return Buffer.from("hello\nworld\n")
+    }) as unknown as typeof readFileSync)
 
     const result = await computeDiff("/proj")
 
@@ -191,7 +196,12 @@ describe("computeDiff", () => {
       { stdout: "" },
       { stdout: "?? 新文件.txt\n" },
     ])
-    vi.mocked(readFileSync).mockReturnValue("hello\n世界\n")
+    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
+      if (typeof opts === "string" || opts?.encoding) {
+        return "hello\n世界\n"
+      }
+      return Buffer.from("hello\n世界\n")
+    }) as unknown as typeof readFileSync)
 
     const result = await computeDiff("/proj")
 
@@ -202,5 +212,96 @@ describe("computeDiff", () => {
     expect(result.files[0].deletions).toBe(0)
     expect(result.files[0].patch).toBe("+hello\n+世界\n")
     expect(readFileSync).toHaveBeenCalledWith("/proj/新文件.txt", "utf-8")
+  })
+})
+
+describe("computeDiff 大文件/二进制防护", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(readFileSync).mockReset()
+  })
+
+  it("untracked 二进制文件(含 NUL 字节)→ binary:true, patch 空, 不再整读 utf-8", async () => {
+    mockRunGitSequence([
+      { stdout: "true\n" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "?? app-release.apk\n" },
+    ])
+    // 第一次调用(嗅探,Buffer)返回含 NUL 的 Buffer;若实现错误地只调 utf-8 读会走第二个 mock
+    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
+      if (typeof opts === "string" || opts?.encoding) {
+        throw new Error("FAIL: 不应对二进制文件做 utf-8 整读")
+      }
+      return Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]) // PK 头 + NUL
+    }) as unknown as typeof readFileSync)
+
+    const result = await computeDiff("/proj")
+
+    expect(result.files).toHaveLength(1)
+    expect(result.files[0]).toEqual({
+      file: "app-release.apk",
+      patch: "",
+      additions: 0,
+      deletions: 0,
+      status: "added",
+      binary: true,
+    })
+  })
+
+  it("untracked 大文本文件(> 256KB patch)→ truncated:true, patch 截断且末行带省略提示", async () => {
+    mockRunGitSequence([
+      { stdout: "true\n" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "?? big.log\n" },
+    ])
+    const bigText = "x".repeat(60) + "\n"
+    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
+      if (typeof opts === "string" || opts?.encoding) {
+        return bigText.repeat(6000) // ~366KB 文本 → patch ~372KB 超 256KB
+      }
+      return Buffer.from(Array(8000).fill(0x61)) // 纯 ASCII,无 NUL → 非二进制
+    }) as unknown as typeof readFileSync)
+
+    const result = await computeDiff("/proj")
+
+    expect(result.files).toHaveLength(1)
+    const f = result.files[0]
+    expect(f.truncated).toBe(true)
+    expect(Buffer.byteLength(f.patch, "utf-8")).toBeLessThanOrEqual(256 * 1024)
+    expect(f.patch.endsWith("…(已截断,共 6000 行)\n")).toBe(true)
+  })
+
+  it("tracked 单文件 patch 超 256KB → truncated:true 截断", async () => {
+    const hugePatch = "+" + "y".repeat(300 * 1024) + "\n"
+    mockRunGitSequence([
+      { stdout: "true\n" },
+      { stdout: "1\t0\thuge.go\n" },
+      { stdout: "M\thuge.go\n" },
+      { stdout: hugePatch },
+      { stdout: "" },
+    ])
+
+    const result = await computeDiff("/proj")
+
+    expect(result.files[0].truncated).toBe(true)
+    expect(Buffer.byteLength(result.files[0].patch, "utf-8")).toBeLessThanOrEqual(256 * 1024)
+    expect(result.files[0].additions).toBe(1) // numstat 原值不因截断改写
+  })
+
+  it("untracked 文件读失败(权限/消失)→ 仍跳过不抛(既有行为保持)", async () => {
+    mockRunGitSequence([
+      { stdout: "true\n" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "?? gone.txt\n" },
+    ])
+    vi.mocked(readFileSync).mockImplementation((() => {
+      throw new Error("ENOENT")
+    }) as unknown as typeof readFileSync)
+
+    const result = await computeDiff("/proj")
+    expect(result.files).toEqual([])
   })
 })

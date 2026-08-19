@@ -2,12 +2,18 @@ import { readFileSync } from "fs"
 import { join } from "path"
 import { runGit } from "./runner.js"
 
+// 二进制嗅探读取的前缀字节数;单文件 patch 字节上限(超限截断,防大 payload 断连)
+const BINARY_SNIFF_BYTES = 8000
+const MAX_PATCH_BYTES = 256 * 1024
+
 export type FileDiff = {
   file: string
   patch: string
   additions: number
   deletions: number
   status: "added" | "modified" | "deleted"
+  binary?: boolean
+  truncated?: boolean
 }
 
 export type DiffResult = {
@@ -55,6 +61,29 @@ function buildUntrackedPatch(content: string): { patch: string; additions: numbe
   return { patch, additions: lines.length }
 }
 
+// 嗅探前 8000 字节:含 NUL 判二进制。
+// 读失败(权限/消失)让异常上抛,由调用方 catch 跳过(保持既有行为,且绝不回退 utf-8 整读)
+function sniffBinary(path: string): boolean {
+  const buf = readFileSync(path)
+  return buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+}
+
+// patch 超限截断:按行边界截,末行追加省略提示,总字节数(含提示行)不超上限
+function clampPatch(patch: string): { patch: string; truncated: boolean } {
+  if (Buffer.byteLength(patch, "utf-8") <= MAX_PATCH_BYTES) return { patch, truncated: false }
+  const totalLines = patch.endsWith("\n") ? patch.split("\n").length - 1 : patch.split("\n").length
+  const suffix = `…(已截断,共 ${totalLines} 行)\n`
+  const budget = Math.max(0, MAX_PATCH_BYTES - Buffer.byteLength(suffix, "utf-8"))
+  const head = Buffer.from(patch, "utf-8").subarray(0, budget)
+  const lastNl = head.lastIndexOf(0x0a)
+  let body = lastNl > 0 ? head.subarray(0, lastNl + 1).toString("utf-8") : head.toString("utf-8")
+  // 预算边界切断多字节字符时逐字符回退,保证字节不超
+  while (body.length > 0 && Buffer.byteLength(body, "utf-8") > budget) {
+    body = body.slice(0, -1)
+  }
+  return { patch: `${body}${suffix}`, truncated: true }
+}
+
 export async function computeDiff(cwd: string): Promise<DiffResult> {
   await runGit(["rev-parse", "--is-inside-work-tree"], { cwd })
 
@@ -78,12 +107,14 @@ export async function computeDiff(cwd: string): Promise<DiffResult> {
   for (const t of tracked) {
     const patchResp = await runGit(["diff", "HEAD", "--", t.file], { cwd })
     const status = mapStatus(statusMap.get(t.file) ?? "M")
+    const clamped = clampPatch(patchResp.stdout)
     files.push({
       file: t.file,
-      patch: patchResp.stdout,
+      patch: clamped.patch,
       additions: t.additions,
       deletions: t.deletions,
       status,
+      ...(clamped.truncated ? { truncated: true } : {}),
     })
   }
 
@@ -91,15 +122,22 @@ export async function computeDiff(cwd: string): Promise<DiffResult> {
   for (const line of porcelain.stdout.split("\n")) {
     if (!line.startsWith("?? ")) continue
     const file = line.slice(3).trim()
+    const abs = join(cwd, file)
     try {
-      const content = readFileSync(join(cwd, file), "utf-8")
-      const { patch, additions } = buildUntrackedPatch(content)
+      if (sniffBinary(abs)) {
+        files.push({ file, patch: "", additions: 0, deletions: 0, status: "added", binary: true })
+        continue
+      }
+      const content = readFileSync(abs, "utf-8")
+      const built = buildUntrackedPatch(content)
+      const clamped = clampPatch(built.patch)
       files.push({
         file,
-        patch,
-        additions,
+        patch: clamped.patch,
+        additions: built.additions,
         deletions: 0,
         status: "added",
+        ...(clamped.truncated ? { truncated: true } : {}),
       })
     } catch {
       continue
