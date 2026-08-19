@@ -32,16 +32,13 @@ jobs:
           CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: flutter build windows --release
 
-      - name: 打包产物
-        shell: pwsh
-        run: |
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath wanling-windows-x64.zip
-
+      # 不自行 zip:浏览器下载 artifact 时 GitHub 会统一打包,预打包会双层压缩。
+      # 通配符铺平上传,下载解压即得 app.exe + dll + data/ 完整运行目录。
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
         with:
           name: wanling-windows-x64
-          path: app/wanling-windows-x64.zip
+          path: app/build/windows/x64/runner/Release/*
           retention-days: 7
 
   build-macos:
@@ -64,15 +61,11 @@ jobs:
       - name: 构建 macOS
         run: flutter build macos --release
 
-      - name: 打包产物
-        run: |
-          cd build/macos/Build/Products/Release
-          zip -r -y "$GITHUB_WORKSPACE/app/wanling-macos-universal.zip" "万灵.app" || \
-            zip -r -y "$GITHUB_WORKSPACE/app/wanling-macos-universal.zip" *.app
-
+      # 不自行 zip(避免与 GitHub artifact 下载层双层压缩),
+      # 直接上传 .app 目录,浏览器下载解压即得可运行的 app.app。
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
         with:
           name: wanling-macos-universal
-          path: app/wanling-macos-universal.zip
+          path: app/build/macos/Build/Products/Release/*.app
           retention-days: 7
