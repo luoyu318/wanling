@@ -5,7 +5,7 @@ import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
 import '../../providers/agent_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;
+import 'package:wanling_core/rendering/message_content_renderer.dart' show FileDownloadSnapshot;
 import '../avatar.dart';
 import 'message_bubble.dart';
 import 'message_quote_block.dart';

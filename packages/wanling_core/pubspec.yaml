@@ -26,3 +26,6 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   encrypt: ^5.0.3
   drift: ^2.20.0
+  flutter_math_fork: ^0.7.3
+  cached_network_image: ^3.4.1
+  url_launcher: ^6.3.1

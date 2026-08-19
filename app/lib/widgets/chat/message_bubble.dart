@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
-import '../../rendering/message_content_renderer.dart';
+import 'package:wanling_core/rendering/message_content_renderer.dart';
 import '../long_press_detector.dart';
 
-export '../markdown_config.dart' show markdownStyle;
+export 'package:wanling_core/widgets/markdown_config.dart' show markdownStyle;
 
 /// 格式化时间戳（参考主流 IM 规则）：
 /// - 今天 → HH:mm

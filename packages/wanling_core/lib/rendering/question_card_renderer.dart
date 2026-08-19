@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/msg_type.dart';
-import '../providers/auth_provider.dart' show apiProvider;
+import 'package:app/providers/auth_provider.dart' show apiProvider; // 临时桥接:Task 7 providers 挪入后 sed 自动收敛为 wanling_core 路径
 import 'package:wanling_core/utils/icon_font.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import 'message_content_renderer.dart';

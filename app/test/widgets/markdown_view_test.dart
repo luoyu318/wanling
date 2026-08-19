@@ -1,6 +1,6 @@
-import 'package:app/widgets/markdown_config.dart';
-import 'package:app/widgets/markdown_latex.dart';
-import 'package:app/widgets/markdown_view.dart';
+import 'package:wanling_core/widgets/markdown_config.dart';
+import 'package:wanling_core/widgets/markdown_latex.dart';
+import 'package:wanling_core/widgets/markdown_view.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

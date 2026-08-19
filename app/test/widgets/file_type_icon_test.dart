@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/widgets/file_type_icon.dart';
+import 'package:wanling_core/widgets/file_type_icon.dart';
 
 void main() {
   testWidgets('PDF shows red background with PDF text', (tester) async {

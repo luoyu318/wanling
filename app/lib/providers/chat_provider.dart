@@ -9,7 +9,7 @@ import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/models/quote.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/models/ws_message.dart';
-import '../rendering/card_renderer.dart';
+import 'package:wanling_core/rendering/card_renderer.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/local_message_store_abstract.dart';
 import 'package:wanling_core/services/websocket_service.dart';

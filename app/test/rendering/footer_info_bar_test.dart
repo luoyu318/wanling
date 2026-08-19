@@ -1,4 +1,4 @@
-import 'package:app/rendering/footer_info_bar.dart';
+import 'package:wanling_core/rendering/footer_info_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

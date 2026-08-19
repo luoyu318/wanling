@@ -1,8 +1,8 @@
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
-import 'package:app/rendering/builtin_renderers.dart';
-import 'package:app/rendering/message_content_renderer.dart' show ContentRendererRegistry, MessageRenderContext;
-import 'package:app/rendering/truncatable_text_block.dart';
+import 'package:wanling_core/rendering/builtin_renderers.dart';
+import 'package:wanling_core/rendering/message_content_renderer.dart' show ContentRendererRegistry, MessageRenderContext;
+import 'package:wanling_core/rendering/truncatable_text_block.dart';
 import 'package:wanling_core/utils/icon_font.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

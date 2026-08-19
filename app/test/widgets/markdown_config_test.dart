@@ -1,4 +1,4 @@
-import 'package:app/widgets/markdown_config.dart';
+import 'package:wanling_core/widgets/markdown_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:markdown_widget/markdown_widget.dart';

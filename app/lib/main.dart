@@ -13,7 +13,7 @@ import 'providers/auth_provider.dart';
 import 'providers/local_message_store_provider.dart';
 import 'providers/saved_logins_provider.dart';
 import 'providers/settings_provider.dart';
-import 'rendering/builtin_renderers.dart';
+import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';

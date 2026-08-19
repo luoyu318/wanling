@@ -1,4 +1,4 @@
-import 'package:app/rendering/truncatable_text_block.dart';
+import 'package:wanling_core/rendering/truncatable_text_block.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wanling_core/utils/file_format.dart';
 import 'package:app/widgets/chat/download_confirm_sheet.dart';
-import 'package:app/widgets/file_type_icon.dart';
+import 'package:wanling_core/widgets/file_type_icon.dart';
 
 void main() {
   const filename = 'report.pdf';

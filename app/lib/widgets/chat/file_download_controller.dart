@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 
-import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;
+import 'package:wanling_core/rendering/message_content_renderer.dart' show FileDownloadSnapshot;
 import 'package:wanling_core/services/file_download_service.dart'
     show DownloadProgress, FileDownloadService;
 import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
