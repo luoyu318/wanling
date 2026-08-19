@@ -1,4 +1,4 @@
-import 'package:app/widgets/feedback/app_snackbar.dart';
+import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 import 'package:app/widgets/chat/message_input_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

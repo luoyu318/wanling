@@ -17,7 +17,7 @@ import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/avatar_picker.dart';
 import '../widgets/feedback/app_dialog.dart';
-import '../widgets/feedback/app_snackbar.dart';
+import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 import '../widgets/settings_group.dart';
 import '../widgets/settings_tile.dart';
 import 'crop_avatar_page.dart';

@@ -8,7 +8,7 @@ import 'package:wanling_core/providers/friend_provider.dart';
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
-import '../widgets/feedback/app_snackbar.dart';
+import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 
 /// 新建群聊页(从好友列表多选,创建 type=group_user 会话)。
 ///

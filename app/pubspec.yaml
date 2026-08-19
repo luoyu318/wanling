@@ -45,13 +45,10 @@ dependencies:
   dio: ^5.4.0
   web_socket_channel: ^3.0.0
   shared_preferences: ^2.2.0
-  encrypt: ^5.0.3
   device_info_plus: ^10.1.0
   go_router: ^14.0.0
   file_picker: ^11.0.2
-  markdown_widget: ^2.3.2+8
   markdown: ^7.3.1
-  flutter_math_fork: ^0.7.3
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
   cached_network_image: ^3.4.1
@@ -60,7 +57,6 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   flutter_background_service: ^5.1.0
   permission_handler: ^11.3.1
-  url_launcher: ^6.3.1
   package_info_plus: ^8.0.0
   nested_scroll_views: ^0.0.12
   wechat_camera_picker: ^4.5.0
@@ -71,17 +67,8 @@ dependencies:
   path_provider: ^2.1.6
   gal: ^2.3.2
   scrollview_observer: ^1.26.3  # 消息列表位置保持 + index 滚动(锁 1.26.3 拿 standby 修复)
-  # 本地消息持久化(drift + SQLCipher 整库加密)
-  drift: ^2.20.0
-  # 强制升 sqlite3 到 3.5.0+,启用 build hook 配置(source: sqlcipher + url_pattern)
-  # sqlite3 默认是 transitive(被 drift 拉的 3.3.4),显式声明为 direct 强制覆盖
-  sqlite3: ^3.5.0
   path: ^1.9.0
-  # sha256(DB 文件名 hash) + SecureStorage 已用,显式声明避免传递依赖告警
-  crypto: ^3.0.3
   open_filex: ^4.7.0
-  # JWT token 安全存储(Android Keystore 加密),替代明文 SharedPreferences
-  flutter_secure_storage: ^9.2.2
   # DirectoryTile 选中态目录名首尾连接无限滚动展示
   marquee: ^2.3.0
 

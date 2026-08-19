@@ -7,7 +7,7 @@ import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/friend_provider.dart';
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
-import '../widgets/feedback/app_snackbar.dart';
+import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 
 /// 用户详情页：按 username 拉对方资料展示 + 加好友按钮。
 ///

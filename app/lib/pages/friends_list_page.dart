@@ -10,7 +10,7 @@ import '../router_helpers.dart' show chatRoute;
 import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
-import '../widgets/feedback/app_snackbar.dart';
+import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 
 /// 好友中心页:好友列表 + 收到请求 + 已发出请求。
 ///
