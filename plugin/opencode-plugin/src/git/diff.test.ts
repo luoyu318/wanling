@@ -4,6 +4,9 @@ vi.mock("fs", async (importActual) => {
   const actual = await importActual<typeof import("fs")>()
   return {
     ...actual,
+    openSync: vi.fn(),
+    readSync: vi.fn(),
+    closeSync: vi.fn(),
     readFileSync: vi.fn(),
   }
 })
@@ -18,9 +21,19 @@ vi.mock("./runner.js", () => ({
   },
 }))
 
-import { readFileSync } from "fs"
+import { closeSync, openSync, readFileSync, readSync } from "fs"
 import { runGit } from "./runner.js"
 import { computeDiff } from "./diff.js"
+
+// 嗅探默认 mock:假 fd + 无 NUL 的 ASCII 前缀字节流(判非二进制),个别用例按需覆盖
+function mockSniffNonBinary(): void {
+  vi.mocked(openSync).mockReset().mockReturnValue(42)
+  vi.mocked(readSync).mockReset().mockImplementation((((_fd: number, buf: Buffer) => {
+    buf.fill(0x61)
+    return buf.length
+  }) as unknown as typeof readSync))
+  vi.mocked(closeSync).mockReset().mockImplementation(() => {})
+}
 
 function mockRunGitSequence(responses: Array<{ stdout?: string; stderr?: string; exitCode?: number } | Error>): void {
   const queue = [...responses]
@@ -39,6 +52,7 @@ describe("computeDiff", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(readFileSync).mockReset()
+    mockSniffNonBinary()
   })
 
   it("纯 modified:1 文件,numstat+status+patch 各 1 次,rev-parse 1 次", async () => {
@@ -71,12 +85,7 @@ describe("computeDiff", () => {
       { stdout: "@@ -1 +1,2 @@\n+new line\n" },
       { stdout: " M main.go\n?? new.txt\n" },
     ])
-    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
-      if (typeof opts === "string" || opts?.encoding) {
-        return "hello\nworld\n"
-      }
-      return Buffer.from("hello\nworld\n")
-    }) as unknown as typeof readFileSync)
+    vi.mocked(readFileSync).mockImplementation((() => "hello\nworld\n") as unknown as typeof readFileSync)
 
     const result = await computeDiff("/proj")
 
@@ -196,12 +205,7 @@ describe("computeDiff", () => {
       { stdout: "" },
       { stdout: "?? 新文件.txt\n" },
     ])
-    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
-      if (typeof opts === "string" || opts?.encoding) {
-        return "hello\n世界\n"
-      }
-      return Buffer.from("hello\n世界\n")
-    }) as unknown as typeof readFileSync)
+    vi.mocked(readFileSync).mockImplementation((() => "hello\n世界\n") as unknown as typeof readFileSync)
 
     const result = await computeDiff("/proj")
 
@@ -219,6 +223,7 @@ describe("computeDiff 大文件/二进制防护", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(readFileSync).mockReset()
+    mockSniffNonBinary()
   })
 
   it("untracked 二进制文件(含 NUL 字节)→ binary:true, patch 空, 不再整读 utf-8", async () => {
@@ -228,13 +233,15 @@ describe("computeDiff 大文件/二进制防护", () => {
       { stdout: "" },
       { stdout: "?? app-release.apk\n" },
     ])
-    // 第一次调用(嗅探,Buffer)返回含 NUL 的 Buffer;若实现错误地只调 utf-8 读会走第二个 mock
-    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
-      if (typeof opts === "string" || opts?.encoding) {
-        throw new Error("FAIL: 不应对二进制文件做 utf-8 整读")
-      }
-      return Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]) // PK 头 + NUL
+    // 嗅探走 fd 前缀读:readSync 返回含 NUL 的前缀 → 判二进制;
+    // 若实现错误地做 utf-8 整读会走 readFileSync mock 抛错
+    vi.mocked(readFileSync).mockImplementation((() => {
+      throw new Error("FAIL: 不应对二进制文件做 utf-8 整读")
     }) as unknown as typeof readFileSync)
+    vi.mocked(readSync).mockImplementation((((_fd: number, buf: Buffer) => {
+      Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]).copy(buf) // PK 头 + NUL
+      return 6
+    }) as unknown as typeof readSync))
 
     const result = await computeDiff("/proj")
 
@@ -247,6 +254,8 @@ describe("computeDiff 大文件/二进制防护", () => {
       status: "added",
       binary: true,
     })
+    expect(openSync).toHaveBeenCalledWith("/proj/app-release.apk", "r")
+    expect(closeSync).toHaveBeenCalledWith(42)
   })
 
   it("untracked 大文本文件(> 256KB patch)→ truncated:true, patch 截断且末行带省略提示", async () => {
@@ -257,12 +266,7 @@ describe("computeDiff 大文件/二进制防护", () => {
       { stdout: "?? big.log\n" },
     ])
     const bigText = "x".repeat(60) + "\n"
-    vi.mocked(readFileSync).mockImplementation(((path: unknown, opts: unknown) => {
-      if (typeof opts === "string" || opts?.encoding) {
-        return bigText.repeat(6000) // ~366KB 文本 → patch ~372KB 超 256KB
-      }
-      return Buffer.from(Array(8000).fill(0x61)) // 纯 ASCII,无 NUL → 非二进制
-    }) as unknown as typeof readFileSync)
+    vi.mocked(readFileSync).mockImplementation((() => bigText.repeat(6000)) as unknown as typeof readFileSync)
 
     const result = await computeDiff("/proj")
 
@@ -290,18 +294,41 @@ describe("computeDiff 大文件/二进制防护", () => {
     expect(result.files[0].additions).toBe(1) // numstat 原值不因截断改写
   })
 
-  it("untracked 文件读失败(权限/消失)→ 仍跳过不抛(既有行为保持)", async () => {
+  it("untracked 文件嗅探读失败(权限/消失)→ 仍跳过不抛(既有行为保持)", async () => {
     mockRunGitSequence([
       { stdout: "true\n" },
       { stdout: "" },
       { stdout: "" },
       { stdout: "?? gone.txt\n" },
     ])
-    vi.mocked(readFileSync).mockImplementation((() => {
+    vi.mocked(openSync).mockImplementation((() => {
       throw new Error("ENOENT")
-    }) as unknown as typeof readFileSync)
+    }) as unknown as typeof openSync)
 
     const result = await computeDiff("/proj")
     expect(result.files).toEqual([])
+  })
+
+  it("多文件总帧超 480KB → 尾部文件 patch 清空并标 truncated,文件条目保留", async () => {
+    // 3 个 tracked 文件,每个 patch ~200KB → 总帧 ~600KB 超 480KB
+    const bigPatch = "+" + "a".repeat(200 * 1024) + "\n"
+    mockRunGitSequence([
+      { stdout: "true\n" },
+      { stdout: "1\t0\tf1.go\n1\t0\tf2.go\n1\t0\tf3.go\n" },
+      { stdout: "M\tf1.go\nM\tf2.go\nM\tf3.go\n" },
+      { stdout: bigPatch }, // f1
+      { stdout: bigPatch }, // f2
+      { stdout: bigPatch }, // f3
+      { stdout: "" },
+    ])
+
+    const result = await computeDiff("/proj")
+
+    const total = Buffer.byteLength(JSON.stringify(result), "utf-8")
+    expect(total).toBeLessThanOrEqual(480 * 1024)
+    expect(result.files).toHaveLength(3) // 条目全保留
+    expect(result.files[0].patch).not.toBe("") // 至少第一个保住 patch
+    const truncatedCount = result.files.filter((f) => f.truncated).length
+    expect(truncatedCount).toBeGreaterThan(0) // 有文件被清空
   })
 })

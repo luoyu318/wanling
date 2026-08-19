@@ -605,13 +605,13 @@ export class WanlingClient extends EventEmitter {
         this.dispatcher.dispatch(call).then((resp) => {
           // 与 sendTypedMessage / sendAgentModels 等 5 处 send 路径同模式:
           // 只在 WS OPEN 时发,避免 CLOSING/CLOSED 状态 ws.send 同步抛错被 catch 吞成
-          // "dispatch 异常" 误导日志(Task 7 review MINOR)。
+          // "dispatch 异常" 误导日志。
           if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
           const out: WSMessage = { op: OP_PLUGIN_RESULT, d: resp as Record<string, unknown> }
           const frame = JSON.stringify(out)
           // 发送侧帧体积警告:server WS 帧上限 512KB,超 400KB 先预警(留缓冲)。
           // 便于定位 session.diff 等大 payload 方法(数据侧截断防护见 git/diff.ts)。
-          // frame.length 是 UTF-16 字符数,须用 Buffer.byteLength 取真实字节数比较(Task 2 review MINOR)。
+          // frame.length 是 UTF-16 字符数,须用 Buffer.byteLength 取真实字节数比较。
           const frameBytes = Buffer.byteLength(frame)
           if (frameBytes > 400 * 1024) {
             logger.warn(`[wanling] RPC 响应超大: method=${call.method} bytes=${frameBytes}(server 帧上限 512KB,可能被断连)`)

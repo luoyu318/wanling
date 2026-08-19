@@ -1,10 +1,12 @@
-import { readFileSync } from "fs"
+import { closeSync, openSync, readFileSync, readSync } from "fs"
 import { join } from "path"
 import { runGit } from "./runner.js"
 
-// 二进制嗅探读取的前缀字节数;单文件 patch 字节上限(超限截断,防大 payload 断连)
+// 二进制嗅探读取的前缀字节数;单文件 patch 字节上限(超限截断,防大 payload 断连);
+// 帧级总预算(480KB:512KB server 帧上限留 JSON 转义余量)
 const BINARY_SNIFF_BYTES = 8000
 const MAX_PATCH_BYTES = 256 * 1024
+const MAX_TOTAL_FRAME_BYTES = 480 * 1024
 
 export type FileDiff = {
   file: string
@@ -61,11 +63,17 @@ function buildUntrackedPatch(content: string): { patch: string; additions: numbe
   return { patch, additions: lines.length }
 }
 
-// 嗅探前 8000 字节:含 NUL 判二进制。
+// 嗅探只读前 8000 字节(fd 前缀读,不整读大文件):含 NUL 判二进制。
 // 读失败(权限/消失)让异常上抛,由调用方 catch 跳过(保持既有行为,且绝不回退 utf-8 整读)
 function sniffBinary(path: string): boolean {
-  const buf = readFileSync(path)
-  return buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+  const fd = openSync(path, "r")
+  try {
+    const buf = Buffer.alloc(BINARY_SNIFF_BYTES)
+    const read = readSync(fd, buf, 0, BINARY_SNIFF_BYTES, 0)
+    return buf.subarray(0, read).includes(0)
+  } finally {
+    closeSync(fd)
+  }
 }
 
 // patch 超限截断:按行边界截,末行追加省略提示,总字节数(含提示行)不超上限
@@ -142,6 +150,15 @@ export async function computeDiff(cwd: string): Promise<DiffResult> {
     } catch {
       continue
     }
+  }
+
+  // 帧级总预算:多文件叠加超限时从尾部文件往前清空 patch(标 truncated),
+  // 文件条目与 additions/deletions 原值保留;至少保留首个文件 patch,防全空帧
+  for (let i = files.length - 1; i >= 1; i--) {
+    if (Buffer.byteLength(JSON.stringify({ files }), "utf-8") <= MAX_TOTAL_FRAME_BYTES) break
+    if (files[i].patch === "") continue
+    files[i].patch = ""
+    files[i].truncated = true
   }
 
   return { files }
