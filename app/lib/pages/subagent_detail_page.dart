@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/message.dart';
-import '../models/msg_type.dart';
-import '../models/ws_message.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import '../providers/auth_provider.dart' show apiProvider, authProvider;
 import '../providers/chat_provider.dart' show wsProvider;
 import '../rendering/message_content_renderer.dart';

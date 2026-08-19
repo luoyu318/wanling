@@ -1,4 +1,4 @@
-import 'package:wanling_core/utils/directory_utils.dart';
+import 'package:app/utils/directory_utils.dart';
 import 'package:app/widgets/directory_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

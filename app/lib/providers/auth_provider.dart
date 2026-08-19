@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/user.dart';
+import 'package:wanling_core/models/user.dart';
 import '../services/api_service.dart';
 import '../services/secure_storage.dart';
 import 'settings_provider.dart';

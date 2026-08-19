@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/session_diff.dart';
+import 'package:wanling_core/models/session_diff.dart';
 import '../services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 

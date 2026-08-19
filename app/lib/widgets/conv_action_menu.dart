@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import 'app_action_menu.dart';
 import 'feedback/app_dialog.dart';
 

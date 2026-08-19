@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import '../providers/auth_provider.dart' show apiProvider;
-import '../utils/icon_font.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/icon_font.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import 'message_content_renderer.dart';
 import 'truncatable_text_block.dart';
 

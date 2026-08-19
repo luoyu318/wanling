@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:highlight/highlight.dart' show highlight;
 
-import '../../utils/code_highlight.dart';
+import 'package:wanling_core/utils/code_highlight.dart';
 import '../feedback/app_text_selection_toolbar.dart';
 
 class CodeHighlightView extends StatefulWidget {

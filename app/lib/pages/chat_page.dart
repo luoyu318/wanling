@@ -8,9 +8,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
-import '../models/agent.dart' show AgentCategory, AgentStatus;
-import '../models/slash_command.dart';
-import '../models/ws_message.dart' show WSMessage;
+import 'package:wanling_core/models/agent.dart' show AgentCategory, AgentStatus;
+import 'package:wanling_core/models/slash_command.dart';
+import 'package:wanling_core/models/ws_message.dart' show WSMessage;
 import '../providers/agent_provider.dart';
 import '../providers/agent_sessions_provider.dart';
 import '../providers/agent_status_provider.dart'
@@ -23,9 +23,9 @@ import '../providers/friend_provider.dart';
 import '../providers/typing_provider.dart';
 import '../services/file_download_service.dart';
 import '../services/websocket_service.dart';
-import '../utils/chat/message_preview.dart' show extractMessageText;
-import '../utils/chat/render_box_utils.dart' show globalRectOf;
-import '../utils/aggregate_card_state.dart' show hasGeneratingAggregateCard;
+import 'package:wanling_core/utils/chat/message_preview.dart' show extractMessageText;
+import 'package:wanling_core/utils/chat/render_box_utils.dart' show globalRectOf;
+import 'package:wanling_core/utils/aggregate_card_state.dart' show hasGeneratingAggregateCard;
 import '../router_helpers.dart' show openFileBrowser;
 import '../widgets/chat/chat_app_bar.dart';
 import '../widgets/chat/chat_input_bar.dart';
@@ -55,7 +55,7 @@ import '../widgets/chat/multi_select_controller.dart';
 import '../widgets/chat/selection_bottom_bar.dart' show SelectionBottomBar;
 import '../widgets/chat/unread_locator_controller.dart';
 import '../widgets/chat/unread_tracker_controller.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/feedback/app_dialog.dart';
 
 /// 聊天页：入参为 convId + agentId。

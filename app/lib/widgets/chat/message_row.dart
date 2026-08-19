@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../models/message.dart';
-import '../../models/msg_type.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import '../../providers/agent_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;

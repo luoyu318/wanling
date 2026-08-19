@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import '../providers/friend_provider.dart';
 import '../providers/user_search_provider.dart';
 import '../widgets/avatar.dart';

@@ -7,7 +7,7 @@ import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier
 import '../../providers/chat_provider.dart' show ChatNotifier, chatProvider;
 import '../../providers/chat_state.dart' show ChatState;
 import '../../providers/conversation_provider.dart' show conversationProvider;
-import '../../utils/debug_log.dart';
+import 'package:wanling_core/utils/debug_log.dart';
 import 'conv_sync_controller.dart' show ConvSyncController;
 import 'jump_controller.dart' show JumpController, dualSliverBottomTarget;
 import 'unread_locator_controller.dart' show UnreadLocatorController;

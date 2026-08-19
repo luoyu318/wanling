@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/account_mark.dart';
+import 'package:wanling_core/models/account_mark.dart';
 import '../theme/account_palette.dart';
 
 /// 账号标记编辑器:颜色圆点单选 + emoji 文本框。

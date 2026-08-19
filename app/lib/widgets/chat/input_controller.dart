@@ -4,13 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 import 'package:wechat_camera_picker/wechat_camera_picker.dart';
 
-import '../../models/msg_type.dart' show MsgType;
-import '../../models/slash_command.dart' show SlashCommand;
+import 'package:wanling_core/models/msg_type.dart' show MsgType;
+import 'package:wanling_core/models/slash_command.dart' show SlashCommand;
 import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/chat_provider.dart' show ChatNotifier;
 import '../../utils/dio_error.dart' show extractDioErrorMessage;
-import '../../utils/file_format.dart' show mimeFromExt;
-import '../../utils/snackbar.dart' show showAppSnackBar, SnackBarType;
+import 'package:wanling_core/utils/file_format.dart' show mimeFromExt;
+import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 import '../avatar_picker.dart' show defaultAssetPickerConfig;
 
 /// 图片扩展名集合：pickFile 据此判定上传结果是 image 还是 file 消息。

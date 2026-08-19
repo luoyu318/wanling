@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../models/slash_command.dart';
-import '../../utils/emoji_editing_controller.dart';
+import 'package:wanling_core/models/slash_command.dart';
+import 'package:wanling_core/utils/emoji_editing_controller.dart';
 import '../feedback/app_text_selection_toolbar.dart';
 import '../panel_item.dart';
 

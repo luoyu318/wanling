@@ -8,11 +8,11 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/common.dart' show CommonDatabase;
 
-import '../models/agent.dart' as model;
-import '../models/conversation.dart' as model;
-import '../models/friendship.dart' as model;
-import '../models/message.dart';
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart' as model;
+import 'package:wanling_core/models/conversation.dart' as model;
+import 'package:wanling_core/models/friendship.dart' as model;
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'local_message_key.dart';
 
 part 'local_message_store.g.dart';

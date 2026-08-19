@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/approval.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/models/approval.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/card_button.dart';
 import '../widgets/card_state_badge.dart';
 import '../widgets/countdown_timer.dart';

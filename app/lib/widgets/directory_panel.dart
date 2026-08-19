@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/agent.dart';
+import 'package:wanling_core/models/agent.dart';
 import '../utils/directory_utils.dart';
 import 'agent_badge.dart';
 import 'avatar.dart';

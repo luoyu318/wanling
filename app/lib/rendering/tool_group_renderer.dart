@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/msg_type.dart';
-import '../utils/icon_font.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/utils/icon_font.dart';
 import '../widgets/chat/shimmer_text.dart';
 import 'message_content_renderer.dart';
 

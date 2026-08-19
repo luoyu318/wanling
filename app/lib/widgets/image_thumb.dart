@@ -1,7 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../utils/image_cache_key.dart';
+import 'package:wanling_core/utils/image_cache_key.dart';
 
 /// 图片缩略图显示尺寸常量（消息列表 / 气泡 / markdown 内嵌图共用）。
 ///

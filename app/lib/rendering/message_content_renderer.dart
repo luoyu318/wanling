@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-import '../models/message.dart';
-import '../models/msg_type.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
 
 /// 消息内容渲染器接口。
 ///

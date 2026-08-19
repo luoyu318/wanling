@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:wanling_core/utils/gallery_image.dart';
 
 import '../../utils/gallery_saver.dart';
-import '../../utils/image_cache_key.dart';
-import '../../utils/snackbar.dart';
+import 'package:wanling_core/utils/image_cache_key.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../long_press_detector.dart';
 import '../panel_item.dart';
 import 'photo_view/photo_view.dart';

@@ -9,7 +9,7 @@ import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/chat_provider.dart' show chatProvider;
 import '../../services/api_service.dart'
     show ApiService, MessageContext, MessageNotFoundException, NoAccessException;
-import '../../utils/snackbar.dart' show showAppSnackBar, SnackBarType;
+import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 
 /// 双 sliver center 几何下「最新消息贴底」的目标 px。
 ///

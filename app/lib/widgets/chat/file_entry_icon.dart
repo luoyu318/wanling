@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../models/file_entry.dart';
+import 'package:wanling_core/models/file_entry.dart';
 
 const _codeColors = <String, Color>{
   'dart': Color(0xFF0175C5),

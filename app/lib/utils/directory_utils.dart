@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/conversation.dart';
+import 'package:wanling_core/models/conversation.dart';
 import '../providers/agent_status_provider.dart';
 
 class DirectoryInfo {

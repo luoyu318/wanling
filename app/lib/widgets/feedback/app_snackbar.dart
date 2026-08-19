@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../utils/snackbar.dart' show SnackBarType;
+import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 
 /// 全局统一位置的轻量提示条。
 ///

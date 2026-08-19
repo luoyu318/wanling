@@ -3,7 +3,7 @@ import 'package:nested_scroll_views/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/user.dart';
+import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/messages_page.dart';
 import '../pages/profile_page.dart';

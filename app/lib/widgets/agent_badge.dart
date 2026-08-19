@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/agent.dart' show AgentCategory;
+import 'package:wanling_core/models/agent.dart' show AgentCategory;
 
 /// Agent 类型标签胶囊。
 ///

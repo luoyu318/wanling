@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import '../services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 

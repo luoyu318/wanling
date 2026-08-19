@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 /// 一行展示 label + value，trailing 是复制 icon（secret 时再加眼睛 icon）。
 /// IM 风：label 灰色小字 + value 黑色 + 复制按钮。

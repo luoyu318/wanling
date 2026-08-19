@@ -1,8 +1,8 @@
-import '../models/agent.dart';
-import '../models/conversation.dart';
-import '../models/friendship.dart';
-import '../models/message.dart';
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/friendship.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'local_message_store_abstract.dart';
 
 /// store 加载中 / 失败时用,所有方法 noop。让 provider 走纯 API 模式。

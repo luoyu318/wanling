@@ -2,10 +2,10 @@ import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import '../providers/auth_provider.dart' show apiProvider;
 import '../providers/friend_provider.dart';
-import '../utils/snackbar.dart' show SnackBarType;
+import 'package:wanling_core/utils/snackbar.dart' show SnackBarType;
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_snackbar.dart';
 

@@ -7,12 +7,12 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../models/ws_message.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import '../utils/avatar_bitmap.dart';
-import '../utils/debug_log.dart';
+import 'package:wanling_core/utils/debug_log.dart';
 import 'notification_service.dart';
-import '../utils/notification_payload.dart';
-import '../utils/reconnect_backoff.dart';
+import 'package:wanling_core/utils/notification_payload.dart';
+import 'package:wanling_core/utils/reconnect_backoff.dart';
 
 /// 通知发送回调。默认走 [NotificationService.instance]，测试可注入替身断言触发。
 typedef ShowMessageNotifier = Future<void> Function({

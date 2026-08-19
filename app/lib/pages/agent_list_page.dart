@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../models/agent.dart';
+import 'package:wanling_core/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../theme/app_colors.dart';

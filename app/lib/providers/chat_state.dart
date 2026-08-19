@@ -1,6 +1,6 @@
-import '../models/conversation.dart';
-import '../models/message.dart';
-import '../models/quote.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/quote.dart';
 
 /// 用户选择的 model override（chat_provider.selectModel 设置）。
 /// 字段命名用 camelCase（chat_provider 内部用），转 WS 协议 snake_case 在 sendText 处。

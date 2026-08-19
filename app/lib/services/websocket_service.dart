@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import '../models/message.dart';
-import '../models/ws_message.dart';
-import '../utils/reconnect_backoff.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/ws_message.dart';
+import 'package:wanling_core/utils/reconnect_backoff.dart';
 import 'local_message_store_abstract.dart';
 
 /// WebSocket 连接状态。banner 用 disconnected 显示「连接断开」。

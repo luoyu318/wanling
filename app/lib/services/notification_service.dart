@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-import '../utils/notification_payload.dart';
+import 'package:wanling_core/utils/notification_payload.dart';
 
 /// 通知渠道 ID 常量。
 class _Channels {

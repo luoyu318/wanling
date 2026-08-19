@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../utils/icon_font.dart';
+import 'package:wanling_core/utils/icon_font.dart';
 
 /// question 工具渲染 body。
 /// 由 ToolCallRenderer 在 name == "question" 时调用。

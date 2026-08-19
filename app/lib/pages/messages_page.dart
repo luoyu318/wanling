@@ -3,13 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/agent.dart' show AgentCategory;
+import 'package:wanling_core/models/agent.dart' show AgentCategory;
 import '../theme/app_colors.dart';
-import '../models/conversation.dart';
+import 'package:wanling_core/models/conversation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../router_helpers.dart';
-import '../utils/emoji_span.dart';
+import 'package:wanling_core/utils/emoji_span.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/conv_action_menu.dart';

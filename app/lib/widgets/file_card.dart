@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../utils/file_format.dart';
+import 'package:wanling_core/utils/file_format.dart';
 import 'file_type_icon.dart';
 
 /// FileCard 的下载状态。

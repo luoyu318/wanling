@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/conversation.dart';
-import '../models/msg_type.dart';
-import '../models/ws_message.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
-import '../utils/diff_merge.dart';
+import 'package:wanling_core/utils/diff_merge.dart';
 import 'auth_provider.dart' show apiProvider, authProvider;
 import 'chat_provider.dart' show wsProvider;
 

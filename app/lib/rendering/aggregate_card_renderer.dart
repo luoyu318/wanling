@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/msg_type.dart';
-import '../models/quote.dart';
+import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/models/quote.dart';
 import 'footer_status_bar.dart';
 import 'message_content_renderer.dart';
 import 'tool_group_renderer.dart';

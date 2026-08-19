@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_colors.dart';
 import '../utils/dio_error.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/password_text_field.dart';
 
 /// 修改密码页：新密码 + 确认密码 + 提交。

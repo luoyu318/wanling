@@ -7,8 +7,8 @@ import '../../providers/agent_sessions_provider.dart' show AgentSessionsNotifier
 import '../../providers/auth_provider.dart' show apiProvider;
 import '../../providers/chat_provider.dart' show chatProvider;
 import '../../providers/conversation_provider.dart' show conversationProvider;
-import '../../utils/debug_log.dart';
-import '../../utils/chat/unread_tracker.dart' show computeNewlySeenUnread;
+import 'package:wanling_core/utils/debug_log.dart';
+import 'package:wanling_core/utils/chat/unread_tracker.dart' show computeNewlySeenUnread;
 
 /// [UnreadTrackerController] 的依赖注入容器。
 ///

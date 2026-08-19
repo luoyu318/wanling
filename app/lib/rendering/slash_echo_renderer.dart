@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../utils/emoji_span.dart';
+import 'package:wanling_core/utils/emoji_span.dart';
 import 'message_content_renderer.dart';
 
 class SlashEchoRenderer implements MessageContentRenderer {

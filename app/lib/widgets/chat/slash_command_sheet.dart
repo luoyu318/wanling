@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../models/slash_command.dart';
+import 'package:wanling_core/models/slash_command.dart';
 import '../../theme/app_colors.dart';
 import 'slash_handle.dart' show AttachSide;
 

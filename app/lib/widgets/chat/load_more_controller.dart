@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/chat_provider.dart' show chatProvider, ChatNotifier;
-import '../../utils/debug_log.dart';
+import 'package:wanling_core/utils/debug_log.dart';
 
 /// [LoadMoreController] 的依赖注入容器。
 ///

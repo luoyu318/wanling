@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/chat_provider.dart' show chatProvider;
-import '../../utils/chat/message_preview.dart' show extractMessageText;
-import '../../utils/snackbar.dart' show showAppSnackBar, SnackBarType;
+import 'package:wanling_core/utils/chat/message_preview.dart' show extractMessageText;
+import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 
 /// [MultiSelectController] 的依赖注入容器。
 ///

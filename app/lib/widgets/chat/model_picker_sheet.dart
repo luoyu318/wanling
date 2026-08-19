@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../models/agent.dart';
-import '../../models/conversation.dart' show SessionMeta;
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart' show SessionMeta;
 import '../../providers/chat_state.dart' show ModelOverride;
 
 /// 模型选择弹出框（紧凑列表 + 搜索 + provider 过滤 pill）。

@@ -8,7 +8,7 @@ import '../theme/app_colors.dart';
 import 'image_thumb.dart';
 import 'markdown_code_wrapper.dart';
 import 'select_all_container.dart';
-import '../utils/gallery_image.dart' show thumbUrl;
+import 'package:wanling_core/utils/gallery_image.dart' show thumbUrl;
 
 /// 允许在 markdown 中点击打开的链接 scheme 白名单。
 ///

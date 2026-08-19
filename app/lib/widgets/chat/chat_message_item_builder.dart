@@ -1,9 +1,9 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../models/conversation.dart' show Conversation;
-import '../../models/message.dart';
-import '../../models/msg_type.dart';
+import 'package:wanling_core/models/conversation.dart' show Conversation;
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/chat_state.dart' show ChatState;
 import '../../providers/settings_provider.dart';

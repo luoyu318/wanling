@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../models/message.dart';
-import '../../models/msg_type.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import '../../rendering/message_content_renderer.dart';
 import '../long_press_detector.dart';
 

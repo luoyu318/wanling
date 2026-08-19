@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../models/session_diff.dart';
+import 'package:wanling_core/models/session_diff.dart';
 import '../providers/session_diff_provider.dart';
 import '../theme/app_colors.dart';
 import '../services/api_service.dart';

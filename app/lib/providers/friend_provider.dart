@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/friendship.dart';
-import '../models/user_summary.dart';
-import '../models/ws_message.dart';
+import 'package:wanling_core/models/friendship.dart';
+import 'package:wanling_core/models/user_summary.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import '../services/api_service.dart';
 import '../services/local_message_store_abstract.dart';
 import '../services/noop_local_message_store.dart';
 import '../services/websocket_service.dart';
-import '../utils/diff_merge.dart';
+import 'package:wanling_core/utils/diff_merge.dart';
 // 复用现有 provider，避免重复定义导致状态分裂。
 import 'auth_provider.dart' show apiProvider, authProvider;
 import 'chat_provider.dart' show wsProvider;

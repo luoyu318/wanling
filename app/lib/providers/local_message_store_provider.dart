@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/agent.dart' as model;
-import '../models/conversation.dart' as model;
-import '../models/friendship.dart' as model;
-import '../models/message.dart';
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart' as model;
+import 'package:wanling_core/models/conversation.dart' as model;
+import 'package:wanling_core/models/friendship.dart' as model;
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import '../services/local_message_store.dart';
 import '../services/local_message_store_abstract.dart';
 import 'auth_provider.dart';

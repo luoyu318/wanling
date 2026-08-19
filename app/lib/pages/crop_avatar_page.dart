@@ -3,8 +3,8 @@ import 'dart:typed_data';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 
-import '../utils/image_normalizer.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/image_normalizer.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 /// 头像裁剪页：用 crop_your_image（纯 Dart）做 1:1 方形裁剪。
 ///

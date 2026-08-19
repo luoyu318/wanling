@@ -3,9 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:highlight/highlight.dart' show highlight;
 
-import '../models/message.dart';
-import '../utils/code_highlight.dart' show languageFromPath, highlightNodesToSpans;
-import '../utils/icon_font.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/utils/code_highlight.dart' show languageFromPath, highlightNodesToSpans;
+import 'package:wanling_core/utils/icon_font.dart';
 import 'message_content_renderer.dart';
 import 'permission_card_renderer.dart' show showPermissionReplySheet;
 import 'question_card_renderer.dart' show showQuestionReplySheet;

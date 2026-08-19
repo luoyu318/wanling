@@ -6,11 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../models/file_content.dart';
-import '../../models/file_entry.dart';
+import 'package:wanling_core/models/file_content.dart';
+import 'package:wanling_core/models/file_entry.dart';
 import '../../providers/file_browser_provider.dart';
 import '../../services/api_service.dart' show RpcException;
-import '../../utils/snackbar.dart' show SnackBarType, showAppSnackBar;
+import 'package:wanling_core/utils/snackbar.dart' show SnackBarType, showAppSnackBar;
 import '../../widgets/chat/code_highlight_view.dart';
 
 class FilePreviewPage extends ConsumerStatefulWidget {

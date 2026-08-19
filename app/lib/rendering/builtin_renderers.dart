@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
-import '../models/msg_type.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import '../pages/text_preview_page.dart';
-import '../utils/emoji_span.dart';
-import '../utils/file_format.dart';
-import '../utils/gallery_image.dart' show thumbUrl;
+import 'package:wanling_core/utils/emoji_span.dart';
+import 'package:wanling_core/utils/file_format.dart';
+import 'package:wanling_core/utils/gallery_image.dart' show thumbUrl;
 import '../widgets/file_card.dart';
 import '../widgets/file_type_icon.dart';
 import '../widgets/image_thumb.dart';

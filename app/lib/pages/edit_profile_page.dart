@@ -7,7 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import 'crop_avatar_page.dart';
 import '../providers/auth_provider.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/avatar.dart';
 import '../widgets/avatar_picker.dart';
 

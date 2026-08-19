@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../utils/file_format.dart' show formatFileSize;
+import 'package:wanling_core/utils/file_format.dart' show formatFileSize;
 import '../file_type_icon.dart' show FileTypeIcon;
 
 /// 文件下载确认底部弹窗。

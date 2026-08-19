@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/account_mark.dart';
-import '../models/saved_login.dart';
-import '../utils/secure_storage.dart';
+import 'package:wanling_core/models/account_mark.dart';
+import 'package:wanling_core/models/saved_login.dart';
+import 'package:wanling_core/utils/secure_storage.dart';
 import 'auth_provider.dart';
 import 'settings_provider.dart';
 

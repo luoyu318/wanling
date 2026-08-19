@@ -7,8 +7,8 @@ import '../widgets/markdown_config.dart';
 import '../widgets/markdown_latex.dart';
 import '../widgets/markdown_strong.dart';
 import '../widgets/markdown_view.dart';
-import '../utils/duration_format.dart';
-import '../utils/icon_font.dart';
+import 'package:wanling_core/utils/duration_format.dart';
+import 'package:wanling_core/utils/icon_font.dart';
 import 'message_content_renderer.dart';
 
 /// MarkdownView 共用的 generators（与 builtin_renderers.dart 一致，改时同步）。

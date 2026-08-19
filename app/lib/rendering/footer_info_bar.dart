@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../utils/duration_format.dart';
+import 'package:wanling_core/utils/duration_format.dart';
 
 /// 聚合卡底部提示条:回合结束(卡 state=done + finished footer)时渲染。
 /// 独立组件,浅灰底通栏,左侧 模式+时长,右侧 模型+tokens。

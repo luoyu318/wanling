@@ -6,7 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import '../../rendering/message_content_renderer.dart' show FileDownloadSnapshot;
 import '../../services/file_download_service.dart'
     show DownloadProgress, FileDownloadService;
-import '../../utils/snackbar.dart' show showAppSnackBar, SnackBarType;
+import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 import 'download_confirm_sheet.dart' show DownloadConfirmSheet;
 
 /// [FileDownloadController] 的依赖注入容器。

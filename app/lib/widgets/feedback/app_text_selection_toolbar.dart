@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../theme/app_menu_style.dart';
-import '../../utils/snackbar.dart' show SnackBarType, showAppSnackBar;
+import 'package:wanling_core/utils/snackbar.dart' show SnackBarType, showAppSnackBar;
 
 /// 估算的菜单宽度（4 个中文按钮 + 3 条 0.5px 分隔线）。
 ///

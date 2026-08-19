@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
-import '../utils/gallery_image.dart' show thumbUrl;
+import 'package:wanling_core/utils/gallery_image.dart' show thumbUrl;
 import 'unread_badge.dart';
 
 /// 内部图片相对路径前缀（/api/files/），用于识别可走缩略图的头像。

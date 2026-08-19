@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/participant.dart';
+import 'package:wanling_core/models/participant.dart';
 import '../services/api_service.dart';
 import 'auth_provider.dart' show apiProvider;
 

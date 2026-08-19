@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 /// 从扫码内容中提取配对 ticket_id。
 /// 识别 `WLPAIR:` 前缀格式，其他内容返回 null。

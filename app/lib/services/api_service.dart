@@ -2,19 +2,19 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import '../models/agent.dart';
-import '../models/approval.dart';
-import '../models/conversation.dart';
-import '../models/friendship.dart';
-import '../models/login_result.dart';
-import '../models/message.dart';
-import '../models/pairing.dart';
-import '../models/register_result.dart';
-import '../models/slash_command.dart';
-import '../models/rpc_method.dart';
-import '../models/unread_info.dart';
-import '../models/user.dart';
-import '../models/user_summary.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/approval.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/friendship.dart';
+import 'package:wanling_core/models/login_result.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/pairing.dart';
+import 'package:wanling_core/models/register_result.dart';
+import 'package:wanling_core/models/slash_command.dart';
+import 'package:wanling_core/models/rpc_method.dart';
+import 'package:wanling_core/models/unread_info.dart';
+import 'package:wanling_core/models/user.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'api_response.dart';
 
 class ApiService {

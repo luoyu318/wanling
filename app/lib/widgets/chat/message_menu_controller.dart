@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../models/message.dart';
-import '../../models/quote.dart';
+import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/quote.dart';
 import '../../providers/chat_provider.dart' show chatProvider;
-import '../../utils/chat/message_preview.dart' show extractLocalPreview;
-import '../../utils/chat/render_box_utils.dart' show listViewRect;
+import 'package:wanling_core/utils/chat/message_preview.dart' show extractLocalPreview;
+import 'package:wanling_core/utils/chat/render_box_utils.dart' show listViewRect;
 import '../../widgets/feedback/app_dialog.dart' show showAppDialog;
 import 'message_context_menu.dart'
     show

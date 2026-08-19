@@ -7,12 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'crop_avatar_page.dart';
-import '../models/agent.dart';
+import 'package:wanling_core/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/auth_provider.dart' show apiProvider;
 import '../providers/conversation_provider.dart';
 import '../router_helpers.dart';
-import '../utils/snackbar.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/app_dropdown_field.dart';
 import '../widgets/avatar.dart';

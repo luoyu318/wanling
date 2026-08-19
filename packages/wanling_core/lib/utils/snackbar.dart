@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/feedback/app_snackbar.dart' as new_impl;
+import 'package:app/widgets/feedback/app_snackbar.dart' as new_impl;
 
 /// SnackBar 类型，保留枚举以维持 API 兼容。
 ///
