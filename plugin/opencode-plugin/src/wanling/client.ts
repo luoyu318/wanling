@@ -611,8 +611,10 @@ export class WanlingClient extends EventEmitter {
           const frame = JSON.stringify(out)
           // 发送侧帧体积警告:server WS 帧上限 512KB,超 400KB 先预警(留缓冲)。
           // 便于定位 session.diff 等大 payload 方法(数据侧截断防护见 git/diff.ts)。
-          if (frame.length > 400 * 1024) {
-            logger.warn(`[wanling] RPC 响应超大: method=${call.method} bytes=${frame.length}(server 帧上限 512KB,可能被断连)`)
+          // frame.length 是 UTF-16 字符数,须用 Buffer.byteLength 取真实字节数比较(Task 2 review MINOR)。
+          const frameBytes = Buffer.byteLength(frame)
+          if (frameBytes > 400 * 1024) {
+            logger.warn(`[wanling] RPC 响应超大: method=${call.method} bytes=${frameBytes}(server 帧上限 512KB,可能被断连)`)
           }
           this.ws.send(frame)
         }).catch((err) => {
