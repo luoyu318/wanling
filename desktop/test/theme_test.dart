@@ -7,7 +7,9 @@ import 'package:wanling_desktop/pages/settings_page.dart';
 import 'package:wanling_desktop/providers/theme_mode_provider.dart';
 
 void main() {
-  testWidgets('themeModeProvider 默认 light,持久化切换到 dark 后重建仍是 dark', (tester) async {
+  testWidgets('themeModeProvider 默认 light,持久化切换到 dark 后重建仍是 dark', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     var container = ProviderContainer();
     expect(container.read(themeModeProvider), ThemeMode.light);
@@ -29,10 +31,12 @@ void main() {
   testWidgets('设置页 RadioListTile 切深色:provider 状态与持久化同步变化', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer();
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: SettingsPage()),
-    ));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: SettingsPage()),
+      ),
+    );
 
     expect(find.text('浅色'), findsOneWidget);
     expect(find.text('深色'), findsOneWidget);

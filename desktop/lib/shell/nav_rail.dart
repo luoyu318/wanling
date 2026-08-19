@@ -22,7 +22,8 @@ class NavRail extends StatelessWidget {
 
     return Container(
       width: 36,
-      color: Theme.of(context).navigationBarTheme.backgroundColor ??
+      color:
+          Theme.of(context).navigationBarTheme.backgroundColor ??
           Theme.of(context).colorScheme.surfaceContainerLow,
       child: Column(
         children: [
