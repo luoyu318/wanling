@@ -15,6 +15,7 @@ dependencies:
   shared_preferences: ^2.2.0
   file_picker: ^11.0.2
   flutter_secure_storage: ^9.2.2
+  cached_network_image: ^3.4.1
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
@@ -23,6 +24,27 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+flutter:
+  # 必须:打包 MaterialIcons 字体。缺失时所有 Icons.*(nav rail/刷新/详情等)
+  # 在真机渲染为乱码方块,widget 测试因测试框架自带字体不会暴露。
+  uses-material-design: true
+  assets:
+    # core widgets(feedback/app_snackbar.dart)引用 logo.png;icon-animated.webp
+    # 与 app 壳保持同构(未来 about 页复用)。路径须与 app 工程一致,core 按相对路径引用。
+    - assets/images/
+    - assets/logo/seal/
+  fonts:
+    # 完整版彩色 emoji 字体(CBDT):Linux 引擎不走 fontconfig 的 emoji fallback,
+    # 消息内容里的 emoji(📂📋😀 等)需打包字体兜底,Android 靠系统字体无需此配置。
+    - family: Noto Color Emoji
+      fonts:
+        - asset: fonts/NotoColorEmojiFull.ttf
+    # iconfont(iconfont.cn,项目 Wanling):聚合卡工具类别图标,
+    # core(utils/icon_font.dart)按 fontFamily 引用,由壳工程负责打包。
+    - family: iconfont
+      fonts:
+        - asset: fonts/iconfont.ttf
 
 hooks:
   user_defines:
