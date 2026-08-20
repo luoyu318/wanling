@@ -3,44 +3,108 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../providers/no_conversation_hint_provider.dart';
+import '../widgets/account_switcher.dart';
 
-/// 左侧导航窄栏:消息/万灵/设置 + 底部退出(账号头像 Task 4 接入)。
-/// 离开消息页时清除 noConversationHintProvider 的无会话提示
-/// (本栏常驻且不 watch 该 provider,清除无 defunct 风险)。
+/// 搜索聚焦请求:工具条 🔍 置 true → ConversationList watch 后聚焦搜索框
+/// 并回置 false(单向脉冲,不 watch 列表自身)。
+final navRailSearchFocusProvider = StateProvider<bool>((ref) => false);
+
+/// 左侧 52px 透明工具条(浮动卡片布局):顶 🔍/＋,中 消息/万灵,
+/// 底 AccountSwitcher(切换账号/退出)。设置入口在标题栏。
+/// 离开消息页清 noConversationHintProvider 逻辑保留。
 class NavRail extends ConsumerWidget {
   const NavRail({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.path;
-    Widget item(IconData icon, String label, String route) {
+    final scheme = Theme.of(context).colorScheme;
+
+    Widget navItem(IconData icon, String label, String route, String key) {
       final selected = location.startsWith(route);
       return Tooltip(
         message: label,
         waitDuration: const Duration(milliseconds: 300),
-        child: IconButton(
-          icon: Icon(icon, size: 20),
-          color: selected ? Theme.of(context).colorScheme.primary : null,
-          onPressed: () {
-            if (route != '/messages') {
-              ref.read(noConversationHintProvider.notifier).state = null;
-            }
-            context.go(route);
-          },
+        child: Material(
+          color: Colors.transparent,
+          child: InkResponse(
+            key: ValueKey(key),
+            onTap: () {
+              if (route != '/messages') {
+                ref.read(noConversationHintProvider.notifier).state = null;
+              }
+              context.go(route);
+            },
+            radius: 18,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(9),
+                color: selected ? scheme.primary.withValues(alpha: 0.12) : null,
+                border: Border.all(color: Colors.transparent),
+              ),
+              child: Stack(
+                children: [
+                  if (selected)
+                    Positioned(
+                      left: 0, top: 8, bottom: 8,
+                      child: Container(width: 3, decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      )),
+                    ),
+                  Center(child: Icon(icon, size: 21,
+                    color: selected ? scheme.primary : scheme.onSurface.withValues(alpha: 0.6))),
+                ],
+              ),
+            ),
+          ),
         ),
       );
     }
 
-    return Container(
-      width: 36,
-      color:
-          Theme.of(context).navigationBarTheme.backgroundColor ??
-          Theme.of(context).colorScheme.surfaceContainerLow,
+    return SizedBox(
+      width: 52,
       child: Column(
         children: [
-          item(Icons.chat_bubble_outline, '消息', '/messages'),
-          item(Icons.extension_outlined, '万灵', '/wanling'),
-          item(Icons.settings_outlined, '设置', '/settings'),
+          const SizedBox(height: 4),
+          Tooltip(
+            message: '搜索',
+            waitDuration: const Duration(milliseconds: 300),
+            child: IconButton(
+              key: const ValueKey('navrail_search'),
+              icon: const Icon(Icons.search, size: 21),
+              color: scheme.onSurface.withValues(alpha: 0.6),
+              onPressed: () {
+                context.go('/messages');
+                ref.read(navRailSearchFocusProvider.notifier).state = true;
+              },
+            ),
+          ),
+          Tooltip(
+            message: '新建会话',
+            waitDuration: const Duration(milliseconds: 300),
+            child: IconButton(
+              key: const ValueKey('navrail_new_chat'),
+              icon: const Icon(Icons.add, size: 22),
+              color: scheme.onSurface.withValues(alpha: 0.6),
+              onPressed: () {
+                // ＋ 语义:跳万灵页发起新会话(点 agent 开聊),不建对话框(YAGNI)
+                final atMessages = location.startsWith('/messages');
+                context.go(atMessages ? '/wanling' : '/messages');
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          navItem(Icons.chat_bubble_outline, '消息', '/messages', 'navrail_messages'),
+          navItem(Icons.extension_outlined, '万灵', '/wanling', 'navrail_wanling'),
+          const Spacer(),
+          // 账号切换:复用登录页 AccountSwitcher(外包 navrail_account key)
+          const KeyedSubtree(
+            key: ValueKey('navrail_account'),
+            child: AccountSwitcher(),
+          ),
         ],
       ),
     );
