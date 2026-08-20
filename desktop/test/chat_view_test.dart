@@ -242,4 +242,58 @@ void main() {
       DateTime(2026, 1, 1, 10, 30),
     );
   });
+
+  testWidgets('agent_session 展示 mode/model 切换条,点击 mode 切换 Build↔Plan', (tester) async {
+    final api = _StubApi(
+      conv: _conv(
+        meta: const SessionMeta(
+          mode: 'build',
+          modelId: 'glm-5.2',
+          providerId: 'zhipu',
+          modelName: 'GLM-5.2',
+          providerName: '智谱',
+        ),
+      ),
+      messages: [_textMsg('m1', 'user', '你好')],
+    );
+    final container = _pumpChat(tester, api: api);
+    await _pumpView(tester, container);
+    await tester.pumpAndSettle();
+
+    // strip 渲染:Build(mode)+ GLM-5.2(model 名)。
+    // strip 是 Text.rich(TextSpan),plainText 为整行拼接,用 textContaining+
+    // findRichText 匹配 span 拼接文本。
+    expect(find.byKey(const ValueKey('session_meta_strip')), findsOneWidget);
+    expect(
+      find.textContaining('Build', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('GLM-5.2', findRichText: true),
+      findsOneWidget,
+    );
+
+    // 点 mode → toggleMode:modeOverride 写入,显示切到 Plan。
+    // mode 段的 Icon(Icons.sync) 有独立 GestureDetector,作稳定点击目标。
+    await tester.tap(find.byIcon(Icons.sync));
+    await tester.pumpAndSettle();
+    final chatKey = (convId: 'conv-1', agentId: null);
+    expect(container.read(chatProvider(chatKey)).modeOverride, 'plan');
+    expect(
+      find.textContaining('Plan', findRichText: true),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('非 agent_session 会话不展示 mode/model 切换条', (tester) async {
+    final api = _StubApi(
+      conv: _conv().copyWith(type: 'dm_user_agent'),
+      messages: [_textMsg('m1', 'user', '你好')],
+    );
+    final container = _pumpChat(tester, api: api);
+    await _pumpView(tester, container);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('session_meta_strip')), findsNothing);
+  });
 }

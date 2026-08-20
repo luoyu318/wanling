@@ -58,7 +58,7 @@ Conversation _conv() => Conversation(
         id: 'agent-1',
         name: '万灵 Agent',
         status: AgentStatus.online,
-        type: 'opencode',
+        type: 'hermes',
       ),
       sessionMeta: const SessionMeta(
         mode: 'build',

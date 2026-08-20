@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/unread_info.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
@@ -33,6 +35,18 @@ Conversation _conv(String id, String name, {int unread = 0}) => Conversation(
   unreadCount: unread,
 );
 
+/// 给会话挂上带 type 的 agent(opencode 条目用,id 固定 '$id-agent')。
+extension _ConvAgentX on Conversation {
+  Conversation withAgentType(String type) => copyWith(
+        agent: AgentSummary(
+          id: '$id-agent',
+          name: title ?? '',
+          status: AgentStatus.online,
+          type: type,
+        ),
+      );
+}
+
 /// 种子 notifier:autoload=false 跳过 load/WS 订阅副作用,直接灌假数据。
 /// core 的 conversationProvider 是 StateNotifierProvider,测试用 overrideWith
 /// 替换 create(与 app 测试 override apiProvider/wsProvider 同族做法)。
@@ -45,6 +59,14 @@ class _SeededConvNotifier extends ConversationListNotifier {
         NoopLocalMessageStore(),
         autoload: false,
       ) {
+    state = seed;
+  }
+}
+
+/// 种子 agent session 二级列表 notifier(构造即 load,种子同步覆盖)。
+class _SeededSessionsNotifier extends AgentSessionsNotifier {
+  _SeededSessionsNotifier(List<Conversation> seed, String agentId)
+    : super(ApiService(baseUrl: ''), WebSocketService(), 'test-user', agentId) {
     state = seed;
   }
 }
@@ -177,5 +199,52 @@ void main() {
 
     expect(find.text(hint), findsNothing);
     expect(container.read(noConversationHintProvider), isNull);
+  });
+
+  testWidgets('消息页:opencode 条目点击进左栏二级 session 列表,点 session 开聊', (tester) async {
+    final oc = _conv('oc', 'OpenCode 主力').withAgentType('opencode');
+    final plain = _conv('c1', '韩劳模');
+    final sessions = [
+      _conv('s1', '本地开发'),
+      _conv('s2', '分支审查'),
+    ];
+    final container = ProviderContainer(overrides: [
+      ..._overrides([oc, plain]),
+      agentSessionsProvider.overrideWith(
+        (ref, agentId) => _SeededSessionsNotifier(
+          agentId == 'oc-agent' ? sessions : const [],
+          agentId,
+        ),
+      ),
+    ]);
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: MessagesPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // opencode 条目点击:不直接选中,左栏切二级列表。
+    await tester.tap(find.text('OpenCode 主力'));
+    await tester.pumpAndSettle();
+    expect(container.read(selectedConvProvider), isNull);
+    expect(find.byKey(const ValueKey('agent_sessions_back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
+
+    // 点 session:选中 + agentId 兜底写入,右侧 ChatView 挂载。
+    await tester.tap(find.byKey(const ValueKey('agent_session_s1')));
+    await tester.pumpAndSettle();
+    expect(container.read(selectedConvProvider), 's1');
+    expect(container.read(selectedAgentIdProvider), 'oc-agent');
+    expect(find.byType(ChatView), findsOneWidget);
+
+    // 返回头回一级列表,已选会话保留。
+    await tester.tap(find.byKey(const ValueKey('agent_sessions_back')));
+    await tester.pumpAndSettle();
+    expect(find.text('OpenCode 主力'), findsOneWidget);
+    expect(container.read(selectedConvProvider), 's1');
   });
 }

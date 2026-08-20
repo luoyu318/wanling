@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/detail_panel_provider.dart';
 import '../providers/no_conversation_hint_provider.dart';
-import '../providers/selected_conv_provider.dart';
+import '../providers/selected_conv_provider.dart' show selectedAgentIdProvider, selectedConvProvider;
+import '../widgets/agent_sessions_pane.dart';
 import '../widgets/conversation_list.dart';
 import '../widgets/detail_panel.dart';
 import 'chat/chat_view.dart';
@@ -15,10 +16,15 @@ const double kDetailPanelWidth = 400;
 /// 宽窗/窄窗分界:<1000 走 Stack 覆盖浮层,≥1000 走 Row 内联挤压。
 const double kDetailPanelWideBreakpoint = 1000;
 
-/// 消息页:三栏布局 —— 左会话列表(240px)+ 中聊天区 + 右详情侧栏。
+/// 消息页:三栏布局 —— 左会话列表(240px,仿 app 两级导航)+ 中聊天区 +
+/// 右详情侧栏。
 /// 选中态由 selectedConvProvider 驱动;agentId 从 conversationProvider 查
-/// (agent_session 不在列表内,查不到时 null 兜底)。
+/// (agent_session 不在列表内,查不到时用 selectedAgentIdProvider 兜底)。
 /// ChatView 按 convId 打 key:切换会话强制重建,列表重新走贴底定位。
+///
+/// 左栏两级导航(仿 app 一级列表按 agent.type 路由):
+/// 点击 opencode 类会话条目 → 左栏切换为该 agent 的二级 session 列表
+/// (AgentSessionsPane,带返回头);点 session 选中开聊。右侧一直是聊天框。
 ///
 /// 详情侧栏(Task 7):
 /// - 宽窗(≥1000):AnimatedContainer 内联在 Row 尾部,开 400px / 关 0,
@@ -29,11 +35,37 @@ const double kDetailPanelWideBreakpoint = 1000;
 /// 无会话提示(noConversationHintProvider):万灵页点无会话 agent 卡片时写入,
 /// 在本页空态展示;切到会话(ref.listen selectedConvProvider)或经 NavRail 离开
 /// 本页即清除,保证提示不残留。
-class MessagesPage extends ConsumerWidget {
+class MessagesPage extends ConsumerStatefulWidget {
   const MessagesPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MessagesPage> createState() => _MessagesPageState();
+}
+
+class _MessagesPageState extends ConsumerState<MessagesPage> {
+  /// 左栏二级模式:选中的 opencode agent id(null = 一级会话列表)。
+  String? _sessionsAgentId;
+
+  /// 左栏:一级会话列表 / 二级 session 列表(带返回头)。
+  Widget _buildLeftPane() {
+    if (_sessionsAgentId != null) {
+      return AgentSessionsPane(
+        agentId: _sessionsAgentId!,
+        onBack: () => setState(() => _sessionsAgentId = null),
+        onOpenSession: (convId, agentId) {
+          ref.read(selectedConvProvider.notifier).state = convId;
+          ref.read(selectedAgentIdProvider.notifier).state = agentId;
+        },
+      );
+    }
+    return ConversationList(
+      onOpenSessions: (agentId) =>
+          setState(() => _sessionsAgentId = agentId),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final panelOpen = ref.watch(detailPanelOpenProvider);
     final selectedId = ref.watch(selectedConvProvider);
@@ -46,12 +78,15 @@ class MessagesPage extends ConsumerWidget {
     final hint = ref.watch(noConversationHintProvider);
     final agentId = selectedId == null
         ? null
+        // agent_session 会话不在 conversationProvider 内,查不到时用
+        // selectedAgentIdProvider 兜底(二级列表选中时写入)。
         : ref
-            .watch(conversationProvider)
-            .where((c) => c.id == selectedId)
-            .firstOrNull
-            ?.agent
-            ?.id;
+              .watch(conversationProvider)
+              .where((c) => c.id == selectedId)
+              .firstOrNull
+              ?.agent
+              ?.id ??
+              ref.watch(selectedAgentIdProvider);
 
     return Scaffold(
       body: LayoutBuilder(
@@ -64,7 +99,9 @@ class MessagesPage extends ConsumerWidget {
 
           final chatArea = Container(
             key: ValueKey('chat_area_$selectedId'),
-            color: scheme.surface,
+            // 聊天区背景对齐 app 聊天页(EDEDED 浅灰/深色对应 scaffold 底色),
+            // 与白色 AppBar、surface 详情侧栏形成层次。
+            color: Theme.of(context).scaffoldBackgroundColor,
             child: selectedId == null
                 ? Center(
                     child: Column(
@@ -112,7 +149,10 @@ class MessagesPage extends ConsumerWidget {
             decoration: BoxDecoration(
               color: scheme.surface,
               border: Border(
-                left: BorderSide(color: scheme.outlineVariant),
+                left: BorderSide(
+                  color: Theme.of(context).dividerTheme.color ??
+                      const Color(0xFFE4E4E4),
+                ),
               ),
               boxShadow: wide || !panelOpen
                   ? null
@@ -133,7 +173,7 @@ class MessagesPage extends ConsumerWidget {
           if (wide) {
             return Row(
               children: [
-                const SizedBox(width: 240, child: ConversationList()),
+                SizedBox(width: 240, child: _buildLeftPane()),
                 const VerticalDivider(width: 1, thickness: 1),
                 Expanded(child: chatArea),
                 panel,
@@ -144,7 +184,7 @@ class MessagesPage extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  const SizedBox(width: 240, child: ConversationList()),
+                  SizedBox(width: 240, child: _buildLeftPane()),
                   const VerticalDivider(width: 1, thickness: 1),
                   Expanded(child: chatArea),
                 ],

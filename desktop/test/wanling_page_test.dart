@@ -8,17 +8,17 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
-import 'package:wanling_desktop/pages/messages_page.dart';
+import 'package:wanling_desktop/pages/chat/chat_view.dart';
 import 'package:wanling_desktop/pages/wanling_page.dart';
 import 'package:wanling_desktop/providers/no_conversation_hint_provider.dart';
 import 'package:wanling_desktop/providers/selected_conv_provider.dart';
-import 'package:wanling_desktop/router.dart';
 
 /// 种子 agent notifier:autoload=false 跳过 load/WS 订阅,直接灌假数据。
 class _SeededAgentNotifier extends AgentListNotifier {
@@ -48,6 +48,14 @@ class _SeededConvNotifier extends ConversationListNotifier {
   }
 }
 
+/// 种子 agent session 二级列表 notifier(构造即 load,种子同步覆盖)。
+class _SeededSessionsNotifier extends AgentSessionsNotifier {
+  _SeededSessionsNotifier(List<Conversation> seed, String agentId)
+      : super(ApiService(baseUrl: ''), WebSocketService(), 'test-user', agentId) {
+    state = seed;
+  }
+}
+
 /// 已登录 auth 种子(镜像 shell_test 模式)。
 class _LoggedInAuth extends AuthNotifier {
   _LoggedInAuth() : super(ApiService(baseUrl: '')) {
@@ -55,7 +63,7 @@ class _LoggedInAuth extends AuthNotifier {
   }
 }
 
-/// 空消息 chat stub:跳转 /messages 后 ChatView 挂载用(镜像 messages_page_test)。
+/// 空消息 chat stub:右栏 ChatView 挂载用(镜像 messages_page_test)。
 class _EmptyChatApi extends ApiService {
   _EmptyChatApi() : super(baseUrl: '');
 
@@ -75,8 +83,9 @@ class _EmptyChatApi extends ApiService {
   }) async => const [];
 }
 
-Agent _agent(String id, String name, AgentStatus status, {String? bio}) =>
-    Agent(id: id, name: name, status: status, bio: bio);
+Agent _agent(String id, String name, AgentStatus status,
+        {String? bio, String type = ''}) =>
+    Agent(id: id, name: name, status: status, bio: bio, type: type);
 
 Conversation _conv(String id, DateTime at, {AgentSummary? agent}) => Conversation(
       id: id,
@@ -94,10 +103,15 @@ Conversation _conv(String id, DateTime at, {AgentSummary? agent}) => Conversatio
 List<Override> _overrides({
   required List<Agent> agents,
   required List<Conversation> convs,
+  Map<String, List<Conversation>> sessions = const {},
 }) =>
     [
       agentListProvider.overrideWith((ref) => _SeededAgentNotifier(agents)),
       conversationProvider.overrideWith((ref) => _SeededConvNotifier(convs)),
+      agentSessionsProvider.overrideWith(
+        (ref, agentId) =>
+            _SeededSessionsNotifier(sessions[agentId] ?? const [], agentId),
+      ),
       authProvider.overrideWith((ref) => _LoggedInAuth()),
       chatProvider.overrideWith(
         (ref, key) => ChatNotifier(
@@ -110,7 +124,19 @@ List<Override> _overrides({
       ),
     ];
 
+Future<void> _pumpPage(WidgetTester tester, ProviderContainer container) async {
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: WanlingPage()),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
   });
@@ -123,13 +149,7 @@ void main() {
     final container = ProviderContainer(overrides: _overrides(agents: agents, convs: []));
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: const MaterialApp(home: WanlingPage()),
-      ),
-    );
-    await tester.pumpAndSettle();
+    await _pumpPage(tester, container);
 
     expect(find.text('OpenCode 主力'), findsOneWidget);
     expect(find.text('闲聊助手'), findsOneWidget);
@@ -148,9 +168,12 @@ void main() {
     final offlineColor = (offlineDot.decoration as BoxDecoration).color;
     expect(onlineColor, const Color(0xFF07C160));
     expect(offlineColor, const Color(0xFFCCCCCC));
+
+    // 右栏聊天区空态。
+    expect(find.text('选择左侧会话开始聊天'), findsOneWidget);
   });
 
-  testWidgets('万灵页:点击 agent 卡片选中该 agent 最新会话并跳 /messages', (tester) async {
+  testWidgets('万灵页:非 opencode agent 点击右栏直接打开最新会话(不跳 /messages)', (tester) async {
     final agents = [_agent('a1', 'OpenCode 主力', AgentStatus.online)];
     final a1 = AgentSummary(id: 'a1', name: 'OpenCode 主力', status: AgentStatus.online);
     final convs = [
@@ -160,52 +183,72 @@ void main() {
     final container = ProviderContainer(overrides: _overrides(agents: agents, convs: convs));
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: container.read(routerProvider)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    container.read(routerProvider).go('/wanling');
-    await tester.pumpAndSettle();
+    await _pumpPage(tester, container);
 
     await tester.tap(find.byKey(const ValueKey('agent_a1')));
     await tester.pumpAndSettle();
 
-    // 选中最新会话(lastMessageAt 最大者)。
+    // 选中最新会话(lastMessageAt 最大者),右栏挂 ChatView。
     expect(container.read(selectedConvProvider), 'conv-new');
-    // 路由切到 /messages(消息页挂载 + ChatView 接线)。
-    expect(find.byType(MessagesPage), findsOneWidget);
+    expect(container.read(selectedAgentIdProvider), 'a1');
+    expect(find.byType(ChatView), findsOneWidget);
   });
 
-  testWidgets('万灵页:agent 无会话时点击仍跳 /messages 并写入提示', (tester) async {
+  testWidgets('万灵页:非 opencode agent 无会话时右栏空态提示', (tester) async {
     final agents = [_agent('a2', '闲聊助手', AgentStatus.offline)];
     final container = ProviderContainer(overrides: _overrides(agents: agents, convs: []));
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: container.read(routerProvider)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    container.read(routerProvider).go('/wanling');
-    await tester.pumpAndSettle();
+    await _pumpPage(tester, container);
 
     await tester.tap(find.byKey(const ValueKey('agent_a2')));
     await tester.pumpAndSettle();
 
-    // 仍切到消息页(不弹「暂无会话」对话框)。
-    expect(find.byType(MessagesPage), findsOneWidget);
-    expect(find.text('与该万灵暂无会话'), findsNothing);
-    // 未选中任何会话 → 消息页空态,提示状态被写入并展示。
+    // 未选中任何会话 → 右栏空态,提示状态被写入并展示。
     expect(container.read(selectedConvProvider), isNull);
     expect(
       container.read(noConversationHintProvider),
       '该 Agent 暂无会话，可从消息页发起',
     );
     expect(find.text('该 Agent 暂无会话，可从消息页发起'), findsOneWidget);
+  });
+
+  testWidgets('万灵页:opencode agent 点击进左栏二级 session 列表,点 session 右栏打开聊天', (tester) async {
+    final agents = [
+      _agent('oc1', 'OpenCode 主力', AgentStatus.online, type: 'opencode'),
+    ];
+    final sessions = [
+      _conv('s1', DateTime(2026, 1, 2)),
+      _conv('s2', DateTime(2026, 1, 1)),
+    ];
+    final container = ProviderContainer(
+      overrides: _overrides(agents: agents, convs: [], sessions: {'oc1': sessions}),
+    );
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    // 点击 opencode agent:左栏切二级列表(带返回头),不选会话。
+    await tester.tap(find.byKey(const ValueKey('agent_oc1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent_session_s2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent_sessions_back')), findsOneWidget);
+    expect(container.read(selectedConvProvider), isNull);
+
+    // 点击 session:选中会话 + agentId 兜底写入,右栏挂 ChatView。
+    await tester.tap(find.byKey(const ValueKey('agent_session_s1')));
+    await tester.pumpAndSettle();
+    expect(container.read(selectedConvProvider), 's1');
+    expect(container.read(selectedAgentIdProvider), 'oc1');
+    expect(find.byType(ChatView), findsOneWidget);
+
+    // 返回头回到一级列表。
+    await tester.tap(find.byKey(const ValueKey('agent_sessions_back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_oc1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsNothing);
+    // 已选会话保留(右栏聊天不丢)。
+    expect(container.read(selectedConvProvider), 's1');
   });
 }

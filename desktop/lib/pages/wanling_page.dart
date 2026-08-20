@@ -1,26 +1,71 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/no_conversation_hint_provider.dart';
 import '../providers/selected_conv_provider.dart';
+import '../widgets/agent_sessions_pane.dart';
+import '../widgets/avatar.dart';
+import 'chat/chat_view.dart';
 
-/// 万灵页:agent 列表(在线状态徽标 + bio)+ 点击进该 agent 的最新会话。
+/// 万灵页:左栏 agent 列表 + 右侧聊天框(与消息页同构的双栏)。
 ///
-/// - 数据源 core agentListProvider(AGENT_ONLINE/OFFLINE WS 实时刷新 status);
-/// - 点击卡片:过滤 conversationProvider 中该 agent 的会话,取 lastMessageAt
-///   最新者写入 selectedConvProvider + context.go('/messages')双栏接线;
-/// - 无会话时(OpenCode 等主 agent 的 agent_session 不在 provider 内):仍切
-///   /messages,清空选中态使消息页空态展示 noConversationHintProvider 的提示。
-class WanlingPage extends ConsumerWidget {
+/// 仿 app 逻辑:
+/// - 左栏一级:agent 列表(在线状态徽标 + bio),数据源 core agentListProvider;
+/// - 点击 opencode 类 agent:左栏进入二级 session 列表(core
+///   agentSessionsProvider(agentId),agent_session 会话不在
+///   conversationProvider 内),带返回;
+/// - 点击非 opencode agent(hermes 等单会话型):右栏直接打开该 agent 最新会话;
+/// - 右侧一直是聊天框:选中会话挂 ChatView,未选中显示空态(无会话 agent 的
+///   提示走 noConversationHintProvider,选中会话即清除)。
+///
+/// 选中态与消息页共享 selectedConvProvider,两页切换选中不丢。
+class WanlingPage extends ConsumerStatefulWidget {
   const WanlingPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final agents = ref.watch(agentListProvider);
-    final scheme = Theme.of(context).colorScheme;
+  ConsumerState<WanlingPage> createState() => _WanlingPageState();
+}
+
+class _WanlingPageState extends ConsumerState<WanlingPage> {
+  /// 左栏二级模式:选中的 opencode agent(null = 一级 agent 列表)。
+  String? _sessionsAgentId;
+
+  @override
+  Widget build(BuildContext context) {
+    // 切到具体会话即清除无会话提示(右栏空态被会话取代)。
+    ref.listen(selectedConvProvider, (prev, next) {
+      if (next != null) {
+        ref.read(noConversationHintProvider.notifier).state = null;
+      }
+    });
+
+    final selectedId = ref.watch(selectedConvProvider);
+    final agentId = selectedId == null
+        ? null
+        // agent_session 会话不在 conversationProvider 内,查不到时用
+        // selectedAgentIdProvider 兜底(二级列表跳转时写入)。
+        : ref
+              .watch(conversationProvider)
+              .where((c) => c.id == selectedId)
+              .firstOrNull
+              ?.agent
+              ?.id ??
+              ref.watch(selectedAgentIdProvider);
+
+    final chatArea = Container(
+      key: ValueKey('wanling_chat_area_$selectedId'),
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: selectedId == null
+          ? _EmptyChatPane(hint: ref.watch(noConversationHintProvider))
+          : ChatView(
+              key: ValueKey('wanling_chat_view_$selectedId'),
+              convId: selectedId,
+              agentId: agentId,
+            ),
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -30,47 +75,48 @@ class WanlingPage extends ConsumerWidget {
             key: const ValueKey('agent_refresh'),
             icon: const Icon(Icons.refresh),
             tooltip: '刷新',
-            onPressed: () => ref.read(agentListProvider.notifier).load(),
+            onPressed: () {
+              ref.read(agentListProvider.notifier).load();
+              final sid = _sessionsAgentId;
+              if (sid != null) {
+                ref.read(agentSessionsProvider(sid).notifier).load();
+              }
+            },
           ),
         ],
       ),
-      body: agents.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.smart_toy_outlined,
-                    size: 48,
-                    color: scheme.onSurface.withValues(alpha: 0.2),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '暂无万灵',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: scheme.onSurface.withValues(alpha: 0.4),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          : ListView.builder(
-              itemCount: agents.length,
-              itemBuilder: (_, i) => _AgentCard(
-                agent: agents[i],
-                onTap: () => _openLatestConversation(context, ref, agents[i]),
-              ),
-            ),
+      body: Row(
+        children: [
+          SizedBox(width: 300, child: _buildLeftPane(context)),
+          const VerticalDivider(width: 1, thickness: 1),
+          Expanded(child: chatArea),
+        ],
+      ),
     );
   }
 
-  /// 过滤该 agent 的会话 → 选最新 → 跳 /messages。
-  void _openLatestConversation(
-    BuildContext context,
-    WidgetRef ref,
-    Agent agent,
-  ) {
+  /// 左栏:一级 agent 列表 / 二级 session 列表(带返回头)。
+  Widget _buildLeftPane(BuildContext context) {
+    if (_sessionsAgentId != null) {
+      return AgentSessionsPane(
+        agentId: _sessionsAgentId!,
+        onBack: () => setState(() => _sessionsAgentId = null),
+        onOpenSession: _openConversation,
+      );
+    }
+    return _AgentListPane(
+      onAgentTap: _onAgentTap,
+      selectedConvId: ref.watch(selectedConvProvider),
+    );
+  }
+
+  void _onAgentTap(Agent agent) {
+    if (agent.type == AgentCategory.opencode) {
+      // opencode:左栏进入二级 session 列表。
+      setState(() => _sessionsAgentId = agent.id);
+      return;
+    }
+    // 非 opencode:右栏直接打开该 agent 最新会话;无会话写提示。
     final convs = ref
         .read(conversationProvider)
         .where((c) => c.agent?.id == agent.id)
@@ -78,27 +124,111 @@ class WanlingPage extends ConsumerWidget {
       ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
 
     if (convs.isEmpty) {
-      // 无匹配会话:不弹「暂无会话」对话框,清空选中态使消息页展示空态提示。
       ref.read(selectedConvProvider.notifier).state = null;
+      ref.read(selectedAgentIdProvider.notifier).state = null;
       ref.read(noConversationHintProvider.notifier).state =
           '该 Agent 暂无会话，可从消息页发起';
-      context.go('/messages');
       return;
     }
-    ref.read(selectedConvProvider.notifier).state = convs.first.id;
-    context.go('/messages');
+    _openConversation(convs.first.id, agent.id);
+  }
+
+  /// 选中会话 + agentId 兜底写入,右栏聊天框打开。
+  void _openConversation(String convId, String agentId) {
+    ref.read(selectedConvProvider.notifier).state = convId;
+    ref.read(selectedAgentIdProvider.notifier).state = agentId;
   }
 }
 
-/// agent 卡片行:色块头像兜底 + name + type 徽标 + 在线状态点 + bio。
+/// 右栏空态:未选中会话时的占位(含无会话 agent 提示)。
+class _EmptyChatPane extends StatelessWidget {
+  final String? hint;
+
+  const _EmptyChatPane({this.hint});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.forum_outlined,
+            size: 48,
+            color: scheme.onSurface.withValues(alpha: 0.2),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '选择左侧会话开始聊天',
+            style: TextStyle(
+              fontSize: 14,
+              color: scheme.onSurface.withValues(alpha: 0.4),
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              hint!,
+              key: const ValueKey('no_conv_hint'),
+              style: TextStyle(fontSize: 13, color: scheme.primary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 一级 agent 列表。
+class _AgentListPane extends ConsumerWidget {
+  final void Function(Agent agent) onAgentTap;
+  final String? selectedConvId;
+
+  const _AgentListPane({required this.onAgentTap, this.selectedConvId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final agents = ref.watch(agentListProvider);
+    final scheme = Theme.of(context).colorScheme;
+    if (agents.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.smart_toy_outlined,
+              size: 48,
+              color: scheme.onSurface.withValues(alpha: 0.2),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '暂无万灵',
+              style: TextStyle(
+                fontSize: 14,
+                color: scheme.onSurface.withValues(alpha: 0.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: agents.length,
+      itemBuilder: (_, i) => _AgentCard(
+        agent: agents[i],
+        onTap: () => onAgentTap(agents[i]),
+      ),
+    );
+  }
+}
+
+/// agent 卡片行:头像(真图兜底色块) + name + type 徽标 + 在线状态点 + bio。
 class _AgentCard extends StatelessWidget {
   final Agent agent;
   final VoidCallback onTap;
 
   const _AgentCard({required this.agent, required this.onTap});
-
-  /// 按 name 稳定取色(头像色块兜底,对齐 IM 惯例)。
-  Color get _avatarColor => Colors.primaries[agent.name.hashCode.abs() % Colors.primaries.length];
 
   @override
   Widget build(BuildContext context) {
@@ -112,14 +242,7 @@ class _AgentCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: _avatarColor.withValues(alpha: 0.85),
-              child: Text(
-                agent.name.isEmpty ? '?' : agent.name.characters.first,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ),
+            Avatar(name: agent.name, url: agent.avatarUrl, size: 36, radius: 18),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

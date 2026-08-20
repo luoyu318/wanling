@@ -274,8 +274,9 @@ class _MessageBubble extends StatelessWidget {
             children: [
               Flexible(
                 child: ConstrainedBox(
+                  // 气泡最大占可用宽 95%(右侧留 5% 边距,对齐用户要求)。
                   constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth * 0.7,
+                    maxWidth: constraints.maxWidth * 0.95,
                   ),
                   child: wrapped,
                 ),

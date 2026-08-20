@@ -2,10 +2,16 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/slash_command.dart' show SlashCommand;
 
+import 'panel_scroll.dart';
+
 /// 桌面 slash 命令面板:列出过滤后命令(name + 描述),↑↓ 高亮 / Enter/点击选中。
 ///
 /// 由 DesktopInputBar 经 OverlayEntry 渲染在输入框上方;
 /// 本组件只管展示与交互回调,过滤/高亮状态由父级持有。
+///
+/// 滚动跟随策略(防 hover 连环滚动):hover 改高亮**永不**触发滚动;
+/// 仅父级在键盘 ↑↓ 导航时调 [followHighlight](最小滚动跟随),
+/// 过滤结果变化时 jumpTo 保持高亮项可见(无动画)。
 class SlashPanel extends StatefulWidget {
   final List<SlashCommand> commands;
   final int highlightedIndex;
@@ -21,28 +27,30 @@ class SlashPanel extends StatefulWidget {
   });
 
   @override
-  State<SlashPanel> createState() => _SlashPanelState();
+  State<SlashPanel> createState() => SlashPanelState();
 }
 
-class _SlashPanelState extends State<SlashPanel> {
+class SlashPanelState extends State<SlashPanel> {
   final List<GlobalKey> _itemKeys = [];
 
   @override
   void didUpdateWidget(SlashPanel old) {
     super.didUpdateWidget(old);
-    if (old.highlightedIndex != widget.highlightedIndex ||
-        old.commands != widget.commands) {
-      _scheduleScrollToHighlight();
+    // 仅过滤结果变化(列表长度/实例变)时校正滚动,hover 高亮变化不滚。
+    if (old.commands != widget.commands) {
+      _scheduleReveal(animate: false);
     }
   }
 
-  /// 高亮变化后滚到可见(键盘 ↑↓ 越屏时跟随)。
-  void _scheduleScrollToHighlight() {
+  /// 键盘导航入口:最小滚动跟随高亮项(可见即不动)。
+  void followHighlight() => _scheduleReveal(animate: true);
+
+  void _scheduleReveal({required bool animate}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final idx = widget.highlightedIndex;
       if (idx < 0 || idx >= _itemKeys.length) return;
       final ctx = _itemKeys[idx].currentContext;
-      if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 80));
+      if (ctx != null) revealItemMinimal(ctx, animate: animate);
     });
   }
 

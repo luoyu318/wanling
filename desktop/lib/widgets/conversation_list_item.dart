@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
-/// 会话列表项(纯展示组件):头像占位方块 + 名称 + 摘要 + 未读角标。
+import 'avatar.dart';
+
+/// 会话列表项(纯展示组件):头像([Avatar],真图+字母色块兜底+未读 badge) +
+/// 名称 + 摘要 + 时间。
 /// 所有数据由构造参数显式传入,选中态由 [selected] 控制。
 class ConversationListItem extends StatelessWidget {
   final String convId;
   final String name;
   final String subtitle;
   final String time;
+  final String? avatarUrl;
   final int unreadCount;
   final bool selected;
   final VoidCallback? onTap;
@@ -17,6 +21,7 @@ class ConversationListItem extends StatelessWidget {
     required this.name,
     required this.subtitle,
     required this.time,
+    this.avatarUrl,
     this.unreadCount = 0,
     this.selected = false,
     this.onTap,
@@ -34,22 +39,13 @@ class ConversationListItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: Row(
             children: [
-              // 头像占位方块:名称首字符,无网络图片依赖(Task 后续接头像再换)。
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  name.isEmpty ? '#' : name.characters.first,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: scheme.onPrimaryContainer,
-                  ),
-                ),
+              // 头像:真图优先,字母色块兜底,未读红圆 badge 在右上角(对齐 app)。
+              Avatar(
+                name: name,
+                url: avatarUrl,
+                size: 36,
+                radius: 8,
+                unreadCount: unreadCount,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -82,36 +78,13 @@ class ConversationListItem extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // 右列:上时间(常显),下未读角标(无未读时占位保持行高稳定)。
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    time,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: scheme.onSurface.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  if (unreadCount > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: scheme.error,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '$unreadCount',
-                        style: TextStyle(fontSize: 11, color: scheme.onError),
-                      ),
-                    )
-                  else
-                    const SizedBox(height: 17),
-                ],
+              // 右列:时间(未读 badge 已挪到头像右上角)。
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.onSurface.withValues(alpha: 0.4),
+                ),
               ),
             ],
           ),

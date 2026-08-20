@@ -67,6 +67,10 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   final _layerLink = LayerLink();
+  // 面板 key:键盘 ↑↓ 导航后调 state.followHighlight() 最小滚动跟随
+  // (hover 不滚,防连环滚动,见 slash_panel.dart 注释)。
+  final _slashPanelKey = GlobalKey<SlashPanelState>();
+  final _mentionPanelKey = GlobalKey<MentionPanelState>();
 
   /// slash catalog(agent 会话 initState 拉取;非 agent 会话恒空)。
   List<SlashCommand> _catalog = const [];
@@ -194,18 +198,22 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
           child: const SizedBox.expand(),
         ),
         CompositedTransformFollower(
+          // 向上弹:面板底边对齐输入区顶边(offset 6 露出缝隙),
+          // 避免面板出现在输入区下方(窗口外被裁)。
           link: _layerLink,
-          targetAnchor: Alignment.bottomLeft,
-          followerAnchor: Alignment.topLeft,
+          targetAnchor: Alignment.topLeft,
+          followerAnchor: Alignment.bottomLeft,
           offset: const Offset(0, -6),
           child: _slashItems != null
               ? SlashPanel(
+                  key: _slashPanelKey,
                   commands: _slashItems!,
                   highlightedIndex: _highlight,
                   onHover: (i) => _setHighlight(i),
                   onSelected: _applySlash,
                 )
               : MentionPanel(
+                  key: _mentionPanelKey,
                   members: _mentionItems!,
                   highlightedIndex: _highlight,
                   onHover: (i) => _setHighlight(i),
@@ -227,6 +235,15 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
     _panelEntry?.markNeedsBuild();
   }
 
+  /// 键盘导航后让面板最小滚动跟随高亮项(内部 postFrame,面板重建后执行)。
+  void _followPanelHighlight() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _slashPanelKey.currentState?.followHighlight();
+      _mentionPanelKey.currentState?.followHighlight();
+    });
+  }
+
   // ============ 键盘:Enter 发送 / Shift+Enter 换行 / 面板导航 ============
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
@@ -240,10 +257,12 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
       final count = _slashItems?.length ?? _mentionItems?.length ?? 0;
       if (key == LogicalKeyboardKey.arrowDown && count > 0) {
         _setHighlight((_highlight + 1) % count);
+        _followPanelHighlight();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowUp && count > 0) {
         _setHighlight((_highlight - 1 + count) % count);
+        _followPanelHighlight();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.escape) {
@@ -425,7 +444,11 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
         decoration: BoxDecoration(
           color: scheme.surface,
           border: Border(
-            top: BorderSide(color: scheme.outlineVariant),
+            // 与会话列表右边框(AppBar 下边框等)同色:主题 divider 色。
+            top: BorderSide(
+              color: Theme.of(context).dividerTheme.color ??
+                  const Color(0xFFE4E4E4),
+            ),
           ),
         ),
         padding: const EdgeInsets.fromLTRB(10, 4, 6, 6),

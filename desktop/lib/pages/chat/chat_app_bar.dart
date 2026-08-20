@@ -22,7 +22,7 @@ class ChatAppBar extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: scheme.surface,
-        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+        border: Border(bottom: BorderSide(color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4))),
       ),
       child: Row(
         children: [

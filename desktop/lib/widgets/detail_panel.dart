@@ -34,7 +34,7 @@ class DetailPanel extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: scheme.outlineVariant),
+                bottom: BorderSide(color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),
               ),
             ),
             child: Row(
@@ -73,7 +73,7 @@ class DetailPanel extends ConsumerWidget {
             height: 40,
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: scheme.outlineVariant),
+                bottom: BorderSide(color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),
               ),
             ),
             child: Row(

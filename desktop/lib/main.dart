@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,8 +12,26 @@ import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/services/notification_service.dart';
 import 'app.dart';
 
+/// 桌面启动诊断日志(对齐 app 壳):逐里程碑追加写 exe 同目录 wanling-startup.log,
+/// GUI 应用无控制台可看,文件日志是唯一线索源。IO 失败静默吞(诊断不阻主流程)。
+void _desktopStartupLog(String msg) {
+  try {
+    final dir = File(Platform.resolvedExecutable).parent;
+    final f = File('${dir.path}${Platform.pathSeparator}wanling-startup.log');
+    f.writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $msg\n',
+      mode: FileMode.append,
+    );
+  } catch (_) {}
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _desktopStartupLog('main: binding initialized');
+  // 首帧里程碑:区分「卡在 runApp 前」vs「渲染后无窗口/被遮」。
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => _desktopStartupLog('main: first frame rendered'),
+  );
   // 消息内容渲染注册表:Text/Markdown/Image/File/Card/Aggregate 等内置 renderer。
   registerBuiltinRenderers();
   // 桌面通知初始化(Windows/Linux settings 由 core notification_service 处理)
@@ -21,6 +40,7 @@ Future<void> main() async {
   // 再按 app 壳同序恢复:settings → savedLogins → 登录态。
   // restoreSession 完成后才 runApp,首帧即最终登录态,无 /login 闪现。
   final prefs = await SharedPreferences.getInstance();
+  _desktopStartupLog('main: prefs loaded');
   final container = ProviderContainer(
     overrides: [sharedPrefsProvider.overrideWithValue(prefs)],
   );
@@ -60,4 +80,5 @@ Future<void> main() async {
       child: const WanlingDesktopApp(),
     ),
   );
+  _desktopStartupLog('main: runApp done');
 }

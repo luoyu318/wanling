@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:wanling_core/models/agent.dart' show AgentCategory;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/selected_conv_provider.dart';
@@ -9,11 +10,14 @@ import 'conversation_list_item.dart';
 /// 会话列表列:顶部搜索框(本地按 displayName 过滤)+ 会话列表。
 /// 数据源 core conversationProvider(`StateNotifier<List<Conversation>>`,
 /// 内部已排序:置顶在前,组内按 lastMessageAt 倒序)。
-/// 点击会话:写 selectedConvProvider 并触发 [onSelected] 回调。
+/// 点击会话仿 app 一级列表路由:多 session 开发型 agent(opencode 类)走
+/// [onOpenSessions] 进二级 session 列表;其余写 selectedConvProvider 并触发
+/// [onSelected] 回调。
 class ConversationList extends ConsumerStatefulWidget {
   final ValueChanged<String>? onSelected;
+  final ValueChanged<String>? onOpenSessions;
 
-  const ConversationList({super.key, this.onSelected});
+  const ConversationList({super.key, this.onSelected, this.onOpenSessions});
 
   @override
   ConsumerState<ConversationList> createState() => _ConversationListState();
@@ -100,6 +104,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                     return ConversationListItem(
                       convId: c.id,
                       name: c.displayName,
+                      avatarUrl: c.displayAvatarUrl,
                       subtitle: c.lastMessagePreview(
                         currentUserId: currentUserId,
                         isGroup: c.isGroup,
@@ -109,6 +114,14 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                       unreadCount: c.unreadCount,
                       selected: c.id == selectedId,
                       onTap: () {
+                        // 一级列表按 agent.type 路由(仿 app):
+                        // 多 session 开发型(opencode 类)→ 二级 session 列表;
+                        // 其余 → 直接选中开聊。type 缺字段 fallback '' 走单聊。
+                        final agentType = c.agent?.type ?? '';
+                        if (AgentCategory.supportsMultiSession(agentType)) {
+                          widget.onOpenSessions?.call(c.agent!.id);
+                          return;
+                        }
                         ref.read(selectedConvProvider.notifier).state = c.id;
                         widget.onSelected?.call(c.id);
                       },

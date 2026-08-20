@@ -128,10 +128,14 @@ Future<_Bar> _pumpBar(
       container: container,
       child: MaterialApp(
         home: Scaffold(
-          body: DesktopInputBar(
-            convId: 'conv-1',
-            agentId: agentId,
-            filePicker: picker,
+          // 底部对齐模拟真实布局(输入区贴窗口底),面板向上弹出仍在视口内。
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: DesktopInputBar(
+              convId: 'conv-1',
+              agentId: agentId,
+              filePicker: picker,
+            ),
           ),
         ),
       ),

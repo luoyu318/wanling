@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/participant.dart' show Participant;
 
+import 'panel_scroll.dart';
+
 /// 桌面 @ 提及面板:列出会话参与者,↑↓ 高亮 / Enter/点击选中。
-/// 与 [SlashPanel] 同构(slash_panel.dart 共无共享依赖,各自独立实现)。
+/// 与 [SlashPanel] 同构(滚动策略一致:hover 不滚,键盘导航最小滚动跟随,
+/// 见 slash_panel.dart 注释)。
 class MentionPanel extends StatefulWidget {
   final List<Participant> members;
   final int highlightedIndex;
@@ -19,26 +22,31 @@ class MentionPanel extends StatefulWidget {
   });
 
   @override
-  State<MentionPanel> createState() => _MentionPanelState();
+  State<MentionPanel> createState() => MentionPanelState();
 }
 
-class _MentionPanelState extends State<MentionPanel> {
+class MentionPanelState extends State<MentionPanel> {
   final List<GlobalKey> _itemKeys = [];
 
   @override
   void didUpdateWidget(MentionPanel old) {
     super.didUpdateWidget(old);
-    if (old.highlightedIndex != widget.highlightedIndex ||
-        old.members != widget.members) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final idx = widget.highlightedIndex;
-        if (idx < 0 || idx >= _itemKeys.length) return;
-        final ctx = _itemKeys[idx].currentContext;
-        if (ctx != null) {
-          Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 80));
-        }
-      });
+    // 仅成员列表变化时校正滚动,hover 高亮变化不滚。
+    if (old.members != widget.members) {
+      _scheduleReveal(animate: false);
     }
+  }
+
+  /// 键盘导航入口:最小滚动跟随高亮项(可见即不动)。
+  void followHighlight() => _scheduleReveal(animate: true);
+
+  void _scheduleReveal({required bool animate}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final idx = widget.highlightedIndex;
+      if (idx < 0 || idx >= _itemKeys.length) return;
+      final ctx = _itemKeys[idx].currentContext;
+      if (ctx != null) revealItemMinimal(ctx, animate: animate);
+    });
   }
 
   @override
