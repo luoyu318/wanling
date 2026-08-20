@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: app
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -37,8 +37,8 @@ jobs:
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wanling-windows-x64
-          path: app/build/windows/x64/runner/Release/*
+          name: wanling-windows-x64-desktop
+          path: desktop/build/windows/x64/runner/Release/*
           retention-days: 7
 
   build-macos:
@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: app
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +66,6 @@ jobs:
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wanling-macos-universal
-          path: app/build/macos/Build/Products/Release/*.app
+          name: wanling-macos-universal-desktop
+          path: desktop/build/macos/Build/Products/Release/*.app
           retention-days: 7

@@ -37,8 +37,10 @@ install-hooks: ## 配置 git hooks（clone 后必跑一次）
 lint: ## 三端 lint
 	@echo "🔍 [Go] golangci-lint..."
 	@cd server && golangci-lint run --timeout 5m ./...
-	@echo "🔍 [Flutter] dart analyze..."
+	@echo "🔍 [Flutter/app] dart analyze..."
 	@cd app && dart analyze lib 2>&1 | tee /dev/stderr | (! grep 'error •')
+	@echo "🔍 [Flutter/desktop] dart analyze..."
+	@cd desktop && dart analyze lib test 2>&1 | tee /dev/stderr | (! grep 'error •')
 	@echo "🔍 [Plugin] eslint..."
 	@cd plugin/opencode-plugin && npx eslint src/
 	@echo "🔍 [SDK/TS] eslint..."
@@ -57,8 +59,10 @@ typecheck: ## 三端类型检查
 test: ## 三端测试
 	@echo "🔍 [Go] go test -race..."
 	@cd server && go test -race -count=1 ./...
-	@echo "🔍 [Flutter] flutter test..."
+	@echo "🔍 [Flutter/app] flutter test..."
 	@cd app && flutter test
+	@echo "🔍 [Flutter/desktop] flutter test..."
+	@cd desktop && flutter test
 	@echo "🔍 [Plugin] vitest run..."
 	@cd plugin/opencode-plugin && npx vitest run
 	@echo "🔍 [SDK/TS] vitest run..."
