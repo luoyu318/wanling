@@ -14,6 +14,7 @@ import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_desktop/pages/chat/chat_view.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
+import 'package:wanling_desktop/providers/no_conversation_hint_provider.dart';
 import 'package:wanling_desktop/providers/selected_conv_provider.dart';
 
 /// 构造测试会话。字段按 core Conversation 实际必填参数:
@@ -147,5 +148,34 @@ void main() {
 
     expect(find.text('部署问题'), findsOneWidget);
     expect(find.text('M2 桌面开发'), findsNothing);
+  });
+
+  testWidgets('消息页:空态展示无会话提示,切到会话后清除', (tester) async {
+    const hint = '该 Agent 暂无会话，可从消息页发起';
+    final convs = [_conv('c1', 'M2 桌面开发'), _conv('c2', '部署问题')];
+    final container = ProviderContainer(overrides: [
+      ..._overrides(convs),
+      noConversationHintProvider.overrideWith((ref) => hint),
+    ]);
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: MessagesPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 未选中会话 → 空态展示提示文案。
+    expect(find.text('选择一个会话开始聊天'), findsOneWidget);
+    expect(find.text(hint), findsOneWidget);
+
+    // 切到具体会话 → 提示被清除且不再展示。
+    await tester.tap(find.text('M2 桌面开发'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(hint), findsNothing);
+    expect(container.read(noConversationHintProvider), isNull);
   });
 }

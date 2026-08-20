@@ -16,6 +16,7 @@ import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
 import 'package:wanling_desktop/pages/wanling_page.dart';
+import 'package:wanling_desktop/providers/no_conversation_hint_provider.dart';
 import 'package:wanling_desktop/providers/selected_conv_provider.dart';
 import 'package:wanling_desktop/router.dart';
 
@@ -178,7 +179,7 @@ void main() {
     expect(find.byType(MessagesPage), findsOneWidget);
   });
 
-  testWidgets('万灵页:agent 无会话时点击提示不跳转', (tester) async {
+  testWidgets('万灵页:agent 无会话时点击仍跳 /messages 并写入提示', (tester) async {
     final agents = [_agent('a2', '闲聊助手', AgentStatus.offline)];
     final container = ProviderContainer(overrides: _overrides(agents: agents, convs: []));
     addTearDown(container.dispose);
@@ -186,15 +187,25 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: WanlingPage()),
+        child: MaterialApp.router(routerConfig: container.read(routerProvider)),
       ),
     );
+    await tester.pumpAndSettle();
+    container.read(routerProvider).go('/wanling');
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('agent_a2')));
     await tester.pumpAndSettle();
 
-    expect(find.text('与该万灵暂无会话'), findsOneWidget);
+    // 仍切到消息页(不弹「暂无会话」对话框)。
+    expect(find.byType(MessagesPage), findsOneWidget);
+    expect(find.text('与该万灵暂无会话'), findsNothing);
+    // 未选中任何会话 → 消息页空态,提示状态被写入并展示。
     expect(container.read(selectedConvProvider), isNull);
+    expect(
+      container.read(noConversationHintProvider),
+      '该 Agent 暂无会话，可从消息页发起',
+    );
+    expect(find.text('该 Agent 暂无会话，可从消息页发起'), findsOneWidget);
   });
 }

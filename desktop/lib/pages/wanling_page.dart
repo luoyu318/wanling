@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
+import '../providers/no_conversation_hint_provider.dart';
 import '../providers/selected_conv_provider.dart';
 
 /// 万灵页:agent 列表(在线状态徽标 + bio)+ 点击进该 agent 的最新会话。
@@ -11,7 +12,8 @@ import '../providers/selected_conv_provider.dart';
 /// - 数据源 core agentListProvider(AGENT_ONLINE/OFFLINE WS 实时刷新 status);
 /// - 点击卡片:过滤 conversationProvider 中该 agent 的会话,取 lastMessageAt
 ///   最新者写入 selectedConvProvider + context.go('/messages')双栏接线;
-/// - 无会话时 SnackBar 提示不跳转(新配对 agent 还没说过话的常见态)。
+/// - 无会话时(OpenCode 等主 agent 的 agent_session 不在 provider 内):仍切
+///   /messages,清空选中态使消息页空态展示 noConversationHintProvider 的提示。
 class WanlingPage extends ConsumerWidget {
   const WanlingPage({super.key});
 
@@ -76,9 +78,11 @@ class WanlingPage extends ConsumerWidget {
       ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
 
     if (convs.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('与该万灵暂无会话'), duration: Duration(seconds: 2)),
-      );
+      // 无匹配会话:不弹「暂无会话」对话框,清空选中态使消息页展示空态提示。
+      ref.read(selectedConvProvider.notifier).state = null;
+      ref.read(noConversationHintProvider.notifier).state =
+          '该 Agent 暂无会话，可从消息页发起';
+      context.go('/messages');
       return;
     }
     ref.read(selectedConvProvider.notifier).state = convs.first.id;

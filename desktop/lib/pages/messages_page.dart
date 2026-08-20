@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/detail_panel_provider.dart';
+import '../providers/no_conversation_hint_provider.dart';
 import '../providers/selected_conv_provider.dart';
 import '../widgets/conversation_list.dart';
 import '../widgets/detail_panel.dart';
@@ -24,6 +25,10 @@ const double kDetailPanelWideBreakpoint = 1000;
 ///   聊天区随之后缩;
 /// - 窄窗(<1000):Stack 右侧覆盖浮层(带投影),不挤压聊天区。
 /// 面板内容仅在展开时挂载(收起即卸载,sessionDiffProvider 随之释放)。
+///
+/// 无会话提示(noConversationHintProvider):万灵页点无会话 agent 卡片时写入,
+/// 在本页空态展示;切到会话(ref.listen selectedConvProvider)或经 NavRail 离开
+/// 本页即清除,保证提示不残留。
 class MessagesPage extends ConsumerWidget {
   const MessagesPage({super.key});
 
@@ -32,6 +37,13 @@ class MessagesPage extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final panelOpen = ref.watch(detailPanelOpenProvider);
     final selectedId = ref.watch(selectedConvProvider);
+    // 切到具体会话即清除万灵页的无会话提示(空态被会话取代)。
+    ref.listen(selectedConvProvider, (prev, next) {
+      if (next != null) {
+        ref.read(noConversationHintProvider.notifier).state = null;
+      }
+    });
+    final hint = ref.watch(noConversationHintProvider);
     final agentId = selectedId == null
         ? null
         : ref
@@ -71,6 +83,17 @@ class MessagesPage extends ConsumerWidget {
                             color: scheme.onSurface.withValues(alpha: 0.4),
                           ),
                         ),
+                        if (hint != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            hint,
+                            key: const ValueKey('no_conv_hint'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   )
