@@ -101,7 +101,8 @@ class ChatView extends ConsumerWidget {
           Container(
             key: const ValueKey('session_meta_strip'),
             width: double.infinity,
-            color: scheme.surface,
+            // 透明透出外层聊天卡片底色(Task 7 CardContainer)
+            color: Colors.transparent,
             padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
             child: SessionMetaStrip(
               meta: chat.sessionMeta!,
@@ -117,7 +118,8 @@ class ChatView extends ConsumerWidget {
           Container(
             key: const ValueKey('env_meta_strip'),
             width: double.infinity,
-            color: scheme.surface,
+            // 透明透出外层聊天卡片底色(Task 7 CardContainer)
+            color: Colors.transparent,
             child: EnvMetaStrip(
               cwd: chat.directory,
               gitBranch: chat.sessionMeta?.gitBranch,

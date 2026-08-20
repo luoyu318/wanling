@@ -43,7 +43,8 @@ class ChatAppBar extends ConsumerWidget {
       height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: scheme.surface,
+        // 透明透出外层聊天卡片底色(Task 7 CardContainer)
+        color: Colors.transparent,
         border: Border(bottom: BorderSide(color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4))),
       ),
       child: Row(

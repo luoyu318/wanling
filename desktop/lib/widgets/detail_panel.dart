@@ -21,10 +21,10 @@ class DetailPanel extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final tab = ref.watch(detailPanelTabProvider);
 
-    // Material 承载面板底色 + ExpansionTile/ListTile 的 ink(避免 ColoredBox
-    // 包裹导致 "ink splashes may be invisible" 断言)
+    // Material 透明(透出父级容器背景),仅承载 ExpansionTile/ListTile 的
+    // ink(避免 ColoredBox 包裹导致 "ink splashes may be invisible" 断言)
     return Material(
-      color: scheme.surface,
+      color: Colors.transparent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
