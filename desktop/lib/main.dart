@@ -10,7 +10,10 @@ import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/services/notification_service.dart';
+import 'package:window_manager/window_manager.dart';
 import 'app.dart';
+import 'shell/app_canvas.dart' show windowActionsProvider;
+import 'shell/window_actions.dart';
 
 /// 桌面启动诊断日志(对齐 app 壳):逐里程碑追加写 exe 同目录 wanling-startup.log,
 /// GUI 应用无控制台可看,文件日志是唯一线索源。IO 失败静默吞(诊断不阻主流程)。
@@ -28,6 +31,26 @@ void _desktopStartupLog(String msg) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _desktopStartupLog('main: binding initialized');
+  // 无边框窗口初始化:失败不阻启动(fallback 系统装饰,标题栏按钮隐藏)。
+  // WindowManagerActions 全局单例(无 close 设计,生命周期与窗口一致),
+  // overrideWithValue 注入 TitleBar 消费。
+  WindowActions? windowActions;
+  try {
+    await windowManager.ensureInitialized();
+    const opts = WindowOptions(
+      size: Size(1280, 800),
+      minimumSize: Size(800, 600),
+      titleBarStyle: TitleBarStyle.hidden,
+      center: true,
+    );
+    await windowManager.waitUntilReadyToShow(opts, () async {
+      await windowManager.show();
+    });
+    windowActions = WindowManagerActions();
+    _desktopStartupLog('main: window_manager ready');
+  } catch (e) {
+    _desktopStartupLog('main: window_manager init fail: $e');
+  }
   // 首帧里程碑:区分「卡在 runApp 前」vs「渲染后无窗口/被遮」。
   WidgetsBinding.instance.addPostFrameCallback(
     (_) => _desktopStartupLog('main: first frame rendered'),
@@ -42,7 +65,10 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   _desktopStartupLog('main: prefs loaded');
   final container = ProviderContainer(
-    overrides: [sharedPrefsProvider.overrideWithValue(prefs)],
+    overrides: [
+      sharedPrefsProvider.overrideWithValue(prefs),
+      windowActionsProvider.overrideWithValue(windowActions),
+    ],
   );
   await container.read(settingsProvider.notifier).load();
   await container.read(savedLoginsProvider.notifier).load();

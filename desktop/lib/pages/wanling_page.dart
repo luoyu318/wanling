@@ -2,40 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
-import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/no_conversation_hint_provider.dart';
 import '../providers/selected_conv_provider.dart';
-import '../widgets/agent_sessions_pane.dart';
+import '../shell/card_container.dart';
+import '../theme/desktop_theme.dart';
 import '../widgets/avatar.dart';
 import 'chat/chat_view.dart';
 
-/// 万灵页:左栏 agent 列表 + 右侧聊天框(与消息页同构的双栏)。
+/// 万灵页(卡片化后):仅聊天卡片内容(空态 / ChatView),由 DesktopShell
+/// 装进 AppCanvas 聊天卡槽。左栏 agent 列表两级导航上移
+/// DesktopShell._ConversationCardHost;刷新按钮移 ChatAppBar(仅
+/// /wanling 路由显示)。
 ///
-/// 仿 app 逻辑:
-/// - 左栏一级:agent 列表(在线状态徽标 + bio),数据源 core agentListProvider;
-/// - 点击 opencode 类 agent:左栏进入二级 session 列表(core
-///   agentSessionsProvider(agentId),agent_session 会话不在
-///   conversationProvider 内),带返回;
-/// - 点击非 opencode agent(hermes 等单会话型):右栏直接打开该 agent 最新会话;
-/// - 右侧一直是聊天框:选中会话挂 ChatView,未选中显示空态(无会话 agent 的
-///   提示走 noConversationHintProvider,选中会话即清除)。
-///
-/// 选中态与消息页共享 selectedConvProvider,两页切换选中不丢。
-class WanlingPage extends ConsumerStatefulWidget {
+/// 选中态与消息页共享 selectedConvProvider,两页切换选中不丢;
+/// agentId 兜底逻辑与消息页同构(agent_session 不在 conversationProvider
+/// 内,查不到时用 selectedAgentIdProvider 兜底)。
+class WanlingPage extends ConsumerWidget {
   const WanlingPage({super.key});
 
   @override
-  ConsumerState<WanlingPage> createState() => _WanlingPageState();
-}
-
-class _WanlingPageState extends ConsumerState<WanlingPage> {
-  /// 左栏二级模式:选中的 opencode agent(null = 一级 agent 列表)。
-  String? _sessionsAgentId;
-
-  @override
-  Widget build(BuildContext context) {
-    // 切到具体会话即清除无会话提示(右栏空态被会话取代)。
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 切到具体会话即清除无会话提示(空态被会话取代)。
     ref.listen(selectedConvProvider, (prev, next) {
       if (next != null) {
         ref.read(noConversationHintProvider.notifier).state = null;
@@ -45,8 +33,6 @@ class _WanlingPageState extends ConsumerState<WanlingPage> {
     final selectedId = ref.watch(selectedConvProvider);
     final agentId = selectedId == null
         ? null
-        // agent_session 会话不在 conversationProvider 内,查不到时用
-        // selectedAgentIdProvider 兜底(二级列表跳转时写入)。
         : ref
               .watch(conversationProvider)
               .where((c) => c.id == selectedId)
@@ -55,9 +41,9 @@ class _WanlingPageState extends ConsumerState<WanlingPage> {
               ?.id ??
               ref.watch(selectedAgentIdProvider);
 
-    final chatArea = Container(
+    return CardContainer(
       key: ValueKey('wanling_chat_area_$selectedId'),
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: DesktopTheme.chatCardColor(Theme.of(context).brightness),
       child: selectedId == null
           ? _EmptyChatPane(hint: ref.watch(noConversationHintProvider))
           : ChatView(
@@ -66,81 +52,10 @@ class _WanlingPageState extends ConsumerState<WanlingPage> {
               agentId: agentId,
             ),
     );
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('万灵'),
-        actions: [
-          IconButton(
-            key: const ValueKey('agent_refresh'),
-            icon: const Icon(Icons.refresh),
-            tooltip: '刷新',
-            onPressed: () {
-              ref.read(agentListProvider.notifier).load();
-              final sid = _sessionsAgentId;
-              if (sid != null) {
-                ref.read(agentSessionsProvider(sid).notifier).load();
-              }
-            },
-          ),
-        ],
-      ),
-      body: Row(
-        children: [
-          SizedBox(width: 300, child: _buildLeftPane(context)),
-          const VerticalDivider(width: 1, thickness: 1),
-          Expanded(child: chatArea),
-        ],
-      ),
-    );
-  }
-
-  /// 左栏:一级 agent 列表 / 二级 session 列表(带返回头)。
-  Widget _buildLeftPane(BuildContext context) {
-    if (_sessionsAgentId != null) {
-      return AgentSessionsPane(
-        agentId: _sessionsAgentId!,
-        onBack: () => setState(() => _sessionsAgentId = null),
-        onOpenSession: _openConversation,
-      );
-    }
-    return _AgentListPane(
-      onAgentTap: _onAgentTap,
-      selectedConvId: ref.watch(selectedConvProvider),
-    );
-  }
-
-  void _onAgentTap(Agent agent) {
-    if (agent.type == AgentCategory.opencode) {
-      // opencode:左栏进入二级 session 列表。
-      setState(() => _sessionsAgentId = agent.id);
-      return;
-    }
-    // 非 opencode:右栏直接打开该 agent 最新会话;无会话写提示。
-    final convs = ref
-        .read(conversationProvider)
-        .where((c) => c.agent?.id == agent.id)
-        .toList()
-      ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
-
-    if (convs.isEmpty) {
-      ref.read(selectedConvProvider.notifier).state = null;
-      ref.read(selectedAgentIdProvider.notifier).state = null;
-      ref.read(noConversationHintProvider.notifier).state =
-          '该 Agent 暂无会话，可从消息页发起';
-      return;
-    }
-    _openConversation(convs.first.id, agent.id);
-  }
-
-  /// 选中会话 + agentId 兜底写入,右栏聊天框打开。
-  void _openConversation(String convId, String agentId) {
-    ref.read(selectedConvProvider.notifier).state = convId;
-    ref.read(selectedAgentIdProvider.notifier).state = agentId;
   }
 }
 
-/// 右栏空态:未选中会话时的占位(含无会话 agent 提示)。
+/// 右侧聊天卡空态:未选中会话时的占位(含无会话 agent 提示)。
 class _EmptyChatPane extends StatelessWidget {
   final String? hint;
 
@@ -180,12 +95,12 @@ class _EmptyChatPane extends StatelessWidget {
   }
 }
 
-/// 一级 agent 列表。
-class _AgentListPane extends ConsumerWidget {
+/// 一级 agent 列表(公开:DesktopShell 会话卡片宿主的万灵分支消费)。
+/// 数据源 core agentListProvider(在线状态徽标 + bio)。
+class WanlingAgentListPane extends ConsumerWidget {
   final void Function(Agent agent) onAgentTap;
-  final String? selectedConvId;
 
-  const _AgentListPane({required this.onAgentTap, this.selectedConvId});
+  const WanlingAgentListPane({super.key, required this.onAgentTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

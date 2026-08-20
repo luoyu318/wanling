@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart';
 
 import '../../providers/detail_panel_provider.dart';
 
-/// 聊天区标题栏:会话名 + git 分支徽标(sessionMeta)+「详情」按钮。
+/// 聊天区标题栏:会话名 + git 分支徽标(sessionMeta)+「详情」按钮,
+/// 万灵路由下额外带「刷新」按钮(原万灵页 AppBar 迁入)。
 ///
 /// 「详情」切换 [detailPanelOpenProvider](Task 7 接面板内容);
 /// gitBranch 徽标展示 agent_session 的工作分支(sessionMeta.gitBranch)。
@@ -11,7 +15,25 @@ class ChatAppBar extends ConsumerWidget {
   final String title;
   final String? gitBranch;
 
-  const ChatAppBar({super.key, required this.title, this.gitBranch});
+  /// 当前聊天 agent:万灵路由刷新按钮联动其二级 session 列表。
+  final String? agentId;
+
+  const ChatAppBar({
+    super.key,
+    required this.title,
+    this.gitBranch,
+    this.agentId,
+  });
+
+  /// 是否处于 /wanling 路由(刷新按钮仅万灵页显示)。
+  /// ChatView 单测直挂无 GoRouter 祖先,查不到路由视作非万灵页。
+  static bool _onWanlingRoute(BuildContext context) {
+    try {
+      return GoRouterState.of(context).uri.path.startsWith('/wanling');
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -48,6 +70,21 @@ class ChatAppBar extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: 8),
+          if (_onWanlingRoute(context))
+            IconButton(
+              key: const ValueKey('agent_refresh'),
+              icon: const Icon(Icons.refresh),
+              tooltip: '刷新',
+              onPressed: () {
+                // 刷新 agent 列表 + 当前聊天 agent 的 session 列表
+                // (左卡片二级列表同源数据)。
+                ref.read(agentListProvider.notifier).load();
+                final aid = agentId;
+                if (aid != null) {
+                  ref.read(agentSessionsProvider(aid).notifier).load();
+                }
+              },
+            ),
           IconButton(
             tooltip: '详情',
             icon: Icon(

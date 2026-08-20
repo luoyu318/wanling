@@ -22,6 +22,7 @@ import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
+import 'package:wanling_desktop/providers/selected_conv_provider.dart';
 import 'package:wanling_desktop/widgets/detail_panel.dart';
 
 /// 种子会话:带 agent(供 agentId 解析)+ participants(成员区)+
@@ -159,8 +160,9 @@ List<Override> _overrides() => [
     ];
 
 /// 选中会话 + 打开详情面板(pumpAndSettle 走完滑入动画)。
-Future<void> _openPanel(WidgetTester tester) async {
-  await tester.tap(find.text('M2 桌面开发'));
+/// 卡片化后消息页无左栏列表,选中态直接写 provider(面板行为是测试焦点)。
+Future<void> _openPanel(WidgetTester tester, ProviderContainer container) async {
+  container.read(selectedConvProvider.notifier).state = 'c1';
   await tester.pumpAndSettle();
   await tester.tap(find.byTooltip('详情'));
   await tester.pumpAndSettle();
@@ -178,7 +180,9 @@ Future<void> _pumpPage(WidgetTester tester, ProviderContainer container) =>
     tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: MessagesPage()),
+        // 卡片化后页面无 Scaffold,Material 祖先由 AppCanvas 的 Scaffold
+        // 提供;测试补 Scaffold 对齐生产结构(InkWell 需要 Material)。
+        child: const MaterialApp(home: Scaffold(body: MessagesPage())),
       ),
     );
 
@@ -197,12 +201,12 @@ void main() {
     // 初始:面板不可见
     expect(find.byType(DetailPanel), findsNothing);
 
-    await _openPanel(tester);
+    await _openPanel(tester, container);
 
     // 动画后可见
     expect(find.byType(DetailPanel), findsOneWidget);
-    // 信息 tab 默认:会话信息字段(标题在会话列表/AppBar/面板三处)
-    expect(find.text('M2 桌面开发'), findsNWidgets(3));
+    // 信息 tab 默认:会话信息字段(标题在 ChatAppBar/面板两处)
+    expect(find.text('M2 桌面开发'), findsNWidgets(2));
     expect(find.textContaining('万灵 Agent'), findsWidgets);
     expect(find.text('工作目录'), findsOneWidget);
     expect(find.text('/home/k/proj'), findsOneWidget);
@@ -222,7 +226,7 @@ void main() {
     addTearDown(container.dispose);
     await _pumpPage(tester, container);
     await tester.pumpAndSettle();
-    await _openPanel(tester);
+    await _openPanel(tester, container);
 
     // 切到「变更」tab
     await tester.tap(find.text('变更'));
@@ -261,7 +265,7 @@ void main() {
     addTearDown(container.dispose);
     await _pumpPage(tester, container);
     await tester.pumpAndSettle();
-    await _openPanel(tester);
+    await _openPanel(tester, container);
 
     expect(find.text('成员 (2)'), findsOneWidget); // 信息 tab 内容
     await tester.tap(find.text('变更'));
@@ -281,7 +285,7 @@ void main() {
     await _pumpPage(tester, container);
     await tester.pumpAndSettle();
 
-    await _openPanel(tester);
+    await _openPanel(tester, container);
 
     expect(find.byType(DetailPanel), findsOneWidget);
     // 浮层不销毁底层:ChatView 仍在树上(Stack 覆盖,不是 Row 挤压替换)

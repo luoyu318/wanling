@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart';
@@ -12,13 +13,18 @@ import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
+import 'package:wanling_core/utils/secure_storage.dart';
 import 'package:wanling_desktop/pages/chat/chat_view.dart';
+import 'package:wanling_desktop/pages/messages_page.dart';
 import 'package:wanling_desktop/pages/wanling_page.dart';
 import 'package:wanling_desktop/providers/no_conversation_hint_provider.dart';
 import 'package:wanling_desktop/providers/selected_conv_provider.dart';
+import 'package:wanling_desktop/shell/card_container.dart';
+import 'package:wanling_desktop/shell/desktop_shell.dart';
 
 /// 种子 agent notifier:autoload=false 跳过 load/WS 订阅,直接灌假数据。
 class _SeededAgentNotifier extends AgentListNotifier {
@@ -100,35 +106,65 @@ Conversation _conv(String id, DateTime at, {AgentSummary? agent}) => Conversatio
       createdAt: at,
     );
 
-List<Override> _overrides({
+/// 空 savedLogins 种子(镜像 shell_test):NavRail 内 AccountSwitcher 不拉存储链。
+class _EmptySavedLogins extends SavedLoginsNotifier {
+  _EmptySavedLogins(SharedPreferences prefs)
+      : super(
+          prefs: prefs,
+          storage: SecureStorage(deviceId: 'test'),
+          onLogout: ({bool silent = false}) async {},
+          onLogin: (u, p) async {},
+          onSwitchingChange: (s) {},
+        );
+}
+
+/// 卡片化后页面测试经 DesktopShell 整壳承载:左卡片(agent 列表两级导航)
+/// 在 shell 的会话卡片宿主内,右卡片 = 路由 child(WanlingPage)。
+Future<List<Override>> _overrides({
   required List<Agent> agents,
   required List<Conversation> convs,
   Map<String, List<Conversation>> sessions = const {},
-}) =>
-    [
-      agentListProvider.overrideWith((ref) => _SeededAgentNotifier(agents)),
-      conversationProvider.overrideWith((ref) => _SeededConvNotifier(convs)),
-      agentSessionsProvider.overrideWith(
-        (ref, agentId) =>
-            _SeededSessionsNotifier(sessions[agentId] ?? const [], agentId),
+}) async {
+  final prefs = await SharedPreferences.getInstance();
+  return [
+    agentListProvider.overrideWith((ref) => _SeededAgentNotifier(agents)),
+    conversationProvider.overrideWith((ref) => _SeededConvNotifier(convs)),
+    agentSessionsProvider.overrideWith(
+      (ref, agentId) =>
+          _SeededSessionsNotifier(sessions[agentId] ?? const [], agentId),
+    ),
+    authProvider.overrideWith((ref) => _LoggedInAuth()),
+    savedLoginsProvider.overrideWith((ref) => _EmptySavedLogins(prefs)),
+    chatProvider.overrideWith(
+      (ref, key) => ChatNotifier(
+        _EmptyChatApi(),
+        WebSocketService(),
+        key.convId,
+        key.agentId,
+        'test-user',
       ),
-      authProvider.overrideWith((ref) => _LoggedInAuth()),
-      chatProvider.overrideWith(
-        (ref, key) => ChatNotifier(
-          _EmptyChatApi(),
-          WebSocketService(),
-          key.convId,
-          key.agentId,
-          'test-user',
-        ),
-      ),
-    ];
+    ),
+  ];
+}
 
 Future<void> _pumpPage(WidgetTester tester, ProviderContainer container) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: WanlingPage()),
+      child: MaterialApp.router(
+        routerConfig: GoRouter(
+          initialLocation: '/wanling',
+          routes: [
+            ShellRoute(
+              builder: (c, s, child) => DesktopShell(child: child),
+              routes: [
+                GoRoute(path: '/messages', builder: (c, s) => const MessagesPage()),
+                GoRoute(path: '/wanling', builder: (c, s) => const WanlingPage()),
+              ],
+            ),
+          ],
+        ),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -146,11 +182,14 @@ void main() {
       _agent('a1', 'OpenCode 主力', AgentStatus.online, bio: '写代码的'),
       _agent('a2', '闲聊助手', AgentStatus.offline),
     ];
-    final container = ProviderContainer(overrides: _overrides(agents: agents, convs: []));
+    final container =
+        ProviderContainer(overrides: await _overrides(agents: agents, convs: []));
     addTearDown(container.dispose);
 
     await _pumpPage(tester, container);
 
+    // 浮动卡片构造:会话卡片 + 聊天卡片(宽度由 convListWidthProvider 驱动)。
+    expect(find.byType(CardContainer), findsAtLeastNWidgets(2));
     expect(find.text('OpenCode 主力'), findsOneWidget);
     expect(find.text('闲聊助手'), findsOneWidget);
     expect(find.text('在线'), findsOneWidget);
@@ -180,7 +219,8 @@ void main() {
       _conv('conv-old', DateTime(2026, 1, 1), agent: a1),
       _conv('conv-new', DateTime(2026, 1, 2), agent: a1),
     ];
-    final container = ProviderContainer(overrides: _overrides(agents: agents, convs: convs));
+    final container =
+        ProviderContainer(overrides: await _overrides(agents: agents, convs: convs));
     addTearDown(container.dispose);
 
     await _pumpPage(tester, container);
@@ -192,11 +232,14 @@ void main() {
     expect(container.read(selectedConvProvider), 'conv-new');
     expect(container.read(selectedAgentIdProvider), 'a1');
     expect(find.byType(ChatView), findsOneWidget);
+    // 刷新按钮移聊天卡顶(ChatAppBar):仅 /wanling 路由显示。
+    expect(find.byKey(const ValueKey('agent_refresh')), findsOneWidget);
   });
 
   testWidgets('万灵页:非 opencode agent 无会话时右栏空态提示', (tester) async {
     final agents = [_agent('a2', '闲聊助手', AgentStatus.offline)];
-    final container = ProviderContainer(overrides: _overrides(agents: agents, convs: []));
+    final container =
+        ProviderContainer(overrides: await _overrides(agents: agents, convs: []));
     addTearDown(container.dispose);
 
     await _pumpPage(tester, container);
@@ -222,7 +265,8 @@ void main() {
       _conv('s2', DateTime(2026, 1, 1)),
     ];
     final container = ProviderContainer(
-      overrides: _overrides(agents: agents, convs: [], sessions: {'oc1': sessions}),
+      overrides:
+          await _overrides(agents: agents, convs: [], sessions: {'oc1': sessions}),
     );
     addTearDown(container.dispose);
 

@@ -13,7 +13,9 @@ import 'package:wanling_core/utils/secure_storage.dart';
 import 'package:wanling_desktop/pages/login_page.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
 import 'package:wanling_desktop/router.dart';
+import 'package:wanling_desktop/shell/app_canvas.dart';
 import 'package:wanling_desktop/shell/nav_rail.dart';
+import 'package:wanling_desktop/shell/window_actions.dart';
 
 /// 已登录 auth 种子:token 直灌(镜像 Task 3 种子模式,无副作用)。
 class _LoggedInAuth extends AuthNotifier {
@@ -46,6 +48,22 @@ class _EmptySavedLogins extends SavedLoginsNotifier {
       );
 }
 
+/// 窗口操作 fake(镜像 title_bar_test):标题栏系统按钮渲染依赖非 null actions。
+class _FakeWindowActions implements WindowActions {
+  @override
+  Future<void> minimize() async {}
+  @override
+  Future<void> toggleMaximize() async {}
+  @override
+  Future<void> close() async {}
+  @override
+  Future<void> dragWindow() async {}
+  @override
+  Future<bool> get isMaximized async => false;
+  @override
+  Stream<void> get onStateChanged => const Stream.empty();
+}
+
 Future<ProviderContainer> _container({required AuthNotifier auth}) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
@@ -54,6 +72,7 @@ Future<ProviderContainer> _container({required AuthNotifier auth}) async {
       authProvider.overrideWith((ref) => auth),
       conversationProvider.overrideWith((ref) => _EmptyConvNotifier()),
       savedLoginsProvider.overrideWith((ref) => _EmptySavedLogins(prefs)),
+      windowActionsProvider.overrideWithValue(_FakeWindowActions()),
     ],
   );
 }
@@ -93,5 +112,8 @@ void main() {
     expect(find.byType(MessagesPage), findsOneWidget); // 进入消息页
     expect(find.byType(NavRail), findsOneWidget); // shell 左导航渲染
     expect(find.byType(DesktopLoginPage), findsNothing);
+    // 浮动卡片构造:画布 + 标题栏 + 工具条
+    expect(find.byType(AppCanvas), findsOneWidget);
+    expect(find.byKey(const ValueKey('titlebar_settings')), findsOneWidget);
   });
 }

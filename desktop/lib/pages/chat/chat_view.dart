@@ -70,6 +70,7 @@ class ChatView extends ConsumerWidget {
         ChatAppBar(
           title: chat.convTitle ?? '会话',
           gitBranch: chat.sessionMeta?.gitBranch,
+          agentId: agentId,
         ),
         Expanded(
           child: chat.isInitialLoading
