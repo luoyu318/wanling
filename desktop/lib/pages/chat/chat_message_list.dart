@@ -5,6 +5,8 @@ import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/rendering/message_content_renderer.dart';
+import 'package:wanling_core/utils/gallery_image.dart';
+import '../../widgets/image_viewer.dart';
 
 /// 桌面消息列表:单列表 oldest-first 贴底(chat-single-list 重构结论,不用 reverse:true)。
 ///
@@ -251,6 +253,13 @@ class _MessageBubble extends StatelessWidget {
           rootMessageId: message.id,
           conversationMessages: conversationMessages,
           isStreaming: message.isStreaming,
+          // 图片消息点击 → 桌面全屏预览(core ImageContentRenderer 的
+          // openGallery 回调机制,原图 URL 用 GalleryImage 拼)。
+          openGallery: (fileId) => showImageViewer(
+            context,
+            url: GalleryImage.fromInternal(fileId, baseUrl, token).url,
+            headers: GalleryImage.fromInternal(fileId, baseUrl, token).headers,
+          ),
         );
         final content =
             ContentRendererRegistry.render(msgType, message.content, context, rc);
