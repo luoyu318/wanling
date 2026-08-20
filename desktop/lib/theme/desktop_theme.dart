@@ -59,4 +59,21 @@ class DesktopTheme {
     dividerTheme: const DividerThemeData(color: Color(0xFF2E2F36)),
     splashFactory: NoSplash.splashFactory,
   );
+
+  /// —— 浮动卡片布局 token(spec §4) ——
+  /// 窗口画布底色(无边框后整窗背景,卡片缝隙/边距露出)。
+  static Color canvasColor(Brightness b) =>
+      b == Brightness.dark ? const Color(0xFF101014) : const Color(0xFFE9EAEC);
+
+  /// 卡片底色(会话列表/聊天区两张卡片;深色下聊天区略深一档见 spec)。
+  static Color cardColor(Brightness b) =>
+      b == Brightness.dark ? const Color(0xFF1A1A20) : const Color(0xFFFFFFFF);
+
+  /// 聊天区卡片底色(深色下比会话卡片深 3 位形成层次,浅色同卡片色)。
+  static Color chatCardColor(Brightness b) =>
+      b == Brightness.dark ? const Color(0xFF17171D) : const Color(0xFFFFFFFF);
+
+  /// 卡片边框/画布上细分割线。
+  static Color cardBorderColor(Brightness b) =>
+      b == Brightness.dark ? const Color(0xFF2E2E38) : const Color(0xFFDCDCDC);
 }
