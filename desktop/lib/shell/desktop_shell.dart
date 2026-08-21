@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../pages/wanling_page.dart' show WanlingAgentListPane;
 import '../providers/open_agent_sessions_provider.dart';
 import '../providers/selected_conv_provider.dart';
+import '../providers/tab_reselect_provider.dart';
 import '../widgets/agent_sessions_pane.dart';
 import '../widgets/conversation_list.dart';
 import 'app_canvas.dart';
@@ -54,6 +55,15 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
       if (next != null) {
         setState(() => _sessionsAgentId = next);
         ref.read(openAgentSessionsProvider.notifier).state = null;
+      }
+    });
+    // 重复点击当前 tab 脉冲:清二级 session 列表回一级(消费后清零)。
+    ref.listen(tabReselectProvider, (prev, next) {
+      if (next != null) {
+        if (_sessionsAgentId != null) {
+          setState(() => _sessionsAgentId = null);
+        }
+        ref.read(tabReselectProvider.notifier).state = null;
       }
     });
     final location = GoRouterState.of(context).uri.path;

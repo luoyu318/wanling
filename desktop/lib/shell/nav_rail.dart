@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 
 import '../providers/no_conversation_hint_provider.dart';
+import '../providers/tab_reselect_provider.dart';
 import '../widgets/account_switcher.dart';
 import '../widgets/avatar.dart';
 
@@ -35,6 +36,12 @@ class NavRail extends ConsumerWidget {
             onTap: () {
               if (route != '/messages') {
                 ref.read(noConversationHintProvider.notifier).state = null;
+              }
+              if (selected) {
+                // 重复点击当前 tab:go 无路由变化,发脉冲让壳层清二级
+                // session 列表回一级(tabReselectProvider 消费后清零)。
+                ref.read(tabReselectProvider.notifier).state = route;
+                return;
               }
               context.go(route);
             },

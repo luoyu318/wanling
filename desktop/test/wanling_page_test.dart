@@ -317,4 +317,33 @@ void main() {
     // 已选会话保留(右栏聊天不丢)。
     expect(container.read(selectedWanlingConvProvider), 's1');
   });
+
+  testWidgets('万灵页:二级列表下重复点击万灵 tab 回一级 agent 列表', (tester) async {
+    final agents = [
+      _agent('oc1', 'OpenCode 主力', AgentStatus.online, type: 'opencode'),
+    ];
+    final sessions = [
+      _conv('s1', DateTime(2026, 1, 2)),
+    ];
+    final container = ProviderContainer(
+      overrides:
+          await _overrides(agents: agents, convs: [], sessions: {'oc1': sessions}),
+    );
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    // 进入二级 session 列表。
+    await tester.tap(find.byKey(const ValueKey('agent_oc1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('进入会话'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
+
+    // 重复点击万灵 tab(NavRail):无路由变化,靠 tabReselect 脉冲回一级。
+    await tester.tap(find.byKey(const ValueKey('navrail_wanling')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsNothing);
+    expect(find.byKey(const ValueKey('agent_oc1')), findsOneWidget);
+  });
 }
