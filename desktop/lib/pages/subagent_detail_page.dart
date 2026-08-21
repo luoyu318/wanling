@@ -1,6 +1,5 @@
 // desktop/lib/pages/subagent_detail_page.dart
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/material.dart';
@@ -10,11 +9,16 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/models/ws_message.dart';
-import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart'
+    show apiProvider, authProvider;
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/settings_provider.dart';
+import 'package:wanling_core/rendering/message_content_renderer.dart';
+import 'package:wanling_core/utils/gallery_image.dart';
 
 import '../shell/card_container.dart';
 import '../theme/desktop_theme.dart';
+import '../widgets/image_viewer.dart' show showImageViewer;
 
 /// 子 Agent 详情页(桌面卡片版,移植自 app 壳 subagent_detail_page):
 /// 展示某条 task 卡片下挂的全部子 agent 事件流。
@@ -30,9 +34,12 @@ import '../theme/desktop_theme.dart';
 ///   - 增量 UPDATE:WS MESSAGE_UPDATE(task 卡片状态变更)按 message_id
 ///     替换对应条目 content
 ///
-/// UI 桌面化差异:无 Scaffold(DesktopShell 装进聊天卡槽);子事件不复用
-/// core 渲染注册表,简化为桌面风事件卡(类型标签/状态点/时间/等宽预览),
-/// 保持信息完整。无文件下载/图片画廊(app 壳基建,桌面版 YAGNI)。
+/// 渲染与 app 版同构:事件流复用 core ContentRendererRegistry(工具卡/
+/// markdown/text 等各自 renderer),气泡为桌面简化壳(无三角,app 壳的
+/// BubbleWithTail 不在 core,desktop 不依赖 app 包)。isDark 用真主题亮度
+/// (desktop 优势,app 版硬编码 false)。无文件下载(fileDownloadSnapshots/
+/// onFileTap 留 null,core renderer 对 null 有点击降级);图片点击接
+/// showImageViewer 全屏预览。
 class SubagentDetailPage extends ConsumerStatefulWidget {
   /// task 卡片的消息 id,作为 root_msg_id 查询子树。
   final String taskCardId;
@@ -63,6 +70,12 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
   StreamSubscription<WSMessage>? _wsSub;
   StreamSubscription<WSMessage>? _wsUpdateSub;
 
+  /// 列表滚动控制器:跳底按钮用。
+  final ScrollController _scroll = ScrollController();
+
+  /// 用户是否在底部(px >= maxScrollExtent - 50 容差,对齐 app 版)。
+  bool _isAtBottom = true;
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +87,7 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
   void dispose() {
     _wsSub?.cancel();
     _wsUpdateSub?.cancel();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -162,15 +176,6 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
     }
   }
 
-  /// 渲染用事件列表:过滤 step_finish 过程态(对齐 app 版)。
-  List<ChatMessage> get _events => _messages
-      .where(
-        (m) =>
-            MsgTypeX.fromString(m.content['msg_type'] as String?) !=
-            MsgType.stepFinish,
-      )
-      .toList();
-
   @override
   Widget build(BuildContext context) {
     return CardContainer(
@@ -237,7 +242,7 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
         onRetry: _loadMessages,
       );
     }
-    final events = _events;
+    final events = _messages;
     if (events.isEmpty) {
       return Center(
         child: Text(
@@ -249,173 +254,149 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
         ),
       );
     }
-    return ListView.builder(
-      key: const ValueKey('subagent_event_list'),
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      itemCount: events.length,
-      itemBuilder: (ctx, i) => _EventCard(msg: events[i]),
+    // 事件流复用 core 渲染注册表(对齐 app 版):每种 msg_type 各自 renderer,
+    // isMe=false(子 agent 消息对当前用户都是接收方视角)。
+    // baseUrl/token 从 settingsProvider/authProvider 直取(desktop 版无
+    // _downloadService 壳);isDark 用真主题亮度(desktop 优势)。
+    // rootMessageId=taskCardId:嵌套 task 卡跳子详情时按根查子树
+    // (aggregate_card_renderer 的 elementRc 模式,此处根即 taskCardId)。
+    // onFileTap/fileDownloadSnapshots 留 null:desktop 未接文件下载基建,
+    // core renderer 对 null 有点击降级(无操作/未下载态)。
+    final baseUrl = ref.watch(settingsProvider);
+    final token = ref.watch(authProvider.select((s) => s.token ?? ''));
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n is ScrollMetricsNotification) return false;
+            final metrics = n.metrics;
+            final atBottom = !metrics.hasViewportDimension ||
+                metrics.pixels >= metrics.maxScrollExtent - 50;
+            if (atBottom != _isAtBottom) {
+              setState(() => _isAtBottom = atBottom);
+            }
+            return false;
+          },
+          child: ListView.builder(
+            key: const ValueKey('subagent_event_list'),
+            controller: _scroll,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: events.length,
+            itemBuilder: (ctx, i) {
+              final msg = events[i];
+              final msgType = MsgTypeX.fromString(
+                msg.content['msg_type'] as String?,
+              );
+              // step_finish 过程态不渲染(对齐 app 版)。
+              if (msgType == MsgType.stepFinish) {
+                return const SizedBox.shrink();
+              }
+              final rc = MessageRenderContext(
+                isMe: false,
+                baseUrl: baseUrl,
+                token: token,
+                isDark: isDark,
+                convId: widget.convId,
+                messageId: msg.id,
+                rootMessageId: widget.taskCardId,
+                conversationMessages: _messages,
+                // 图片点击 → 桌面全屏预览(对齐 chat_message_list 模式)。
+                openGallery: (fileId) {
+                  final img = GalleryImage.fromInternal(fileId, baseUrl, token);
+                  showImageViewer(ctx, url: img.url, headers: img.headers);
+                },
+              );
+              final content =
+                  ContentRendererRegistry.render(msgType, msg.content, ctx, rc);
+              final bubble =
+                  ContentRendererRegistry.shouldWrapInBubble(msgType)
+                      ? _Bubble(child: content)
+                      : content;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: bubble,
+              );
+            },
+          ),
+        ),
+        if (!_isAtBottom)
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: _JumpToBottomButton(onTap: _scrollToBottom),
+          ),
+      ],
+    );
+  }
+
+  /// 平滑滚到底部(对齐 app 版)。
+  void _scrollToBottom() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(
+      _scroll.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
     );
   }
 }
 
-/// 子事件卡片(桌面简化风):状态点 + 类型标签 + 时间 + 等宽内容预览。
-class _EventCard extends StatelessWidget {
-  final ChatMessage msg;
+/// 桌面简化气泡壳(agent 侧,isMe 恒 false):surfaceContainerHighest 底 +
+/// 8px 圆角,无三角(对齐 chat_message_list 的 _BubbleShell agent 分支;
+/// app 壳的 BubbleWithTail 不在 core,desktop 不依赖 app 包)。
+class _Bubble extends StatelessWidget {
+  final Widget child;
 
-  const _EventCard({required this.msg});
+  const _Bubble({required this.child});
 
-  /// 事件类型中文标签。
-  static String _typeLabel(MsgType t) => switch (t) {
-        MsgType.text => '文本',
-        MsgType.markdown => '回复',
-        MsgType.reasoning => '思考',
-        MsgType.toolCall => '工具调用',
-        MsgType.toolCard => '工具卡',
-        MsgType.toolResult => '工具结果',
-        MsgType.toolError => '工具错误',
-        MsgType.image => '图片',
-        MsgType.file => '文件',
-        MsgType.fileDiff => '文件变更',
-        MsgType.subagent => '子任务',
-        MsgType.question => '提问',
-        MsgType.questionCard => '选择题',
-        MsgType.permissionCard => '权限审批',
-        MsgType.card => '审批',
-        MsgType.slashEcho => '命令',
-        _ => '事件',
-      };
-
-  /// 状态中文标签(仅已知状态;工具卡 running/completed/error,
-  /// 审批卡 pending/approved/denied/expired 等)。
-  static String? _statusLabel(String? raw) => switch (raw) {
-        'running' => '运行中',
-        'completed' => '完成',
-        'error' => '失败',
-        'pending' => '待处理',
-        'approved' => '已同意',
-        'denied' => '已拒绝',
-        'rejected' => '已拒绝',
-        'answered' => '已回答',
-        'expired' => '已过期',
-        '' || null => null,
-        _ => raw,
-      };
-
-  static Color _statusColor(String? raw) => switch (raw) {
-        'running' || 'pending' => const Color(0xFF576B95),
-        'completed' || 'approved' || 'answered' => const Color(0xFF07C160),
-        'error' ||
-        'denied' ||
-        'rejected' ||
-        'expired' =>
-          const Color(0xFFFA5151),
-        _ => const Color(0xFF999999),
-      };
-
-  /// 内容预览:优先常见正文/名称字段,兜底 JSON 截断(保持信息完整)。
-  String _preview() {
-    final data = msg.content['data'];
-    if (data is Map<String, dynamic>) {
-      for (final k in const [
-        'text', 'name', 'title', 'description', 'preview', 'filename',
-      ]) {
-        final v = data[k];
-        if (v is String && v.isNotEmpty) {
-          return v.length > 200 ? '${v.substring(0, 200)}…' : v;
-        }
-      }
-    }
-    final raw = jsonEncode(msg.content['data'] ?? msg.content);
-    return raw.length > 200 ? '${raw.substring(0, 200)}…' : raw;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: child,
+    );
   }
+}
 
-  String _hhmmss(DateTime t) =>
-      '${t.hour.toString().padLeft(2, '0')}:'
-      '${t.minute.toString().padLeft(2, '0')}:'
-      '${t.second.toString().padLeft(2, '0')}';
+/// 跳底浮动按钮(桌面简版,app 壳 JumpToBottomButton 私有不可复用):
+/// 右下角圆形 + 下箭头,颜色跟随主题(desktop 深色模式优势)。
+class _JumpToBottomButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _JumpToBottomButton({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final msgType = MsgTypeX.fromString(msg.content['msg_type'] as String?);
-    final data = msg.content['data'];
-    final status = data is Map<String, dynamic>
-        ? data['status'] as String?
-        : null;
-    final statusLabel = _statusLabel(status);
-    final secondary = scheme.onSurface.withValues(alpha: 0.5);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 状态点:有无状态都渲染(对齐左列,内容区对齐)。
-          Container(
-            margin: const EdgeInsets.only(top: 5),
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _statusColor(status),
-            ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      _typeLabel(msgType),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurface.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    if (statusLabel != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        statusLabel,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _statusColor(status),
-                        ),
-                      ),
-                    ],
-                    const Spacer(),
-                    Text(
-                      _hhmmss(msg.createdAt),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: secondary,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _preview(),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                    color: scheme.onSurface.withValues(alpha: 0.65),
-                  ),
-                ),
-              ],
-            ),
+          child: Icon(
+            Icons.keyboard_arrow_down,
+            size: 24,
+            color: scheme.onSurface,
           ),
-        ],
+        ),
       ),
     );
   }

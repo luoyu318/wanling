@@ -12,6 +12,7 @@ import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
@@ -142,15 +143,21 @@ Future<void> _pumpAndPush(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('有效参数:push 路由挂载详情页,事件列表渲染 + api 按正确参数拉取', (tester) async {
+  setUpAll(() {
+    // 渲染管线注册:生产在 desktop main.dart,测试环境手动注册
+    // (事件流走 core ContentRendererRegistry,不注册会降级 UnknownRenderer)。
+    registerBuiltinRenderers();
+  });
+
+  testWidgets('有效参数:push 路由挂载详情页,事件流 core 渲染 + api 按正确参数拉取', (tester) async {
     final api = _StubApi(messages: [
       _ev('m1', {
-        'msg_type': 'tool_card',
-        'data': {'name': 'read_file', 'status': 'completed'},
+        'msg_type': 'text',
+        'data': {'text': '子 agent 回复正文'},
       }),
       _ev('m2', {
-        'msg_type': 'reasoning',
-        'data': {'text': '用户要求查看配置文件'},
+        'msg_type': 'tool_card',
+        'data': {'name': 'read_file', 'status': 'completed'},
       }, minutes: 1),
       // step_finish 过程态应被过滤,不渲染
       _ev('m3', {
@@ -172,12 +179,13 @@ void main() {
     expect(find.text('部署任务'), findsOneWidget);
     expect(find.byKey(const ValueKey('subagent_back')), findsOneWidget);
     expect(find.byKey(const ValueKey('subagent_refresh')), findsOneWidget);
-    // 事件列表:2 个可见事件(类型标签),step_finish 被过滤。
+    // 事件列表:走 core 渲染注册表,text 消息正文直显,tool_card 渲染
+    // 工具名(capitalize → 'Read_file')+ 完成标签;step_finish 被过滤不渲染。
     expect(find.byKey(const ValueKey('subagent_event_list')), findsOneWidget);
-    expect(find.text('工具卡'), findsOneWidget);
-    expect(find.text('思考'), findsOneWidget);
-    expect(find.text('read_file'), findsOneWidget);
+    expect(find.text('子 agent 回复正文'), findsOneWidget);
+    expect(find.text('Read_file'), findsOneWidget);
     expect(find.text('完成'), findsOneWidget);
+    expect(find.textContaining('finished'), findsNothing);
     // api 按 (convId, taskCardId) 拉取。
     expect(api.calls, [(_convId, _taskCardId)]);
   });
