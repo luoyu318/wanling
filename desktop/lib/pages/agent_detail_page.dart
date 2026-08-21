@@ -13,6 +13,7 @@ import '../providers/no_conversation_hint_provider.dart';
 import '../providers/open_agent_sessions_provider.dart';
 import '../providers/selected_conv_provider.dart';
 import '../shell/card_container.dart';
+import '../widgets/agent_type_badge.dart';
 import '../theme/desktop_theme.dart';
 import '../widgets/avatar.dart';
 
@@ -91,7 +92,7 @@ class AgentDetailPage extends ConsumerWidget {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          _TypeBadge(type: agent.type),
+                          AgentTypeBadge(type: agent.type),
                         ],
                       ),
                       const SizedBox(height: 5),
@@ -377,38 +378,6 @@ class AgentDetailPage extends ConsumerWidget {
             child: const Text('删除'),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 类型徽标:''→普通 / hermes→Hermes / opencode→OpenCode。
-class _TypeBadge extends StatelessWidget {
-  final String type;
-
-  const _TypeBadge({required this.type});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final label = switch (type) {
-      AgentCategory.hermes => 'Hermes',
-      AgentCategory.opencode => 'OpenCode',
-      _ => '普通',
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.primary.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: scheme.primary,
-        ),
       ),
     );
   }

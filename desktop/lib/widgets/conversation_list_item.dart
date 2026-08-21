@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:wanling_core/models/agent.dart' show AgentCategory;
-
+import 'agent_type_badge.dart';
 import 'avatar.dart';
 
 /// 会话列表项(纯展示组件):头像([Avatar],真图+字母色块兜底+未读 badge) +
@@ -81,7 +80,7 @@ class ConversationListItem extends StatelessWidget {
                         // 对比度,选中绿底上仍清晰,无需反白。
                         if (agentType.isNotEmpty) ...[
                           const SizedBox(width: 5),
-                          _AgentTypeBadge(type: agentType),
+                          AgentTypeBadge(type: agentType),
                         ],
                       ],
                     ),
@@ -114,41 +113,6 @@ class ConversationListItem extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// agent type 实心胶囊(样式复刻 app widgets/agent_badge.dart,改时两处同步)。
-/// 浅色底深色字三档:Hermes 琥珀 / OpenCode 绿 / 兜底紫「智能体」。
-class _AgentTypeBadge extends StatelessWidget {
-  final String type;
-  const _AgentTypeBadge({required this.type});
-
-  @override
-  Widget build(BuildContext context) {
-    final String label;
-    final Color bg;
-    final Color fg;
-    if (type == AgentCategory.hermes) {
-      label = 'Hermes';
-      bg = const Color(0xFFFEF3C7);
-      fg = const Color(0xFF78350F);
-    } else if (AgentCategory.supportsMultiSession(type)) {
-      label = 'OpenCode';
-      bg = const Color(0xFFD1FAE5);
-      fg = const Color(0xFF047857);
-    } else {
-      label = '智能体';
-      bg = const Color(0xFFEDE9FE);
-      fg = const Color(0xFF6D28D9);
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: fg, height: 1.5),
       ),
     );
   }

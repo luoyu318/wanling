@@ -6,6 +6,7 @@ import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/no_conversation_hint_provider.dart';
 import '../providers/selected_conv_provider.dart';
 import '../shell/card_container.dart';
+import '../widgets/agent_type_badge.dart';
 import '../theme/desktop_theme.dart';
 import '../widgets/avatar.dart';
 import 'chat/chat_view.dart';
@@ -178,7 +179,7 @@ class _AgentCard extends StatelessWidget {
                       ),
                       if (agent.type.isNotEmpty) ...[
                         const SizedBox(width: 6),
-                        _TypeBadge(type: agent.type),
+                        AgentTypeBadge(type: agent.type),
                       ],
                     ],
                   ),
@@ -235,33 +236,6 @@ class _AgentCard extends StatelessWidget {
               color: scheme.onSurface.withValues(alpha: 0.3),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// agent 类型小徽标(OpenCode 多 session / Hermes 对话型)。
-class _TypeBadge extends StatelessWidget {
-  final String type;
-
-  const _TypeBadge({required this.type});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: scheme.primary.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        type == AgentCategory.opencode ? 'OpenCode' : type.toUpperCase(),
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: scheme.primary,
         ),
       ),
     );
