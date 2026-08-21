@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:flutter_highlight/themes/vs2015.dart';
@@ -215,7 +216,7 @@ Widget _buildInputBody(String name, Map<String, dynamic> input,
             text: input.toString(),
             sheetTitle: Text(capitalize(name)),
             textStyle: TextStyle(
-                fontFamily: 'monospace',
+                fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                 fontSize: 11,
                 // 深色灰阶反转:#666 → #AAAAAA
                 color: isDark
@@ -288,7 +289,7 @@ class _TruncatedOutput extends StatelessWidget {
       // 深色灰阶反转:抽屉标题 #333 → #EEEEEE
       sheetTitle: Text(capitalize(name), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       textStyle: TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
           fontSize: 11,
           // 深色灰阶反转:#666 → #AAAAAA
           color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666)),
@@ -332,7 +333,7 @@ class _TruncatedOutput extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 11,
-                      fontFamily: 'monospace',
+                      fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                       color: Color(0xFF999999),
                     ),
                   ),
@@ -379,7 +380,7 @@ class _ReadCodeView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = isDark ? vs2015Theme : a11yLightTheme;
     const fontStyle = TextStyle(
-        fontFamily: 'monospace', fontSize: 12, height: 1.5);
+        fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12, height: 1.5);
 
     final result = highlight.parse(code, language: language);
     final spans = highlightNodesToSpans(result.nodes ?? const [], theme);
@@ -489,7 +490,7 @@ class _FileDiffRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 0.5),
               child: Text(line,
                 style: TextStyle(
-                  fontFamily: 'monospace', fontSize: 12, height: 1.4,
+                  fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12, height: 1.4,
                   color: line.startsWith('+ ') ? const Color(0xFF07C160) : (line.startsWith('- ') ? const Color(0xFFFA5151) : const Color(0xFF999999)),
                 ),
               ),
@@ -601,7 +602,7 @@ class _WebFetchRow extends StatelessWidget {
             const Text('网址', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
             const SizedBox(height: 4),
             SelectableText(url,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF5B8BF7))),
+                style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: Color(0xFF5B8BF7))),
             const SizedBox(height: 12),
           ],
           if (error.isNotEmpty) ...[
@@ -616,7 +617,7 @@ class _WebFetchRow extends StatelessWidget {
             const SizedBox(height: 4),
             // 深色灰阶反转:抽屉正文 #555 → #C8C8C8
             SelectableText(output,
-                style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
+                style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
           ],
         ],
       ),
@@ -707,7 +708,7 @@ class _SkillRow extends StatelessWidget {
             const SizedBox(height: 4),
             // 深色灰阶反转:抽屉正文 #555 → #C8C8C8
             SelectableText(output,
-                style: TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
+                style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
           ],
         ],
       ),

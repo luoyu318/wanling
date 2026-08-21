@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/msg_type.dart';
@@ -193,7 +194,7 @@ class _PendingPermissionCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontFamily: 'monospace',
+                  fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                   fontSize: 12,
                   color: Color(0xFF8C5A1A),
                 ),
@@ -411,7 +412,7 @@ class _TerminalPermissionCard extends StatelessWidget {
               TruncatableTextBlock(
                 text: detail,
                 sheetTitle: Text('权限审批 · $label'),
-                textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Color(0xFF666666)),
+                textStyle: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12, color: Color(0xFF666666)),
                 backgroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               ),
@@ -576,7 +577,7 @@ class _PermissionReplySheetState extends ConsumerState<_PermissionReplySheet> {
                           child: Text(
                             detail,
                             style: const TextStyle(
-                              fontFamily: 'monospace',
+                              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                               fontSize: 13,
                               height: 1.6,
                               color: Color(0xFF80CBC4),
@@ -842,7 +843,7 @@ class _SaveRules extends StatelessWidget {
                     child: Text(
                       r,
                       style: TextStyle(
-                        fontFamily: 'monospace',
+                        fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                         fontSize: 12,
                         color: dangerous
                             ? const Color(0xFFEF5350)

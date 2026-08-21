@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'tool_card_body_widgets.dart' show showDetailSheet;
 
@@ -44,7 +45,7 @@ class TruncatableTextBlock extends StatelessWidget {
           child: SelectableText(
             text,
             style: TextStyle(
-              fontFamily: 'monospace',
+              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
               fontSize: 12,
               height: 1.5,
               // 深色灰阶反转:#555 → #C8C8C8

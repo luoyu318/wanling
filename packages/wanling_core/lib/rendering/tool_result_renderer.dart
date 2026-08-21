@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'message_content_renderer.dart';
 import 'truncatable_text_block.dart';
@@ -52,7 +53,7 @@ class ToolResultRenderer implements MessageContentRenderer {
               TruncatableTextBlock(
                 text: output,
                 sheetTitle: Text(capitalize(name), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
-                textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+                textStyle: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: Color(0xFF666666)),
                 maxLines: 1,
               ),
           ],

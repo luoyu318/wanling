@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'message_content_renderer.dart';
 
@@ -102,7 +103,7 @@ class FileDiffRenderer implements MessageContentRenderer {
                         child: Text(
                           line,
                           style: TextStyle(
-                            fontFamily: 'monospace', fontSize: 12, height: 1.4,
+                            fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12, height: 1.4,
                             // 语义色(新增绿/删除红)保留;普通行深色 #999 → #777777
                             color: isAdd ? const Color(0xFF07C160) : (isDel ? const Color(0xFFFA5151) : (isDark ? const Color(0xFF777777) : const Color(0xFF999999))),
                           ),

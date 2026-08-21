@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'package:wanling_core/models/approval.dart';
 import 'package:wanling_core/utils/snackbar.dart';
@@ -181,7 +182,7 @@ class _CardViewState extends State<_CardView> {
             ),
             child: Text(
               widget.card.preview,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12),
             ),
           ),
           const SizedBox(height: 6),
@@ -206,7 +207,7 @@ class _CardViewState extends State<_CardView> {
             ),
             child: Text(
               widget.card.preview,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12),
             ),
           ),
           const SizedBox(height: 6),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../utils/mono_font.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
@@ -104,7 +105,7 @@ class _TextPreviewPageState extends State<TextPreviewPage> {
               style: const TextStyle(
                 fontSize: 15,
                 height: 1.5,
-                fontFamily: 'monospace',
+                fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
               ),
             ),
             if (_truncated)

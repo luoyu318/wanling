@@ -1,10 +1,19 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 /// 桌面双套主题:浅色参照 core 紧凑浅色(白底/浅灰页面/深黑正文),
 /// 深色自定(深灰 surface/更深背景/浅灰正文),主色均为品牌绿系。
-/// 不指定 fontFamily,跟随系统。
+///
+/// fontFamily:Flutter 引擎默认请求 Roboto,Windows 无此字体,中文经
+/// DirectWrite 兜底落到宋体(观感怪异的根因)。Windows 显式指定系统
+/// UI 字体 Microsoft YaHei UI;Linux/macOS 保持 null 走各自正常兜底。
 class DesktopTheme {
   DesktopTheme._();
+
+  /// Windows 系统 UI 字体,其余平台 null(跟随引擎兜底)。
+  static final String? uiFontFamily =
+      Platform.isWindows ? 'Microsoft YaHei UI' : null;
 
   /// 品牌绿(core accentGreen)
   static const Color _brandGreen = Color(0xFF07C160);
@@ -14,6 +23,7 @@ class DesktopTheme {
 
   static final ThemeData light = ThemeData(
     useMaterial3: true,
+    fontFamily: uiFontFamily,
     colorScheme: const ColorScheme(
       brightness: Brightness.light,
       primary: _brandGreen,
@@ -38,6 +48,7 @@ class DesktopTheme {
 
   static final ThemeData dark = ThemeData(
     useMaterial3: true,
+    fontFamily: uiFontFamily,
     colorScheme: const ColorScheme(
       brightness: Brightness.dark,
       primary: _brandGreenDark,

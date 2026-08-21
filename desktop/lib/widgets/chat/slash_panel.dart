@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/slash_command.dart' show SlashCommand;
+import 'package:wanling_core/utils/mono_font.dart';
 
 import 'panel_scroll.dart';
 
@@ -82,7 +83,7 @@ class SlashPanelState extends State<SlashPanel> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'monospace',
+                    fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                     color: scheme.primary,
                   ),
                 ),

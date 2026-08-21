@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'message_content_renderer.dart';
 import 'subagent_renderer.dart';
@@ -60,7 +61,7 @@ class ToolCallRenderer implements MessageContentRenderer {
           ? TruncatableTextBlock(
               text: input.toString(),
               sheetTitle: Text(capitalize(name)),
-              textStyle: TextStyle(fontFamily: 'monospace', fontSize: 11, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666)),
+              textStyle: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666)),
               maxLines: 1,
             )
           : null,

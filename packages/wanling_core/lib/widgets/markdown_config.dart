@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 import 'package:flutter_highlight/themes/a11y-dark.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -75,7 +76,7 @@ MarkdownConfig markdownStyle({
     const CodeConfig(style: TextStyle(
       color: AppColors.mdLink,
       backgroundColor: Colors.transparent,
-      fontFamily: 'monospace',
+      fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
     )),
     // 任务列表 checkbox:checked=绿底白字 ✓,unchecked=灰边框空心(与 TodoBody 风格一致)
     const CheckBoxConfig(builder: _markdownCheckBoxBuilder),

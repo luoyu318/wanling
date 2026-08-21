@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:wanling_core/utils/mono_font.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/session_diff.dart';
@@ -273,7 +274,7 @@ class _FileTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontFamily: 'monospace',
+                fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
                 fontSize: 12,
                 color: scheme.onSurface.withValues(alpha: 0.85),
               ),
@@ -465,7 +466,7 @@ class _DiffLineRow extends StatelessWidget {
       child: Text(
         line.text,
         softWrap: false,
-        style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: fg),
+        style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: fg),
       ),
     );
   }

@@ -1,5 +1,6 @@
 // desktop/lib/pages/agent_detail_page.dart
 import 'package:flutter/material.dart';
+import 'package:wanling_core/utils/mono_font.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -442,7 +443,7 @@ class _AppIdRowState extends State<_AppIdRow> {
         Expanded(
           child: SelectableText(
             widget.value,
-            style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+            style: const TextStyle(fontSize: 13, fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback),
           ),
         ),
         IconButton(
@@ -537,7 +538,7 @@ class _NewSecretContentState extends State<_NewSecretContent> {
             widget.secretKey,
             style: const TextStyle(
               fontSize: 13,
-              fontFamily: 'monospace',
+              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
             ),
           ),
         ),

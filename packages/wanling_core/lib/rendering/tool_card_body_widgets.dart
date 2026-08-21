@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/mono_font.dart';
 
 import 'package:wanling_core/theme/app_colors.dart';
 
@@ -26,7 +27,7 @@ class BashBody extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(4)),
             child: Text('\$ $command', maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF4FC3F7))),
+                style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: Color(0xFF4FC3F7))),
           ),
           if (workdir.isNotEmpty)
             Padding(padding: const EdgeInsets.only(top: 4), child: Text('📂 ${basename(workdir)}', style: const TextStyle(fontSize: 10, color: Color(0xFFAAAAAA)))),
@@ -47,7 +48,7 @@ class BashBody extends StatelessWidget {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(6)),
             child: SelectableText('\$ $command',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF4FC3F7))),
+              style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: Color(0xFF4FC3F7))),
           ),
           if (workdir.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -111,7 +112,7 @@ class EditBody extends StatelessWidget {
         lines.join(' · '),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: color),
+        style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: color),
       ),
     );
   }
@@ -130,7 +131,7 @@ class EditBody extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: SelectableText(l, style: TextStyle(
-              fontFamily: 'monospace', fontSize: 13, height: 1.4,
+              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.4,
               color: isAdd ? const Color(0xFF07C160) : const Color(0xFFFA5151),
             )),
           );
@@ -159,7 +160,7 @@ class ReadBody extends StatelessWidget {
         padding: const EdgeInsets.all(6),
         // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
         decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
-        child: Text(basename(filePath), style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF5B8BF7))),
+        child: Text(basename(filePath), style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: Color(0xFF5B8BF7))),
       ),
     );
   }
@@ -170,7 +171,7 @@ class ReadBody extends StatelessWidget {
       title: Text('读取文件', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
-        children: [SelectableText(filePath, style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555)))],
+        children: [SelectableText(filePath, style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555)))],
       ),
     );
   }
@@ -204,7 +205,7 @@ class GrepBody extends StatelessWidget {
           ].join(' · '),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFFFA8C16)),
+          style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: Color(0xFFFA8C16)),
         ),
       ),
     );
@@ -217,13 +218,13 @@ class GrepBody extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SelectableText('pattern: $pattern', style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFFFA8C16))),
+          SelectableText('pattern: $pattern', style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: Color(0xFFFA8C16))),
           if (path.isNotEmpty) const SizedBox(height: 6),
           if (path.isNotEmpty)
-            SelectableText('scope: $path', style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
+            SelectableText('scope: $path', style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
           if (include.isNotEmpty) const SizedBox(height: 6),
           if (include.isNotEmpty)
-            SelectableText('include: $include', style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF999999))),
+            SelectableText('include: $include', style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: Color(0xFF999999))),
         ],
       ),
     );
@@ -248,7 +249,7 @@ class GlobBody extends StatelessWidget {
         padding: const EdgeInsets.all(6),
         // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
         decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
-        child: Text(pattern, style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFFFA8C16))),
+        child: Text(pattern, style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: Color(0xFFFA8C16))),
       ),
     );
   }
@@ -259,7 +260,7 @@ class GlobBody extends StatelessWidget {
       title: Text('Glob 匹配', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
-        children: [SelectableText(pattern, style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFFFA8C16)))],
+        children: [SelectableText(pattern, style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: Color(0xFFFA8C16)))],
       ),
     );
   }
@@ -422,7 +423,7 @@ class WriteBody extends StatelessWidget {
             decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
             child: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis,
                 // 深色灰阶反转:#666 → #AAAAAA
-                style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
+                style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 11, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
           ),
         ],
       ),
@@ -442,7 +443,7 @@ class WriteBody extends StatelessWidget {
             // 深色:抽屉(1E1F24)内的内容块用 26272D 区分层次;标题级字色 #333 → #EEEEEE
             decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF5F5F5), borderRadius: BorderRadius.circular(6)),
             child: SelectableText(content,
-              style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
+              style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
           ),
         ],
       ),
