@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 /// 由 ToolCallRenderer 在 name == "task" 时调用。
 class SubagentBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const SubagentBody({super.key, required this.input});
+
+  /// 深色模式:描述文字灰阶反转(555 → C8C8C8);紫色主题色与白字徽章双模式保持
+  final bool isDark;
+  const SubagentBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +30,7 @@ class SubagentBody extends StatelessWidget {
           ],
         ),
         if (description.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 4), child: Text(description, style: const TextStyle(fontSize: 12, color: Color(0xFF555555)))),
+          Padding(padding: const EdgeInsets.only(top: 4), child: Text(description, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555)))),
       ],
     );
   }
