@@ -86,10 +86,11 @@ class NavRail extends ConsumerWidget {
           navItem(Icons.chat_bubble_outline, '消息', '/messages', 'navrail_messages'),
           navItem(Icons.auto_awesome_outlined, '万灵', '/wanling', 'navrail_wanling'),
           const Spacer(),
-          // 账号切换:复用登录页 AccountSwitcher(外包 navrail_account key)
+          // 账号切换:复用登录页 AccountSwitcher(外包 navrail_account key);
+          // alwaysShow:savedLogins 为空也常驻入口(菜单提示暂无账号)
           const KeyedSubtree(
             key: ValueKey('navrail_account'),
-            child: AccountSwitcher(iconOnly: true),
+            child: AccountSwitcher(iconOnly: true, alwaysShow: true),
           ),
         ],
       ),

@@ -13,7 +13,7 @@ void main() {
     expect(DesktopTheme.cardBorderColor(Brightness.light), const Color(0xFFDCDCDC));
   });
 
-  testWidgets('CardContainer 渲染 12px 圆角与 1px 边框', (tester) async {
+  testWidgets('CardContainer 渲染 12px 圆角且无外边框', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -29,6 +29,7 @@ void main() {
     );
     final box = decor.decoration! as BoxDecoration;
     expect(box.borderRadius, BorderRadius.circular(12));
-    expect(box.border?.top.width, 1);
+    // 验收反馈:去掉卡片外部边框线(内部 divider 分割线不受影响)
+    expect(box.border, isNull);
   });
 }

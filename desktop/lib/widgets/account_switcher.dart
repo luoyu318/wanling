@@ -6,38 +6,46 @@ import '../utils/dio_error.dart';
 
 /// 登录页顶部多账号切换器。
 ///
-/// savedLogins 为空时不渲染;点击弹出账号菜单(username@server),
-/// 选中即调 SavedLoginsNotifier.switchTo:silent logout → 切 baseUrl →
-/// 用保存的凭据自动登录,全程 isSwitching 守卫防 router 误跳。
+/// savedLogins 为空时不渲染(除非 alwaysShow,工具条底部需常驻入口);
+/// 点击弹出账号菜单(username@server),选中即调 SavedLoginsNotifier
+/// .switchTo:silent logout → 切 baseUrl → 用保存的凭据自动登录,
+/// 全程 isSwitching 守卫防 router 误跳。
 ///
 /// iconOnly=true 时 child 只渲染账号图标(工具条底部紧凑模式),
 /// 菜单逻辑与完整模式一致。
 class AccountSwitcher extends ConsumerWidget {
   final bool iconOnly;
 
-  const AccountSwitcher({super.key, this.iconOnly = false});
+  /// savedLogins 为空时是否仍渲染(工具条常驻入口,菜单提示暂无账号)。
+  final bool alwaysShow;
+
+  const AccountSwitcher({super.key, this.iconOnly = false, this.alwaysShow = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final saved = ref.watch(savedLoginsProvider);
-    if (saved.isEmpty) return const SizedBox.shrink();
+    if (saved.isEmpty && !alwaysShow) return const SizedBox.shrink();
     final busy = ref.watch(
       authProvider.select((s) => s.isSwitching || s.isLoading),
     );
     final current = saved.selected;
+    final scheme = Theme.of(context).colorScheme;
 
     return PopupMenuButton<int>(
       key: const ValueKey('account_switcher_button'),
       enabled: !busy,
       tooltip: '切换服务器/账号',
       itemBuilder: (_) => [
-        for (var i = 0; i < saved.logins.length; i++)
-          PopupMenuItem(
-            value: i,
-            child: Text(
-              '${saved.logins[i].username}@${saved.logins[i].server}',
+        if (saved.logins.isEmpty)
+          const PopupMenuItem(enabled: false, child: Text('暂无已保存账号'))
+        else
+          for (var i = 0; i < saved.logins.length; i++)
+            PopupMenuItem(
+              value: i,
+              child: Text(
+                '${saved.logins[i].username}@${saved.logins[i].server}',
+              ),
             ),
-          ),
       ],
       onSelected: (i) async {
         try {
@@ -62,9 +70,16 @@ class AccountSwitcher extends ConsumerWidget {
         }
       },
       child: iconOnly
-          ? const Padding(
-              padding: EdgeInsets.all(8),
-              child: Icon(Icons.account_circle, size: 22),
+          ? SizedBox(
+              width: 36,
+              height: 36,
+              child: Center(
+                child: Icon(
+                  Icons.account_circle,
+                  size: 21,
+                  color: scheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
             )
           : Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),

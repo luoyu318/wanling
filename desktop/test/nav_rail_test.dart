@@ -64,6 +64,8 @@ void main() {
     expect(find.byKey(const ValueKey('navrail_messages')), findsOneWidget);
     expect(find.byKey(const ValueKey('navrail_wanling')), findsOneWidget);
     expect(find.byKey(const ValueKey('navrail_account')), findsOneWidget);
+    // alwaysShow:空 savedLogins 也常驻账号切换入口
+    expect(find.byKey(const ValueKey('account_switcher_button')), findsOneWidget);
     // 设置项已移除(入口进标题栏)
     expect(find.byKey(const ValueKey('navrail_settings')), findsNothing);
     // 透明工具条:无背景色 Container

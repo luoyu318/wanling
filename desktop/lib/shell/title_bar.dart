@@ -56,14 +56,17 @@ class _TitleBarState extends ConsumerState<TitleBar> {
       height: 40,
       child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 12),
-            child: Avatar(
-              key: const ValueKey('titlebar_logo'),
-              name: user?.displayName ?? '',
-              url: user?.avatarUrl,
-              size: 22,
-              radius: 11,
+          // 21px 与工具条 icon 同视觉尺寸;Center 撑满 40px 高确保垂直居中。
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Avatar(
+                key: const ValueKey('titlebar_logo'),
+                name: user?.displayName ?? '',
+                url: user?.avatarUrl,
+                size: 21,
+                radius: 10.5,
+              ),
             ),
           ),
           Expanded(
