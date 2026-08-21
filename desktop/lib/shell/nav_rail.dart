@@ -71,8 +71,9 @@ class NavRail extends ConsumerWidget {
       width: 52,
       child: Column(
         children: [
-          // 用户头像置顶(搜索上方):28px 略大于线条 icon(实心圆形与 21px
-          // 线条视觉平衡),36x36 容器与 navItem 对齐。
+          // 头像与窗口顶部的间距(与右/底 8px 画布边距同量级,视觉透气)。
+          const SizedBox(height: 8),
+          // 用户头像置顶(搜索上方):填满 36x36 容器,与 navItem 同尺寸。
           SizedBox(
             width: 36,
             height: 36,
@@ -81,8 +82,8 @@ class NavRail extends ConsumerWidget {
                 key: const ValueKey('navrail_user_avatar'),
                 name: user?.displayName ?? '',
                 url: user?.avatarUrl,
-                size: 28,
-                radius: 14,
+                size: 36,
+                radius: 18,
               ),
             ),
           ),
