@@ -101,6 +101,7 @@ void main() {
   Widget host(
     Map<String, dynamic> c, {
     String outerMessageId = '',
+    bool isDark = false,
     void Function(GlobalKey key, bool expanded, double topDelta, bool isHistory)?
         onToolGroupToggle,
   }) {
@@ -115,7 +116,7 @@ void main() {
               isMe: false,
               baseUrl: 'http://localhost',
               token: 'test',
-              isDark: false,
+              isDark: isDark,
               messageId: outerMessageId,
               onToolGroupToggle: onToolGroupToggle,
             ),
@@ -591,6 +592,58 @@ void main() {
       expect(cbExpanded, isTrue);
       expect(cbTopDelta, isA<double>());
       expect(cbTopDelta!, lessThanOrEqualTo(0));
+    });
+  });
+
+  group('深色模式适配', () {
+    testWidgets('isDark=true:卡片底色 0xFF26272D(浅色回归白底)', (tester) async {
+      await tester.pumpWidget(host(content(elements: []), isDark: true));
+      final container = tester.widget<Container>(find.byType(Container).first);
+      final deco = container.decoration! as BoxDecoration;
+      expect(deco.color, const Color(0xFF26272D));
+
+      await tester.pumpWidget(host(content(elements: [])));
+      final light = tester.widget<Container>(find.byType(Container).first);
+      expect((light.decoration! as BoxDecoration).color, Colors.white);
+    });
+
+    testWidgets('isDark=true:压缩分隔线 0xFF2E2F36(浅色回归 #F5F5F5)', (tester) async {
+      await tester.pumpWidget(host(
+        content(
+          state: 'done',
+          elements: [element('compact_divider', 'divider_1', const {})],
+        ),
+        isDark: true,
+      ));
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .any((c) => c.color == const Color(0xFF2E2F36)),
+        isTrue,
+      );
+
+      await tester.pumpWidget(host(
+        content(
+          state: 'done',
+          elements: [element('compact_divider', 'divider_1', const {})],
+        ),
+      ));
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .any((c) => c.color == const Color(0xFFF5F5F5)),
+        isTrue,
+      );
+    });
+
+    testWidgets('isDark=true:generating 底部状态条深灰底(0xFF2E2F36)', (tester) async {
+      await tester.pumpWidget(host(content(state: 'generating'), isDark: true));
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .any((c) => c.color == const Color(0xFF2E2F36)),
+        isTrue,
+      );
     });
   });
 

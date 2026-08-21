@@ -241,6 +241,13 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
   @override
   Widget build(BuildContext context) {
     final streaming = widget.rc.isStreaming;
+    // 深色模式灰阶反转:标题/闪烁字/展开箭头提亮,保持与深色卡底(0xFF26272D)对比度
+    final shimmerColor =
+        widget.rc.isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666);
+    final titleColor =
+        widget.rc.isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555);
+    final arrowColor =
+        widget.rc.isDark ? const Color(0xFF777777) : const Color(0xFFBBBBBB);
     final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
     final (icon, iconColor) = _categoryVisual(widget.cards);
     return Padding(
@@ -259,18 +266,18 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
                   child: streaming
                       ? ShimmerText(
                           text: title,
-                          baseColor: const Color(0xFF666666),
-                          style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                          baseColor: shimmerColor,
+                          style: TextStyle(fontSize: 14, color: shimmerColor),
                         )
                       : Text(
                           title,
-                          style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                          style: TextStyle(fontSize: 14, color: titleColor),
                         ),
                 ),
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: const Color(0xFFBBBBBB),
+                  color: arrowColor,
                 ),
               ],
             ),

@@ -64,5 +64,43 @@ void main() {
       expect(find.text('build'), findsOneWidget);
       expect(find.text('12.3s'), findsOneWidget);
     });
+
+    testWidgets('isDark=true → generating 状态条深灰底(0xFF2E2F36)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: FooterStatusBar(
+            generating: true,
+            elements: [el('tool_card', 't1')],
+            footerData: const {},
+            isDark: true,
+          ),
+        ),
+      ));
+      // Container(color:) 在渲染树里落成 ColoredBox
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .any((c) => c.color == const Color(0xFF2E2F36)),
+        isTrue,
+      );
+    });
+
+    testWidgets('浅色回归:generating 状态条保持 #F7F7F7', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: FooterStatusBar(
+            generating: true,
+            elements: [el('tool_card', 't1')],
+            footerData: const {},
+          ),
+        ),
+      ));
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .any((c) => c.color == const Color(0xFFF7F7F7)),
+        isTrue,
+      );
+    });
   });
 }

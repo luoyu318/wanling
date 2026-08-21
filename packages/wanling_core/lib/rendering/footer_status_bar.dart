@@ -29,18 +29,22 @@ class FooterStatusBar extends StatelessWidget {
   final bool generating;
   final List<Map<String, dynamic>> elements;
   final Map<String, dynamic> footerData;
+
+  /// 深色模式(桌面端):状态条底色切深灰;浅色(app 壳)保持 #F7F7F7。
+  final bool isDark;
   const FooterStatusBar({
     super.key,
     required this.generating,
     required this.elements,
     required this.footerData,
+    this.isDark = false,
   });
 
   @override
   Widget build(BuildContext context) {
     if (generating) {
       return Container(
-        color: const Color(0xFFF7F7F7),
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: ShimmerText(
           text: aggregatePhaseText(elements),

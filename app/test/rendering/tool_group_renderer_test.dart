@@ -14,6 +14,7 @@ Map<String, dynamic> tool(String id, String name, {String status = 'completed'})
 
 MessageRenderContext rc({
   bool streaming = false,
+  bool isDark = false,
   void Function(GlobalKey key, bool expanded, double topDelta, bool isHistory)?
       onToolGroupToggle,
 }) =>
@@ -21,7 +22,7 @@ MessageRenderContext rc({
       isMe: false,
       baseUrl: '',
       token: '',
-      isDark: false,
+      isDark: isDark,
       isStreaming: streaming,
       onToolGroupToggle: onToolGroupToggle,
     );
@@ -224,6 +225,40 @@ void main() {
       expect(cbTopDelta, isA<double>());
       expect(cbTopDelta!, lessThan(0));
       expect(cbIsHistory, isFalse); // 默认 live/非 history
+    });
+  });
+
+  group('深色模式灰阶反转', () {
+    testWidgets('isDark=true:完成态标题 0xFFC8C8C8,展开箭头 0xFF777777', (tester) async {
+      final cards = [tool('r1', 'read')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc(isDark: true))));
+      final text = tester.widget<Text>(find.text('已探索 1次读取'));
+      expect(text.style!.color, const Color(0xFFC8C8C8));
+      // 组内唯一 Icon 是展开箭头(IconFont 是 Text 实现)
+      final arrow = tester.widget<Icon>(find.byType(Icon));
+      expect(arrow.color, const Color(0xFF777777));
+    });
+
+    testWidgets('isDark=true:进行中 ShimmerText baseColor 0xFFAAAAAA', (tester) async {
+      final cards = [tool('r1', 'read')];
+      await tester.pumpWidget(
+          host(ToolGroupCard(cards: cards, rc: rc(isDark: true, streaming: true))));
+      final shimmer = tester.widget<ShimmerText>(find.byType(ShimmerText));
+      expect(shimmer.baseColor, const Color(0xFFAAAAAA));
+      expect(shimmer.style.color, const Color(0xFFAAAAAA));
+    });
+
+    testWidgets('浅色回归:标题 0xFF555555,箭头 0xFFBBBBBB,闪烁字 0xFF666666', (tester) async {
+      final cards = [tool('r1', 'read')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
+      final text = tester.widget<Text>(find.text('已探索 1次读取'));
+      expect(text.style!.color, const Color(0xFF555555));
+      expect(tester.widget<Icon>(find.byType(Icon)).color,
+          const Color(0xFFBBBBBB));
+
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc(streaming: true))));
+      final shimmer = tester.widget<ShimmerText>(find.byType(ShimmerText));
+      expect(shimmer.baseColor, const Color(0xFF666666));
     });
   });
 }

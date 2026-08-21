@@ -72,7 +72,8 @@ class AggregateCardRenderer implements MessageContentRenderer {
       // 左上角直角(对齐头像起始),其余三角 12px 圆角;无边框,阴影浮起(0x1A = 10% 黑)
       // 分卡序列按 data.segment 调整四角(相邻接触处直角,首末保留圆角)。
       decoration: BoxDecoration(
-        color: Colors.white,
+        // 深色模式(桌面端)卡片底色切深灰,浅色(app 壳)保持白底
+        color: rc.isDark ? const Color(0xFF26272D) : Colors.white,
         borderRadius: radius,
         // 阴影参数恒定,radius 动态故 BoxDecoration 本身不能 const,阴影子项可 const
         boxShadow: const [
@@ -118,12 +119,14 @@ class AggregateCardRenderer implements MessageContentRenderer {
                 generating: true,
                 elements: elements,
                 footerData: const {},
+                isDark: rc.isDark,
               )
             else if (_hasFinishedFooter(elements))
               FooterStatusBar(
                 generating: false,
                 elements: elements,
                 footerData: _finishedFooterData(elements),
+                isDark: rc.isDark,
               ),
           ],
         ),
@@ -178,7 +181,7 @@ class AggregateCardRenderer implements MessageContentRenderer {
           MsgType.toolCard, elementContent, context, elementRc),
       'markdown' => ContentRendererRegistry.render(
           MsgType.markdown, elementContent, context, elementRc),
-      'compact_divider' => _buildCompactDivider(),
+      'compact_divider' => _buildCompactDivider(elementRc),
       'footer' => ContentRendererRegistry.render(
           MsgType.stepFinish, elementContent, context, elementRc),
       'question_card' => ContentRendererRegistry.render(
@@ -195,12 +198,13 @@ class AggregateCardRenderer implements MessageContentRenderer {
   }
 
   /// 压缩分隔线:元素间视觉分段(自绘细线,不引入 Divider 默认上下间距)。
-  Widget _buildCompactDivider() {
+  /// 深色模式切深灰分隔色,浅色保持 #F5F5F5。
+  Widget _buildCompactDivider(MessageRenderContext rc) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Container(
         height: 1,
-        color: const Color(0xFFF5F5F5),
+        color: rc.isDark ? const Color(0xFF2E2F36) : const Color(0xFFF5F5F5),
       ),
     );
   }
