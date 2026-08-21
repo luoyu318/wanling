@@ -156,6 +156,77 @@ void main() {
     expect(r!.selectable, isFalse);
     expect(r.wrapInBubble, isFalse);
   });
+
+  group('FileContentRenderer 文本预览卡深色适配', () {
+    // 卡底 Container 可能走 color 也可能走 decoration.color,两者都查
+    bool hasCardBg(WidgetTester tester, Color color) => tester
+        .widgetList<Container>(find.byType(Container))
+        .any((w) => w.color == color || (w.decoration as BoxDecoration?)?.color == color);
+
+    testWidgets('text/plain 卡:深色底 26272D + 边框 2E2F36 + 文件名 EEEEEE(浅色回归 白底/E8E8E8/333333)', (tester) async {
+      final data = {
+        'file_id': 'abc',
+        'filename': 'readme.txt',
+        'mime_type': 'text/plain',
+        'file_size': 256,
+      };
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: _RendererHost(msgType: MsgType.file, data: data, isDark: true)),
+      ));
+      expect(hasCardBg(tester, const Color(0xFF26272D)), isTrue);
+      expect(
+        tester.widget<Text>(find.text('readme.txt')).style?.color,
+        const Color(0xFFEEEEEE),
+      );
+      expect(
+        tester.widget<Text>(find.text('256 B')).style?.color,
+        const Color(0xFF777777),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: _RendererHost(msgType: MsgType.file, data: data)),
+      ));
+      expect(hasCardBg(tester, Colors.white), isTrue);
+      expect(
+        tester.widget<Text>(find.text('readme.txt')).style?.color,
+        const Color(0xFF333333),
+      );
+      expect(
+        tester.widget<Text>(find.text('256 B')).style?.color,
+        const Color(0xFF999999),
+      );
+    });
+
+    testWidgets('圆形 icon 底:深色 26272D + 图标 AAAAAA(浅色回归 F2F2F2/666666)', (tester) async {
+      final data = {
+        'file_id': 'abc',
+        'filename': 'notes.md',
+        'mime_type': 'text/markdown',
+        'file_size': 4096,
+      };
+      bool hasCircleBg(WidgetTester tester, Color color) => tester
+          .widgetList<Container>(find.byType(Container))
+          .any((w) => (w.decoration as BoxDecoration?)?.borderRadius == BorderRadius.circular(17) && (w.decoration as BoxDecoration).color == color);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: _RendererHost(msgType: MsgType.file, data: data, isDark: true)),
+      ));
+      expect(hasCircleBg(tester, const Color(0xFF26272D)), isTrue);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.description)).color,
+        const Color(0xFFAAAAAA),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: _RendererHost(msgType: MsgType.file, data: data)),
+      ));
+      expect(hasCircleBg(tester, const Color(0xFFF2F2F2)), isTrue);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.description)).color,
+        const Color(0xFF666666),
+      );
+    });
+  });
 }
 
 /// 渲染 host widget，复用 ContentRendererRegistry.render 路径
@@ -163,11 +234,13 @@ class _RendererHost extends StatelessWidget {
   final MsgType msgType;
   final Map<String, dynamic> data;
   final Map<String, FileDownloadSnapshot>? snapshots;
+  final bool isDark;
 
   const _RendererHost({
     required this.msgType,
     required this.data,
     this.snapshots,
+    this.isDark = false,
   });
 
   @override
@@ -180,7 +253,7 @@ class _RendererHost extends StatelessWidget {
         isMe: false,
         baseUrl: 'http://localhost',
         token: 'test',
-        isDark: false,
+        isDark: isDark,
         fileDownloadSnapshots: snapshots,
       ),
     );

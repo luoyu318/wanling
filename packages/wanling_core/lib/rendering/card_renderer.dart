@@ -20,8 +20,9 @@ class CardContentRenderer implements MessageContentRenderer {
   @override
   bool get selectable => false;
 
+  // 卡片自带底色外壳(深浅双色适配),MessageBubble 仍给三角
   @override
-  bool get wrapInBubble => false; // 卡片自带白底外壳，MessageBubble 仍给三角
+  bool get wrapInBubble => false;
 
   @override
   Widget build(
@@ -32,7 +33,7 @@ class CardContentRenderer implements MessageContentRenderer {
     final data = content['data'] as Map<String, dynamic>?;
     if (data == null) return const Text('[卡片数据缺失]');
     final card = ApprovalCard.fromJson(data);
-    return _CardView(card: card);
+    return _CardView(card: card, isDark: rc.isDark);
   }
 }
 
@@ -51,7 +52,10 @@ Color _cardBorderColor(ApprovalState state) {
 
 class _CardView extends StatefulWidget {
   final ApprovalCard card;
-  const _CardView({required this.card});
+
+  /// 深色模式:外壳/嵌块底/文字灰阶适配(浅色路径不变)。
+  final bool isDark;
+  const _CardView({required this.card, this.isDark = false});
 
   @override
   State<_CardView> createState() => _CardViewState();
@@ -68,6 +72,7 @@ class _CardViewState extends State<_CardView> {
     final isTerminal = state == ApprovalState.approved ||
         state == ApprovalState.denied ||
         state == ApprovalState.expired;
+    final isDark = widget.isDark;
 
     // 卡片状态变化(pending→终态 PATCH 回写)高度变化时平滑过渡:
     // 顶部锚定向下展开,动画期间裁剪,后续消息随之下移平滑。
@@ -79,7 +84,8 @@ class _CardViewState extends State<_CardView> {
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.95),
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          // 深色:白底外壳 → 26272D
+          color: isDark ? const Color(0xFF26272D) : Colors.white,
           borderRadius: BorderRadius.circular(6),
           border: Border(
             left: BorderSide(color: _cardBorderColor(state), width: 3),
@@ -117,9 +123,10 @@ class _CardViewState extends State<_CardView> {
                     '${m.icon} ${m.text}',
                     style: TextStyle(
                       fontSize: 12,
+                      // FA8C16 橙色警示为语义色保留;次要灰深色 #888 → #AAAAAA
                       color: m.warn
                           ? const Color(0xFFFA8C16)
-                          : const Color(0xFF888888),
+                          : (isDark ? const Color(0xFFAAAAAA) : const Color(0xFF888888)),
                     ),
                   ),
                 ),
@@ -166,8 +173,9 @@ class _CardViewState extends State<_CardView> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(6),
+            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F2F2),
+              color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -190,8 +198,9 @@ class _CardViewState extends State<_CardView> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(6),
+            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F2F2),
+              color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -206,8 +215,9 @@ class _CardViewState extends State<_CardView> {
         return [
           Container(
             padding: const EdgeInsets.all(8),
+            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F2F2),
+              color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Row(
@@ -228,9 +238,10 @@ class _CardViewState extends State<_CardView> {
                       ),
                       Text(
                         _fileMeta(f),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF888888),
+                          // 深色灰阶反转:#888 → #AAAAAA
+                          color: widget.isDark ? const Color(0xFFAAAAAA) : const Color(0xFF888888),
                         ),
                       ),
                     ],

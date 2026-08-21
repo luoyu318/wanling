@@ -264,6 +264,7 @@ class FileContentRenderer implements MessageContentRenderer {
       return _TextPreviewCard(
         filename: filename,
         fileSize: fileSize,
+        isDark: rc.isDark,
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
@@ -320,11 +321,15 @@ class FileContentRenderer implements MessageContentRenderer {
 class _TextPreviewCard extends StatelessWidget {
   final String filename;
   final int fileSize;
+
+  /// 深色模式:卡底/边框/文字灰阶适配(浅色路径不变)。
+  final bool isDark;
   final VoidCallback? onTap;
 
   const _TextPreviewCard({
     required this.filename,
     required this.fileSize,
+    this.isDark = false,
     this.onTap,
   });
 
@@ -339,8 +344,10 @@ class _TextPreviewCard extends StatelessWidget {
           minWidth: 220,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: const Color(0xFFE8E8E8)),
+          // 深色:白卡底 → 26272D
+          color: isDark ? const Color(0xFF26272D) : Colors.white,
+          // 深色边框:#E8E8E8 → #2E2F36
+          border: Border.all(color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFE8E8E8)),
           borderRadius: BorderRadius.circular(16),
           boxShadow: const [
             BoxShadow(
@@ -368,10 +375,11 @@ class _TextPreviewCard extends StatelessWidget {
                       children: [
                         Text(
                           filename.isNotEmpty ? filename : '文本文件',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF333333),
+                            // 深色灰阶反转:#333 → #EEEEEE
+                            color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333),
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -379,9 +387,10 @@ class _TextPreviewCard extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           formatFileSize(fileSize),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            color: Color(0xFF999999),
+                            // 深色灰阶反转:#999 → #777777
+                            color: isDark ? const Color(0xFF777777) : const Color(0xFF999999),
                           ),
                         ),
                       ],
@@ -392,13 +401,15 @@ class _TextPreviewCard extends StatelessWidget {
                     width: 34,
                     height: 34,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F2),
+                      // 深色:#F2F2F2 圆形底 → 26272D
+                      color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
                       borderRadius: BorderRadius.circular(17),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.description,
                       size: 16,
-                      color: Color(0xFF666666),
+                      // 深色灰阶反转:#666 → #AAAAAA
+                      color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666),
                     ),
                   ),
                 ],
