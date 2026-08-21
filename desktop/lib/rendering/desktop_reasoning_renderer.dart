@@ -83,7 +83,8 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
             ),
           ),
         ),
-        // 原地展开全文:markdown 渲染复用 core 组件。
+        // 原地展开全文:纯文本走浅灰 Text(思考内容不抢正文视觉);
+        // 含 markdown 语法时仍用 MarkdownView(链接/代码等富文本保持可读)。
         ClipRect(
           child: Align(
             alignment: Alignment.topCenter,
@@ -91,11 +92,17 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
             child: Padding(
               key: _contentKey,
               padding: const EdgeInsets.only(top: 6, bottom: 6),
-              child: MarkdownView(
-                data: widget.text,
-                config:
-                    markdownStyle(isDark: false, isMe: false, context: context),
-              ),
+              child: _hasMarkdownSyntax(widget.text)
+                  ? MarkdownView(
+                      data: widget.text,
+                      config: markdownStyle(
+                          isDark: false, isMe: false, context: context),
+                    )
+                  : Text(
+                      widget.text,
+                      style: const TextStyle(
+                          fontSize: 13, color: Color(0xFFAAAAAA), height: 1.5),
+                    ),
             ),
           ),
         ),
@@ -110,4 +117,19 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
     }
     return '思考完成';
   }
+
+  /// markdown 语法检测(正则与 core TextContentRenderer 同款,私有无法复用)。
+  static final _markdownRe = RegExp(
+    r'(^|\n)\s{0,3}(#{1,6}\s|[*+-]\s|\d+\.\s|>)'
+    r'|```'
+    r'|`[^`]+`'
+    r'|\*\*[^*]+\*\*'
+    r'|\*[^*]+\*'
+    r'|_[^_]+_'
+    r'|\[[^\]]+\]\([^)]+\)'
+    r'|\$[^$\n]+\$',
+  );
+
+  static bool _hasMarkdownSyntax(String text) =>
+      text.isNotEmpty && _markdownRe.hasMatch(text);
 }

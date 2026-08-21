@@ -94,6 +94,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('思考内容'), findsWidgets);
     expect(find.byType(BottomSheet), findsNothing);
+    // 展开正文浅灰(不抢正文视觉)。
+    final body = tester.widget<Text>(
+        find.textContaining('思考内容').hitTestable().first);
+    expect(body.style!.color, const Color(0xFFAAAAAA));
   });
 
   testWidgets('权限卡终态:hover 切前导 icon,点击原地展开原卡', (tester) async {
