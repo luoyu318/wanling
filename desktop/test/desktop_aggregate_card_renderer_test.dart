@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
+import 'package:wanling_core/rendering/footer_info_bar.dart';
+import 'package:wanling_core/rendering/footer_status_bar.dart'
+    show FooterStatusBar;
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_desktop/rendering/aggregate_card_renderer.dart';
 
@@ -69,5 +72,36 @@ void main() {
     ])));
     await tester.pumpAndSettle();
     expect(find.text('桌面透明卡内容'), findsOneWidget);
+  });
+
+  testWidgets('done footer:元信息纯文字行,无灰底通栏', (tester) async {
+    await tester.pumpWidget(host(content(elements: [
+      {
+        'type': 'footer',
+        'element_id': 'f1',
+        'data': {
+          'finished': true,
+          'mode': 'agent',
+          'duration': 1600,
+          'model': 'gpt-test',
+          'tokens': {'total': 1200},
+        },
+      },
+    ])));
+    await tester.pumpAndSettle();
+    // 四要素文本可见。
+    expect(find.text('agent'), findsOneWidget);
+    expect(find.text('1.6s'), findsOneWidget);
+    // 无 FooterInfoBar 灰底通栏(core 组件,桌面版自绘替代)。
+    expect(find.byType(FooterInfoBar), findsNothing);
+  });
+
+  testWidgets('generating:阶段词闪烁,无灰底通栏', (tester) async {
+    await tester.pumpWidget(host(content(state: 'generating', elements: [
+      {'type': 'reasoning', 'element_id': 'e1', 'data': <String, dynamic>{}},
+    ])));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('思考'), findsOneWidget);
+    expect(find.byType(FooterStatusBar), findsNothing);
   });
 }

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/models/quote.dart';
-import 'package:wanling_core/rendering/footer_status_bar.dart';
+import 'package:wanling_core/rendering/footer_status_bar.dart'
+    show aggregatePhaseText;
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/rendering/tool_group_renderer.dart';
+import 'package:wanling_core/utils/duration_format.dart';
+import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 
 /// 桌面版聚合卡渲染器:分叉自 core aggregate_card_renderer(desktop 启动
 /// 时在 registerBuiltinRenderers 后覆盖注册),数据解析/元素分派/子渲染
@@ -70,20 +73,15 @@ class DesktopAggregateCardRenderer implements MessageContentRenderer {
                       )
                     : const SizedBox.shrink(),
             },
-          // footer 状态条:generating→动态阶段词;done+finished footer→静态信息条
+          // footer 状态条:桌面版自绘轻量行(无底色/无分隔线,与透明外壳
+          // 融合;core FooterStatusBar 灰底通栏是贴白卡设计,透明卡上突兀)。
           if (generating)
-            FooterStatusBar(
-              generating: true,
-              elements: elements,
-              footerData: const {},
-              isDark: rc.isDark,
-            )
+            _DesktopFooterBar(generating: true, elements: elements)
           else if (_hasFinishedFooter(elements))
-            FooterStatusBar(
+            _DesktopFooterBar(
               generating: false,
               elements: elements,
               footerData: _finishedFooterData(elements),
-              isDark: rc.isDark,
             ),
         ],
       ),
@@ -275,6 +273,103 @@ class _QuoteLine extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 桌面版 footer 行:透明外壳内的轻量元信息,无底色/无分隔线。
+/// - generating:阶段词闪烁(ShimmerText,文案复用 core aggregatePhaseText);
+/// - done/stopped:模式 + 时长(左),模型 + tokens(右),全部低对比灰小字,
+///   视觉上与正文自然分隔(靠留白而非通栏)。
+class _DesktopFooterBar extends StatelessWidget {
+  final bool generating;
+  final List<Map<String, dynamic>> elements;
+  final Map<String, dynamic> footerData;
+
+  const _DesktopFooterBar({
+    required this.generating,
+    required this.elements,
+    this.footerData = const {},
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (generating) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+        child: ShimmerText(
+          text: aggregatePhaseText(elements),
+          baseColor: const Color(0xFF07C160),
+          style: const TextStyle(fontSize: 11),
+        ),
+      );
+    }
+    // 主动停止态:仅「已停止」灰字。
+    if (footerData['stopped'] == true) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(12, 4, 12, 6),
+        child: Text(
+          '已停止',
+          style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
+        ),
+      );
+    }
+    final mode = (footerData['mode'] as String?) ?? '';
+    final model = (footerData['model'] as String?) ?? '';
+    final duration = footerData['duration'];
+    final durationText = duration is num && duration > 0
+        ? formatDurationMs(duration.toInt())
+        : '';
+    final tokens = footerData['tokens'];
+    final total = tokens is Map ? tokens['total'] : null;
+    final tokensText = total is num && total > 0
+        ? '${(total / 1000).toStringAsFixed(1)}k'
+        : '';
+    // 四要素全空(历史 footer 无快照):不渲染空行。
+    if (mode.isEmpty &&
+        durationText.isEmpty &&
+        model.isEmpty &&
+        tokensText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+      child: Row(
+        children: [
+          if (mode.isNotEmpty)
+            const Text(
+              '模式',
+              style: TextStyle(fontSize: 10, color: Color(0xFF999999)),
+            ),
+          if (mode.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Text(
+              mode,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF999999)),
+            ),
+          ],
+          if (durationText.isNotEmpty) ...[
+            if (mode.isNotEmpty) const SizedBox(width: 10),
+            Text(
+              durationText,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF07C160)),
+            ),
+          ],
+          const Spacer(),
+          if (model.isNotEmpty)
+            Text(
+              model,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF5B8BF7)),
+            ),
+          if (tokensText.isNotEmpty) ...[
+            if (model.isNotEmpty) const SizedBox(width: 10),
+            Text(
+              'tokens $tokensText',
+              style: const TextStyle(fontSize: 11, color: Color(0xFFFA8C16)),
+            ),
+          ],
         ],
       ),
     );
