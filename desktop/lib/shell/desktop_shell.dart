@@ -48,6 +48,31 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
   /// 二级模式:选中的 opencode agent id(null = 一级列表)。
   String? _sessionsAgentId;
 
+  /// 上次路由分支(messages/wanling/settings),用于检测 tab 切换。
+  String _lastBranch = '';
+
+  /// 路由分支:二级状态按分支隔离——切 tab(消息↔万灵↔设置)时
+  /// 重置 _sessionsAgentId 回一级,防二级列表跨 tab 残留。
+  String _branchOf(String location) {
+    if (location.startsWith('/settings')) return 'settings';
+    if (location.startsWith('/wanling') || location.startsWith('/agent')) {
+      return 'wanling';
+    }
+    return 'messages';
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final branch = _branchOf(GoRouterState.of(context).uri.path);
+    if (_lastBranch.isNotEmpty &&
+        branch != _lastBranch &&
+        _sessionsAgentId != null) {
+      setState(() => _sessionsAgentId = null);
+    }
+    _lastBranch = branch;
+  }
+
   @override
   Widget build(BuildContext context) {
     // 详情页「进入会话」脉冲:消费后立即清零,防残留误触发。
@@ -67,14 +92,13 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
       }
     });
     final location = GoRouterState.of(context).uri.path;
-    if (location.startsWith('/settings')) {
+    if (_branchOf(location) == 'settings') {
       return const CardContainer(child: SizedBox.expand());
     }
-    // /agent/:id 属万灵分支:浏览详情时左卡片保持 agent 列表。
-    final wanlingBranch =
-        location.startsWith('/wanling') || location.startsWith('/agent');
     return CardContainer(
-      child: wanlingBranch ? _wanlingPane() : _messagesPane(),
+      child: _branchOf(location) == 'wanling'
+          ? _wanlingPane()
+          : _messagesPane(),
     );
   }
 

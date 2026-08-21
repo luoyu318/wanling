@@ -346,4 +346,35 @@ void main() {
     expect(find.byKey(const ValueKey('agent_session_s1')), findsNothing);
     expect(find.byKey(const ValueKey('agent_oc1')), findsOneWidget);
   });
+
+  testWidgets('万灵页:切走 tab 再切回万灵不残留二级列表', (tester) async {
+    final agents = [
+      _agent('oc1', 'OpenCode 主力', AgentStatus.online, type: 'opencode'),
+    ];
+    final sessions = [
+      _conv('s1', DateTime(2026, 1, 2)),
+    ];
+    final container = ProviderContainer(
+      overrides:
+          await _overrides(agents: agents, convs: [], sessions: {'oc1': sessions}),
+    );
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    // 进入二级 session 列表。
+    await tester.tap(find.byKey(const ValueKey('agent_oc1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('进入会话'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
+
+    // 切到消息 tab 再切回万灵:路由分支变化应重置二级,回 agent 一级列表。
+    await tester.tap(find.byKey(const ValueKey('navrail_messages')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('navrail_wanling')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('agent_session_s1')), findsNothing);
+    expect(find.byKey(const ValueKey('agent_oc1')), findsOneWidget);
+  });
 }
