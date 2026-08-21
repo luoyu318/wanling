@@ -263,7 +263,7 @@ class _GroupHeader extends StatelessWidget {
 }
 
 /// session 列表项:头像 + 名称 + 摘要 + 时间(未读 badge 在头像右上)。
-/// 选中态品牌绿底白字,对齐一级列表 ConversationListItem 新样式。
+/// 选中态柔和主色 tint 底 + onSurface 文字,对齐一级列表样式。
 class _SessionTile extends StatelessWidget {
   final Conversation conv;
   final bool selected;
@@ -287,7 +287,7 @@ class _SessionTile extends StatelessWidget {
       child: Container(
         key: ValueKey('agent_session_${conv.id}'),
         decoration: BoxDecoration(
-          color: selected ? scheme.primary : null,
+          color: selected ? scheme.primary.withValues(alpha: 0.10) : null,
           borderRadius: BorderRadius.circular(8),
         ),
         child: InkWell(
@@ -315,7 +315,8 @@ class _SessionTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 13.5,
-                          color: selected ? Colors.white : scheme.onSurface,
+                          color: scheme.onSurface,
+                          fontWeight: selected ? FontWeight.w600 : null,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -329,9 +330,7 @@ class _SessionTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
-                          color: selected
-                              ? Colors.white.withValues(alpha: 0.78)
-                              : scheme.onSurface.withValues(alpha: 0.5),
+                          color: scheme.onSurface.withValues(alpha: 0.5),
                         ),
                       ),
                     ],
@@ -342,9 +341,7 @@ class _SessionTile extends StatelessWidget {
                   time,
                   style: TextStyle(
                     fontSize: 11,
-                    color: selected
-                        ? Colors.white.withValues(alpha: 0.62)
-                        : scheme.onSurface.withValues(alpha: 0.4),
+                    color: scheme.onSurface.withValues(alpha: 0.4),
                   ),
                 ),
               ],

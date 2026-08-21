@@ -5,7 +5,8 @@ import 'avatar.dart';
 /// 会话列表项(纯展示组件):头像([Avatar],真图+字母色块兜底+未读 badge) +
 /// 名称(可选 agent type 描边小标签) + 摘要 + 时间。
 /// 所有数据由构造参数显式传入,选中态由 [selected] 控制。
-/// 选中态仿主流 IM:品牌绿底 + 白字(浅色主题原名黑字在浅容器上不显眼)。
+/// 选中态柔和主色 tint 底(与 NavRail 选中语言一致),文字保持 onSurface,
+/// 区分靠底色 + 名称字重。
 class ConversationListItem extends StatelessWidget {
   final String convId;
   final String name;
@@ -36,8 +37,8 @@ class ConversationListItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Container(
       key: ValueKey('conv_$convId'),
-      // 选中态品牌绿底,配白字(次级文字白色降透明度)。
-      color: selected ? scheme.primary : null,
+      // 选中态柔和主色 tint 底,文字不反白(次级文字仍降透明度)。
+      color: selected ? scheme.primary.withValues(alpha: 0.10) : null,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -66,9 +67,7 @@ class ConversationListItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 14,
-                              color: selected
-                                  ? Colors.white
-                                  : scheme.onSurface,
+                              color: scheme.onSurface,
                               fontWeight: selected
                                   ? FontWeight.w600
                                   : FontWeight.w400,
@@ -91,9 +90,7 @@ class ConversationListItem extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
-                        color: selected
-                            ? Colors.white.withValues(alpha: 0.75)
-                            : scheme.onSurface.withValues(alpha: 0.55),
+                        color: scheme.onSurface.withValues(alpha: 0.55),
                       ),
                     ),
                   ],
@@ -105,9 +102,7 @@ class ConversationListItem extends StatelessWidget {
                 time,
                 style: TextStyle(
                   fontSize: 11,
-                  color: selected
-                      ? Colors.white.withValues(alpha: 0.6)
-                      : scheme.onSurface.withValues(alpha: 0.4),
+                  color: scheme.onSurface.withValues(alpha: 0.4),
                 ),
               ),
             ],

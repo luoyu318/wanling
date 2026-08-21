@@ -289,9 +289,9 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-/// 气泡外壳:user 主色底 / agent surfaceContainerHighest 底(与白卡片
-/// 区分,浅色 EDEDED/深色 26272D 两模式均有对比),8px 圆角(桌面紧凑风,
-/// 无三角)。
+/// 气泡外壳:user 蓝底 597BFF(对齐 app BubbleWithTail/TuiUserRenderer,
+/// 深浅色同值)/ agent surfaceContainerHighest 底(与白卡片区分,浅色
+/// EDEDED/深色 26272D 两模式均有对比),8px 圆角(桌面紧凑风,无三角)。
 class _BubbleShell extends StatelessWidget {
   final bool isMe;
   final Widget child;
@@ -304,7 +304,7 @@ class _BubbleShell extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: isMe ? scheme.primary : scheme.surfaceContainerHighest,
+        color: isMe ? const Color(0xFF597BFF) : scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
       ),
       child: child,
