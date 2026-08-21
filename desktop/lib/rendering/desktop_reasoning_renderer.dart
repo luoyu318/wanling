@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:markdown_widget/markdown_widget.dart';
 
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/utils/duration_format.dart';
@@ -60,9 +60,16 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
                     width: 15,
                     height: 15,
                     child: Center(
+                      // hover 切展开指示,方向跟随展开态(与折叠组同语言):
+                      // 未展开右指(可展开)/已展开下指(可收起)。
                       child: _hovering
-                          ? const Icon(Icons.chevron_right,
-                              size: 15, color: Color(0xFFD4A017))
+                          ? Icon(
+                              _expanded
+                                  ? Icons.keyboard_arrow_down
+                                  : Icons.chevron_right,
+                              size: 15,
+                              color: const Color(0xFFD4A017),
+                            )
                           : IconFont.icon(IconFont.deepThink,
                               size: 15, color: const Color(0xFFD4A017)),
                     ),
@@ -83,8 +90,9 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
             ),
           ),
         ),
-        // 原地展开全文:纯文本走浅灰 Text(思考内容不抢正文视觉);
-        // 含 markdown 语法时仍用 MarkdownView(链接/代码等富文本保持可读)。
+        // 原地展开全文:整体浅灰(思考内容不抢正文视觉)——纯文本走灰 Text,
+        // markdown 思考链(常见 **强调**/`代码`)段落色替换为浅灰(标题/链接
+        // 等富元素保持,降饱和但不丢可读性)。
         ClipRect(
           child: Align(
             alignment: Alignment.topCenter,
@@ -95,8 +103,7 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
               child: _hasMarkdownSyntax(widget.text)
                   ? MarkdownView(
                       data: widget.text,
-                      config: markdownStyle(
-                          isDark: false, isMe: false, context: context),
+                      config: _mutedMarkdownConfig(context),
                     )
                   : Text(
                       widget.text,
@@ -132,4 +139,17 @@ class _DesktopReasoningCardState extends State<DesktopReasoningCard> {
 
   static bool _hasMarkdownSyntax(String text) =>
       text.isNotEmpty && _markdownRe.hasMatch(text);
+
+  /// 降饱和 markdown config:基于 core markdownStyle,copy 按 tag 覆盖
+  /// 段落(PConfig)字色为浅灰 #AAAAAA(其余配置原样),思考整体退后于正文。
+  static MarkdownConfig _mutedMarkdownConfig(BuildContext context) {
+    return markdownStyle(isDark: false, isMe: false, context: context).copy(
+      configs: const [
+        PConfig(
+          textStyle:
+              TextStyle(fontSize: 13, color: Color(0xFFAAAAAA), height: 1.5),
+        ),
+      ],
+    );
+  }
 }

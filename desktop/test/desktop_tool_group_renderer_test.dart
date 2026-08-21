@@ -19,11 +19,13 @@ void main() {
     );
   }
 
-  Future<void> hover(WidgetTester tester, Finder finder) async {
+  /// 悬停到目标中心,返回 gesture(tap 会清除 hover,需 moveTo 重建)。
+  Future<TestGesture> hover(WidgetTester tester, Finder finder) async {
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: tester.getCenter(finder));
     addTearDown(gesture.removePointer);
     await tester.pumpAndSettle();
+    return gesture;
   }
 
   testWidgets('折叠组:默认前导类别 icon,无尾部箭头', (tester) async {
@@ -87,9 +89,10 @@ void main() {
       duration: 2,
     )));
     expect(find.text('▸'), findsNothing);
-    await hover(tester, find.textContaining('思考完成'));
+    final g = await hover(tester, find.textContaining('思考完成'));
     expect(find.byIcon(Icons.chevron_right), findsOneWidget);
-    // 点击:原地展开显示 markdown 全文(无底部抽屉)。
+    // 点击:原地展开显示全文(无底部抽屉)。触摸 tap 会清除 hover,展开后
+    // 移回鼠标重建悬停,断言 icon 跟随展开态切「可收起」下指箭头。
     await tester.tap(find.textContaining('思考完成'));
     await tester.pumpAndSettle();
     expect(find.textContaining('思考内容'), findsWidgets);
@@ -98,6 +101,36 @@ void main() {
     final body = tester.widget<Text>(
         find.textContaining('思考内容').hitTestable().first);
     expect(body.style!.color, const Color(0xFFAAAAAA));
+    await g.moveTo(tester.getCenter(find.textContaining('思考完成')));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+  });
+
+  testWidgets('思考块:markdown 内容展开段落也浅灰', (tester) async {
+    await tester.pumpWidget(host(DesktopReasoningCard(
+      text: '先看 **关键点** 再分析代码',
+      duration: 1,
+    )));
+    await tester.tap(find.textContaining('思考完成'));
+    await tester.pumpAndSettle();
+    // markdown 段落根 span 无样式,PConfig 色在叶子 span,遍历查找。
+    final rich = tester.widget<RichText>(
+      find.textContaining('再分析代码', findRichText: true).first,
+    );
+    Color? leafColor;
+    void walk(InlineSpan span) {
+      if (span is TextSpan) {
+        if (span.text != null && span.text!.contains('再分析代码')) {
+          leafColor ??= span.style?.color;
+        }
+        for (final c in span.children ?? const <InlineSpan>[]) {
+          walk(c);
+        }
+      }
+    }
+
+    walk(rich.text as TextSpan);
+    expect(leafColor, const Color(0xFFAAAAAA));
   });
 
   testWidgets('权限卡终态:hover 切前导 icon,点击原地展开原卡', (tester) async {
