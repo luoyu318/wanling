@@ -40,7 +40,7 @@ class InputToolbar extends StatelessWidget {
         _ToolbarButton(
           key: const ValueKey('input_toolbar_slash'),
           tooltip: '斜杠命令 /',
-          text: '/',
+          icon: Icons.terminal,
           onTap: slashEnabled ? onSlash : null,
         ),
         _ToolbarButton(
