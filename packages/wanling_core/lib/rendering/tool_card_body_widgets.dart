@@ -5,7 +5,11 @@ import 'package:wanling_core/theme/app_colors.dart';
 // ─── bash ─────────────────────────────────────────
 class BashBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const BashBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):抽屉底/标题适配;浅色(app 壳)不变。
+  /// 终端块 1E1E1E + 青 4FC3F7 双模式保持(本来就深色)。
+  final bool isDark;
+  const BashBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +37,8 @@ class BashBody extends StatelessWidget {
 
   void _showDetail(BuildContext context, String command, String workdir) {
     showDetailSheet(context,
-      title: const Text('Bash 命令', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text('Bash 命令', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -57,7 +62,10 @@ class BashBody extends StatelessWidget {
 // ─── edit ─────────────────────────────────────────
 class EditBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const EditBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):预览框底/抽屉适配;浅色(app 壳)不变。红绿语义色不动。
+  final bool isDark;
+  const EditBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +105,8 @@ class EditBody extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+      // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+      decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
       child: Text(
         lines.join(' · '),
         maxLines: 1,
@@ -112,7 +121,8 @@ class EditBody extends StatelessWidget {
     for (final l in oldStr.split('\n')) allLines.add('- $l');
     for (final l in newStr.split('\n')) allLines.add('+ $l');
     showDetailSheet(context,
-      title: Text(filePath.isNotEmpty ? basename(filePath) : '编辑', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text(filePath.isNotEmpty ? basename(filePath) : '编辑', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: allLines.map((l) {
@@ -133,7 +143,10 @@ class EditBody extends StatelessWidget {
 // ─── read ─────────────────────────────────────────
 class ReadBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const ReadBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):块底/抽屉适配;浅色(app 壳)不变。蓝语义色不动。
+  final bool isDark;
+  const ReadBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +157,8 @@ class ReadBody extends StatelessWidget {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+        // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+        decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
         child: Text(basename(filePath), style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF5B8BF7))),
       ),
     );
@@ -152,10 +166,11 @@ class ReadBody extends StatelessWidget {
 
   void _showDetail(BuildContext context, String filePath) {
     showDetailSheet(context,
-      title: const Text('读取文件', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text('读取文件', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
-        children: [SelectableText(filePath, style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF555555)))],
+        children: [SelectableText(filePath, style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555)))],
       ),
     );
   }
@@ -164,7 +179,10 @@ class ReadBody extends StatelessWidget {
 // ─── grep ─────────────────────────────────────────
 class GrepBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const GrepBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):块底/抽屉适配;浅色(app 壳)不变。橙语义色不动。
+  final bool isDark;
+  const GrepBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -176,7 +194,8 @@ class GrepBody extends StatelessWidget {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+        // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+        decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
         child: Text(
           [
             if (pattern.isNotEmpty) 'pattern: $pattern',
@@ -193,14 +212,15 @@ class GrepBody extends StatelessWidget {
 
   void _showDetail(BuildContext context, String pattern, String path, String include) {
     showDetailSheet(context,
-      title: const Text('Grep 搜索', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text('Grep 搜索', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           SelectableText('pattern: $pattern', style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFFFA8C16))),
           if (path.isNotEmpty) const SizedBox(height: 6),
           if (path.isNotEmpty)
-            SelectableText('scope: $path', style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF666666))),
+            SelectableText('scope: $path', style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
           if (include.isNotEmpty) const SizedBox(height: 6),
           if (include.isNotEmpty)
             SelectableText('include: $include', style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF999999))),
@@ -213,7 +233,10 @@ class GrepBody extends StatelessWidget {
 // ─── glob ─────────────────────────────────────────
 class GlobBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const GlobBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):块底/抽屉适配;浅色(app 壳)不变。橙语义色不动。
+  final bool isDark;
+  const GlobBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +246,8 @@ class GlobBody extends StatelessWidget {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+        // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+        decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
         child: Text(pattern, style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFFFA8C16))),
       ),
     );
@@ -231,7 +255,8 @@ class GlobBody extends StatelessWidget {
 
   void _showDetail(BuildContext context, String pattern) {
     showDetailSheet(context,
-      title: const Text('Glob 匹配', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text('Glob 匹配', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [SelectableText(pattern, style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFFFA8C16)))],
@@ -246,7 +271,10 @@ class GlobBody extends StatelessWidget {
 /// 展开内容始终渲染(Align heightFactor 收起时视觉高度 0),与聚合卡折叠组交互一致。
 class TodoBody extends StatefulWidget {
   final Map<String, dynamic> input;
-  const TodoBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):标题/箭头/任务行灰阶适配;浅色(app 壳)不变。
+  final bool isDark;
+  const TodoBody({super.key, required this.input, this.isDark = false});
 
   @override
   State<TodoBody> createState() => _TodoBodyState();
@@ -263,6 +291,10 @@ class _TodoBodyState extends State<TodoBody> {
       final todo = t as Map<String, dynamic>?;
       return todo?['status'] == 'completed';
     }).length;
+    // 深色灰阶反转(对齐 _TodoFoldRow):#555 → #C8C8C8 / #BBB → #777777
+    final isDark = widget.isDark;
+    final titleColor = isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555);
+    final arrowColor = isDark ? const Color(0xFF777777) : const Color(0xFFBBBBBB);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -275,13 +307,13 @@ class _TodoBodyState extends State<TodoBody> {
               const SizedBox(width: 6),
               Text(
                 '已完成 $completed/${todos.length} 项',
-                style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                style: TextStyle(fontSize: 14, color: titleColor),
               ),
               const Spacer(),
               Icon(
                 _expanded ? Icons.expand_less : Icons.expand_more,
                 size: 16,
-                color: const Color(0xFFBBBBBB),
+                color: arrowColor,
               ),
             ],
           ),
@@ -319,7 +351,8 @@ class _TodoBodyState extends State<TodoBody> {
           _todoIcon(status, size: 14),
           Expanded(
             child: Text(content, style: TextStyle(fontSize: 13, height: 1.4,
-              color: status == 'completed' ? const Color(0xFF999999) : (status == 'in_progress' ? const Color(0xFF333333) : const Color(0xFFAAAAAA)),
+              // 深色灰阶反转(对齐 _TodoFoldRow):#333 → #EEEEEE;#999/#AAA 双模式可读保持
+              color: status == 'completed' ? const Color(0xFF999999) : (status == 'in_progress' ? (widget.isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333)) : const Color(0xFFAAAAAA)),
             )),
           ),
         ],
@@ -349,8 +382,10 @@ class _TodoBodyState extends State<TodoBody> {
       );
     }
     final icon = status == 'in_progress' ? '●' : '○';
-    final color =
-        status == 'in_progress' ? const Color(0xFFFA8C16) : const Color(0xFFCCCCCC);
+    // 深色灰阶反转(对齐 _TodoFoldRow):#CCC → #777777(弱化未选中态)
+    final color = status == 'in_progress'
+        ? const Color(0xFFFA8C16)
+        : (widget.isDark ? const Color(0xFF777777) : const Color(0xFFCCCCCC));
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: Text(icon, style: TextStyle(fontSize: size, color: color)),
@@ -361,7 +396,10 @@ class _TodoBodyState extends State<TodoBody> {
 // ─── write ────────────────────────────────────────
 class WriteBody extends StatelessWidget {
   final Map<String, dynamic> input;
-  const WriteBody({super.key, required this.input});
+
+  /// 深色模式(桌面端):块底/抽屉适配;浅色(app 壳)不变。
+  final bool isDark;
+  const WriteBody({super.key, required this.input, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -380,9 +418,11 @@ class WriteBody extends StatelessWidget {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(color: const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
+            // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+            decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2), borderRadius: BorderRadius.circular(4)),
             child: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666))),
+                // 深色灰阶反转:#666 → #AAAAAA
+                style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666))),
           ),
         ],
       ),
@@ -391,16 +431,18 @@ class WriteBody extends StatelessWidget {
 
   void _showDetail(BuildContext context, String filePath, String content) {
     showDetailSheet(context,
-      title: Text(filePath.isNotEmpty ? basename(filePath) : '写入文件', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      isDark: isDark,
+      title: Text(filePath.isNotEmpty ? basename(filePath) : '写入文件', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFFF5F5F5), borderRadius: BorderRadius.circular(6)),
+            // 深色:抽屉(1E1F24)内的内容块用 26272D 区分层次;标题级字色 #333 → #EEEEEE
+            decoration: BoxDecoration(color: isDark ? const Color(0xFF26272D) : const Color(0xFFF5F5F5), borderRadius: BorderRadius.circular(6)),
             child: SelectableText(content,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF333333))),
+              style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
           ),
         ],
       ),
@@ -415,14 +457,17 @@ String basename(String path) {
 }
 
 /// 共享 bottom sheet 骨架：拖拽手柄 + 标题行 + divider + 可滚动内容。
+/// [isDark] 深色模式(桌面端):抽屉底 1E1F24 + 把手 3A3B42 + 分割线 2E2F36;
+/// 浅色(app 壳)白底不变。sheet 内文字色由调用方按 isDark 分支传入。
 Future<void> showDetailSheet(BuildContext context, {
   required Widget title,
   required Widget body,
+  bool isDark = false,
 }) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: Colors.white,
+    backgroundColor: isDark ? const Color(0xFF1E1F24) : Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
     builder: (ctx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
@@ -432,12 +477,12 @@ Future<void> showDetailSheet(BuildContext context, {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(width: 36, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 4),
-              decoration: BoxDecoration(color: const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2))),
+              decoration: BoxDecoration(color: isDark ? const Color(0xFF3A3B42) : const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2))),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: title,
             ),
-            const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            Divider(height: 1, color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFEEEEEE)),
             Flexible(child: body),
           ],
         ),

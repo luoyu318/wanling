@@ -911,9 +911,10 @@ void main() {
       );
     }
 
+    // 新版 Container(color:) 不再折叠进 decoration,需同时查 self color + decoration
     bool hasCardBg(WidgetTester tester, Color color) => tester
         .widgetList<Container>(find.byType(Container))
-        .any((w) => (w.decoration as BoxDecoration?)?.color == color);
+        .any((w) => w.color == color || (w.decoration as BoxDecoration?)?.color == color);
 
     testWidgets('completed 卡:深色底 0xFF2E2F36(浅色回归 #F7F7F7)', (tester) async {
       final data = {'name': 'bash', 'status': 'completed', 'input': {'command': 'ls'}, 'output': 'total 100'};
@@ -983,6 +984,77 @@ void main() {
 
       await tester.pumpWidget(renderTool(data));
       expect(tester.widget<Text>(find.text('已完成 1/2 项')).style?.color, const Color(0xFF555555));
+    });
+
+    testWidgets('edit input body:深色预览框底 #26272D + 标题 #EEEEEE(浅色回归 #F2F2F2/#111111)', (tester) async {
+      final data = {
+        'name': 'edit',
+        'status': 'completed',
+        'input': {'filePath': 'main.go', 'oldString': 'foo', 'newString': 'bar'},
+        'output': 'edited',
+      };
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      // 改前/改后预览框(工具卡 2E2F36 内的二级嵌块)深色底 26272D
+      expect(hasCardBg(tester, const Color(0xFF26272D)), isTrue);
+      expect(tester.widget<Text>(find.text('Edit')).style?.color, const Color(0xFFEEEEEE));
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFF2F2F2)), isTrue);
+      expect(tester.widget<Text>(find.text('Edit')).style?.color, const Color(0xFF111111));
+    });
+
+    testWidgets('bash input body:终端块 #1E1E1E + 青字 #4FC3F7 双模式保持', (tester) async {
+      final data = {'name': 'bash', 'status': 'completed', 'input': {'command': 'ls'}, 'output': 'total 100'};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF1E1E1E)), isTrue);
+      expect(tester.widget<Text>(find.text('\$ ls')).style?.color, const Color(0xFF4FC3F7));
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFF1E1E1E)), isTrue);
+      expect(tester.widget<Text>(find.text('\$ ls')).style?.color, const Color(0xFF4FC3F7));
+    });
+
+    testWidgets('grep input body:深色块底 #26272D(read/glob/write 同构)', (tester) async {
+      final data = {'name': 'grep', 'status': 'completed', 'input': {'pattern': 'foo'}};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF26272D)), isTrue);
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFF2F2F2)), isTrue);
+    });
+
+    testWidgets('read 长输出:深色抽屉底 #1E1F24 + 行号列 #2E2F36 + 代码底 #1E1E1E(浅色回归白底)', (tester) async {
+      final lines = List<String>.generate(30, (i) => '${i + 1}: line $i');
+      final output = '<path>/src/main.go</path>\n<type>file</type>\n<content>\n${lines.join('\n')}\n</content>';
+      final data = {'name': 'read', 'status': 'completed', 'output': output};
+
+      // 深色:卡内预览块 26272D → 点击弹抽屉
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF26272D)), isTrue);
+      await tester.tap(find.textContaining('30 行'));
+      await tester.pumpAndSettle();
+      final darkSheet = tester.widget<Material>(
+        find.descendant(of: find.byType(BottomSheet), matching: find.byType(Material)).first,
+      );
+      expect(darkSheet.color, const Color(0xFF1E1F24));
+      expect(hasCardBg(tester, const Color(0xFF2E2F36)), isTrue, reason: '深色行号列底');
+      expect(hasCardBg(tester, const Color(0xFF1E1E1E)), isTrue, reason: '深色代码列底(vs2015 主题)');
+      expect(tester.widget<Text>(find.text('1')).style?.color, const Color(0xFF777777), reason: '深色行号字');
+
+      // 浅色回归:白抽屉 + EEEEEE 行号列 + white 代码底 + 999 行号字(先关深色抽屉)
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(renderTool(data));
+      await tester.tap(find.textContaining('30 行'));
+      await tester.pumpAndSettle();
+      final lightSheet = tester.widget<Material>(
+        find.descendant(of: find.byType(BottomSheet), matching: find.byType(Material)).first,
+      );
+      expect(lightSheet.color, Colors.white);
+      expect(hasCardBg(tester, const Color(0xFFEEEEEE)), isTrue, reason: '浅色行号列底');
+      // a11y-light root.backgroundColor = #FEFEFE(原 ?? Colors.white fallback 从未生效)
+      expect(hasCardBg(tester, const Color(0xFFFEFEFE)), isTrue, reason: '浅色代码列底');
+      expect(tester.widget<Text>(find.text('1')).style?.color, const Color(0xFF999999), reason: '浅色行号字');
     });
   });
 

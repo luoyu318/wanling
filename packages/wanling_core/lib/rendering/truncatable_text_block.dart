@@ -16,6 +16,10 @@ class TruncatableTextBlock extends StatelessWidget {
   final EdgeInsets padding;
   final int maxLines;
 
+  /// 深色模式(桌面端):透传 showDetailSheet(抽屉底 1E1F24 + 正文 C8C8C8);
+  /// 浅色(app 壳)白底 + 555555 不变。内联样式由调用方传(textStyle/backgroundColor)。
+  final bool isDark;
+
   const TruncatableTextBlock({
     super.key,
     required this.text,
@@ -24,6 +28,7 @@ class TruncatableTextBlock extends StatelessWidget {
     this.backgroundColor = const Color(0xFFF2F2F2),
     this.padding = const EdgeInsets.all(6),
     this.maxLines = 3,
+    this.isDark = false,
   });
 
   @override
@@ -32,16 +37,18 @@ class TruncatableTextBlock extends StatelessWidget {
     return GestureDetector(
       onTap: () => showDetailSheet(
         context,
+        isDark: isDark,
         title: sheetTitle,
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: SelectableText(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'monospace',
               fontSize: 12,
               height: 1.5,
-              color: Color(0xFF555555),
+              // 深色灰阶反转:#555 → #C8C8C8
+              color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555),
             ),
           ),
         ),

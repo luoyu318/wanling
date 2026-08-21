@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_highlight/themes/a11y-light.dart';
+import 'package:flutter_highlight/themes/vs2015.dart';
 import 'package:highlight/highlight.dart' show highlight;
 
 import 'package:wanling_core/models/message.dart';
@@ -202,13 +203,13 @@ bool _matchesTaskSubSession(ChatMessage m, String taskSubSessionId) {
 Widget _buildInputBody(String name, Map<String, dynamic> input,
     {required bool isDark}) {
   return switch (name) {
-    'bash' => BashBody(input: input),
-    'edit' => EditBody(input: input),
-    'read' => ReadBody(input: input),
-    'grep' => GrepBody(input: input),
-    'glob' => GlobBody(input: input),
-    'todowrite' => TodoBody(input: input),
-    'write' => WriteBody(input: input),
+    'bash' => BashBody(input: input, isDark: isDark),
+    'edit' => EditBody(input: input, isDark: isDark),
+    'read' => ReadBody(input: input, isDark: isDark),
+    'grep' => GrepBody(input: input, isDark: isDark),
+    'glob' => GlobBody(input: input, isDark: isDark),
+    'todowrite' => TodoBody(input: input, isDark: isDark),
+    'write' => WriteBody(input: input, isDark: isDark),
     _ => input.isNotEmpty
         ? TruncatableTextBlock(
             text: input.toString(),
@@ -220,6 +221,9 @@ Widget _buildInputBody(String name, Map<String, dynamic> input,
                 color: isDark
                     ? const Color(0xFFAAAAAA)
                     : const Color(0xFF666666)),
+            // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+            backgroundColor: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
+            isDark: isDark,
           )
         : const SizedBox.shrink(),
   };
@@ -234,8 +238,7 @@ class _TruncatedOutput extends StatelessWidget {
   final String name;
   final String output;
 
-  /// 深色模式(桌面端):卡内嵌块/正文字色适配;浅色(app 壳)不变。
-  /// 抽屉内色值不动(showDetailSheet 白底固定,浅色语义)。
+  /// 深色模式(桌面端):卡内嵌块/正文字色/抽屉适配;浅色(app 壳)不变。
   final bool isDark;
   const _TruncatedOutput(
       {required this.name, required this.output, this.isDark = false});
@@ -282,13 +285,17 @@ class _TruncatedOutput extends StatelessWidget {
     // 其他工具:走通用截断组件(限一行预览,点击弹抽屉看全文)
     return TruncatableTextBlock(
       text: output,
-      sheetTitle: Text(capitalize(name), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+      // 深色灰阶反转:抽屉标题 #333 → #EEEEEE
+      sheetTitle: Text(capitalize(name), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
       textStyle: TextStyle(
           fontFamily: 'monospace',
           fontSize: 11,
-          // 深色灰阶反转:#666 → #AAAAAA(抽屉标题 333 不动,抽屉白底固定)
+          // 深色灰阶反转:#666 → #AAAAAA
           color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666)),
+      // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
+      backgroundColor: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
       maxLines: 1,
+      isDark: isDark,
     );
   }
 
@@ -298,6 +305,7 @@ class _TruncatedOutput extends StatelessWidget {
         : parsed.path.split('/').last;
     showDetailSheet(
       context,
+      isDark: isDark,
       title: Row(
         children: [
           const Icon(Icons.description_outlined,
@@ -311,10 +319,11 @@ class _TruncatedOutput extends StatelessWidget {
                 Text(
                   filename,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF333333),
+                    // 深色灰阶反转:#333 → #EEEEEE
+                    color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333),
                   ),
                 ),
                 if (parsed.path.isNotEmpty)
@@ -336,6 +345,7 @@ class _TruncatedOutput extends StatelessWidget {
         code: parsed.code,
         language: parsed.language,
         lineCount: parsed.lineCount,
+        isDark: isDark,
       ),
     );
   }
@@ -348,21 +358,26 @@ class _TruncatedOutput extends StatelessWidget {
 /// - 行号列与代码列共用相同字体度量(monospace 12px, height 1.5) → 每行视觉高度
 ///   一致,行号自然对齐
 /// - 代码列 softWrap=false + 横向滚动 → 每行严格 1 行,长行不折行错位
-/// - 抽屉背景固定白色(showDetailSheet hard-code),代码视图固定用 a11y-light 主题
+/// - 浅色用 a11y-light 主题(代码列底 fallback white);深色用 vs2015 主题
+///   (VS Code Dark+ 风格:代码列底 #1E1E1E + 默认字 #DCDCDC,与卡内终端块同底色)
 class _ReadCodeView extends StatelessWidget {
   final String code;
   final String language;
   final int lineCount;
 
+  /// 深色模式(桌面端):行号列底/代码主题适配;浅色(app 壳)不变。
+  final bool isDark;
+
   const _ReadCodeView({
     required this.code,
     required this.language,
     required this.lineCount,
+    this.isDark = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    const theme = a11yLightTheme;
+    final theme = isDark ? vs2015Theme : a11yLightTheme;
     const fontStyle = TextStyle(
         fontFamily: 'monospace', fontSize: 12, height: 1.5);
 
@@ -373,30 +388,34 @@ class _ReadCodeView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 行号列
+          // 行号列(深色:底色对齐卡壳分割层 #2E2F36,行号字 #999 → #777777 弱化)
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-            color: const Color(0xFFEEEEEE),
+            color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFEEEEEE),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 for (var i = 1; i <= lineCount; i++)
-                  Text('$i', style: fontStyle.copyWith(color: const Color(0xFF999999))),
+                  Text('$i', style: fontStyle.copyWith(color: isDark ? const Color(0xFF777777) : const Color(0xFF999999))),
               ],
             ),
           ),
-          // 代码列:横向滚动,长行不折行
+          // 代码列:横向滚动,长行不折行(深色 vs2015 root:底 #1E1E1E + 字 #DCDCDC)
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                color: theme['root']?.backgroundColor ?? Colors.white,
+                color: isDark
+                    ? (theme['root']?.backgroundColor ?? const Color(0xFF1E1E1E))
+                    : (theme['root']?.backgroundColor ?? Colors.white),
                 child: RichText(
                   softWrap: false,
                   text: TextSpan(
                     style: fontStyle.copyWith(
-                        color: theme['root']?.color ?? const Color(0xFF222222)),
+                        color: isDark
+                            ? (theme['root']?.color ?? const Color(0xFFDCDCDC))
+                            : (theme['root']?.color ?? const Color(0xFF222222))),
                     children: spans,
                   ),
                 ),
@@ -413,8 +432,7 @@ class _ReadCodeView extends StatelessWidget {
 class _FileDiffRow extends StatelessWidget {
   final Map<String, dynamic> fileDiff;
 
-  /// 深色模式(桌面端):嵌块底/文件名适配;浅色(app 壳)不变。
-  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  /// 深色模式(桌面端):嵌块底/文件名/抽屉适配;浅色(app 壳)不变。
   final bool isDark;
   const _FileDiffRow({required this.fileDiff, this.isDark = false});
 
@@ -454,8 +472,10 @@ class _FileDiffRow extends StatelessWidget {
 
   void _showDiffDetail(BuildContext context, String file, int additions, int deletions, String diff) {
     showDetailSheet(context,
+      isDark: isDark,
       title: Row(children: [
-        Text(file, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+        // 深色灰阶反转:抽屉标题 #333 → #EEEEEE
+        Text(file, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
         const Spacer(),
         Text('+$additions', style: const TextStyle(fontSize: 13, color: Color(0xFF07C160))),
         const SizedBox(width: 4),
@@ -487,8 +507,7 @@ class _FileDiffRow extends StatelessWidget {
 class _WebFetchRow extends StatelessWidget {
   final Map<String, dynamic> data;
 
-  /// 深色模式(桌面端):行文字灰阶反转;浅色(app 壳)不变。
-  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  /// 深色模式(桌面端):行文字灰阶反转 + 抽屉适配;浅色(app 壳)不变。
   final bool isDark;
   const _WebFetchRow({required this.data, this.isDark = false});
 
@@ -563,14 +582,16 @@ class _WebFetchRow extends StatelessWidget {
     final error = data['error'] as String? ?? '';
     showDetailSheet(
       context,
-      title: const Row(
+      isDark: isDark,
+      title: Row(
         children: [
-          Text(IconFont.explore,
+          const Text(IconFont.explore,
               style: TextStyle(
                   fontFamily: 'iconfont', fontSize: 18, color: Color(0xFFB388FF), height: 1)),
           SizedBox(width: 6),
+          // 深色灰阶反转:抽屉标题 #333 → #EEEEEE
           Text('WebFetch',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
         ],
       ),
       body: ListView(
@@ -593,8 +614,9 @@ class _WebFetchRow extends StatelessWidget {
           if (output.isNotEmpty) ...[
             const Text('搜索结果', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
             const SizedBox(height: 4),
+            // 深色灰阶反转:抽屉正文 #555 → #C8C8C8
             SelectableText(output,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF555555))),
+                style: TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
           ],
         ],
       ),
@@ -608,8 +630,7 @@ class _WebFetchRow extends StatelessWidget {
 class _SkillRow extends StatelessWidget {
   final Map<String, dynamic> data;
 
-  /// 深色模式(桌面端):行文字灰阶反转;浅色(app 壳)不变。
-  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  /// 深色模式(桌面端):行文字灰阶反转 + 抽屉适配;浅色(app 壳)不变。
   final bool isDark;
   const _SkillRow({required this.data, this.isDark = false});
 
@@ -660,12 +681,14 @@ class _SkillRow extends StatelessWidget {
   void _showDetail(BuildContext context, String name, String output) {
     showDetailSheet(
       context,
-      title: const Row(
+      isDark: isDark,
+      title: Row(
         children: [
-          Icon(Icons.auto_awesome, size: 18, color: Color(0xFFFA8C16)),
+          const Icon(Icons.auto_awesome, size: 18, color: Color(0xFFFA8C16)),
           SizedBox(width: 6),
+          // 深色灰阶反转:抽屉标题 #333 → #EEEEEE
           Text('已加载技能',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
         ],
       ),
       body: ListView(
@@ -674,15 +697,17 @@ class _SkillRow extends StatelessWidget {
           if (name.isNotEmpty) ...[
             const Text('技能名', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
             const SizedBox(height: 4),
+            // 深色灰阶反转:#333 → #EEEEEE
             SelectableText(name,
-                style: const TextStyle(fontSize: 13, height: 1.5, color: Color(0xFF333333))),
+                style: TextStyle(fontSize: 13, height: 1.5, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
             const SizedBox(height: 12),
           ],
           if (output.isNotEmpty) ...[
             const Text('技能内容', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
             const SizedBox(height: 4),
+            // 深色灰阶反转:抽屉正文 #555 → #C8C8C8
             SelectableText(output,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5, color: Color(0xFF555555))),
+                style: TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
           ],
         ],
       ),
