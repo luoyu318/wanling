@@ -14,10 +14,10 @@ import 'title_bar.dart';
 /// 保留,标题栏按钮隐藏)。
 final windowActionsProvider = Provider<WindowActions?>((ref) => null);
 
-/// 浮动卡片画布:透明 TitleBar 贯穿全宽 + Row[透明工具条 | 会话卡片 |
-/// ResizeHandle | 聊天卡片]。窗口右/底 8px 边距。两张卡片内容(已包
-/// CardContainer)由调用方注入,会话卡片宽度由 convListWidthProvider
-/// 驱动(ResizeHandle 拖拽)。
+/// 浮动卡片画布:外层 Row[透明工具条(通顶) | 主体区] + 主体区
+/// Column[TitleBar | Row[会话卡片 | ResizeHandle | 聊天卡片]]。窗口右/底
+/// 8px 边距提到最外层。两张卡片内容(已包 CardContainer)由调用方注入,
+/// 会话卡片宽度由 convListWidthProvider 驱动(ResizeHandle 拖拽)。
 class AppCanvas extends ConsumerWidget {
   final Widget conversationCard; // 会话列表卡片
   final Widget chatCard; // 聊天区卡片
@@ -38,23 +38,29 @@ class AppCanvas extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: DesktopTheme.canvasColor(brightness),
-      body: Column(
-        children: [
-          TitleBar(actions: actions),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(right: 8, bottom: 8),
-              child: Row(
+      body: Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 8),
+        child: Row(
+          children: [
+            const NavRail(),
+            Expanded(
+              child: Column(
                 children: [
-                  const NavRail(),
-                  SizedBox(width: convWidth, child: conversationCard),
-                  const ResizeHandle(),
-                  Expanded(child: chatCard),
+                  TitleBar(actions: actions),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        SizedBox(width: convWidth, child: conversationCard),
+                        const ResizeHandle(),
+                        Expanded(child: chatCard),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

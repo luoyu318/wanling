@@ -66,12 +66,16 @@ void main() {
     expect(find.byKey(const ValueKey('navrail_account')), findsOneWidget);
     // alwaysShow:空 savedLogins 也常驻账号切换入口
     expect(find.byKey(const ValueKey('account_switcher_button')), findsOneWidget);
-    // 用户头像移至工具条最底部(auth 种子 user 为 null,Avatar name '' 仍渲染)
+    // 用户头像移至工具条最顶部、搜索上方(auth 种子 user 为 null,Avatar name '' 仍渲染)
     expect(find.byKey(const ValueKey('navrail_user_avatar')), findsOneWidget);
     // 设置项已移除(入口进标题栏)
     expect(find.byKey(const ValueKey('navrail_settings')), findsNothing);
-    // 透明工具条:无背景色 Container
-    final rail = tester.widget<Container>(find.byType(Container).first);
-    expect(rail.color, isNull);
+    // 透明工具条:根节点为 52px 无界高 SizedBox(通顶由外层撑满),
+    // 不存在整体背景 Container(带色 Container 仅头像等小控件,置顶后
+    // 不再依赖 Container.first 顺序)
+    final railRoot = tester.widget<SizedBox>(
+      find.byWidgetPredicate((w) => w is SizedBox && w.width == 52),
+    );
+    expect(railRoot.height, isNull);
   });
 }

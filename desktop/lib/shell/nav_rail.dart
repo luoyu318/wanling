@@ -11,8 +11,8 @@ import '../widgets/avatar.dart';
 /// 并回置 false(单向脉冲,不 watch 列表自身)。
 final navRailSearchFocusProvider = StateProvider<bool>((ref) => false);
 
-/// 左侧 52px 透明工具条(浮动卡片布局):顶 🔍,中 消息/万灵,
-/// 底 账号头像 + AccountSwitcher(iconOnly,切换服务器/账号)。
+/// 左侧 52px 透明工具条(浮动卡片布局,通顶):顶 用户头像 + 🔍,中
+/// 消息/万灵,底 AccountSwitcher(iconOnly,切换服务器/账号)。
 /// 设置入口在标题栏。离开消息页清 noConversationHintProvider 逻辑保留。
 class NavRail extends ConsumerWidget {
   const NavRail({super.key});
@@ -71,7 +71,22 @@ class NavRail extends ConsumerWidget {
       width: 52,
       child: Column(
         children: [
-          const SizedBox(height: 4),
+          // 用户头像置顶(搜索上方):21px 与工具条 icon 同视觉尺寸,
+          // 36x36 容器与 navItem 对齐。
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: Avatar(
+                key: const ValueKey('navrail_user_avatar'),
+                name: user?.displayName ?? '',
+                url: user?.avatarUrl,
+                size: 21,
+                radius: 10.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Tooltip(
             message: '搜索',
             waitDuration: const Duration(milliseconds: 300),
@@ -94,21 +109,6 @@ class NavRail extends ConsumerWidget {
           const KeyedSubtree(
             key: ValueKey('navrail_account'),
             child: AccountSwitcher(iconOnly: true, alwaysShow: true),
-          ),
-          // 用户头像放最底部(IM 惯例):21px 与工具条 icon 同视觉尺寸,
-          // 36x36 容器与 navItem 对齐。
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: Center(
-              child: Avatar(
-                key: const ValueKey('navrail_user_avatar'),
-                name: user?.displayName ?? '',
-                url: user?.avatarUrl,
-                size: 21,
-                radius: 10.5,
-              ),
-            ),
           ),
         ],
       ),

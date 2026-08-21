@@ -79,12 +79,25 @@ void main() {
     );
     expect(scaffold.backgroundColor, DesktopTheme.canvasColor(Brightness.light));
 
-    // 窗口右/底 8px:唯一 EdgeInsets.only(right: 8, bottom: 8)
+    // 窗口右/底 8px:唯一 EdgeInsets.only(right: 8, bottom: 8),提到最外层
     expect(
       find.byWidgetPredicate(
         (w) => w is Padding && w.padding == const EdgeInsets.only(right: 8, bottom: 8),
       ),
       findsOneWidget,
+    );
+
+    // 外层 Row 结构:NavRail 通顶(顶边贴画布 0 且贯穿到 底边距),
+    // TitleBar 收窄主体区(顶边贴 0,左边缘在 NavRail 右侧)
+    expect(tester.getTopLeft(find.byType(NavRail)).dy, 0);
+    expect(
+      tester.getBottomRight(find.byType(NavRail)).dy,
+      moreOrLessEquals(600 - 8),
+    );
+    expect(tester.getTopLeft(find.byType(TitleBar)).dy, 0);
+    expect(
+      tester.getTopLeft(find.byType(TitleBar)).dx,
+      tester.getTopRight(find.byType(NavRail)).dx,
     );
 
     // 会话卡片槽默认宽 280(convListWidthProvider 默认值)
