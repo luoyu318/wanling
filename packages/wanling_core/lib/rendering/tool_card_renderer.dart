@@ -128,12 +128,12 @@ class ToolCardRenderer implements MessageContentRenderer {
 
     // webfetch 特殊：无边框无背景的纯文字行(网络探索,不折叠不进工具卡容器)
     if (name == 'webfetch') {
-      return _WebFetchRow(data: data);
+      return _WebFetchRow(data: data, isDark: rc.isDark);
     }
 
     // skill 特殊：无边框无背景的纯文字行(技能加载,星标橙 + 已加载技能 + 技能名)
     if (name == 'skill') {
-      return _SkillRow(data: data);
+      return _SkillRow(data: data, isDark: rc.isDark);
     }
 
     // todowrite 特殊：无外壳纯折叠行(图标 + 已完成 x/y 项 + 箭头,展开任务列表)
@@ -144,11 +144,11 @@ class ToolCardRenderer implements MessageContentRenderer {
     // 普通 tool_card：原三态
     switch (status) {
       case 'completed':
-        return _wrapAnimated(_CompletedToolCard(data: data));
+        return _wrapAnimated(_CompletedToolCard(data: data, isDark: rc.isDark));
       case 'error':
-        return _wrapAnimated(_ErrorToolCard(data: data));
+        return _wrapAnimated(_ErrorToolCard(data: data, isDark: rc.isDark));
       default:
-        return _wrapAnimated(_RunningToolCard(data: data));
+        return _wrapAnimated(_RunningToolCard(data: data, isDark: rc.isDark));
     }
   }
 }
@@ -199,7 +199,8 @@ bool _matchesTaskSubSession(ChatMessage m, String taskSubSessionId) {
 }
 
 /// 根据 tool name 构建 input body widget。
-Widget _buildInputBody(String name, Map<String, dynamic> input) {
+Widget _buildInputBody(String name, Map<String, dynamic> input,
+    {required bool isDark}) {
   return switch (name) {
     'bash' => BashBody(input: input),
     'edit' => EditBody(input: input),
@@ -212,7 +213,13 @@ Widget _buildInputBody(String name, Map<String, dynamic> input) {
         ? TruncatableTextBlock(
             text: input.toString(),
             sheetTitle: Text(capitalize(name)),
-            textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+            textStyle: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                // 深色灰阶反转:#666 → #AAAAAA
+                color: isDark
+                    ? const Color(0xFFAAAAAA)
+                    : const Color(0xFF666666)),
           )
         : const SizedBox.shrink(),
   };
@@ -226,7 +233,12 @@ Widget _buildInputBody(String name, Map<String, dynamic> input) {
 class _TruncatedOutput extends StatelessWidget {
   final String name;
   final String output;
-  const _TruncatedOutput({required this.name, required this.output});
+
+  /// 深色模式(桌面端):卡内嵌块/正文字色适配;浅色(app 壳)不变。
+  /// 抽屉内色值不动(showDetailSheet 白底固定,浅色语义)。
+  final bool isDark;
+  const _TruncatedOutput(
+      {required this.name, required this.output, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -240,8 +252,9 @@ class _TruncatedOutput extends StatelessWidget {
         onTap: () => _showReadDetail(context, parsed),
         child: Container(
           padding: const EdgeInsets.all(6),
+          // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
           decoration: BoxDecoration(
-              color: const Color(0xFFF2F2F2),
+              color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
               borderRadius: BorderRadius.circular(4)),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -270,7 +283,11 @@ class _TruncatedOutput extends StatelessWidget {
     return TruncatableTextBlock(
       text: output,
       sheetTitle: Text(capitalize(name), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
-      textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF666666)),
+      textStyle: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          // 深色灰阶反转:#666 → #AAAAAA(抽屉标题 333 不动,抽屉白底固定)
+          color: isDark ? const Color(0xFFAAAAAA) : const Color(0xFF666666)),
       maxLines: 1,
     );
   }
@@ -395,7 +412,11 @@ class _ReadCodeView extends StatelessWidget {
 /// file_diff 紧凑行。
 class _FileDiffRow extends StatelessWidget {
   final Map<String, dynamic> fileDiff;
-  const _FileDiffRow({required this.fileDiff});
+
+  /// 深色模式(桌面端):嵌块底/文件名适配;浅色(app 壳)不变。
+  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  final bool isDark;
+  const _FileDiffRow({required this.fileDiff, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -408,13 +429,15 @@ class _FileDiffRow extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        // 深色:工具卡(2E2F36)内的二级嵌块回扣卡底色 26272D 区分层次
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F2F2),
+          color: isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Row(
           children: [
-            Text(file, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF111111))),
+            // 深色灰阶反转:近黑标题 #111 → #EEEEEE
+            Text(file, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF111111))),
             const Spacer(),
             Text('+$additions', style: const TextStyle(fontSize: 11, color: Color(0xFF07C160))),
             const SizedBox(width: 4),
@@ -463,7 +486,11 @@ class _FileDiffRow extends StatelessWidget {
 /// 网址过长单行截断(ellipsis),点击弹抽屉展示完整 url / output / error。
 class _WebFetchRow extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _WebFetchRow({required this.data});
+
+  /// 深色模式(桌面端):行文字灰阶反转;浅色(app 壳)不变。
+  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  final bool isDark;
+  const _WebFetchRow({required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -488,8 +515,13 @@ class _WebFetchRow extends StatelessWidget {
         child: Row(children: [
           IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
           const SizedBox(width: 6),
-          const Text('WebFetch',
-              style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
+          Text('WebFetch',
+              style: TextStyle(
+                  fontSize: 14,
+                  // 深色灰阶反转:#555 → #C8C8C8
+                  color: isDark
+                      ? const Color(0xFFC8C8C8)
+                      : const Color(0xFF555555))),
           if (url.isNotEmpty) ...[
             const SizedBox(width: 8),
             Expanded(
@@ -497,11 +529,14 @@ class _WebFetchRow extends StatelessWidget {
                 url,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF999999),
+                  color: const Color(0xFF999999),
                   decoration: TextDecoration.underline,
-                  decorationColor: Color(0xFFBBBBBB),
+                  // 深色灰阶反转:#BBB → #777777
+                  decorationColor: isDark
+                      ? const Color(0xFF777777)
+                      : const Color(0xFFBBBBBB),
                 ),
               ),
             ),
@@ -572,7 +607,11 @@ class _WebFetchRow extends StatelessWidget {
 /// 星标橙图标 + 「已加载技能」+ 技能名(灰斜体),点击弹抽屉看技能内容。
 class _SkillRow extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _SkillRow({required this.data});
+
+  /// 深色模式(桌面端):行文字灰阶反转;浅色(app 壳)不变。
+  /// 抽屉内色值不动(showDetailSheet 白底固定)。
+  final bool isDark;
+  const _SkillRow({required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -590,8 +629,13 @@ class _SkillRow extends StatelessWidget {
           children: [
             const Icon(Icons.auto_awesome, size: 15, color: Color(0xFFFA8C16)),
             const SizedBox(width: 6),
-            const Text('已加载技能',
-                style: TextStyle(fontSize: 14, color: Color(0xFF555555))),
+            Text('已加载技能',
+                style: TextStyle(
+                    fontSize: 14,
+                    // 深色灰阶反转:#555 → #C8C8C8
+                    color: isDark
+                        ? const Color(0xFFC8C8C8)
+                        : const Color(0xFF555555))),
             if (name.isNotEmpty) ...[
               const SizedBox(width: 6),
               Expanded(
@@ -691,6 +735,12 @@ class _TodoFoldRowState extends State<_TodoFoldRow> {
       final todo = t as Map<String, dynamic>?;
       return todo?['status'] == 'completed';
     }).length;
+    // 深色灰阶反转:#555 → #C8C8C8 / #BBB → #777777
+    final isDark = widget.rc.isDark;
+    final titleColor =
+        isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555);
+    final arrowColor =
+        isDark ? const Color(0xFF777777) : const Color(0xFFBBBBBB);
     return Padding(
       key: _key,
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -705,13 +755,13 @@ class _TodoFoldRowState extends State<_TodoFoldRow> {
                 const SizedBox(width: 6),
                 Text(
                   '已完成 $completed/${todos.length} 项',
-                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555)),
+                  style: TextStyle(fontSize: 14, color: titleColor),
                 ),
                 const Spacer(),
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: const Color(0xFFBBBBBB),
+                  color: arrowColor,
                 ),
               ],
             ),
@@ -743,10 +793,14 @@ class _TodoFoldRowState extends State<_TodoFoldRow> {
     if (todo == null) return const SizedBox.shrink();
     final status = (todo['status'] as String?) ?? 'pending';
     final content = (todo['content'] as String?) ?? '';
+    final isDark = widget.rc.isDark;
     final icon = switch (status) {
       'completed' => const Icon(Icons.check_circle, size: 15, color: Color(0xFF07C160)),
       'in_progress' => const Icon(Icons.radio_button_checked, size: 15, color: Color(0xFFFA8C16)),
-      _ => const Icon(Icons.radio_button_unchecked, size: 15, color: Color(0xFFCCCCCC)),
+      // 深色灰阶反转:#CCC → #777777(弱化未选中态,对齐 #BBB 规则)
+      _ => Icon(Icons.radio_button_unchecked,
+          size: 15,
+          color: isDark ? const Color(0xFF777777) : const Color(0xFFCCCCCC)),
     };
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
@@ -761,10 +815,13 @@ class _TodoFoldRowState extends State<_TodoFoldRow> {
               style: TextStyle(
                 fontSize: 13,
                 height: 1.4,
+                // 深色灰阶反转:#333 → #EEEEEE(近黑提亮);#999/#AAA 双模式可读保持
                 color: status == 'completed'
                     ? const Color(0xFF999999)
                     : (status == 'in_progress'
-                        ? const Color(0xFF333333)
+                        ? (isDark
+                            ? const Color(0xFFEEEEEE)
+                            : const Color(0xFF333333))
                         : const Color(0xFFAAAAAA)),
                 decoration: status == 'completed' ? TextDecoration.lineThrough : null,
               ),
@@ -779,7 +836,10 @@ class _TodoFoldRowState extends State<_TodoFoldRow> {
 // ── running card ──
 class _RunningToolCard extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _RunningToolCard({required this.data});
+
+  /// 深色模式(桌面端):卡底切深灰嵌套色;浅色(app 壳)保持 #F7F7F7。
+  final bool isDark;
+  const _RunningToolCard({required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -793,8 +853,9 @@ class _RunningToolCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
+      // 深色:聚合卡(26272D)内的嵌套卡块用 2E2F36 区分层次
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F7F7),
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF5B8BF7), width: 3)),
       ),
@@ -803,7 +864,8 @@ class _RunningToolCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(children: [
-            Text(capitalize(name), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111111))),
+            // 深色灰阶反转:近黑标题 #111 → #EEEEEE
+            Text(capitalize(name), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF111111))),
             if (contextLabel.isNotEmpty) ...[
               const SizedBox(width: 8),
               Text(contextLabel, style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
@@ -813,7 +875,7 @@ class _RunningToolCard extends StatelessWidget {
           ]),
           if (bodyInput.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _buildInputBody(name, bodyInput),
+            _buildInputBody(name, bodyInput, isDark: isDark),
           ],
         ],
       ),
@@ -877,7 +939,10 @@ class _PulseIndicatorState extends State<_PulseIndicator> with SingleTickerProvi
 // ── completed card ──
 class _CompletedToolCard extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _CompletedToolCard({required this.data});
+
+  /// 深色模式(桌面端):卡底切深灰嵌套色;浅色(app 壳)保持 #F7F7F7。
+  final bool isDark;
+  const _CompletedToolCard({required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -894,8 +959,9 @@ class _CompletedToolCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
+      // 深色:聚合卡(26272D)内的嵌套卡块用 2E2F36 区分层次
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F7F7),
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFF07C160), width: 3)),
       ),
@@ -904,7 +970,8 @@ class _CompletedToolCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(children: [
-            Text(capitalize(name), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111111))),
+            // 深色灰阶反转:近黑标题 #111 → #EEEEEE
+            Text(capitalize(name), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF111111))),
             if (contextLabel.isNotEmpty) ...[
               const SizedBox(width: 8),
               Text(contextLabel, style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
@@ -914,7 +981,7 @@ class _CompletedToolCard extends StatelessWidget {
           ]),
           if (bodyInput.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _buildInputBody(name, bodyInput),
+            _buildInputBody(name, bodyInput, isDark: isDark),
           ],
           if (displayOutput.isNotEmpty && name != ToolName.todowrite) ...[
             const SizedBox(height: 4),
@@ -922,9 +989,9 @@ class _CompletedToolCard extends StatelessWidget {
               Text(displayOutput, maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12, color: Color(0xFF07C160)))
             else
-              _TruncatedOutput(name: name, output: displayOutput),
+              _TruncatedOutput(name: name, output: displayOutput, isDark: isDark),
           ],
-          if (fileDiff != null) _FileDiffRow(fileDiff: fileDiff!),
+          if (fileDiff != null) _FileDiffRow(fileDiff: fileDiff!, isDark: isDark),
         ],
       ),
     );
@@ -934,7 +1001,10 @@ class _CompletedToolCard extends StatelessWidget {
 // ── error card ──
 class _ErrorToolCard extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _ErrorToolCard({required this.data});
+
+  /// 深色模式(桌面端):卡底切深色红调;浅色(app 壳)保持 #FFF1F1。
+  final bool isDark;
+  const _ErrorToolCard({required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -949,8 +1019,9 @@ class _ErrorToolCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
+      // 深色:嵌套卡底 2E2F36 叠 ~10% FA5151 红调(对齐浅色 白底叠 ~10% 红调 的推导)
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF1F1),
+        color: isDark ? const Color(0xFF423239) : const Color(0xFFFFF1F1),
         borderRadius: BorderRadius.circular(6),
         border: const Border(left: BorderSide(color: Color(0xFFFA5151), width: 3)),
       ),
@@ -959,7 +1030,8 @@ class _ErrorToolCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(children: [
-            Text(capitalize(name), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111111))),
+            // 深色灰阶反转:近黑标题 #111 → #EEEEEE
+            Text(capitalize(name), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF111111))),
             if (contextLabel.isNotEmpty) ...[
               const SizedBox(width: 8),
               Text(contextLabel, style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
@@ -969,7 +1041,7 @@ class _ErrorToolCard extends StatelessWidget {
           ]),
           if (bodyInput.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _buildInputBody(name, bodyInput),
+            _buildInputBody(name, bodyInput, isDark: isDark),
           ],
           if (error.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -999,6 +1071,7 @@ class _StartingTaskCard extends StatelessWidget {
       description: (input['description'] as String?) ?? '',
       statusText: '已启动',
       statusColor: const Color(0xFF5B8BF7),
+      isDark: rc.isDark,
       subSessionId: (data['sub_session_id'] as String?) ?? '',
       taskCardId: _taskRootId(rc),
       convId: rc.convId,
@@ -1021,6 +1094,7 @@ class _WorkingTaskCard extends StatelessWidget {
       description: (input['description'] as String?) ?? '',
       statusText: '正在执行',
       statusColor: const Color(0xFFFA8C16),
+      isDark: rc.isDark,
       subSessionId: (data['sub_session_id'] as String?) ?? '',
       taskCardId: _taskRootId(rc),
       convId: rc.convId,
@@ -1045,6 +1119,7 @@ class _CompletedTaskCard extends StatelessWidget {
       description: (input['description'] as String?) ?? '',
       statusText: statusText,
       statusColor: const Color(0xFF07C160),
+      isDark: rc.isDark,
       subSessionId: (data['sub_session_id'] as String?) ?? '',
       taskCardId: _taskRootId(rc),
       convId: rc.convId,
@@ -1077,6 +1152,7 @@ class _ErrorTaskCard extends StatelessWidget {
       description: (input['description'] as String?) ?? '',
       statusText: statusText,
       statusColor: const Color(0xFFFA5151),
+      isDark: rc.isDark,
       subSessionId: (data['sub_session_id'] as String?) ?? '',
       taskCardId: _taskRootId(rc),
       convId: rc.convId,
@@ -1115,6 +1191,9 @@ class _TaskCardShell extends StatelessWidget {
   // 当前会话全部消息(用于反查 pending 子审批卡聚合渲染)。
   final List<ChatMessage> conversationMessages;
 
+  /// 深色模式(桌面端):卡底/描述文字适配;浅色(app 壳)不变。
+  final bool isDark;
+
   const _TaskCardShell({
     required this.agentType,
     required this.description,
@@ -1126,6 +1205,7 @@ class _TaskCardShell extends StatelessWidget {
     required this.showPulse,
     this.statusIcon = Icons.check_circle,
     this.conversationMessages = const [],
+    this.isDark = false,
   });
 
   @override
@@ -1133,8 +1213,9 @@ class _TaskCardShell extends StatelessWidget {
     final card = Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
+      // 深色:聚合卡(26272D)内的嵌套卡块用 2E2F36 区分层次
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F7F7),
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
         borderRadius: BorderRadius.circular(6),
         border: Border(left: BorderSide(color: statusColor, width: 3)),
       ),
@@ -1169,7 +1250,8 @@ class _TaskCardShell extends StatelessWidget {
           if (description.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(description, style: const TextStyle(fontSize: 12, color: Color(0xFF555555))),
+              // 深色灰阶反转:#555 → #C8C8C8
+              child: Text(description, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555))),
             ),
         ],
       ),
@@ -1197,6 +1279,7 @@ class _TaskCardShell extends StatelessWidget {
           ...pendingApprovals.map((m) => _PendingApprovalChip(
                 message: m,
                 convId: convId,
+                isDark: isDark,
               )),
         ],
       );
@@ -1217,9 +1300,13 @@ class _PendingApprovalChip extends StatelessWidget {
   final ChatMessage message;
   final String convId;
 
+  /// 深色模式(桌面端):底色切深色橙调;浅色(app 壳)不变。
+  final bool isDark;
+
   const _PendingApprovalChip({
     required this.message,
     required this.convId,
+    this.isDark = false,
   });
 
   @override
@@ -1236,8 +1323,9 @@ class _PendingApprovalChip extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         margin: const EdgeInsets.only(top: 2),
+        // 深色:嵌套卡底 2E2F36 叠 ~10% FFA940 橙调(对齐浅色 白底叠 ~10% 橙调 的推导)
         decoration: BoxDecoration(
-          color: const Color(0xFFFFF7E6),
+          color: isDark ? const Color(0xFF433B37) : const Color(0xFFFFF7E6),
           borderRadius: BorderRadius.circular(6),
           border: const Border(left: BorderSide(color: color, width: 3)),
         ),
@@ -1248,7 +1336,8 @@ class _PendingApprovalChip extends StatelessWidget {
             const Text('待审批', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
             if (action.isNotEmpty) ...[
               const SizedBox(width: 6),
-              Text('· $action', style: const TextStyle(fontSize: 11, color: Color(0xFF888888))),
+              // 深色灰阶反转:#888 → #999999
+              Text('· $action', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF999999) : const Color(0xFF888888))),
             ],
           ],
         ),

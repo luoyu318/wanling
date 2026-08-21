@@ -99,6 +99,7 @@ class AggregateCardRenderer implements MessageContentRenderer {
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
                 child: _QuoteLine(
                   quote: Quote.fromJson(data['quote'] as Map<String, dynamic>),
+                  isDark: rc.isDark,
                 ),
               ),
             for (final slot in slots)
@@ -246,7 +247,10 @@ class AggregateCardRenderer implements MessageContentRenderer {
 /// 示例：`| 回复 洛羽：查到了吗？`
 class _QuoteLine extends StatelessWidget {
   final Quote quote;
-  const _QuoteLine({required this.quote});
+
+  /// 深色模式(桌面端):引用文字亮一档(#888 → #999);浅色(app 壳)不变。
+  final bool isDark;
+  const _QuoteLine({required this.quote, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -268,7 +272,12 @@ class _QuoteLine extends StatelessWidget {
           Expanded(
             child: Text.rich(
               TextSpan(
-                style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark
+                      ? const Color(0xFF999999)
+                      : const Color(0xFF888888),
+                ),
                 children: [
                   const TextSpan(text: '回复 '),
                   TextSpan(

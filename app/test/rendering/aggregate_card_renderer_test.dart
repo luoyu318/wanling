@@ -677,5 +677,29 @@ void main() {
       await tester.pumpWidget(host(content(state: 'done')));
       expect(find.textContaining('回复'), findsNothing);
     });
+
+    testWidgets('isDark=true:引用行文字亮一档 0xFF999999(浅色回归 0xFF888888)', (tester) async {
+      Color? quoteColor() {
+        final t = tester.widget<Text>(find.textContaining('回复'));
+        return (t.textSpan as TextSpan).style?.color;
+      }
+
+      final quoteContent = content(
+        state: 'done',
+        quote: {
+          'message_id': 'm-1',
+          'sender_type': 'user',
+          'sender_id': 'u1',
+          'sender_name': '洛羽',
+          'msg_type': 'text',
+          'preview': '查到了吗？',
+        },
+      );
+      await tester.pumpWidget(host(quoteContent, isDark: true));
+      expect(quoteColor(), const Color(0xFF999999));
+
+      await tester.pumpWidget(host(quoteContent));
+      expect(quoteColor(), const Color(0xFF888888));
+    });
   });
 }

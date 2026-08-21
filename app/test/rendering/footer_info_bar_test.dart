@@ -2,9 +2,9 @@ import 'package:wanling_core/rendering/footer_info_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Widget host(Map<String, dynamic> data) {
+Widget host(Map<String, dynamic> data, {bool isDark = false}) {
   return MaterialApp(
-    home: Scaffold(body: FooterInfoBar(data: data)),
+    home: Scaffold(body: FooterInfoBar(data: data, isDark: isDark)),
   );
 }
 
@@ -98,6 +98,60 @@ void main() {
       }));
       expect(find.text('已停止'), findsNothing);
       expect(find.text('tokens 1.5k'), findsOneWidget);
+    });
+  });
+
+  group('FooterInfoBar 深色模式适配', () {
+    testWidgets('深色四要素条:底 0xFF2E2F36 + 顶边线 0xFF26272D(浅色回归 F7F7F7/F0F0F0)', (tester) async {
+      BoxDecoration? barDecoration() {
+        final container = tester.widget<Container>(
+          find.byWidgetPredicate((w) => w is Container && w.decoration is BoxDecoration),
+        );
+        return container.decoration as BoxDecoration;
+      }
+
+      await tester.pumpWidget(host({
+        'mode': 'build',
+        'duration': 12300,
+        'model': 'DeepSeek-V3',
+        'tokens': {'total': 2100},
+      }, isDark: true));
+      expect(barDecoration()!.color, const Color(0xFF2E2F36));
+      expect(barDecoration()!.border!.top, const BorderSide(color: Color(0xFF26272D)));
+
+      await tester.pumpWidget(host({
+        'mode': 'build',
+        'duration': 12300,
+        'model': 'DeepSeek-V3',
+        'tokens': {'total': 2100},
+      }));
+      expect(barDecoration()!.color, const Color(0xFFF7F7F7));
+      expect(barDecoration()!.border!.top, const BorderSide(color: Color(0xFFF0F0F0)));
+    });
+
+    testWidgets('深色停止态:底 0xFF2E2F36(浅色回归 F7F7F7)', (tester) async {
+      await tester.pumpWidget(host({'stopped': true}, isDark: true));
+      // Container(color:) 在渲染树里落成 ColoredBox
+      expect(
+        tester.widgetList<ColoredBox>(find.byType(ColoredBox)).any((c) => c.color == const Color(0xFF2E2F36)),
+        isTrue,
+      );
+
+      await tester.pumpWidget(host({'stopped': true}));
+      expect(
+        tester.widgetList<ColoredBox>(find.byType(ColoredBox)).any((c) => c.color == const Color(0xFFF7F7F7)),
+        isTrue,
+      );
+    });
+
+    testWidgets('深色 mode 文字灰阶反转:#666 → #AAAAAA(浅色回归 #666666)', (tester) async {
+      await tester.pumpWidget(host({'mode': 'build'}, isDark: true));
+      final dark = tester.widget<Text>(find.text('build'));
+      expect(dark.style?.color, const Color(0xFFAAAAAA));
+
+      await tester.pumpWidget(host({'mode': 'build'}));
+      final light = tester.widget<Text>(find.text('build'));
+      expect(light.style?.color, const Color(0xFF666666));
     });
   });
 }

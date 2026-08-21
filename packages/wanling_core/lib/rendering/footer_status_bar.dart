@@ -53,6 +53,6 @@ class FooterStatusBar extends StatelessWidget {
         ),
       );
     }
-    return FooterInfoBar(data: footerData);
+    return FooterInfoBar(data: footerData, isDark: isDark);
   }
 }

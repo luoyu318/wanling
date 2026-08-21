@@ -895,6 +895,97 @@ void main() {
     });
   });
 
+  group('深色模式适配', () {
+    Widget renderTool(Map<String, dynamic> data, {bool isDark = false}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.toolCard,
+              {'data': data},
+              ctx,
+              MessageRenderContext(isMe: false, baseUrl: '', token: '', isDark: isDark),
+            ),
+          ),
+        ),
+      );
+    }
+
+    bool hasCardBg(WidgetTester tester, Color color) => tester
+        .widgetList<Container>(find.byType(Container))
+        .any((w) => (w.decoration as BoxDecoration?)?.color == color);
+
+    testWidgets('completed 卡:深色底 0xFF2E2F36(浅色回归 #F7F7F7)', (tester) async {
+      final data = {'name': 'bash', 'status': 'completed', 'input': {'command': 'ls'}, 'output': 'total 100'};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF2E2F36)), isTrue);
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFF7F7F7)), isTrue);
+    });
+
+    testWidgets('running 卡:深色底 0xFF2E2F36(浅色回归 #F7F7F7)', (tester) async {
+      final data = {'name': 'bash', 'status': 'running', 'input': {'command': 'ls'}};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF2E2F36)), isTrue);
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFF7F7F7)), isTrue);
+    });
+
+    testWidgets('error 卡:深色底 0xFF423239 红调(浅色回归 #FFF1F1)', (tester) async {
+      final data = {'name': 'bash', 'status': 'error', 'input': {'command': 'ls'}, 'error': 'boom'};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF423239)), isTrue);
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFFFF1F1)), isTrue);
+    });
+
+    testWidgets('task 卡:深色底 0xFF2E2F36 + 描述 #C8C8C8(浅色回归 #F7F7F7/#555555)', (tester) async {
+      final data = {
+        'name': 'task',
+        'status': 'completed',
+        'input': {'description': '调研一下', 'subagent_type': 'general'},
+        'sub_session_id': 'ses-child-1',
+      };
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(hasCardBg(tester, const Color(0xFF2E2F36)), isTrue);
+      expect(tester.widget<Text>(find.text('调研一下')).style?.color, const Color(0xFFC8C8C8));
+
+      await tester.pumpWidget(renderTool(data));
+      expect(hasCardBg(tester, const Color(0xFFF7F7F7)), isTrue);
+      expect(tester.widget<Text>(find.text('调研一下')).style?.color, const Color(0xFF555555));
+    });
+
+    testWidgets('webfetch 行:深色 WebFetch 文字 #C8C8C8(浅色回归 #555555)', (tester) async {
+      final data = {'name': 'webfetch', 'status': 'completed', 'input': {'url': 'https://example.com'}};
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(tester.widget<Text>(find.text('WebFetch')).style?.color, const Color(0xFFC8C8C8));
+
+      await tester.pumpWidget(renderTool(data));
+      expect(tester.widget<Text>(find.text('WebFetch')).style?.color, const Color(0xFF555555));
+    });
+
+    testWidgets('todowrite 行:深色标题 #C8C8C8(浅色回归 #555555)', (tester) async {
+      final data = {
+        'name': 'todowrite',
+        'status': 'completed',
+        'input': {
+          'todos': [
+            {'content': '任务A', 'status': 'completed'},
+            {'content': '任务B', 'status': 'pending'},
+          ],
+        },
+      };
+      await tester.pumpWidget(renderTool(data, isDark: true));
+      expect(tester.widget<Text>(find.text('已完成 1/2 项')).style?.color, const Color(0xFFC8C8C8));
+
+      await tester.pumpWidget(renderTool(data));
+      expect(tester.widget<Text>(find.text('已完成 1/2 项')).style?.color, const Color(0xFF555555));
+    });
+  });
+
   group('ToolCardRenderer 高度平滑过渡', () {
     Map<String, dynamic> makeContent({
       required String status,

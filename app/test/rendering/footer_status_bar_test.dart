@@ -102,5 +102,24 @@ void main() {
         isTrue,
       );
     });
+
+    testWidgets('isDark=true + done 态透传:静态信息条深灰底(0xFF2E2F36)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: FooterStatusBar(
+            generating: false,
+            elements: [el('footer', 'f1')],
+            footerData: const {'mode': 'build'},
+            isDark: true,
+          ),
+        ),
+      ));
+      // done 态委托 FooterInfoBar 渲染,isDark 需透传到底
+      final container = tester.widget<Container>(
+        find.byWidgetPredicate((w) => w is Container && w.decoration is BoxDecoration),
+      );
+      expect((container.decoration as BoxDecoration).color, const Color(0xFF2E2F36));
+      expect(find.text('build'), findsOneWidget);
+    });
   });
 }

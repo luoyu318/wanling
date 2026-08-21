@@ -7,7 +7,10 @@ import 'package:wanling_core/utils/duration_format.dart';
 /// 数据全部来自 footer 元素 data(消息快照,非 sessionMeta 实时态)。
 class FooterInfoBar extends StatelessWidget {
   final Map<String, dynamic> data;
-  const FooterInfoBar({super.key, required this.data});
+
+  /// 深色模式(桌面端):通栏底色切深灰;浅色(app 壳)保持 #F7F7F7。
+  final bool isDark;
+  const FooterInfoBar({super.key, required this.data, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -15,7 +18,7 @@ class FooterInfoBar extends StatelessWidget {
     // 无终态 tokens/duration/mode/model 数据(footer 只带 reason/stopped/finished)。
     if (data['stopped'] == true) {
       return Container(
-        color: const Color(0xFFF7F7F7),
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: const Row(
           children: [
@@ -49,16 +52,25 @@ class FooterInfoBar extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      // 顶部细线分隔,与正文区分离(替代整圈边框)
-      decoration: const BoxDecoration(
-        color: Color(0xFFF7F7F7),
-        border: Border(top: BorderSide(color: Color(0xFFF0F0F0))),
+      // 顶部细线分隔,与正文区分离(替代整圈边框)。
+      // 深色:底切 2E2F36(嵌套块),细线回扣卡底 26272D 保持「线比底深一档」关系。
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFF7F7F7),
+        border: Border(
+          top: BorderSide(
+              color: isDark ? const Color(0xFF26272D) : const Color(0xFFF0F0F0)),
+        ),
       ),
       child: Row(
         children: [
           if (mode.isNotEmpty) ...[
             Text(mode,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF666666))),
+                style: TextStyle(
+                    fontSize: 11,
+                    // 深色灰阶反转:#666 → #AAAAAA(对齐上轮折叠组规则)
+                    color: isDark
+                        ? const Color(0xFFAAAAAA)
+                        : const Color(0xFF666666))),
           ],
           if (durationText.isNotEmpty) ...[
             if (mode.isNotEmpty) const SizedBox(width: 10),
