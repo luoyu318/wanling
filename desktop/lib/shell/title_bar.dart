@@ -2,30 +2,27 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:wanling_core/providers/auth_provider.dart';
 
-import '../widgets/avatar.dart';
 import 'window_actions.dart';
 
 // TitleBar 构造参数暴露 WindowActions 类型,导出以便消费方无需单独 import。
 export 'window_actions.dart';
 
-/// 透明标题栏(画布色上):左用户头像(authProvider.user),中拖拽区
-/// (双击最大化/还原),右 ⚙ 设置 + ─ □ ✕。✕ 悬停红(#E81123)。
+/// 透明标题栏(画布色上):左起即拖拽区(双击最大化/还原),右 ⚙ 设置
+/// + ─ □ ✕。✕ 悬停红(#E81123)。头像在侧边栏工具条底部,不在标题栏。
 /// actions 注入窗口操作(生产 WindowManagerActions / 测试 fake),缺省
 /// null 时按钮隐藏(如 window_manager 初始化失败的降级场景仍可拖拽)。
-class TitleBar extends ConsumerStatefulWidget {
+class TitleBar extends StatefulWidget {
   final WindowActions? actions;
 
   const TitleBar({super.key, this.actions});
 
   @override
-  ConsumerState<TitleBar> createState() => _TitleBarState();
+  State<TitleBar> createState() => _TitleBarState();
 }
 
-class _TitleBarState extends ConsumerState<TitleBar> {
+class _TitleBarState extends State<TitleBar> {
   bool _maximized = false;
   StreamSubscription<void>? _sub;
 
@@ -51,24 +48,10 @@ class _TitleBarState extends ConsumerState<TitleBar> {
 
   @override
   Widget build(BuildContext context) {
-    final user = ref.watch(authProvider.select((s) => s.user));
     return SizedBox(
       height: 40,
       child: Row(
         children: [
-          // 21px 与工具条 icon 同视觉尺寸;Center 撑满 40px 高确保垂直居中。
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: Avatar(
-                key: const ValueKey('titlebar_logo'),
-                name: user?.displayName ?? '',
-                url: user?.avatarUrl,
-                size: 21,
-                radius: 10.5,
-              ),
-            ),
-          ),
           Expanded(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,

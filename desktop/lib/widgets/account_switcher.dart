@@ -11,8 +11,8 @@ import '../utils/dio_error.dart';
 /// .switchTo:silent logout → 切 baseUrl → 用保存的凭据自动登录,
 /// 全程 isSwitching 守卫防 router 误跳。
 ///
-/// iconOnly=true 时 child 只渲染账号图标(工具条底部紧凑模式),
-/// 菜单逻辑与完整模式一致。
+/// iconOnly=true 时 child 只渲染「切换」双箭头图标(工具条底部紧凑
+/// 模式,区别于头像),菜单逻辑与完整模式一致。
 class AccountSwitcher extends ConsumerWidget {
   final bool iconOnly;
 
@@ -75,7 +75,7 @@ class AccountSwitcher extends ConsumerWidget {
               height: 36,
               child: Center(
                 child: Icon(
-                  Icons.account_circle,
+                  Icons.swap_horiz,
                   size: 21,
                   color: scheme.onSurface.withValues(alpha: 0.6),
                 ),

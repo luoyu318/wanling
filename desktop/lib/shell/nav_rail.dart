@@ -1,22 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:wanling_core/providers/auth_provider.dart';
 
 import '../providers/no_conversation_hint_provider.dart';
 import '../widgets/account_switcher.dart';
+import '../widgets/avatar.dart';
 
 /// 搜索聚焦请求:工具条 🔍 置 true → ConversationList watch 后聚焦搜索框
 /// 并回置 false(单向脉冲,不 watch 列表自身)。
 final navRailSearchFocusProvider = StateProvider<bool>((ref) => false);
 
 /// 左侧 52px 透明工具条(浮动卡片布局):顶 🔍,中 消息/万灵,
-/// 底 AccountSwitcher(iconOnly,切换服务器/账号)。设置入口在标题栏。
-/// 离开消息页清 noConversationHintProvider 逻辑保留。
+/// 底 账号头像 + AccountSwitcher(iconOnly,切换服务器/账号)。
+/// 设置入口在标题栏。离开消息页清 noConversationHintProvider 逻辑保留。
 class NavRail extends ConsumerWidget {
   const NavRail({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authProvider.select((s) => s.user));
     final location = GoRouterState.of(context).uri.path;
     final scheme = Theme.of(context).colorScheme;
 
@@ -91,6 +94,21 @@ class NavRail extends ConsumerWidget {
           const KeyedSubtree(
             key: ValueKey('navrail_account'),
             child: AccountSwitcher(iconOnly: true, alwaysShow: true),
+          ),
+          // 用户头像放最底部(IM 惯例):21px 与工具条 icon 同视觉尺寸,
+          // 36x36 容器与 navItem 对齐。
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: Avatar(
+                key: const ValueKey('navrail_user_avatar'),
+                name: user?.displayName ?? '',
+                url: user?.avatarUrl,
+                size: 21,
+                radius: 10.5,
+              ),
+            ),
           ),
         ],
       ),
