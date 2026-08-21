@@ -181,4 +181,55 @@ void main() {
       expect(find.byType(MarkdownView), findsOneWidget);
     });
   });
+
+  group('ReasoningRenderer 抽屉深色适配', () {
+    Widget darkHost({required String text, required bool isStreaming}) {
+      return MaterialApp(
+        darkTheme: ThemeData(brightness: Brightness.dark),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ContentRendererRegistry.render(
+              MsgType.reasoning,
+              {
+                'msg_type': MsgType.reasoning.value,
+                'data': {'text': text},
+              },
+              ctx,
+              MessageRenderContext(
+                isMe: false,
+                baseUrl: 'http://localhost',
+                token: 'test',
+                isDark: true,
+                isStreaming: isStreaming,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('深色 rc 终态抽屉:深底+亮标题', (tester) async {
+      await tester.pumpWidget(darkHost(text: '深色思考全文', isStreaming: false));
+      await tester.tap(find.byType(GestureDetector));
+      await tester.pumpAndSettle();
+      // 抽屉底 1E1F24(对齐 showDetailSheet 深色体系)
+      final container = tester.widget<Material>(
+        find.descendant(of: find.byType(BottomSheet), matching: find.byType(Material)).first,
+      );
+      expect(container.color, const Color(0xFF1E1F24));
+      // 标题亮色
+      expect(find.text('思考'), findsOneWidget);
+    });
+
+    testWidgets('浅色 rc 抽屉保持白底(回归)', (tester) async {
+      await tester.pumpWidget(host(text: '浅色思考全文', isStreaming: false));
+      await tester.tap(find.byType(GestureDetector));
+      await tester.pumpAndSettle();
+      final container = tester.widget<Material>(
+        find.descendant(of: find.byType(BottomSheet), matching: find.byType(Material)).first,
+      );
+      expect(container.color, Colors.white);
+    });
+  });
 }

@@ -52,11 +52,11 @@ class ReasoningRenderer implements MessageContentRenderer {
     // 流式思考中:text 可能为空(流式占位无文本),但必须渲染「正在思考...」流式卡,
     // 否则聚合卡首元素(思考块)空白 → 整卡内容空直到思考完成才显示。
     if (rc.isStreaming && !finished) {
-      return _StreamingReasoningCard(text: text);
+      return _StreamingReasoningCard(text: text, isDark: rc.isDark);
     }
     // 非流式 + 空文本:无内容可展示(异常/历史占位),返回空。
     if (text.isEmpty) return const SizedBox.shrink();
-    return _StaticReasoningCard(text: text, duration: duration);
+    return _StaticReasoningCard(text: text, duration: duration, isDark: rc.isDark);
   }
 }
 
@@ -67,12 +67,14 @@ class ReasoningRenderer implements MessageContentRenderer {
 class _StaticReasoningCard extends StatelessWidget {
   final String text;
   final num? duration;
-  const _StaticReasoningCard({required this.text, this.duration});
+  /// 深色模式:抽屉底/标题/markdown 主题适配(浅色路径不变)。
+  final bool isDark;
+  const _StaticReasoningCard({required this.text, this.duration, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _showDetail(context, text),
+      onTap: () => _showDetail(context, text, isDark: isDark),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
@@ -111,7 +113,9 @@ class _StaticReasoningCard extends StatelessWidget {
 /// 闪烁:opacity 沿 sin(2πt) 在 0.25 ↔ 1.0 之间平滑往返,周期 1800ms。
 class _StreamingReasoningCard extends StatefulWidget {
   final String text;
-  const _StreamingReasoningCard({required this.text});
+  /// 深色模式:抽屉底/标题/markdown 主题适配(浅色路径不变)。
+  final bool isDark;
+  const _StreamingReasoningCard({required this.text, this.isDark = false});
 
   @override
   State<_StreamingReasoningCard> createState() => _StreamingReasoningCardState();
@@ -139,7 +143,7 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _showDetail(context, widget.text),
+      onTap: () => _showDetail(context, widget.text, isDark: widget.isDark),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
@@ -186,11 +190,12 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
   }
 }
 
-void _showDetail(BuildContext context, String text) {
+void _showDetail(BuildContext context, String text, {bool isDark = false}) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: Colors.white,
+    // 抽屉深色底对齐 showDetailSheet 体系(1E1F24),浅色白底不变。
+    backgroundColor: isDark ? const Color(0xFF1E1F24) : Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
     builder: (ctx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
@@ -202,23 +207,23 @@ void _showDetail(BuildContext context, String text) {
             Container(
               width: 36, height: 4,
               margin: const EdgeInsets.only(top: 8, bottom: 4),
-              decoration: BoxDecoration(color: const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(color: isDark ? const Color(0xFF3A3B42) : const Color(0xFFDDDDDD), borderRadius: BorderRadius.circular(2)),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(children: [
                 IconFont.icon(IconFont.deepThink, size: 18, color: const Color(0xFFD4A017)),
                 const SizedBox(width: 6),
-                const Text('思考', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF333333))),
+                Text('思考', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFFEEEEEE) : const Color(0xFF333333))),
               ]),
             ),
-            const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            Divider(height: 1, color: isDark ? const Color(0xFF2E2F36) : const Color(0xFFEEEEEE)),
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: MarkdownView(
                   data: text,
-                  config: markdownStyle(isDark: false, isMe: false, context: ctx),
+                  config: markdownStyle(isDark: isDark, isMe: false, context: ctx),
                   inlineSyntaxes: [LatexSyntax()],
                   generators: _markdownGenerators,
                 ),
