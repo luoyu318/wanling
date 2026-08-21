@@ -7,6 +7,7 @@ import 'package:wanling_core/rendering/footer_status_bar.dart'
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/rendering/tool_group_renderer.dart'
     show groupAggregateElements, SingleElementSlot, ToolGroupSlot;
+import 'desktop_permission_card_renderer.dart';
 import 'desktop_reasoning_renderer.dart';
 import 'desktop_tool_group_renderer.dart';
 import 'package:wanling_core/utils/duration_format.dart';
@@ -132,10 +133,11 @@ class DesktopAggregateCardRenderer implements MessageContentRenderer {
     final elementContent = <String, dynamic>{'msg_type': type, 'data': data};
 
     final Widget child = switch (type) {
-      // 桌面版思考块:hover 前导 icon 切换,无尾部 ▸(core registry 版无 hover)。
+      // 桌面版思考块:hover 前导 icon 切换,点击卡内原地展开(core registry 版弹抽屉)。
       'reasoning' => DesktopReasoningCard(
         text: ((data['text'] as String?) ?? ''),
         duration: data['duration'] as num?,
+        rc: elementRc,
       ),
       'tool_card' => ContentRendererRegistry.render(
         MsgType.toolCard,
@@ -162,12 +164,8 @@ class DesktopAggregateCardRenderer implements MessageContentRenderer {
         context,
         elementRc,
       ),
-      'permission_card' => ContentRendererRegistry.render(
-        MsgType.permissionCard,
-        elementContent,
-        context,
-        elementRc,
-      ),
+      'permission_card' => const DesktopPermissionCardRenderer()
+          .build(context, elementContent, elementRc),
       _ => const SizedBox.shrink(),
     };
 

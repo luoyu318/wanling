@@ -15,6 +15,7 @@ import 'package:wanling_core/services/notification_service.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'rendering/aggregate_card_renderer.dart';
+import 'rendering/desktop_permission_card_renderer.dart';
 import 'shell/app_canvas.dart' show windowActionsProvider;
 import 'shell/window_actions.dart';
 
@@ -68,6 +69,9 @@ Future<void> main() async {
   // (app 端注册表不受影响,仍用 core 白卡样式;差异见 desktop renderer 注释)。
   ContentRendererRegistry.register(
       MsgType.aggregateCard, const DesktopAggregateCardRenderer());
+  // 权限卡终态折叠外壳同步桌面 hover 交互(pending 卡内部委托 core)。
+  ContentRendererRegistry.register(
+      MsgType.permissionCard, const DesktopPermissionCardRenderer());
   // 桌面通知初始化(Windows/Linux settings 由 core notification_service 处理)
   await NotificationService.instance.init();
   // 注入已 load 的 SharedPreferences(savedLogins 依赖同步实例),

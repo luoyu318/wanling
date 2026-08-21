@@ -1,8 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/rendering/message_content_renderer.dart';
+import 'package:wanling_desktop/rendering/desktop_permission_card_renderer.dart';
 import 'package:wanling_desktop/rendering/desktop_reasoning_renderer.dart';
 import 'package:wanling_desktop/rendering/desktop_tool_group_renderer.dart';
 
@@ -81,7 +81,7 @@ void main() {
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
   });
 
-  testWidgets('思考块:hover 时前导 icon 切换,无尾部 ▸', (tester) async {
+  testWidgets('思考块:hover 时前导 icon 切换,点击卡内原地展开', (tester) async {
     await tester.pumpWidget(host(DesktopReasoningCard(
       text: '思考内容',
       duration: 2,
@@ -89,5 +89,46 @@ void main() {
     expect(find.text('▸'), findsNothing);
     await hover(tester, find.textContaining('思考完成'));
     expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+    // 点击:原地展开显示 markdown 全文(无底部抽屉)。
+    await tester.tap(find.textContaining('思考完成'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('思考内容'), findsWidgets);
+    expect(find.byType(BottomSheet), findsNothing);
+  });
+
+  testWidgets('权限卡终态:hover 切前导 icon,点击原地展开原卡', (tester) async {
+    const rc = MessageRenderContext(
+      isMe: false,
+      baseUrl: '',
+      token: '',
+      isDark: false,
+      messageId: 'm1',
+    );
+    final content = <String, dynamic>{
+      'msg_type': 'permission_card',
+      'data': {
+        'status': 'approved',
+        'action': 'bash',
+        'result': 'once',
+        'resources': ['rm -rf /tmp/x'],
+        'metadata': <String, dynamic>{},
+        'oc_request_id': 'r1',
+      },
+    };
+    await tester.pumpWidget(host(Builder(
+      builder: (ctx) =>
+          const DesktopPermissionCardRenderer().build(ctx, content, rc),
+    )));
+    // 折叠态:标题行结果可见(展开内容 heightFactor 0 裁剪,只 1 个可点)。
+    expect(find.textContaining('已批准').hitTestable(), findsOneWidget);
+    // 无尾部常驻箭头。
+    expect(find.byIcon(Icons.expand_more), findsNothing);
+    // hover:前导 icon 切 chevron(标题行与展开内容同名文本,取可点的首个)。
+    await hover(tester, find.textContaining('权限审批').hitTestable().first);
+    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+    // 点击:展开原卡(命令明细可见)。
+    await tester.tap(find.textContaining('权限审批').hitTestable().first);
+    await tester.pumpAndSettle();
+    expect(find.text('rm -rf /tmp/x').hitTestable(), findsOneWidget);
   });
 }
