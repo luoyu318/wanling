@@ -37,13 +37,17 @@ Future<void> main() async {
   WindowActions? windowActions;
   try {
     await windowManager.ensureInitialized();
+    // 不用 TitleBarStyle.hidden:其 Windows 实现会在 WM_NCCALCSIZE 预留
+    // 8px 非客户区做系统缩放边,而窗口类无背景刷 → 该区域涂黑成黑边
+    // (window_manager_plugin.cc NCCALCSIZE 分支)。改 setAsFrameless()
+    // 客户区铺满整窗由 Flutter 自绘,缩放走 WindowResizeEdges 热区。
     const opts = WindowOptions(
       size: Size(1280, 800),
       minimumSize: Size(800, 600),
-      titleBarStyle: TitleBarStyle.hidden,
       center: true,
     );
     await windowManager.waitUntilReadyToShow(opts, () async {
+      await windowManager.setAsFrameless();
       await windowManager.show();
     });
     windowActions = WindowManagerActions();

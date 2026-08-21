@@ -6,6 +6,7 @@ import '../providers/conv_list_width_provider.dart';
 import '../theme/desktop_theme.dart';
 import 'nav_rail.dart';
 import 'resize_handle.dart';
+import 'window_resize_edges.dart';
 // WindowActions 类型经 title_bar.dart re-export,不再单独 import
 import 'title_bar.dart';
 
@@ -36,30 +37,34 @@ class AppCanvas extends ConsumerWidget {
     final actions = this.actions ?? ref.watch(windowActionsProvider);
     final convWidth = ref.watch(convListWidthProvider);
 
-    return Scaffold(
-      backgroundColor: DesktopTheme.canvasColor(brightness),
-      body: Padding(
-        padding: const EdgeInsets.only(right: 8, bottom: 8),
-        child: Row(
-          children: [
-            const NavRail(),
-            Expanded(
-              child: Column(
-                children: [
-                  TitleBar(actions: actions),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        SizedBox(width: convWidth, child: conversationCard),
-                        const ResizeHandle(),
-                        Expanded(child: chatCard),
-                      ],
+    // WindowResizeEdges:无边框窗口的边缘缩放热区(frameless 后系统缩放
+    // 边已去,Flutter 自绘),覆盖在最外层。
+    return WindowResizeEdges(
+      child: Scaffold(
+        backgroundColor: DesktopTheme.canvasColor(brightness),
+        body: Padding(
+          padding: const EdgeInsets.only(right: 8, bottom: 8),
+          child: Row(
+            children: [
+              const NavRail(),
+              Expanded(
+                child: Column(
+                  children: [
+                    TitleBar(actions: actions),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          SizedBox(width: convWidth, child: conversationCard),
+                          const ResizeHandle(),
+                          Expanded(child: chatCard),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
