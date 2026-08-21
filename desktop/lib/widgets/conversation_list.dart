@@ -105,6 +105,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                       convId: c.id,
                       name: c.displayName,
                       avatarUrl: c.displayAvatarUrl,
+                      agentType: c.agent?.type ?? '',
                       subtitle: c.lastMessagePreview(
                         currentUserId: currentUserId,
                         isGroup: c.isGroup,
