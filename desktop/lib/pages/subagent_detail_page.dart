@@ -258,8 +258,8 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
     // isMe=false(子 agent 消息对当前用户都是接收方视角)。
     // baseUrl/token 从 settingsProvider/authProvider 直取(desktop 版无
     // _downloadService 壳);isDark 用真主题亮度(desktop 优势)。
-    // rootMessageId=taskCardId:嵌套 task 卡跳子详情时按根查子树
-    // (aggregate_card_renderer 的 elementRc 模式,此处根即 taskCardId)。
+    // rootMessageId 不传(对齐 app 子 agent 页):嵌套 task 卡跳转按
+    // messageId=该卡自身 id 查子树。
     // onFileTap/fileDownloadSnapshots 留 null:desktop 未接文件下载基建,
     // core renderer 对 null 有点击降级(无操作/未下载态)。
     final baseUrl = ref.watch(settingsProvider);
@@ -299,7 +299,9 @@ class _SubagentDetailPageState extends ConsumerState<SubagentDetailPage> {
                 isDark: isDark,
                 convId: widget.convId,
                 messageId: msg.id,
-                rootMessageId: widget.taskCardId,
+                // rootMessageId 不传(默认 ''):嵌套 task 卡跳转 fallback 到
+                // messageId=该卡自身 id,子事件 root_msg_id 指向谁就查谁,
+                // 避免 rootMessageId=taskCardId 导致重复 push 当前页自身。
                 conversationMessages: _messages,
                 // 图片点击 → 桌面全屏预览(对齐 chat_message_list 模式)。
                 openGallery: (fileId) {
