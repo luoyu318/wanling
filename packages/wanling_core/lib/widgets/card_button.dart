@@ -11,6 +11,8 @@ class CardButton extends StatelessWidget {
   final String style; // primary / info / danger
   final CardButtonState state;
   final VoidCallback? onTap;
+  /// 深色模式:disabled 态底/字灰阶适配(浅色路径不变)。
+  final bool isDark;
 
   const CardButton({
     super.key,
@@ -19,6 +21,7 @@ class CardButton extends StatelessWidget {
     required this.style,
     this.state = CardButtonState.active,
     this.onTap,
+    this.isDark = false,
   });
 
   @override
@@ -30,8 +33,9 @@ class CardButton extends StatelessWidget {
     Color fgColor = Colors.white;
 
     if (isDisabled) {
-      bgColor = const Color(0xFFE0E0E0);
-      fgColor = const Color(0xFF9E9E9E);
+      // disabled 态:浅色 E0E0E0/9E9E9E,深色回扣抽屉把手灰 3A3B42 + 次要字 777777。
+      bgColor = isDark ? const Color(0xFF3A3B42) : const Color(0xFFE0E0E0);
+      fgColor = isDark ? const Color(0xFF777777) : const Color(0xFF9E9E9E);
     } else if (isSelected) {
       bgColor = _darkenedColor();
     } else {

@@ -144,6 +144,7 @@ class _CardViewState extends State<_CardView> {
                       iconName: a.icon,
                       style: a.style,
                       state: btnState,
+                      isDark: isDark,
                       onTap: _disabled || isTerminal ? null : () => _onTap(a.id),
                     ),
                   ),
@@ -155,7 +156,7 @@ class _CardViewState extends State<_CardView> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: CountdownTimer(expiresAt: widget.card.expiresAt),
+                  child: CountdownTimer(expiresAt: widget.card.expiresAt, isDark: isDark),
                 ),
               ),
           ],

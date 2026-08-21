@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 /// 根据 expiresAt 自算倒计时，每秒刷新。显示「⏱ M:SS」格式。
 class CountdownTimer extends StatefulWidget {
   final DateTime expiresAt;
+  /// 深色模式:文字灰阶适配(浅色路径不变)。
+  final bool isDark;
 
-  const CountdownTimer({super.key, required this.expiresAt});
+  const CountdownTimer({super.key, required this.expiresAt, this.isDark = false});
 
   @override
   State<CountdownTimer> createState() => _CountdownTimerState();
@@ -48,8 +50,9 @@ class _CountdownTimerState extends State<CountdownTimer> {
     final s = _remaining.inSeconds % 60;
     return Text(
       '⏱ $m:${s.toString().padLeft(2, '0')}',
-      style: const TextStyle(
-        color: Color(0xFF999999),
+      style: TextStyle(
+        // 次要灰:深色映射 777777(对齐 tool_card_renderer 行号灰)。
+        color: widget.isDark ? const Color(0xFF777777) : const Color(0xFF999999),
         fontSize: 11,
       ),
     );

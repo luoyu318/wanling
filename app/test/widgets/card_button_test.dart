@@ -64,4 +64,40 @@ void main() {
       expect(deco.color, expected);
     }
   });
+
+  testWidgets('disabled 深浅成对:浅色 E0E0E0/9E9E9E,深色 3A3B42/777777', (tester) async {
+    Widget host({required bool isDark}) => MaterialApp(
+          home: Scaffold(
+            body: CardButton(
+              label: '允许',
+              iconName: 'check',
+              style: 'primary',
+              state: CardButtonState.disabled,
+              isDark: isDark,
+            ),
+          ),
+        );
+
+    // 浅色臂
+    await tester.pumpWidget(host(isDark: false));
+    var container = tester.widget<Container>(
+      find.descendant(of: find.byType(CardButton), matching: find.byType(Container)).first,
+    );
+    expect((container.decoration as BoxDecoration).color, const Color(0xFFE0E0E0));
+    expect(
+      (tester.widget<Text>(find.text('允许')).style!).color,
+      const Color(0xFF9E9E9E),
+    );
+
+    // 深色臂
+    await tester.pumpWidget(host(isDark: true));
+    container = tester.widget<Container>(
+      find.descendant(of: find.byType(CardButton), matching: find.byType(Container)).first,
+    );
+    expect((container.decoration as BoxDecoration).color, const Color(0xFF3A3B42));
+    expect(
+      (tester.widget<Text>(find.text('允许')).style!).color,
+      const Color(0xFF777777),
+    );
+  });
 }
