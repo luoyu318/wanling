@@ -239,8 +239,10 @@ void main() {
     // 「发消息」:选中最新会话(lastMessageAt 最大者),回万灵页挂 ChatView。
     await tester.tap(find.text('发消息'));
     await tester.pumpAndSettle();
-    expect(container.read(selectedConvProvider), 'conv-new');
-    expect(container.read(selectedAgentIdProvider), 'a1');
+    expect(container.read(selectedWanlingConvProvider), 'conv-new');
+    expect(container.read(selectedWanlingAgentIdProvider), 'a1');
+    // 消息 tab 选中态不受污染(双 tab 隔离)。
+    expect(container.read(selectedConvProvider), isNull);
     expect(find.byType(ChatView), findsOneWidget);
     // 刷新按钮移聊天卡顶(ChatAppBar):仅 /wanling 路由显示。
     expect(find.byKey(const ValueKey('agent_refresh')), findsOneWidget);
@@ -262,7 +264,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 未选中任何会话 → 右栏空态,提示状态被写入并展示。
-    expect(container.read(selectedConvProvider), isNull);
+    expect(container.read(selectedWanlingConvProvider), isNull);
     expect(
       container.read(noConversationHintProvider),
       '该 Agent 暂无会话，可从消息页发起',
@@ -297,13 +299,14 @@ void main() {
     expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
     expect(find.byKey(const ValueKey('agent_session_s2')), findsOneWidget);
     expect(find.byKey(const ValueKey('agent_sessions_back')), findsOneWidget);
+    expect(container.read(selectedWanlingConvProvider), isNull);
     expect(container.read(selectedConvProvider), isNull);
 
     // 点击 session:选中会话 + agentId 兜底写入,右栏挂 ChatView。
     await tester.tap(find.byKey(const ValueKey('agent_session_s1')));
     await tester.pumpAndSettle();
-    expect(container.read(selectedConvProvider), 's1');
-    expect(container.read(selectedAgentIdProvider), 'oc1');
+    expect(container.read(selectedWanlingConvProvider), 's1');
+    expect(container.read(selectedWanlingAgentIdProvider), 'oc1');
     expect(find.byType(ChatView), findsOneWidget);
 
     // 返回头回到一级列表。
@@ -312,6 +315,6 @@ void main() {
     expect(find.byKey(const ValueKey('agent_oc1')), findsOneWidget);
     expect(find.byKey(const ValueKey('agent_session_s1')), findsNothing);
     // 已选会话保留(右栏聊天不丢)。
-    expect(container.read(selectedConvProvider), 's1');
+    expect(container.read(selectedWanlingConvProvider), 's1');
   });
 }

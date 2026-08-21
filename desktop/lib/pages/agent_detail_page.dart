@@ -11,7 +11,8 @@ import 'package:wanling_core/utils/snackbar.dart';
 
 import '../providers/no_conversation_hint_provider.dart';
 import '../providers/open_agent_sessions_provider.dart';
-import '../providers/selected_conv_provider.dart';
+import '../providers/selected_conv_provider.dart'
+    show selectedWanlingAgentIdProvider, selectedWanlingConvProvider;
 import '../shell/card_container.dart';
 import '../widgets/agent_type_badge.dart';
 import '../theme/desktop_theme.dart';
@@ -187,7 +188,8 @@ class AgentDetailPage extends ConsumerWidget {
   }
 
   /// 「发消息」(原万灵页一级点击逻辑迁入):取该 agent 最新会话直开;
-  /// 无会话清选中并写提示,均回万灵页展示。
+  /// 无会话清选中并写提示,均回万灵页展示。写万灵 tab 独立 provider
+  /// (与消息 tab 选中态隔离)。
   void _startChat(BuildContext context, WidgetRef ref, Agent agent) {
     final convs = ref
         .read(conversationProvider)
@@ -196,13 +198,13 @@ class AgentDetailPage extends ConsumerWidget {
       ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
 
     if (convs.isEmpty) {
-      ref.read(selectedConvProvider.notifier).state = null;
-      ref.read(selectedAgentIdProvider.notifier).state = null;
+      ref.read(selectedWanlingConvProvider.notifier).state = null;
+      ref.read(selectedWanlingAgentIdProvider.notifier).state = null;
       ref.read(noConversationHintProvider.notifier).state =
           '该 Agent 暂无会话，可从消息页发起';
     } else {
-      ref.read(selectedConvProvider.notifier).state = convs.first.id;
-      ref.read(selectedAgentIdProvider.notifier).state = agent.id;
+      ref.read(selectedWanlingConvProvider.notifier).state = convs.first.id;
+      ref.read(selectedWanlingAgentIdProvider.notifier).state = agent.id;
     }
     context.go('/wanling');
   }

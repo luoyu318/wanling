@@ -28,11 +28,17 @@ class AgentSessionsPane extends ConsumerStatefulWidget {
   final VoidCallback onBack;
   final void Function(String convId, String agentId) onOpenSession;
 
+  /// 选中会话 id 覆盖值:万灵 tab 传 selectedWanlingConvProvider 的值
+  /// (双 tab 选中态隔离);null = 内部 watch 消息 tab 的
+  /// selectedConvProvider(消息 tab 调用方默认行为)。
+  final String? selectedConvId;
+
   const AgentSessionsPane({
     super.key,
     required this.agentId,
     required this.onBack,
     required this.onOpenSession,
+    this.selectedConvId,
   });
 
   @override
@@ -71,7 +77,9 @@ class _AgentSessionsPaneState extends ConsumerState<AgentSessionsPane> {
     final currentUserId = ref.watch(
       authProvider.select((s) => s.user?.id ?? ''),
     );
-    final selectedId = ref.watch(selectedConvProvider);
+    // 选中高亮:外部覆盖值优先(万灵 tab 独立选中),否则消息 tab provider。
+    final selectedId =
+        widget.selectedConvId ?? ref.watch(selectedConvProvider);
     final agent = ref.watch(agentByIdProvider(widget.agentId));
 
     return Column(

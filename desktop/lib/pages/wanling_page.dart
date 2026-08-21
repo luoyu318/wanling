@@ -4,7 +4,8 @@ import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/no_conversation_hint_provider.dart';
-import '../providers/selected_conv_provider.dart';
+import '../providers/selected_conv_provider.dart'
+    show selectedWanlingAgentIdProvider, selectedWanlingConvProvider;
 import '../shell/card_container.dart';
 import '../widgets/agent_type_badge.dart';
 import '../theme/desktop_theme.dart';
@@ -16,22 +17,24 @@ import 'chat/chat_view.dart';
 /// DesktopShell._ConversationCardHost;刷新按钮移 ChatAppBar(仅
 /// /wanling 路由显示)。
 ///
-/// 选中态与消息页共享 selectedConvProvider,两页切换选中不丢;
+/// 选中态用万灵 tab 独立的 selectedWanlingConvProvider(与消息 tab 的
+/// selectedConvProvider 隔离):消息页聊着天切到万灵,右侧不残留消息
+/// 页会话;仅万灵 tab 内(二级列表/详情页 CTA)打开的会话显示。
 /// agentId 兜底逻辑与消息页同构(agent_session 不在 conversationProvider
-/// 内,查不到时用 selectedAgentIdProvider 兜底)。
+/// 内,查不到时用 selectedWanlingAgentIdProvider 兜底)。
 class WanlingPage extends ConsumerWidget {
   const WanlingPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // 切到具体会话即清除无会话提示(空态被会话取代)。
-    ref.listen(selectedConvProvider, (prev, next) {
+    ref.listen(selectedWanlingConvProvider, (prev, next) {
       if (next != null) {
         ref.read(noConversationHintProvider.notifier).state = null;
       }
     });
 
-    final selectedId = ref.watch(selectedConvProvider);
+    final selectedId = ref.watch(selectedWanlingConvProvider);
     final agentId = selectedId == null
         ? null
         : ref
@@ -40,7 +43,7 @@ class WanlingPage extends ConsumerWidget {
               .firstOrNull
               ?.agent
               ?.id ??
-              ref.watch(selectedAgentIdProvider);
+              ref.watch(selectedWanlingAgentIdProvider);
 
     return CardContainer(
       key: ValueKey('wanling_chat_area_$selectedId'),

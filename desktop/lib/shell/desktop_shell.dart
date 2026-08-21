@@ -86,13 +86,16 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
   }
 
   /// 万灵路由:一级 agent 列表(点击推入详情页),二级该 agent 的
-  /// session 列表(带返回头)。
+  /// session 列表(带返回头)。选中写万灵 tab 独立 provider(与消息
+  /// tab 隔离,见 selectedWanlingConvProvider 注释)。
   Widget _wanlingPane() {
     if (_sessionsAgentId != null) {
       return AgentSessionsPane(
         agentId: _sessionsAgentId!,
         onBack: () => setState(() => _sessionsAgentId = null),
         onOpenSession: _openConversation,
+        // 选中高亮读万灵 tab 独立选中态。
+        selectedConvId: ref.watch(selectedWanlingConvProvider),
       );
     }
     return WanlingAgentListPane(
@@ -100,10 +103,11 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
     );
   }
 
-  /// 选中会话 + agentId 兜底写入(agent_session 查不到 agent,靠
-  /// selectedAgentIdProvider 兜底),聊天卡片打开。
+  /// 万灵 tab 选中会话 + agentId 兜底写入(独立 provider,不污染消息
+  /// tab 的选中态;agent_session 查不到 agent,靠
+  /// selectedWanlingAgentIdProvider 兜底),聊天卡片打开。
   void _openConversation(String convId, String agentId) {
-    ref.read(selectedConvProvider.notifier).state = convId;
-    ref.read(selectedAgentIdProvider.notifier).state = agentId;
+    ref.read(selectedWanlingConvProvider.notifier).state = convId;
+    ref.read(selectedWanlingAgentIdProvider.notifier).state = agentId;
   }
 }
