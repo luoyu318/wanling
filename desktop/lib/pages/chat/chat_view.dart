@@ -135,7 +135,8 @@ class ChatView extends ConsumerWidget {
               ],
             ),
           ),
-          Container(height: 1, color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),
+          // 此处不画分割线:DesktopInputBar 自带顶边框
+          // (desktop_input_bar.dart Border.top),再画会重叠成双线。
         ],
         DesktopInputBar(convId: convId, agentId: agentId),
       ],
