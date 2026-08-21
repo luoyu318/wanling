@@ -6,6 +6,7 @@ import 'shell/desktop_shell.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/login_page.dart';
 import 'pages/messages_page.dart';
+import 'pages/subagent_detail_page.dart';
 import 'pages/wanling_page.dart';
 import 'pages/settings_page.dart';
 
@@ -38,6 +39,37 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/agent/:id',
             builder: (c, s) =>
                 AgentDetailPage(agentId: s.pathParameters['id']!),
+          ),
+          // 子 Agent 详情页:core 渲染层 task 卡片硬编码 push
+          // '/chat/subagent/:taskCardId?convId=...&title=...',desktop 必须
+          // 匹配该 path(本壳无 /chat/:convId 路由,无静态段吞参冲突)。
+          // 参数校验 fail-fast(对齐 app 壳 router):taskCardId/convId
+          // 缺失或非 UUID 直接渲染错误页,不放行到 api 拼无效路径。
+          GoRoute(
+            path: '/chat/subagent/:taskCardId',
+            builder: (c, s) {
+              final taskCardId = s.pathParameters['taskCardId'] ?? '';
+              final convId = s.uri.queryParameters['convId'] ?? '';
+              final title = s.uri.queryParameters['title'] ?? '';
+              final uuid = RegExp(
+                r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+              );
+              if (taskCardId.isEmpty || convId.isEmpty) {
+                return const SubagentParamErrorView(
+                  message: '链接缺少必要参数(convId / taskCardId)',
+                );
+              }
+              if (!uuid.hasMatch(taskCardId) || !uuid.hasMatch(convId)) {
+                return const SubagentParamErrorView(
+                  message: '链接参数格式错误(需合法 UUID)',
+                );
+              }
+              return SubagentDetailPage(
+                taskCardId: taskCardId,
+                convId: convId,
+                title: title,
+              );
+            },
           ),
         ],
       ),
