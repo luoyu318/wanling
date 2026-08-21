@@ -5,7 +5,10 @@ import 'package:wanling_core/models/quote.dart';
 import 'package:wanling_core/rendering/footer_status_bar.dart'
     show aggregatePhaseText;
 import 'package:wanling_core/rendering/message_content_renderer.dart';
-import 'package:wanling_core/rendering/tool_group_renderer.dart';
+import 'package:wanling_core/rendering/tool_group_renderer.dart'
+    show groupAggregateElements, SingleElementSlot, ToolGroupSlot;
+import 'desktop_reasoning_renderer.dart';
+import 'desktop_tool_group_renderer.dart';
 import 'package:wanling_core/utils/duration_format.dart';
 import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 
@@ -60,7 +63,8 @@ class DesktopAggregateCardRenderer implements MessageContentRenderer {
             switch (slot) {
               ToolGroupSlot(:final cards) => Padding(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                child: ToolGroupCard(cards: cards, rc: rc),
+                // 桌面版折叠组:hover 前导 icon 切换展开指示,无尾部箭头。
+                child: DesktopToolGroupCard(cards: cards, rc: rc),
               ),
               SingleElementSlot(:final element) =>
                 // finished footer 元素由底部状态条代替渲染(不重复走 step_finish)
@@ -128,11 +132,10 @@ class DesktopAggregateCardRenderer implements MessageContentRenderer {
     final elementContent = <String, dynamic>{'msg_type': type, 'data': data};
 
     final Widget child = switch (type) {
-      'reasoning' => ContentRendererRegistry.render(
-        MsgType.reasoning,
-        elementContent,
-        context,
-        elementRc,
+      // 桌面版思考块:hover 前导 icon 切换,无尾部 ▸(core registry 版无 hover)。
+      'reasoning' => DesktopReasoningCard(
+        text: ((data['text'] as String?) ?? ''),
+        duration: data['duration'] as num?,
       ),
       'tool_card' => ContentRendererRegistry.render(
         MsgType.toolCard,
