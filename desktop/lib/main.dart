@@ -8,10 +8,13 @@ import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/local_message_store_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
+import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
+import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/services/notification_service.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app.dart';
+import 'rendering/aggregate_card_renderer.dart';
 import 'shell/app_canvas.dart' show windowActionsProvider;
 import 'shell/window_actions.dart';
 
@@ -61,6 +64,10 @@ Future<void> main() async {
   );
   // 消息内容渲染注册表:Text/Markdown/Image/File/Card/Aggregate 等内置 renderer。
   registerBuiltinRenderers();
+  // 桌面版聚合卡覆盖注册:外壳透明无边框无阴影,与聊天背景融合
+  // (app 端注册表不受影响,仍用 core 白卡样式;差异见 desktop renderer 注释)。
+  ContentRendererRegistry.register(
+      MsgType.aggregateCard, const DesktopAggregateCardRenderer());
   // 桌面通知初始化(Windows/Linux settings 由 core notification_service 处理)
   await NotificationService.instance.init();
   // 注入已 load 的 SharedPreferences(savedLogins 依赖同步实例),
