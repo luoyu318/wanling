@@ -92,10 +92,10 @@ class ChatView extends ConsumerWidget {
                   token: token,
                 ),
         ),
-        // agent_session 输入面板区(对齐 app 壳:mode/model 条 + 环境条,均在
-        // 输入栏上方;非 agent_session 不渲染):
-        //   分割线 + SessionMetaStrip(mode/model 切换) + 分割线 +
-        //   EnvMetaStrip(cwd/gitBranch/token) + 分割线 + DesktopInputBar。
+        // agent_session 输入面板区(对齐 app 壳,两条 meta 条合并为一行:
+        // SessionMetaStrip(mode/model)居左 + EnvMetaStrip(cwd/branch/token)
+        // 紧随其后,空间不足各自横向滚动;非 agent_session 不渲染):
+        //   分割线 + 单行双 strip + 分割线 + DesktopInputBar。
         if (chat.convType == 'agent_session' && chat.sessionMeta != null) ...[
           Container(height: 1, color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),
           Container(
@@ -104,32 +104,35 @@ class ChatView extends ConsumerWidget {
             // 透明透出外层聊天卡片底色(Task 7 CardContainer)
             color: Colors.transparent,
             padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
-            child: SessionMetaStrip(
-              meta: chat.sessionMeta!,
-              modeOverride: chat.modeOverride,
-              onModeTap: () => ref
-                  .read(chatProvider((convId: convId, agentId: agentId)).notifier)
-                  .toggleMode(),
-              modelOverride: chat.modelOverride,
-              onModelTap: () => _showModelPicker(context, ref),
-            ),
-          ),
-          Container(height: 1, color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),
-          Container(
-            key: const ValueKey('env_meta_strip'),
-            width: double.infinity,
-            // 透明透出外层聊天卡片底色(Task 7 CardContainer)
-            color: Colors.transparent,
-            child: EnvMetaStrip(
-              cwd: chat.directory,
-              gitBranch: chat.sessionMeta?.gitBranch,
-              tokensTotal: chat.sessionMeta?.tokensTotal,
-              contextUsed: chat.sessionMeta?.contextUsed,
-              contextLimit: chat.sessionMeta?.contextLimit,
-              // gitBranch 段点击:打开详情面板(Changes tab 即 session diff)。
-              onTapGitBranch: () => ref
-                  .read(detailPanelOpenProvider.notifier)
-                  .state = true,
+            child: Row(
+              children: [
+                Flexible(
+                  child: SessionMetaStrip(
+                    meta: chat.sessionMeta!,
+                    modeOverride: chat.modeOverride,
+                    onModeTap: () => ref
+                        .read(chatProvider((convId: convId, agentId: agentId)).notifier)
+                        .toggleMode(),
+                    modelOverride: chat.modelOverride,
+                    onModelTap: () => _showModelPicker(context, ref),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Flexible(
+                  child: EnvMetaStrip(
+                    key: const ValueKey('env_meta_strip'),
+                    cwd: chat.directory,
+                    gitBranch: chat.sessionMeta?.gitBranch,
+                    tokensTotal: chat.sessionMeta?.tokensTotal,
+                    contextUsed: chat.sessionMeta?.contextUsed,
+                    contextLimit: chat.sessionMeta?.contextLimit,
+                    // gitBranch 段点击:打开详情面板(Changes tab 即 session diff)。
+                    onTapGitBranch: () => ref
+                        .read(detailPanelOpenProvider.notifier)
+                        .state = true,
+                  ),
+                ),
+              ],
             ),
           ),
           Container(height: 1, color: Theme.of(context).dividerTheme.color ?? const Color(0xFFE4E4E4)),

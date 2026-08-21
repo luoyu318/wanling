@@ -129,14 +129,13 @@ class EnvMetaStrip extends StatelessWidget {
     }
 
     // 横向超出屏幕时水平滑动查看,不显示滚动条。
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Text.rich(
-          TextSpan(children: parts),
-          maxLines: 1,
-        ),
+    // 无内置水平 padding:并入 chat_view 合并行后由外层统一控制
+    // (此前独立成条时的 LTRB(16,2,16,2) 已上移)。
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Text.rich(
+        TextSpan(children: parts),
+        maxLines: 1,
       ),
     );
   }
