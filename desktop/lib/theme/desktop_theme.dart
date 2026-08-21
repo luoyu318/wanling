@@ -80,9 +80,10 @@ class DesktopTheme {
   static Color cardColor(Brightness b) =>
       b == Brightness.dark ? const Color(0xFF1A1A20) : const Color(0xFFFFFFFF);
 
-  /// 聊天区卡片底色(深色下比会话卡片深 3 位形成层次,浅色同卡片色)。
+  /// 聊天区卡片底色(深色下比会话卡片深 3 位形成层次,浅色比纯白
+  /// 降一档 FCFCFC,与画布/左卡片拉开微妙层次)。
   static Color chatCardColor(Brightness b) =>
-      b == Brightness.dark ? const Color(0xFF17171D) : const Color(0xFFFFFFFF);
+      b == Brightness.dark ? const Color(0xFF17171D) : const Color(0xFFFCFCFC);
 
   /// 卡片边框/画布上细分割线。
   static Color cardBorderColor(Brightness b) =>

@@ -459,7 +459,6 @@ class _DesktopInputBarState extends ConsumerState<DesktopInputBar> {
             InputToolbar(
               onPickFile: () => _pickAndSend(FileType.any),
               onPickImage: () => _pickAndSend(FileType.image),
-              onMention: () => _insertTrigger('@'),
               onSlash: () => _insertTrigger('/'),
               slashEnabled: widget.agentId != null && _catalog.isNotEmpty,
             ),

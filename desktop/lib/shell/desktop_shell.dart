@@ -9,6 +9,7 @@ import '../providers/selected_conv_provider.dart';
 import '../providers/tab_reselect_provider.dart';
 import '../widgets/agent_sessions_pane.dart';
 import '../widgets/conversation_list.dart';
+import '../widgets/settings_nav_pane.dart';
 import 'app_canvas.dart';
 import 'card_container.dart';
 
@@ -93,7 +94,8 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
     });
     final location = GoRouterState.of(context).uri.path;
     if (_branchOf(location) == 'settings') {
-      return const CardContainer(child: SizedBox.expand());
+      // 设置分支:左卡片放分区导航(与右卡片 SettingsPage 经 provider 联动)。
+      return const CardContainer(child: SettingsNavPane());
     }
     return CardContainer(
       child: _branchOf(location) == 'wanling'

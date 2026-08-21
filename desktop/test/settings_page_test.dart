@@ -10,6 +10,8 @@ import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_desktop/pages/settings_page.dart';
 import 'package:wanling_desktop/providers/desktop_notifications_provider.dart';
+import 'package:wanling_desktop/providers/settings_nav_provider.dart';
+import 'package:wanling_desktop/widgets/settings_nav_pane.dart';
 
 /// 已登录 auth 种子(user 供账号段显示)。api.logout stub 成空:
 /// 登出确认测试点「退出」后会走 notifier.logout → api.logout,不能发网络。
@@ -152,5 +154,52 @@ void main() {
     expect(find.text('关于'), findsOneWidget);
     expect(find.text('万灵 Wanling'), findsOneWidget);
     expect(find.text('版本 1.5.0'), findsOneWidget);
+  });
+
+  testWidgets('设置页联动:左导航点击滚动定位,右滚动反推高亮', (tester) async {
+    final container = ProviderContainer(
+      overrides: [authProvider.overrideWith((ref) => _LoggedInAuth())],
+    );
+    addTearDown(container.dispose);
+
+    // 小视口先行(关于段在视口外,列表可滚),再挂左导航 + 右设置页。
+    await tester.binding.setSurfaceSize(const Size(800, 320));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              SizedBox(width: 180, child: SettingsNavPane()),
+              Expanded(child: SettingsPage()),
+            ],
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // 左导航 4 个分区项可见。
+    expect(find.byKey(const ValueKey('settings_nav_外观')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings_nav_关于')), findsOneWidget);
+    // 初始高亮:外观。
+    expect(container.read(settingsActiveSectionProvider), 0);
+
+    // 视口压扁后关于段在视口外。
+    expect(find.text('万灵 Wanling'), findsNothing);
+
+    // 点击左导航「关于」→ 右侧滚动定位到关于段(脉冲消费清零)。
+    await tester.tap(find.byKey(const ValueKey('settings_nav_关于')));
+    await tester.pumpAndSettle();
+    expect(find.text('万灵 Wanling'), findsOneWidget);
+    expect(container.read(settingsScrollToProvider), isNull);
+    // 滚动反推:关于段进入锚定带,高亮联动到 3。
+    expect(container.read(settingsActiveSectionProvider), 3);
+
+    // 点击「外观」滚回顶部,高亮回到 0。
+    await tester.tap(find.byKey(const ValueKey('settings_nav_外观')));
+    await tester.pumpAndSettle();
+    expect(container.read(settingsActiveSectionProvider), 0);
   });
 }

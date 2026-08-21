@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-/// 桌面输入区工具栏(上置):📎 文件 / @ 提及 / / 斜杠 / 🖼️ 图片。
+/// 桌面输入区工具栏(上置):📎 文件 / 终端斜杠 / 🖼️ 图片。
 ///
 /// 纯按钮排,行为由回调注入;[slashEnabled] 控制 / 按钮
 /// (slash catalog 仅 agent 会话有,agentId 为 null 时禁用)。
+/// @ 提及暂未上线,入口不展示(输入 @ 触发面板逻辑保留)。
 class InputToolbar extends StatelessWidget {
   final VoidCallback onPickFile;
-  final VoidCallback onMention;
   final VoidCallback onSlash;
   final VoidCallback onPickImage;
   final bool slashEnabled;
@@ -14,7 +14,6 @@ class InputToolbar extends StatelessWidget {
   const InputToolbar({
     super.key,
     required this.onPickFile,
-    required this.onMention,
     required this.onSlash,
     required this.onPickImage,
     this.slashEnabled = true,
@@ -30,12 +29,6 @@ class InputToolbar extends StatelessWidget {
           tooltip: '发送文件',
           icon: Icons.attach_file,
           onTap: onPickFile,
-        ),
-        _ToolbarButton(
-          key: const ValueKey('input_toolbar_mention'),
-          tooltip: '提及成员 @',
-          text: '@',
-          onTap: onMention,
         ),
         _ToolbarButton(
           key: const ValueKey('input_toolbar_slash'),
@@ -66,16 +59,14 @@ class InputToolbar extends StatelessWidget {
 /// 紧凑工具栏按钮:28×28 圆角 hover 高亮,图标/单字符二选一。
 class _ToolbarButton extends StatefulWidget {
   final String tooltip;
-  final IconData? icon;
-  final String? text;
+  final IconData icon;
   final VoidCallback? onTap;
 
   const _ToolbarButton({
     super.key,
     required this.tooltip,
+    required this.icon,
     required this.onTap,
-    this.icon,
-    this.text,
   });
 
   @override
@@ -109,16 +100,7 @@ class _ToolbarButtonState extends State<_ToolbarButton> {
                 : null,
             borderRadius: BorderRadius.circular(6),
           ),
-          child: widget.icon != null
-              ? Icon(widget.icon, size: 17, color: color)
-              : Text(
-                  widget.text ?? '',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
+          child: Icon(widget.icon, size: 17, color: color),
         ),
       ),
     );
