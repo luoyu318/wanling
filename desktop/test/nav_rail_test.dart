@@ -24,7 +24,7 @@ class _EmptySavedLogins extends SavedLoginsNotifier {
 }
 
 void main() {
-  testWidgets('工具条渲染五类入口且无设置项', (tester) async {
+  testWidgets('工具条渲染四类入口且无设置项/＋按钮', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final container = ProviderContainer(
@@ -59,7 +59,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('navrail_search')), findsOneWidget);
-    expect(find.byKey(const ValueKey('navrail_new_chat')), findsOneWidget);
+    // ＋ 按钮已移除(验收反馈:入口冗余)
+    expect(find.byKey(const ValueKey('navrail_new_chat')), findsNothing);
     expect(find.byKey(const ValueKey('navrail_messages')), findsOneWidget);
     expect(find.byKey(const ValueKey('navrail_wanling')), findsOneWidget);
     expect(find.byKey(const ValueKey('navrail_account')), findsOneWidget);

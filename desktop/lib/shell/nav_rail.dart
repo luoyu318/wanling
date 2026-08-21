@@ -9,8 +9,8 @@ import '../widgets/account_switcher.dart';
 /// 并回置 false(单向脉冲,不 watch 列表自身)。
 final navRailSearchFocusProvider = StateProvider<bool>((ref) => false);
 
-/// 左侧 52px 透明工具条(浮动卡片布局):顶 🔍/＋,中 消息/万灵,
-/// 底 AccountSwitcher(切换账号/退出)。设置入口在标题栏。
+/// 左侧 52px 透明工具条(浮动卡片布局):顶 🔍,中 消息/万灵,
+/// 底 AccountSwitcher(iconOnly,切换服务器/账号)。设置入口在标题栏。
 /// 离开消息页清 noConversationHintProvider 逻辑保留。
 class NavRail extends ConsumerWidget {
   const NavRail({super.key});
@@ -82,28 +82,14 @@ class NavRail extends ConsumerWidget {
               },
             ),
           ),
-          Tooltip(
-            message: '新建会话',
-            waitDuration: const Duration(milliseconds: 300),
-            child: IconButton(
-              key: const ValueKey('navrail_new_chat'),
-              icon: const Icon(Icons.add, size: 22),
-              color: scheme.onSurface.withValues(alpha: 0.6),
-              onPressed: () {
-                // ＋ 语义:跳万灵页发起新会话(点 agent 开聊),不建对话框(YAGNI)
-                final atMessages = location.startsWith('/messages');
-                context.go(atMessages ? '/wanling' : '/messages');
-              },
-            ),
-          ),
           const SizedBox(height: 16),
           navItem(Icons.chat_bubble_outline, '消息', '/messages', 'navrail_messages'),
-          navItem(Icons.extension_outlined, '万灵', '/wanling', 'navrail_wanling'),
+          navItem(Icons.auto_awesome_outlined, '万灵', '/wanling', 'navrail_wanling'),
           const Spacer(),
           // 账号切换:复用登录页 AccountSwitcher(外包 navrail_account key)
           const KeyedSubtree(
             key: ValueKey('navrail_account'),
-            child: AccountSwitcher(),
+            child: AccountSwitcher(iconOnly: true),
           ),
         ],
       ),

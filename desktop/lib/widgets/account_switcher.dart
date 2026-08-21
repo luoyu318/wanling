@@ -9,8 +9,13 @@ import '../utils/dio_error.dart';
 /// savedLogins 为空时不渲染;点击弹出账号菜单(username@server),
 /// 选中即调 SavedLoginsNotifier.switchTo:silent logout → 切 baseUrl →
 /// 用保存的凭据自动登录,全程 isSwitching 守卫防 router 误跳。
+///
+/// iconOnly=true 时 child 只渲染账号图标(工具条底部紧凑模式),
+/// 菜单逻辑与完整模式一致。
 class AccountSwitcher extends ConsumerWidget {
-  const AccountSwitcher({super.key});
+  final bool iconOnly;
+
+  const AccountSwitcher({super.key, this.iconOnly = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -24,7 +29,7 @@ class AccountSwitcher extends ConsumerWidget {
     return PopupMenuButton<int>(
       key: const ValueKey('account_switcher_button'),
       enabled: !busy,
-      tooltip: '切换账号',
+      tooltip: '切换服务器/账号',
       itemBuilder: (_) => [
         for (var i = 0; i < saved.logins.length; i++)
           PopupMenuItem(
@@ -56,33 +61,38 @@ class AccountSwitcher extends ConsumerWidget {
           }
         }
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.account_circle, size: 20),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                current != null
-                    ? '${current.username}@${current.server}'
-                    : '切换账号',
-                overflow: TextOverflow.ellipsis,
+      child: iconOnly
+          ? const Padding(
+              padding: EdgeInsets.all(8),
+              child: Icon(Icons.account_circle, size: 22),
+            )
+          : Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.account_circle, size: 20),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      current != null
+                          ? '${current.username}@${current.server}'
+                          : '切换账号',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  if (busy)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    const Icon(Icons.arrow_drop_down, size: 18),
+                ],
               ),
             ),
-            const SizedBox(width: 4),
-            if (busy)
-              const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              const Icon(Icons.arrow_drop_down, size: 18),
-          ],
-        ),
-      ),
     );
   }
 }

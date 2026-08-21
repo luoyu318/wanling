@@ -18,6 +18,7 @@ import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
+import 'package:wanling_desktop/pages/agent_detail_page.dart';
 import 'package:wanling_desktop/pages/chat/chat_view.dart';
 import 'package:wanling_desktop/pages/messages_page.dart';
 import 'package:wanling_desktop/pages/wanling_page.dart';
@@ -160,6 +161,11 @@ Future<void> _pumpPage(WidgetTester tester, ProviderContainer container) async {
               routes: [
                 GoRoute(path: '/messages', builder: (c, s) => const MessagesPage()),
                 GoRoute(path: '/wanling', builder: (c, s) => const WanlingPage()),
+                GoRoute(
+                  path: '/agent/:id',
+                  builder: (c, s) =>
+                      AgentDetailPage(agentId: s.pathParameters['id']!),
+                ),
               ],
             ),
           ],
@@ -212,7 +218,7 @@ void main() {
     expect(find.text('选择左侧会话开始聊天'), findsOneWidget);
   });
 
-  testWidgets('万灵页:非 opencode agent 点击右栏直接打开最新会话(不跳 /messages)', (tester) async {
+  testWidgets('万灵页:agent 点击推入详情页,「发消息」CTA 右栏打开最新会话', (tester) async {
     final agents = [_agent('a1', 'OpenCode 主力', AgentStatus.online)];
     final a1 = AgentSummary(id: 'a1', name: 'OpenCode 主力', status: AgentStatus.online);
     final convs = [
@@ -225,10 +231,14 @@ void main() {
 
     await _pumpPage(tester, container);
 
+    // 点击 agent:右栏(聊天卡槽)推入详情页,左栏保持 agent 列表。
     await tester.tap(find.byKey(const ValueKey('agent_a1')));
     await tester.pumpAndSettle();
+    expect(find.byType(AgentDetailPage), findsOneWidget);
 
-    // 选中最新会话(lastMessageAt 最大者),右栏挂 ChatView。
+    // 「发消息」:选中最新会话(lastMessageAt 最大者),回万灵页挂 ChatView。
+    await tester.tap(find.text('发消息'));
+    await tester.pumpAndSettle();
     expect(container.read(selectedConvProvider), 'conv-new');
     expect(container.read(selectedAgentIdProvider), 'a1');
     expect(find.byType(ChatView), findsOneWidget);
@@ -236,7 +246,7 @@ void main() {
     expect(find.byKey(const ValueKey('agent_refresh')), findsOneWidget);
   });
 
-  testWidgets('万灵页:非 opencode agent 无会话时右栏空态提示', (tester) async {
+  testWidgets('万灵页:无会话 agent 详情页「发消息」右栏空态提示', (tester) async {
     final agents = [_agent('a2', '闲聊助手', AgentStatus.offline)];
     final container =
         ProviderContainer(overrides: await _overrides(agents: agents, convs: []));
@@ -245,6 +255,10 @@ void main() {
     await _pumpPage(tester, container);
 
     await tester.tap(find.byKey(const ValueKey('agent_a2')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AgentDetailPage), findsOneWidget);
+
+    await tester.tap(find.text('发消息'));
     await tester.pumpAndSettle();
 
     // 未选中任何会话 → 右栏空态,提示状态被写入并展示。
@@ -256,7 +270,7 @@ void main() {
     expect(find.text('该 Agent 暂无会话，可从消息页发起'), findsOneWidget);
   });
 
-  testWidgets('万灵页:opencode agent 点击进左栏二级 session 列表,点 session 右栏打开聊天', (tester) async {
+  testWidgets('万灵页:opencode 详情页「进入会话」切左栏二级列表,点 session 右栏打开聊天', (tester) async {
     final agents = [
       _agent('oc1', 'OpenCode 主力', AgentStatus.online, type: 'opencode'),
     ];
@@ -272,8 +286,13 @@ void main() {
 
     await _pumpPage(tester, container);
 
-    // 点击 opencode agent:左栏切二级列表(带返回头),不选会话。
+    // 点击 opencode agent:右栏推入详情页。
     await tester.tap(find.byKey(const ValueKey('agent_oc1')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AgentDetailPage), findsOneWidget);
+
+    // 「进入会话」(脉冲通知壳层):左栏切二级列表(带返回头),不选会话。
+    await tester.tap(find.text('进入会话'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('agent_session_s1')), findsOneWidget);
     expect(find.byKey(const ValueKey('agent_session_s2')), findsOneWidget);

@@ -1,11 +1,10 @@
+// desktop/lib/shell/desktop_shell.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:wanling_core/models/agent.dart';
-import 'package:wanling_core/providers/conversation_provider.dart';
 import '../pages/wanling_page.dart' show WanlingAgentListPane;
-import '../providers/no_conversation_hint_provider.dart';
+import '../providers/open_agent_sessions_provider.dart';
 import '../providers/selected_conv_provider.dart';
 import '../widgets/agent_sessions_pane.dart';
 import '../widgets/conversation_list.dart';
@@ -14,7 +13,7 @@ import 'card_container.dart';
 
 /// 浮动卡片壳:AppCanvas(画布 + 标题栏 + 工具条 + 双卡片)。
 /// 左卡片由 [_ConversationCardHost] 按路由切换内容,右卡片 = 路由 child
-/// (messages/wanling = 聊天卡片内容,settings = 设置页)。
+/// (messages/wanling = 聊天卡片内容,agent/:id = 详情页,settings = 设置页)。
 class DesktopShell extends ConsumerWidget {
   final Widget child;
 
@@ -33,8 +32,11 @@ class DesktopShell extends ConsumerWidget {
 /// GoRouterState.of),两级导航 state 自持(原消息/万灵页左栏迁入,
 /// 全路由共享一份)。
 /// - /messages:一级会话列表 / 二级该 agent 的 session 列表;
-/// - /wanling:一级 agent 列表 / 二级该 agent 的 session 列表;
+/// - /wanling(含 /agent/:id 详情页期间):一级 agent 列表 / 二级该
+///   agent 的 session 列表;
 /// - /settings:无会话内容,空占位卡保持画布双卡结构。
+/// 二级切换入口:一级列表 onOpenSessions(消息页)+ 详情页 CTA
+/// 「进入会话」经 openAgentSessionsProvider 脉冲触发(消费后清零)。
 class _ConversationCardHost extends ConsumerStatefulWidget {
   @override
   ConsumerState<_ConversationCardHost> createState() =>
@@ -47,12 +49,22 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
 
   @override
   Widget build(BuildContext context) {
+    // 详情页「进入会话」脉冲:消费后立即清零,防残留误触发。
+    ref.listen(openAgentSessionsProvider, (prev, next) {
+      if (next != null) {
+        setState(() => _sessionsAgentId = next);
+        ref.read(openAgentSessionsProvider.notifier).state = null;
+      }
+    });
     final location = GoRouterState.of(context).uri.path;
     if (location.startsWith('/settings')) {
       return const CardContainer(child: SizedBox.expand());
     }
+    // /agent/:id 属万灵分支:浏览详情时左卡片保持 agent 列表。
+    final wanlingBranch =
+        location.startsWith('/wanling') || location.startsWith('/agent');
     return CardContainer(
-      child: location.startsWith('/wanling') ? _wanlingPane() : _messagesPane(),
+      child: wanlingBranch ? _wanlingPane() : _messagesPane(),
     );
   }
 
@@ -73,7 +85,8 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
     );
   }
 
-  /// 万灵路由:一级 agent 列表,二级该 agent 的 session 列表(带返回头)。
+  /// 万灵路由:一级 agent 列表(点击推入详情页),二级该 agent 的
+  /// session 列表(带返回头)。
   Widget _wanlingPane() {
     if (_sessionsAgentId != null) {
       return AgentSessionsPane(
@@ -82,31 +95,9 @@ class _ConversationCardHostState extends ConsumerState<_ConversationCardHost> {
         onOpenSession: _openConversation,
       );
     }
-    return WanlingAgentListPane(onAgentTap: _onAgentTap);
-  }
-
-  /// 一级 agent 点击(原万灵页逻辑迁入):opencode 进二级 session 列表;
-  /// 其余直开该 agent 最新会话,无会话写提示并清选中。
-  void _onAgentTap(Agent agent) {
-    if (agent.type == AgentCategory.opencode) {
-      // opencode:左卡片进入二级 session 列表。
-      setState(() => _sessionsAgentId = agent.id);
-      return;
-    }
-    final convs = ref
-        .read(conversationProvider)
-        .where((c) => c.agent?.id == agent.id)
-        .toList()
-      ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
-
-    if (convs.isEmpty) {
-      ref.read(selectedConvProvider.notifier).state = null;
-      ref.read(selectedAgentIdProvider.notifier).state = null;
-      ref.read(noConversationHintProvider.notifier).state =
-          '该 Agent 暂无会话，可从消息页发起';
-      return;
-    }
-    _openConversation(convs.first.id, agent.id);
+    return WanlingAgentListPane(
+      onAgentTap: (agent) => context.push('/agent/${agent.id}'),
+    );
   }
 
   /// 选中会话 + agentId 兜底写入(agent_session 查不到 agent,靠

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'shell/desktop_shell.dart';
+import 'pages/agent_detail_page.dart';
 import 'pages/login_page.dart';
 import 'pages/messages_page.dart';
 import 'pages/wanling_page.dart';
@@ -32,6 +33,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/messages', builder: (c, s) => const MessagesPage()),
           GoRoute(path: '/wanling', builder: (c, s) => const WanlingPage()),
           GoRoute(path: '/settings', builder: (c, s) => const SettingsPage()),
+          // agent 详情(万灵列表点击推入,渲染进右卡片)
+          GoRoute(
+            path: '/agent/:id',
+            builder: (c, s) =>
+                AgentDetailPage(agentId: s.pathParameters['id']!),
+          ),
         ],
       ),
     ],
