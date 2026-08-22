@@ -146,6 +146,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(modeOverride: newMode);
   }
 
+  /// 清单驱动选模式:plugin 上报的 AGENT_MODES 清单里选中一项,
+  /// 下一条消息携带 _mode 下发,插件切换会话模式。
+  /// 与 OC 的 build↔plan 二值 toggleMode 不同,mode id 全由插件定义。
+  void selectMode(String modeId) {
+    state = state.copyWith(modeOverride: modeId);
+  }
+
   /// 初始化：获取未读信息 → 拉首屏消息 → 定位。
   ///
   /// 有未读时用 firstUnreadCreatedAt 直接作 before 游标（不再用 _findMessageById

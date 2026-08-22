@@ -10,6 +10,7 @@ import 'package:wanling_desktop/widgets/chat/desktop_input_bar.dart';
 import 'package:wanling_desktop/widgets/chat/env_meta_strip.dart';
 import 'package:wanling_core/providers/agent_modes_provider.dart';
 import 'package:wanling_desktop/widgets/chat/model_picker_sheet.dart';
+import 'package:wanling_desktop/widgets/chat/mode_picker_sheet.dart';
 import 'package:wanling_desktop/widgets/chat/session_meta_strip.dart';
 import 'chat_app_bar.dart';
 import 'chat_message_list.dart';
@@ -54,6 +55,31 @@ class ChatView extends ConsumerWidget {
       if (!context.mounted) return;
       showAppSnackBar(context, '模型列表加载失败');
     }
+  }
+
+  /// 模式选择:清单驱动(plugin 上报 AGENT_MODES)。
+  /// 空清单(老插件未上报)回退 build↔plan 二值切换(OC 兼容期)。
+  Future<void> _showModePicker(BuildContext context, WidgetRef ref) async {
+    final chatNotifier = ref
+        .read(chatProvider((convId: convId, agentId: agentId)).notifier);
+    if (agentId != null) {
+      try {
+        final modes =
+            await ref.read(agentModesProvider(agentId!).future);
+        if (modes.isNotEmpty && context.mounted) {
+          final chatState =
+              ref.read(chatProvider((convId: convId, agentId: agentId)));
+          final selected = await ModePickerDialog.show(
+            context: context,
+            modes: modes,
+            currentMode: chatState.modeOverride ?? chatState.sessionMeta?.mode,
+          );
+          if (selected != null) chatNotifier.selectMode(selected);
+          return;
+        }
+      } catch (_) {/* 拉取失败走回退 */}
+    }
+    chatNotifier.toggleMode();
   }
 
   @override
@@ -118,9 +144,7 @@ class ChatView extends ConsumerWidget {
                                 .watch(agentModesProvider(agentId!))
                                 .valueOrNull ??
                             const [],
-                    onModeTap: () => ref
-                        .read(chatProvider((convId: convId, agentId: agentId)).notifier)
-                        .toggleMode(),
+                    onModeTap: () => _showModePicker(context, ref),
                     modelOverride: chat.modelOverride,
                     onModelTap: () => _showModelPicker(context, ref),
                   ),
