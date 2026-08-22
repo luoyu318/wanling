@@ -109,6 +109,43 @@ describe("AggregateCard", () => {
     expect(patches[1]?.op).toEqual({ op: "update", element_id: "tool_x", data: { name: "x", status: "working" } })
   })
 
+  it("finish 后迟到 update 不建孤儿卡（零 wire 流量）", async () => {
+    const { io, cards, patches, updates } = makeIo()
+    const card = new AggregateCard("c1", io)
+    await card.append("tool_card", { type: "tool_card", element_id: "t1", name: "bash" })
+    await card.finish({ durationMs: 100 })
+    // 收尾后工具终态迟到:sealed,不建新卡(resetRound/孤儿 generating 卡)、
+    // 不 PATCH 已收尾卡、不触发降级全量替换 —— 对齐 opencode pending 缓存语义
+    const wire = { cards: cards.length, patches: patches.length, updates: updates.length }
+    await card.update("t1", { status: "done", output: "ok" })
+    expect(cards.length).toBe(wire.cards)
+    expect(patches.length).toBe(wire.patches)
+    expect(updates.length).toBe(wire.updates)
+  })
+
+  it("interrupt 后迟到 update 零 wire,新一轮 append 正常开新卡", async () => {
+    const { io, cards, patches } = makeIo()
+    const card = new AggregateCard("c1", io)
+    await card.append("tool_card", { type: "tool_card", element_id: "t1", name: "bash" })
+    await card.interrupt()
+    const cardCount = cards.length
+    const patchCount = patches.length
+    // 用户停止后工具终态迟到:同 finish 语义,零 wire 流量
+    await card.update("t1", { status: "done" })
+    expect(cards.length).toBe(cardCount)
+    expect(patches.length).toBe(patchCount)
+    // 新一轮 append:resetRound 路径未被破坏,正常开新卡
+    await card.append("markdown", { type: "markdown", element_id: "md_1", text: "next" })
+    expect(cards.length).toBe(cardCount + 1)
+    expect(cards.at(-1)?.data).toMatchObject({ state: "generating", elements: [] })
+    // 新一轮 update 打到新卡(resetRound 已清迟到缓存,不跨轮泄漏)
+    await card.update("md_1", { text: "edited" })
+    expect(patches.at(-1)).toMatchObject({
+      cardId: `m${cardCount + 1}`,
+      op: { op: "update", element_id: "md_1", data: { text: "edited" } },
+    })
+  })
+
   it("连续 3 次失败降级全量替换自愈（append 改写幂等 update）", async () => {
     const { io, patches, updates } = makeIo({ failPatch: 3 })
     const card = new AggregateCard("c1", io)

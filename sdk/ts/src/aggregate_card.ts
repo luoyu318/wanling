@@ -186,10 +186,19 @@ export class AggregateCard {
    * 更新元素 data。当前卡元素:与本地镜像合并后发全量(server update 是
    * 整体替换而非 merge)。分卡后旧卡元素:经归属映射直接 PATCH 旧卡。
    * 元素未就绪(尚未 append):缓存待 append 落地后补发(多次 update 字段合并)。
+   * 本方法不建卡(建卡是 append/finish 的职责,对齐 opencode updateElement:
+   * 未就绪元素走 pending 缓存零 wire 流量)。
    */
   async update(elementId: string, data: Record<string, unknown>): Promise<void> {
-    await this.ensureCard()
     await this.enqueue(async () => {
+      // sealed 后迟到 update(finish/interrupt 已收尾,如用户停止后工具终态):
+      // 守卫在队列内读最新态,不触发 ensureCard 的 resetRound/建新卡(防孤儿
+      // generating 卡)、不 PATCH 已收尾卡 —— 走 pending 缓存零 wire 流量,
+      // 对齐 opencode 语义(缓存由下一轮 resetRound 清空,不跨轮泄漏)。
+      if (this.sealed) {
+        this.pendingUpdates.set(elementId, { ...(this.pendingUpdates.get(elementId) ?? {}), ...data })
+        return
+      }
       const target = this.mirror.find((e) => e.element_id === elementId)
       if (target !== undefined) {
         const merged = { ...target.data, ...data }
