@@ -166,14 +166,18 @@ export class InteractionCards {
   private async askViaApprovals(payload: QuestionAskedPayload, state: SessionState): Promise<void> {
     const questions = payload.questions
     if (questions.length === 0) return
-    // 多问题拍平:option id 全卡唯一(单问题直接用 label,多问题带 header 前缀防撞),
-    // optionOwners 登记 id → qIdx 供答案分组;multiSelect = 任一问题允许多选。
+    // 多问题拍平:option id 全卡唯一(单问题直接用 label,多问题带 header 前缀防撞,
+    // 仍撞车时追加 _2/_3 序号兜底,防 server 因 id 重复 400 导致整次 ask 抛错丢问题),
+    // optionOwners 登记 id → qIdx 供答案分组;multiSelect 见下方发卡处说明。
     const optionOwners = new Map<string, number>()
     const options: ApprovalOption[] = []
     for (let qIdx = 0; qIdx < questions.length; qIdx++) {
       const q = questions[qIdx]
       for (const o of q.options) {
-        const id = questions.length > 1 && qIdx > 0 ? `${q.header || `Q${qIdx + 1}`}:${o.label}` : o.label
+        const base = questions.length > 1 && qIdx > 0 ? `${q.header || `Q${qIdx + 1}`}:${o.label}` : o.label
+        let id = base
+        let n = 2
+        while (optionOwners.has(id)) id = `${base}_${n++}`
         optionOwners.set(id, qIdx)
         options.push({ id, label: o.description ? `${o.label} — ${o.description}` : o.label })
       }
@@ -184,11 +188,14 @@ export class InteractionCards {
     const entry = { settled: false }
     this.pendingQuestions.set(payload.id, entry)
     // 发卡(REST)即返回 pending 卡;pendingToolCard 刷新不等决议(工具卡不被答题阻塞)
+    // multiSelect:多问题恒 true(server 单选限答 1 项,多条单选问题拍平后
+    // 若仍单选只能答一问其余空数组,放开多选保全部可答);单问题按题意
+    // (仅 multiple 题允许多选)。
     const askP = this.wanling.approvals.ask(state.convId, {
       cardType: "question",
       title,
       options,
-      multiSelect: questions.some((q) => q.multiple),
+      multiSelect: questions.length > 1 || questions.some((q) => q.multiple),
       sessionKey: payload.id,
     })
     this.toolCard.flushPending(state)

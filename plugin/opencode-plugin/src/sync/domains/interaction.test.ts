@@ -197,6 +197,42 @@ describe("InteractionCards 聚合模式 — question 走 SDK approvals.ask", () 
     void p
   })
 
+  it("多条单选问题拍平 → multiSelect=true(server 单选限答 1 项,放开多选保全部问题可答)", async () => {
+    const { interaction, wanling } = makeFixture()
+    const twoSinglePayload = {
+      ...questionPayload,
+      questions: [
+        { question: "选语言?", header: "语言", options: [{ label: "Go" }] },
+        { question: "确认?", header: "确认", options: [{ label: "好" }] },
+      ],
+    }
+    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
+    const p = interaction.onQuestionAsked(twoSinglePayload)
+    await vi.waitFor(() => {
+      expect(wanling.approvals.ask).toHaveBeenCalled()
+    })
+    expect(wanling.approvals.ask.mock.calls[0][1].multiSelect).toBe(true)
+    void p
+  })
+
+  it("同题同名 label → option id 追加序号去重不撞车(防 server 400 丢问题)", async () => {
+    const { interaction, wanling } = makeFixture()
+    const dupPayload = {
+      ...questionPayload,
+      questions: [
+        { question: "选?", header: "选", options: [{ label: "同" }, { label: "同" }, { label: "同" }] },
+      ],
+    }
+    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
+    const p = interaction.onQuestionAsked(dupPayload)
+    await vi.waitFor(() => {
+      expect(wanling.approvals.ask).toHaveBeenCalled()
+    })
+    const ids = wanling.approvals.ask.mock.calls[0][1].options.map((o: { id: string }) => o.id)
+    expect(ids).toEqual(["同", "同_2", "同_3"])
+    void p
+  })
+
   it("ask 决议 approved → answers 按问题归属分组回填 replyQuestion", async () => {
     const { interaction, wanling, opencode } = makeFixture()
     let resolveAsk!: (r: unknown) => void
