@@ -260,18 +260,21 @@ class _CardViewState extends State<_CardView> {
         ];
       case CardType.question:
         // question：选项列表嵌块。pending 可交互（radio/checkbox），
-        // 终态回显 answers 摘要（id 映射 label 后 join('、')）。
+        // 终态回显 answers 摘要（id 映射 label 后 join('、')）;
+        // 摘要为空(reject/expired 未答)不渲染空灰块(状态徽章已表达终态)。
         // 用 Material 而非 Container:ListTile 的 ink 水纹需绘制在 Material 上
         final state = _optimisticState ?? widget.card.state;
         final isTerminal = state == ApprovalState.approved ||
             state == ApprovalState.denied ||
             state == ApprovalState.expired;
+        final body = isTerminal ? _questionAnswersSummary() : _questionOptions();
+        if (body == null) return const [];
         return [
           Material(
             // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
             color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
             borderRadius: BorderRadius.circular(4),
-            child: isTerminal ? _questionAnswersSummary() : _questionOptions(),
+            child: body,
           ),
           const SizedBox(height: 6),
         ];
@@ -354,7 +357,8 @@ class _CardViewState extends State<_CardView> {
   /// question 终态 answers 摘要：answers 存选项 id,优先映射 label,未知 id 原样展示。
   /// 乐观窗口:提交成功但服务器 PATCH 回写前 card.answers 仍空,
   /// 回退本地已选项（对齐 _buttonLabel 的 _optimisticAction 乐观约定）。
-  Widget _questionAnswersSummary() {
+  /// 摘要文案为空(reject/expired 未答且非乐观窗口)返回 null,由调用方跳过整块。
+  Widget? _questionAnswersSummary() {
     final labelById = {
       for (final o in widget.card.options) o.id: o.label,
     };
@@ -362,6 +366,7 @@ class _CardViewState extends State<_CardView> {
         ? widget.card.answers
         : (_optimisticAction == 'answer' ? _answerIds : const <String>[]);
     final text = answers.map((a) => labelById[a] ?? a).join('、');
+    if (text.isEmpty) return null;
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Text(

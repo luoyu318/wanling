@@ -164,4 +164,19 @@ void main() {
     );
     expect(submit.state, CardButtonState.selected);
   });
+
+  testWidgets('question 拒绝终态无 answers 不渲染空摘要块', (tester) async {
+    await tester.pumpWidget(host(questionContent(
+      multiSelect: false,
+      state: 'denied',
+      decidedAction: 'reject',
+    )));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 状态徽章/按钮文案表达终态
+    expect(find.text('已拒绝'), findsOneWidget);
+    // 无 answers → 摘要块整体不渲染(此前渲染带 padding 的空灰块)
+    expect(find.text(''), findsNothing);
+    expect(find.text('开发环境'), findsNothing);
+  });
 }
