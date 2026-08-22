@@ -172,6 +172,14 @@ export class WanlingRestClient {
     this.envelopeOk(resp)
   }
 
+  // 撤回自己发的消息(scope=recall:全局软删,双向不可见;server 限 5 分钟内)。
+  // 聚合卡空卡清理(aggregate_card recallEmpty)用,对齐 server
+  // DELETE /api/messages/:id?scope=recall。
+  async recallMessage(msgId: string): Promise<void> {
+    const resp = await this.request<{ ok: boolean }>("DELETE", `/api/messages/${msgId}?scope=recall`, undefined)
+    this.envelopeOk(resp)
+  }
+
   // 聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)。
   // 语义对齐 aggregate-card.md 的增量协议:
   // - append/update/remove/reorder 维护 elements

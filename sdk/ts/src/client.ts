@@ -19,8 +19,14 @@ import type {
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "./rpc.js"
 import { WanlingRestClient } from "./rest.js"
-import type { CreateApprovalBody } from "./rest.js"
+import type { AggregatePatchOp, CreateApprovalBody } from "./rest.js"
 import { Approvals } from "./approvals.js"
+import { AggregateCard } from "./aggregate_card.js"
+import type { AggregateCardOptions } from "./aggregate_card.js"
+import { StreamSession } from "./stream_session.js"
+import type { StreamSessionOptions } from "./stream_session.js"
+import { SessionMapping } from "./session_mapping.js"
+import type { SessionMappingOptions } from "./session_mapping.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -159,11 +165,13 @@ export class WanlingClient extends EventEmitter {
   // 流式输出:把生成中的文本全量快照推给"正在看本会话"的 user 连接。
   // op=14 绕过 dispatchBuffer/Resume,不带 seq、不落库、不计未读。
   // 终态仍由 sendTypedMessage 发 MESSAGE_CREATE(带 _stream_id 让 APP 替换占位)。
+  // aggregate 定位(聚合模式卡内元素流式):帧不建独立占位,APP 定位
+  // aggregate_card 消息内 element_id 匹配元素整体替换 data.text。
   // 与 sendTyping 一致:WS 未连接时 silently drop,不 emit error 不 warn
   // (流式为瞬态,终态消息兜底;agent 建会话期间短窗口掉帧可接受)。
   sendStream(
     convId: string,
-    payload: { stream_id: string; msg_type: string; text: string },
+    payload: { stream_id: string; msg_type: string; text: string; aggregate?: { message_id: string; element_id: string } },
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return
@@ -183,6 +191,39 @@ export class WanlingClient extends EventEmitter {
       d: { conversation_id: convId },
     }
     this.ws.send(JSON.stringify(payload))
+  }
+
+  // 聚合卡工厂:一次问答一张卡(append/update/finish/interrupt)。
+  // 建卡 silent=true(回合进行中不打扰,计未读由 finish 翻转 set_silent 承接)。
+  aggregate(convId: string, opts?: AggregateCardOptions): AggregateCard {
+    return new AggregateCard(convId, {
+      sendCard: (data) => this.rest.sendCardMessage(convId, data.msg_type, data.data, true),
+      patch: (messageId, op) => this.rest.patchAggregateMessage(messageId, op as AggregatePatchOp),
+      updateContent: (messageId, content) => this.rest.updateMessageContent(messageId, content),
+      recall: (messageId) => this.rest.recallMessage(messageId),
+    }, opts)
+  }
+
+  // 流式会话工厂:首帧立即 + 节流 + 兜底 flush,终态消息由调用方带 _stream_id 发。
+  stream(convId: string, opts?: StreamSessionOptions): StreamSession {
+    return new StreamSession(convId, (cid, frame) => this.sendStream(cid, frame), opts)
+  }
+
+  // 会话映射工厂:外部 session ↔ conversation 持久映射(miss 时建 agent_session 群)。
+  // ownerUserId 可在工厂注入或 ensureConversation 时传入(server 强制 user_id
+  // 必须是 agent 的 owner,缺失时 fail fast 不发请求)。
+  sessionMapping(opts: SessionMappingOptions & { ownerUserId?: string }): SessionMapping {
+    const factoryOwner = opts.ownerUserId
+    return new SessionMapping(opts.path, async (_sessionId, o) => {
+      const ownerUserId = o.ownerUserId ?? factoryOwner
+      if (!ownerUserId) {
+        throw new Error("sessionMapping 需要 ownerUserId(工厂 opts 或 ensureConversation opts 提供)")
+      }
+      return this.rest.createGroupAsAgent("agent_session", o.title, {
+        userId: ownerUserId,
+        ...(o.directory !== undefined ? { directory: o.directory } : {}),
+      })
+    })
   }
 
   // 上报 agent 可选模型清单(plugin 启动/重连时拉 opencode providers)。
