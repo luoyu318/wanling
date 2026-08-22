@@ -10,7 +10,9 @@ export interface AggregateElement {
 // footer 元素入参:durationMs 映射协议字段 duration(毫秒);其余字段透传
 // (tokens/model/reason 等,见 docs/ai-handbook/aggregate-card.md footer 行)。
 export interface AggregateFooter {
-  tokens?: number
+  // token 用量 map(wire 为对象而非数值:input/output/cache.read 等键,
+  // opencode 发送含嵌套 cache {read,write},hermes 侧为 Dict[str,Any])。
+  tokens?: Record<string, unknown>
   durationMs?: number
   model?: string
   [key: string]: unknown

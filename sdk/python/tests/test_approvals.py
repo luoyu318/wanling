@@ -9,8 +9,10 @@ from wanling_sdk.approvals import Approvals
 
 def make_approvals():
     handlers: dict[str, list] = {}
+    create_bodies: list[dict] = []
 
     async def create(conv_id, body):
+        create_bodies.append(body)
         return {"approval_id": "ap1", "state": "pending"}
 
     async def fetch(approval_id):
@@ -25,12 +27,12 @@ def make_approvals():
         for cb in handlers.get(name, []):
             cb(payload)
 
-    return approvals, emit
+    return approvals, create_bodies, emit
 
 
 @pytest.mark.asyncio
 async def test_decided_event_settles_approved_with_answers():
-    approvals, emit = make_approvals()
+    approvals, _, emit = make_approvals()
     task = asyncio.ensure_future(
         approvals.ask(
             "c1",
@@ -51,13 +53,36 @@ async def test_decided_event_settles_approved_with_answers():
 
 @pytest.mark.asyncio
 async def test_expired_event_settles_expired():
-    approvals, emit = make_approvals()
+    approvals, _, emit = make_approvals()
     task = asyncio.ensure_future(
         approvals.ask("c1", {"card_type": "tool", "title": "t", "session_key": "s"})
     )
     await asyncio.sleep(0)
     emit("approval.expired", {"approval_id": "ap1"})
     assert await task == {"state": "expired"}
+
+
+@pytest.mark.asyncio
+async def test_ask_passes_preview_language_and_meta():
+    approvals, create_bodies, emit = make_approvals()
+    task = asyncio.ensure_future(
+        approvals.ask(
+            "c1",
+            {
+                "card_type": "command",
+                "title": "t",
+                "session_key": "s",
+                "preview": "rm -rf /tmp/x",
+                "preview_language": "shell",
+                "meta": [{"text": "dangerous command from hook", "warn": True}],
+            },
+        )
+    )
+    await asyncio.sleep(0)
+    assert create_bodies[0]["preview_language"] == "shell"
+    assert create_bodies[0]["meta"] == [{"text": "dangerous command from hook", "warn": True}]
+    emit("approval.decided", {"approval_id": "ap1", "decision": "approve"})
+    assert await task == {"state": "approved", "decision": "approve"}
 
 
 @pytest.mark.asyncio
@@ -81,7 +106,7 @@ async def test_timeout_fallback_expired(monkeypatch):
     loop = asyncio.get_running_loop()
     orig_call_later = loop.call_later
     monkeypatch.setattr(loop, "call_later", lambda delay, cb, *a: orig_call_later(0.01, cb, *a))
-    approvals, emit = make_approvals()
+    approvals, _, emit = make_approvals()
     task = asyncio.ensure_future(
         approvals.ask("c1", {"card_type": "tool", "title": "t", "session_key": "s", "timeout_sec": 1})
     )

@@ -3,12 +3,16 @@ import { Approvals } from "../src/approvals.js"
 
 function makeApprovals() {
   const handlers: Record<string, ((p: Record<string, unknown>) => void)[]> = {}
+  const createBodies: Record<string, unknown>[] = []
   const approvals = new Approvals(
-    async () => ({ approval_id: "ap1", state: "pending" }),
+    async (_convId: string, body: Record<string, unknown>) => {
+      createBodies.push(body)
+      return { approval_id: "ap1", state: "pending" }
+    },
     async () => { throw new Error("not called") },
     (name, cb) => { (handlers[name] ??= []).push(cb) },
   )
-  return { approvals, emit: (name: string, p: Record<string, unknown>) => handlers[name]?.forEach((cb) => cb(p)) }
+  return { approvals, createBodies, emit: (name: string, p: Record<string, unknown>) => handlers[name]?.forEach((cb) => cb(p)) }
 }
 
 describe("Approvals", () => {
@@ -27,6 +31,23 @@ describe("Approvals", () => {
     await new Promise((r) => setTimeout(r, 0))
     emit("approval.expired", { approval_id: "ap1" })
     expect(await p).toEqual({ state: "expired" })
+  })
+
+  it("ask 透传 preview_language/meta 到建卡 body", async () => {
+    const { approvals, createBodies, emit } = makeApprovals()
+    const p = approvals.ask("c1", {
+      cardType: "command", title: "t", sessionKey: "s",
+      preview: "rm -rf /tmp/x", previewLanguage: "shell",
+      meta: [{ text: "dangerous command from hook", warn: true }],
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(createBodies[0]).toMatchObject({
+      card_type: "command",
+      preview_language: "shell",
+      meta: [{ text: "dangerous command from hook", warn: true }],
+    })
+    emit("approval.decided", { approval_id: "ap1", decision: "approve" })
+    expect(await p).toEqual({ state: "approved", decision: "approve" })
   })
 
   it("auto_approved 命中白名单立即返回", async () => {

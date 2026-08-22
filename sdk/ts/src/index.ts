@@ -16,5 +16,5 @@ export * from "./opcodes.js"
 export type {
   WSMessage, HelloPayload, MessageContent, MessageCreatePayload,
   TypingStartPayload, GenerationAbortPayload, ConvUpdatePayload, OutboundMessage,
-  ApprovalOption, AskOptions, AskResult,
+  ApprovalOption, ApprovalMetaRow, AskOptions, AskResult,
 } from "./types.js"

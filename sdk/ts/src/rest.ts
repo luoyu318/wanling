@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from "node:fs"
-import type { MessageContent } from "./types.js"
+import type { ApprovalMetaRow, MessageContent } from "./types.js"
 
 export class ApiError extends Error {
   status: number
@@ -31,7 +31,7 @@ export type CreateApprovalBody = {
   preview_language?: string
   tool_name?: string
   file?: { id: string }
-  meta?: Array<{ icon?: string; text?: string; warn?: boolean }>
+  meta?: ApprovalMetaRow[]
   session_key: string
   allow_pattern?: string
   confirm_id?: string

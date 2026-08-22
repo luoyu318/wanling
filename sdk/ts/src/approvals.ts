@@ -34,6 +34,8 @@ export class Approvals {
     const created = await this.create(convId, {
       card_type: opts.cardType, title: opts.title,
       ...(opts.preview !== undefined && { preview: opts.preview }),
+      ...(opts.previewLanguage !== undefined && { preview_language: opts.previewLanguage }),
+      ...(opts.meta !== undefined && { meta: opts.meta }),
       ...(opts.toolName !== undefined && { tool_name: opts.toolName }),
       session_key: opts.sessionKey,
       ...(opts.options !== undefined && { options: opts.options }),

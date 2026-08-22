@@ -65,7 +65,7 @@ class Approvals:
             "title": opts["title"],
             "session_key": opts["session_key"],
         }
-        for key in ("preview", "tool_name", "options", "multi_select", "allow_pattern", "confirm_id", "timeout_sec"):
+        for key in ("preview", "preview_language", "meta", "tool_name", "options", "multi_select", "allow_pattern", "confirm_id", "timeout_sec"):
             if opts.get(key) is not None:
                 body[key] = opts[key]
         created = await self._create(conv_id, body)

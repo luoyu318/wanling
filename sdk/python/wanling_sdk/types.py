@@ -1,6 +1,6 @@
 """消息 payload 类型(TypedDict,与 TS types.ts 对齐)。"""
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class WSMessage(TypedDict, total=False):
@@ -47,6 +47,14 @@ class ApprovalOption(TypedDict):
     label: str
 
 
+class ApprovalMetaRow(TypedDict, total=False):
+    """审批卡 meta 行(icon/text/warn,建卡时随卡下发展示,对齐 CreateApprovalBody)。"""
+
+    icon: str
+    text: str
+    warn: bool
+
+
 class _AskOptionsRequired(TypedDict):
     card_type: str  # command/tool/file/slash_confirm/question
     title: str
@@ -60,6 +68,8 @@ class AskOptions(_AskOptionsRequired, total=False):
     """
 
     preview: str
+    preview_language: str  # preview 代码块语言(command 卡常用 "shell",JSON 参数用 "json")
+    meta: list[ApprovalMetaRow]  # 卡片补充展示行(如权限决策说明 reason)
     tool_name: str
     options: list[ApprovalOption]
     multi_select: bool
@@ -86,9 +96,13 @@ class AggregateCardOptions(TypedDict, total=False):
 
 
 class AggregateFooter(TypedDict, total=False):
-    """footer 元素入参:duration_ms 映射协议字段 duration(毫秒);其余字段透传。"""
+    """footer 元素入参:duration_ms 映射协议字段 duration(毫秒);其余字段透传。
 
-    tokens: int
+    tokens 是用量 map(wire 为对象而非数值:input/output/cache.read 等键,
+    opencode 发送含嵌套 cache {read,write},hermes 侧为 Dict[str,Any])。
+    """
+
+    tokens: dict[str, Any]
     duration_ms: int
     model: str
 
