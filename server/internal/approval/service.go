@@ -116,8 +116,8 @@ func (s *Service) Decide(ctx context.Context, approvalID, actionID, reason strin
 	}
 
 	state := model.ApprovalStateApproved
-	// deny（exec_approval）和 cancel（slash_confirm）都是「未通过」，统一映射 denied。
-	if actionID == "deny" || actionID == "cancel" {
+	// deny（exec_approval）、cancel（slash_confirm）、reject（question）都是「未通过」，统一映射 denied。
+	if actionID == "deny" || actionID == "cancel" || actionID == "reject" {
 		state = model.ApprovalStateDenied
 	}
 	// DecidedBy/DecidedReason 仅决策有值，expired 不写（writeTerminalState 共用）。

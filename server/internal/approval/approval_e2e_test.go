@@ -2,6 +2,7 @@ package approval
 
 // 审批链路 e2e 回归测试（真库 testcontainers）：
 //   - TestCancelStateConsistency   缺陷 A：cancel 决策后 approvals 表与 content 双写状态一致 denied
+//   - TestRejectStateConsistency   question 卡 reject 决策后表与 content 双写一致 denied
 //   - TestAllowPatternNarrowing    缺陷 B：allow_once 不进白名单 / allow_always 进
 //   - TestExpiredWritesContent     缺陷 C：expired 双写 content + 广播 MESSAGE_UPDATE
 
@@ -105,6 +106,40 @@ func TestCancelStateConsistency(t *testing.T) {
 	svc := NewService(approvalRepo, &mockHub{}, approvalRepo)
 	if _, err := svc.Decide(t.Context(), aID, "cancel", "", nil, "user", userID); err != nil {
 		t.Fatalf("Decide cancel: %v", err)
+	}
+
+	got, _ := approvalRepo.GetByID(t.Context(), aID)
+	if got.State != model.ApprovalStateDenied {
+		t.Fatalf("approvals.state=%s, want denied", got.State)
+	}
+	content := e2eContentState(t, msgRepo, msgID)
+	if content.State != model.ApprovalStateDenied {
+		t.Fatalf("content.state=%s, want denied", content.State)
+	}
+}
+
+// TestRejectStateConsistency question 卡 decide reject 后，
+// approvals.state 与 messages.content.data.state 必须一致为 denied
+// （reject 与 deny/cancel 同为「未通过」，原实现缺映射导致落库 approved）。
+func TestRejectStateConsistency(t *testing.T) {
+	approvalRepo, msgRepo, userID, agentID, convID := e2eFixture(t)
+	cardData := model.CardContent{
+		CardType: model.CardTypeQuestion, Title: "部署到哪个环境？",
+		Options: []model.ApprovalOption{
+			{ID: "prod", Label: "生产"}, {ID: "dev", Label: "开发"},
+		},
+		Actions: []model.ApprovalAction{
+			{ID: "answer", Label: "提交答案", Style: "primary"},
+			{ID: "reject", Label: "拒绝", Style: "danger"},
+		},
+		State:     model.ApprovalStatePending,
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+	}
+	aID, msgID := e2eCreateCard(t, approvalRepo, msgRepo, cardData, agentID, convID, "question:reject:1", nil)
+
+	svc := NewService(approvalRepo, &mockHub{}, approvalRepo)
+	if _, err := svc.Decide(t.Context(), aID, "reject", "", nil, "user", userID); err != nil {
+		t.Fatalf("Decide reject: %v", err)
 	}
 
 	got, _ := approvalRepo.GetByID(t.Context(), aID)

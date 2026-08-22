@@ -187,8 +187,8 @@ var ErrApprovalNotPending = errors.New("approval not pending")
 // 已是终态时返回 ErrApprovalNotPending（用 WHERE state='pending' 做乐观锁）。
 func (r *ApprovalRepo) MarkDecided(ctx context.Context, id, actionID, deciderType, deciderID, reason string, allowPattern *string, answers []string) error {
 	state := model.ApprovalStateApproved
-	// 对齐 service 层语义：deny（exec_approval）与 cancel（slash_confirm）都映射 denied。
-	if actionID == "deny" || actionID == "cancel" {
+	// 对齐 service 层语义：deny（exec_approval）、cancel（slash_confirm）、reject（question）都映射 denied。
+	if actionID == "deny" || actionID == "cancel" || actionID == "reject" {
 		state = model.ApprovalStateDenied
 	}
 	var answersRaw any // nil → NULL（非 question 决策不落 decided_answers）
