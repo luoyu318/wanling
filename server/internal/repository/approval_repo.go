@@ -35,26 +35,27 @@ type DecisionContext struct {
 
 const approvalSelectCols = `id, message_id, conversation_id, initiator_type, initiator_id,
 	decider_type, decider_id,
-	card_type, state, actions, decided_action, decided_by, decided_reason, decided_at,
+	card_type, state, actions, decided_action, decided_by, decided_reason, decided_at, decided_answers,
 	expires_at, session_key, allow_pattern, confirm_id, created_at`
 
 func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	a := &model.Approval{}
 	var (
-		actionsRaw    []byte
-		deciderType   sql.NullString
-		deciderID     sql.NullString
-		decidedAction sql.NullString
-		decidedBy     sql.NullString
-		decidedReason sql.NullString
-		decidedAt     sql.NullTime
-		allowPattern  sql.NullString
-		confirmID     sql.NullString
+		actionsRaw        []byte
+		deciderType       sql.NullString
+		deciderID         sql.NullString
+		decidedAction     sql.NullString
+		decidedBy         sql.NullString
+		decidedReason     sql.NullString
+		decidedAt         sql.NullTime
+		decidedAnswersRaw []byte
+		allowPattern      sql.NullString
+		confirmID         sql.NullString
 	)
 	err := s.Scan(
 		&a.ID, &a.MessageID, &a.ConversationID, &a.InitiatorType, &a.InitiatorID,
 		&deciderType, &deciderID,
-		&a.CardType, &a.State, &actionsRaw, &decidedAction, &decidedBy, &decidedReason, &decidedAt,
+		&a.CardType, &a.State, &actionsRaw, &decidedAction, &decidedBy, &decidedReason, &decidedAt, &decidedAnswersRaw,
 		&a.ExpiresAt, &a.SessionKey, &allowPattern, &confirmID, &a.CreatedAt,
 	)
 	if err != nil {
@@ -81,6 +82,12 @@ func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	}
 	if decidedAt.Valid {
 		a.DecidedAt = &decidedAt.Time
+	}
+	// decided_answers JSONB：仅 question 决策有值（NULL → nil []byte，跳过 unmarshal）
+	if len(decidedAnswersRaw) > 0 {
+		if err := json.Unmarshal(decidedAnswersRaw, &a.DecidedAnswers); err != nil {
+			return nil, err
+		}
 	}
 	if allowPattern.Valid {
 		a.AllowPattern = &allowPattern.String
