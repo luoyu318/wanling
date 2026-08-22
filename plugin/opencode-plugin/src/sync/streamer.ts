@@ -19,7 +19,7 @@ import { ToolCardManager } from "./domains/tool_card.js"
 import { PartDispatcher } from "./domains/part_dispatcher.js"
 import { InteractionCards } from "./domains/interaction.js"
 import { SessionLifecycle } from "./domains/session_lifecycle.js"
-import { AggregateCardManager } from "./domains/aggregate_card.js"
+import { getAggregateCard } from "./domains/aggregate_bridge.js"
 
 export class Streamer extends EventEmitter {
   // 子 session 兜底超时默认值:task 崩溃或漏发 completed/error SSE 时强制清理。
@@ -124,6 +124,7 @@ export class Streamer extends EventEmitter {
       store: this.store,
       router: this.router,
       wanling,
+      opencode: this.ensureDeps.opencode,
       toolCard: this.toolCard,
       emitter: this,
       aggregateCardEnabled: aggregateCardEnabled ?? true,
@@ -248,7 +249,7 @@ export class Streamer extends EventEmitter {
     const state = await this.store.getOrCreateState(sessionId)
     if (!state) return
     if (!this.aggregateCardEnabled || state.isChildSession) return
-    await new AggregateCardManager(this.wanling, state)
+    await getAggregateCard(state, this.wanling)
       .finishCard(reason)
       .catch((err) => {
         console.error(`[streamer] finishCard(${reason}) 失败: ${err instanceof Error ? err.message : String(err)}`)
@@ -275,7 +276,7 @@ export class Streamer extends EventEmitter {
       : 0
     const draft = state.footerDraft
     const footerMeta = this.metaSync.peekFullMeta(payload.sessionID)
-    await new AggregateCardManager(this.wanling, state)
+    await getAggregateCard(state, this.wanling)
       .finalizeCard({
         reason: draft?.reason ?? "stop",
         duration,

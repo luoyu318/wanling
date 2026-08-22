@@ -5,7 +5,7 @@ import { ensureConversation } from "./ensure_conversation.js"
 import { findBySessionId } from "./mapper.js"
 import type { SessionState, ChildSessionEntry } from "./types.js"
 import type { MessageRouter } from "./messaging.js"
-import { AggregateCardManager } from "./domains/aggregate_card.js"
+import { getAggregateCard } from "./domains/aggregate_bridge.js"
 
 // SessionStore:跨事件共享状态仓。
 // 持有 sessions / childSessionTree / partIndex / idleHandled / createStateInflight
@@ -68,7 +68,7 @@ export class SessionStore {
           if (child.aggregateElementId && child.aggregateParentState) {
             // 聚合模式:task 卡是聚合卡内元素,working 更新经 updateElement 合并进元素 data
             // (保留 input/sub_session_id,不丢字段),不再 updateMessageContent 独立卡。
-            await new AggregateCardManager(this.wanling, child.aggregateParentState).updateElement(
+            await getAggregateCard(child.aggregateParentState, this.wanling).updateElement(
               child.aggregateElementId,
               { status: "working" },
             )
@@ -236,7 +236,7 @@ export class SessionStore {
       this.childSessionTree.delete(childSessionId)
       if (entry.aggregateElementId && entry.aggregateParentState) {
         // 聚合模式:更新聚合卡内 task 元素为 error(updateElement 合并保留 input/sub_session_id)。
-        new AggregateCardManager(this.wanling, entry.aggregateParentState).updateElement(
+        getAggregateCard(entry.aggregateParentState, this.wanling).updateElement(
           entry.aggregateElementId,
           { output: "子 Agent 超时未完成(>30min)", status: "error" },
         ).catch((patchErr) => {

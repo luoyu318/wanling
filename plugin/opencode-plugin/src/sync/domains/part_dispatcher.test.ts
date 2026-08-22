@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from "vitest"
 import { EventEmitter } from "events"
 import { PartDispatcher } from "./part_dispatcher.js"
-import { AggregateCardManager, AGGREGATE_SCHEMA_VER } from "./aggregate_card.js"
+import { getAggregateCard, reasoningElement, markdownElement } from "./aggregate_bridge.js"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 
-// PartDispatcher 聚合卡改造单测:mock store/router/wanling,直接断言
-// reasoning/text/step-finish 三条路径在聚合卡开关开/关下的行为差异。
+// PartDispatcher 迁移 SDK 后单测:mock store/router/wanling,直接断言
+// reasoning/text/step-finish 三条路径在聚合卡开关开/关下的行为差异
+// (聚合元素经 aggregate_bridge → SDK AggregateCard,流式经 SDK StreamSession)。
 function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const partIndex = new Map<string, SessionState>()
   const state: SessionState = {
@@ -67,13 +68,13 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       time: 2,
     })
     expect(wanling.sendCardMessage).toHaveBeenCalledWith("conv-1", "aggregate_card", {
-      schema_ver: AGGREGATE_SCHEMA_VER,
+      schema_ver: 1,
       state: "generating",
       elements: [],
-    })
+    }, { silent: true })
     expect(wanling.patchAggregateMessage).toHaveBeenCalledWith(
       "card-1",
-      { op: "append", element: AggregateCardManager.reasoning("思考过程", 1, true, 4000) },
+      { op: "append", element: reasoningElement("思考过程", 1, true, 4000) },
     )
     expect(router.send).not.toHaveBeenCalled()
   })
@@ -101,11 +102,15 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
       part: { type: "step-finish", id: "p-f1", reason: "stop", cost: 0.01, tokens: { total: 100 } },
       time: 3,
     })
-    // 只 PATCH markdown 元素(step-finish 判定后追加最终回复)
+    // 只 PATCH markdown 元素(step-finish 判定后追加最终回复;
+    // flushPendingText 是 fire-and-forget,waitFor 等落地)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
     expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(
       1,
       "card-1",
-      { op: "append", element: AggregateCardManager.markdown("最终回复", 1) },
+      { op: "append", element: markdownElement("最终回复", 1) },
     )
     // footer 不再在此 append(改由 assistant_message_completed → finalizeCard 收尾)。
     // step-finish 只把 cost/tokens/reason 暂存到 state.footerDraft,供 completed 事件合并。
@@ -208,7 +213,7 @@ describe("PartDispatcher 聚合卡(reasoning/markdown/step_finish 转元素)", (
     })
     const [msgId, body] = wanling.patchAggregateMessage.mock.calls[0]
     expect(msgId).toBe("card-1")
-    expect(body).toEqual({ op: "append", element: AggregateCardManager.markdown("打", 1) })
+    expect(body).toEqual({ op: "append", element: markdownElement("打", 1) })
     // 占位 PATCH 落地后才发流式帧(帧能命中已存在的 markdown_1)
     await vi.waitFor(() => {
       expect(wanling.sendStream).toHaveBeenCalledWith(
@@ -489,15 +494,14 @@ describe("PartDispatcher 两轮对话跨轮残留(首条 thinking 占位)", () =
     await vi.waitFor(() => {
       expect(wanling.sendStream).toHaveBeenCalled()
     })
-    // reasoning 终态 + 收尾(finalizeCard 模拟)
+    // reasoning 终态 + 收尾(finalizeCard 模拟,经 bridge → SDK 真实收尾链路)
     await partDispatcher.onPartUpdated({
       sessionID: "sess-1",
       part: { type: "reasoning", id: "p-r1", text: "第一轮思考", time: { start: 1, end: 2 } },
       time: 2,
     })
-    // 模拟 finalizeCard 收尾(footer + set_state done + set_silent false + reset)
-    const manager = new AggregateCardManager(wanling as any, state)
-    await manager.finalizeCard({ reason: "stop", duration: 1000 })
+    // 模拟 finalizeCard 收尾(footer + set_state done + set_silent false + 跨轮 reset)
+    await getAggregateCard(state, wanling as any).finalizeCard({ reason: "stop", duration: 1000 })
     // 验证收尾后 aggregateStreamedElementIds 已清空(防跨轮残留)
     expect(state.aggregateStreamedElementIds).toBeUndefined()
 
