@@ -8,6 +8,13 @@
 - `sdk/python` → PyPI 包 `wanling-sdk`(UV 管理):与 TS 对称,`asyncio` + `websockets` + `httpx`
 - `sdk/templates` → 最小 agent 插件脚手架(template-ts / template-py)
 
+## 高层封装四类(TS/Python 对称,经 client 工厂取用)
+
+- `client.approvals`(`Approvals`):`ask(convId, opts)` 发审批/提问卡并 Promise 决议 `{state: approved|denied|expired, decision, answers?}`;监听 APPROVAL_DECIDED/EXPIRED 匹配 approval_id,超时本地兜底,重连后 `resync()` REST 兜底。deny/reject/cancel 映射 denied
+- `client.aggregate(convId, opts)`(`AggregateCard`):聚合卡状态机——`append`/`update`/`finish(footer)`/`interrupt()`,建卡幂等 + PATCH 串行队列 + 20 元素自动分卡 + 降级全量替换自愈(`degradedSelfHeal`)/空卡撤回(`recallEmpty`,Python 下划线 `degraded_self_heal`/`recall_empty`)
+- `client.stream(convId, opts)`(`StreamSession`):op=14 流式——`push(delta)`/`end(finalText)`/`abort()`,节流(默认 300ms)+尾部兜底,帧为累积全量快照;`aggregate` 选项定位卡内元素
+- `client.sessionMapping(path)`(`SessionMapping`):本地 JSON 持久化 session→conversation 映射,`ensureConversation(sessionId, opts)` 不存在则建(agent_session),`bySession`/`byConversation` 查询,`remove` 清理
+
 ## 开发命令
 
 ```bash
@@ -38,8 +45,8 @@ flowchart LR
 - opcodes 常量以 `server/internal/model/opcodes.go` 为单真相源,改动 server 协议必须同步 `sdk/ts/src/opcodes.ts` + `sdk/python/wanling_sdk/opcodes.py` + 各自对照表单测
 - 事件命名两语言一致,见 `docs/architecture/sdk.md` 事件表
 - REST 方法遵循 `docs/ai-handbook/rest-response.md` envelope
-- 审批接口(createApproval)字段对齐 `server/internal/handler/approval_handler.go` CreateApproval(card_type 枚举/session_key/allow_pattern/confirm_id)
-- 聚合卡增量(patchAggregateMessage)对齐 `docs/ai-handbook/aggregate-card.md` 增量 op,改动 server 增量协议必须同步
+- 审批接口(createApproval)字段对齐 `server/internal/handler/approval_handler.go` CreateApproval(card_type 枚举含 question/session_key/allow_pattern/confirm_id);`Approvals.ask`/question 协议对齐 `docs/ai-handbook/approval-card.md`
+- 聚合卡增量(patchAggregateMessage)对齐 `docs/ai-handbook/aggregate-card.md` 增量 op,改动 server 增量协议必须同步;`AggregateCard`/`StreamSession` 是该协议的高层封装,行为变更双向同步
 
 ## 发布
 
