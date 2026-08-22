@@ -68,9 +68,10 @@ export class SessionStore {
           if (child.aggregateElementId && child.aggregateParentState) {
             // 聚合模式:task 卡是聚合卡内元素,working 更新经 updateElement 合并进元素 data
             // (保留 input/sub_session_id,不丢字段),不再 updateMessageContent 独立卡。
+            // 分卡旧卡元素 SDK 整体替换:以注册时记账的全量 data 为底再覆盖终态字段。
             await getAggregateCard(child.aggregateParentState, this.wanling).updateElement(
               child.aggregateElementId,
-              { status: "working" },
+              { ...(child.aggregateElementData ?? {}), status: "working" },
             )
           } else {
             await this.wanling.updateMessageContent(child.parentMsgId, {
@@ -186,7 +187,7 @@ export class SessionStore {
     childSessionId: string,
     parentSessionId: string | undefined,
     taskInput: Record<string, unknown>,
-    aggregateOpts?: { elementId: string },
+    aggregateOpts?: { elementId: string; data?: Record<string, unknown> },
   ): ChildSessionEntry {
     // 嵌套继承:若父 state 本身是 child(即 isChildSession=true),说明本次 task 是
     // 二层子 agent,rootMsgId 必须取父 childEntry 的 rootMsgId(指向最顶层),
@@ -219,6 +220,7 @@ export class SessionStore {
     // working PATCH / 超时兜底 PATCH 经 updateElement 更新聚合元素。
     if (aggregateOpts) {
       entry.aggregateElementId = aggregateOpts.elementId
+      entry.aggregateElementData = aggregateOpts.data
       entry.aggregateParentState = parentState
     }
     childState.childEntry = entry
@@ -236,9 +238,10 @@ export class SessionStore {
       this.childSessionTree.delete(childSessionId)
       if (entry.aggregateElementId && entry.aggregateParentState) {
         // 聚合模式:更新聚合卡内 task 元素为 error(updateElement 合并保留 input/sub_session_id)。
+        // 分卡旧卡元素 SDK 整体替换:以注册时记账的全量 data 为底再覆盖终态字段。
         getAggregateCard(entry.aggregateParentState, this.wanling).updateElement(
           entry.aggregateElementId,
-          { output: "子 Agent 超时未完成(>30min)", status: "error" },
+          { ...(entry.aggregateElementData ?? {}), output: "子 Agent 超时未完成(>30min)", status: "error" },
         ).catch((patchErr) => {
           console.error(`[streamer] 超时更新聚合卡 task 元素失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
         })

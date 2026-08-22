@@ -370,7 +370,12 @@ export class ToolCardManager {
       childSessionId,
       parentSessionId,
       taskInput,
-      { elementId: `tool_card_${seq}` },
+      {
+        elementId: `tool_card_${seq}`,
+        // 全量元素 data 记账(与 flushAggregateTool append 的 data 一致):
+        // working/超时兜底 PATCH 经 updateElement 需全量(分卡旧卡整体替换契约)。
+        data: { name: "task", input: taskInput, status: "starting", sub_session_id: childSessionId },
+      },
     )
   }
 
@@ -477,7 +482,7 @@ export class ToolCardManager {
             if (entry.rootMsgId === AGGREGATE_MSG_PENDING) entry.rootMsgId = msgId
           } else {
             console.error(`[streamer] task 聚合追加后 childSessionTree 未注册(提前注册缺失),补注册: part=${pending.partId}`)
-            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId })
+            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId, data: { ...data } })
           }
         }
       })

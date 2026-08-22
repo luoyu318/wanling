@@ -63,6 +63,42 @@ function lastPatch(wanling: ReturnType<typeof makeFixture>["wanling"]) {
   return calls[calls.length - 1]
 }
 
+// 真实 SessionStore + ToolCardManager fixture(聚合开):session_store 的 working/
+// 超时兜底 PATCH 走真实 childSessionTree 注册链路,断言全量 data 不丢字段。
+function makeRealFixture(childTimeoutMs: number) {
+  const wanling = {
+    sendCardMessage: vi.fn().mockResolvedValue("card-1"),
+    patchAggregateMessage: vi.fn().mockResolvedValue(undefined),
+    updateMessageContent: vi.fn().mockResolvedValue(undefined),
+    sendTypedMessage: vi.fn(),
+  } as any
+  const router = new MessageRouter(wanling)
+  const store = new SessionStore({
+    mainSessionId: "sess-main",
+    ensureDeps: {} as any,
+    wanling,
+    router,
+    childTimeoutMs,
+  })
+  const manager = new ToolCardManager({
+    store,
+    router,
+    wanling,
+    emitter: new EventEmitter(),
+    aggregateCardEnabled: true,
+  })
+  const state: SessionState = {
+    reasoning: null,
+    text: null,
+    convId: "conv-1",
+    toolPartsSent: new Set(),
+    textPartsFlushed: new Set(),
+    toolCardMsgIds: new Map(),
+    toolCardInflight: new Map(),
+  }
+  return { wanling, store, manager, state }
+}
+
 describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态修复)", () => {
   it("task running 同步注册 childSessionTree(不等 append PATCH),子 session 事件到达不再被丢弃", async () => {
     // 真实 SessionStore + 真实 ToolCardManager:验证注册时机早于 append PATCH 完成,
@@ -185,6 +221,73 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
     expect(child!.parentMsgId).toBe("card-exists")
     expect(child!.rootMsgId).toBe("card-exists")
 
+    store.stop()
+  })
+
+  it("聚合模式子 session 首事件 working PATCH 携带全量 data(name/input/sub_session_id 不丢)", async () => {
+    const { wanling, store, manager, state } = makeRealFixture(60_000)
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+    // 等 append 落地(元素进 SDK 镜像)后再触发首事件
+    await new Promise((r) => setImmediate(r))
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+
+    await store.getOrCreateState("sess-child")
+
+    // 全量 data:partial {status:"working"} 会把分卡旧卡元素整体替换丢 name/input
+    expect(lastPatch(wanling)).toEqual([
+      "card-1",
+      {
+        op: "update",
+        element_id: "tool_card_1",
+        data: { name: "task", input: { description: "子任务", prompt: "..." }, status: "working", sub_session_id: "sess-child" },
+      },
+    ])
+    store.stop()
+  })
+
+  it("聚合模式子 session 超时兜底 PATCH 携带全量 data(分卡旧卡整体替换不丢字段)", async () => {
+    const { wanling, store, manager, state } = makeRealFixture(30)
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+    await new Promise((r) => setImmediate(r))
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+
+    // 不 cleanupChild,30ms 兜底 timer 触发超时 PATCH
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+    warnSpy.mockRestore()
+
+    expect(lastPatch(wanling)).toEqual([
+      "card-1",
+      {
+        op: "update",
+        element_id: "tool_card_1",
+        data: {
+          name: "task",
+          input: { description: "子任务", prompt: "..." },
+          output: "子 Agent 超时未完成(>30min)",
+          status: "error",
+          sub_session_id: "sess-child",
+        },
+      },
+    ])
     store.stop()
   })
 })

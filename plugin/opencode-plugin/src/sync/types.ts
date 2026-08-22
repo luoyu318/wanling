@@ -93,4 +93,9 @@ export interface ChildSessionEntry {
   // bridge.updateElement,不再 updateMessageContent 独立 task 卡。
   aggregateElementId?: string
   aggregateParentState?: SessionState
+  // task 元素 append 时的全量 data 记账(registerChild 经 aggregateOpts.data 传入):
+  // SDK updateElement 对分卡旧卡元素是整体替换(旧卡无本地镜像可合并),working/
+  // 超时兜底 PATCH 必须以全量 data 为底再覆盖终态字段,否则 name/input/
+  // sub_session_id 丢失(对齐 interaction.ts entry.data 合并模式)。
+  aggregateElementData?: Record<string, unknown>
 }
