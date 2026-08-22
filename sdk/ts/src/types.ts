@@ -48,3 +48,29 @@ export interface OutboundMessage {
   conversation_id: string
   content: MessageContent
 }
+
+/** question 选项。 */
+export interface ApprovalOption { id: string; label: string }
+
+/** approvals.ask 入参（command/tool/file/slash_confirm/question 通用）。 */
+export interface AskOptions {
+  cardType: "command" | "tool" | "file" | "slash_confirm" | "question"
+  title: string
+  preview?: string
+  toolName?: string
+  sessionKey: string
+  /** question 专用 */
+  options?: ApprovalOption[]
+  multiSelect?: boolean
+  /** command 白名单 glob（* % 差异由 server 转换，这里传 glob） */
+  allowPattern?: string
+  /** slash_confirm 专用 */
+  confirmId?: string
+  timeoutSec?: number
+}
+
+/** approvals.ask 结果。 */
+export type AskResult =
+  | { state: "approved"; decision: string; answers?: string[]; decidedBy?: string; reason?: string }
+  | { state: "denied"; decision: string; decidedBy?: string; reason?: string }
+  | { state: "expired" }

@@ -19,6 +19,8 @@ import type {
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "./rpc.js"
 import { WanlingRestClient } from "./rest.js"
+import type { CreateApprovalBody } from "./rest.js"
+import { Approvals } from "./approvals.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -57,11 +59,20 @@ export class WanlingClient extends EventEmitter {
   private dispatcher: RPCDispatcher | null = null
   // REST 客户端:会话/消息/文件/审批等 HTTP 方法统一走 rest.ts,WS 只管转发与状态。
   rest: WanlingRestClient
+  // 审批/提问高层封装(ask 发卡等决策)。构造时挂事件监听(this.on 不依赖 WS 状态,
+  // 挂一次即可,重连不重复挂),断线重连后 resync 主动兜底未决项。
+  approvals: Approvals
 
   constructor(opts: WanlingClientOptions) {
     super()
     this.opts = opts
     this.rest = new WanlingRestClient(opts.serverUrl, this.getToken.bind(this))
+    this.approvals = new Approvals(
+      (convId, body) => this.rest.createApproval(convId, body as CreateApprovalBody),
+      (id) => this.rest.getApproval(id),
+      (name, cb) => { this.on(name, cb) },
+      (msg) => console.log(`[wanling] ${msg}`),
+    )
   }
 
   // 注入 RPC 分发器(可选)。未注入时 OpPluginCall 会被安全忽略;
@@ -373,6 +384,8 @@ export class WanlingClient extends EventEmitter {
         this.ws = await this.establishWS()
         this.retry.backoff = 1
         this.emit("connected")
+        // 重连后未决审批可能错过 WS 推送，REST 兜底查询一次（首次连接 pending 为空，空跑无害）。
+        void this.approvals.resync()
         await this.receiveLoop()
       } catch {
         if (this.retry.stopping) return

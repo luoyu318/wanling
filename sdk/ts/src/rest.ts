@@ -22,7 +22,7 @@ export type SessionMeta = {
   contextLimit?: number
 }
 
-export type ApprovalCardType = "command" | "tool" | "file" | "slash_confirm"
+export type ApprovalCardType = "command" | "tool" | "file" | "slash_confirm" | "question"
 
 export type CreateApprovalBody = {
   card_type: ApprovalCardType
@@ -36,6 +36,10 @@ export type CreateApprovalBody = {
   allow_pattern?: string
   confirm_id?: string
   timeout_sec?: number
+  /** question 专用：选项列表 */
+  options?: Array<{ id: string; label: string }>
+  /** question 专用：是否多选 */
+  multi_select?: boolean
 }
 
 export type CreateApprovalResult = {
@@ -43,6 +47,15 @@ export type CreateApprovalResult = {
   state?: string
   auto_approved?: boolean
   matched_pattern?: string
+}
+
+/** GET /api/approvals/:id 的 data（model.Approval 子集，agent 侧只关心决议字段）。 */
+export type ApprovalDetail = {
+  state?: string
+  decided_action?: string
+  decided_by?: string
+  decided_reason?: string
+  decided_answers?: string[]
 }
 
 // 聚合卡增量 op,对齐 docs/ai-handbook/aggregate-card.md。
@@ -202,6 +215,42 @@ export class WanlingRestClient {
       "PATCH", `/api/agents/me/conversations/${convId}/session-meta`, meta,
     )
     this.envelopeOk(resp)
+  }
+
+  // 查审批详情（GET /api/approvals/:id，双角色鉴权）。
+  // agent 断线重连错过 APPROVAL_DECIDED/EXPIRED 推送时主动查（Approvals.resync 用）。
+  // question 决议含 decided_answers（option id 列表），其余类型该字段缺省。
+  async getApproval(id: string): Promise<ApprovalDetail> {
+    const resp = await this.request<{ ok: boolean; data?: ApprovalDetail }>(
+      "GET", `/api/approvals/${id}`, undefined,
+    )
+    this.envelopeOk(resp)
+    return resp.data ?? {}
+  }
+
+  // agent 视角列自己的会话（GET /api/agents/me/conversations，agentAuth）。
+  // envelope data 直接是数组（server ListAsAgent 返 []model.Conversation）。
+  // type 可选过滤（如 "agent_session"，SessionMapping 恢复映射用）。
+  async listAgentConversations(type?: string): Promise<Array<{ id: string; type: string; title?: string }>> {
+    const query = type ? `?type=${encodeURIComponent(type)}` : ""
+    const resp = await this.request<{ ok: boolean; data?: Array<{ id: string; type: string; title?: string }> }>(
+      "GET", `/api/agents/me/conversations${query}`, undefined,
+    )
+    this.envelopeOk(resp)
+    return resp.data ?? []
+  }
+
+  // 列某 agent 的 agent_session 会话（GET /api/agents/:id/sessions）。
+  // envelope data 直接是数组（server ListAgentSessions 返 []ConversationListItem，
+  // 主键是会话 id，无独立 session_id 字段）。
+  // ⚠️ server 该路由当前挂 userAuth（仅 user JWT 可调）；agent 侧对账请用
+  // listAgentConversations("agent_session")。
+  async listAgentSessions(agentId: string): Promise<Array<{ id: string; type: string; title?: string }>> {
+    const resp = await this.request<{ ok: boolean; data?: Array<{ id: string; type: string; title?: string }> }>(
+      "GET", `/api/agents/${agentId}/sessions`, undefined,
+    )
+    this.envelopeOk(resp)
+    return resp.data ?? []
   }
 
   async uploadFile(filePath: string, convId?: string): Promise<string> {
