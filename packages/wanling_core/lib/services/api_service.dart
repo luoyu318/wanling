@@ -831,13 +831,15 @@ class ApiService {
   }
 
   /// 决策审批。actionId 必须是卡片 actions 列表内的合法 id。
+  /// answers 仅 question 卡的 answer 动作携带（选中选项 id 列表）。
   /// 返回 null 表示成功（HTTP 200），非 null 为错误文案。
   Future<String?> decideApproval(String approvalId, String actionId,
-      {String? reason}) async {
+      {String? reason, List<String>? answers}) async {
     try {
       await _dio.post('/api/approvals/$approvalId/decide', data: {
         'action_id': actionId,
         if (reason != null && reason.isNotEmpty) 'reason': reason,
+        if (answers != null) 'answers': answers,
       });
       return null;
     } on DioException catch (e) {
