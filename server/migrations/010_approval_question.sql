@@ -20,3 +20,9 @@ ALTER TABLE approvals
     CHECK (card_type IN ('command', 'tool', 'file', 'slash_confirm', 'question'));
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS decided_answers JSONB;
+
+-- 回滚(如需,手执行,不写实体 down 段):
+--   ALTER TABLE approvals DROP COLUMN IF EXISTS decided_answers;
+--   ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_card_type_check;
+--   ALTER TABLE approvals ADD CONSTRAINT approvals_card_type_check
+--     CHECK (card_type IN ('command', 'tool', 'file', 'slash_confirm'));
