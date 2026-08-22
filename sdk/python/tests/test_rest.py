@@ -201,3 +201,66 @@ async def test_patch_aggregate_message_set_silent():
     client = build_client(handler)
     await client.patch_aggregate_message("m1", {"op": "set_silent", "silent": False})
     assert seen["body"] == {"content": {"msg_type": "aggregate_card", "data": {"op": "set_silent", "silent": False}}}
+
+
+@pytest.mark.asyncio
+async def test_get_approval():
+    def handler(request):
+        return httpx_response(200, {"ok": True, "data": {"state": "approved", "decided_action": "allow", "decided_answers": ["a"]}})
+
+    client = build_client(handler)
+    res = await client.get_approval("appr-1")
+    assert res == {"state": "approved", "decided_action": "allow", "decided_answers": ["a"]}
+
+
+@pytest.mark.asyncio
+async def test_envelope_not_ok_raises_api_error():
+    def handler(request):
+        return httpx_response(200, {"ok": False})
+
+    client = build_client(handler)
+    with pytest.raises(ApiError):
+        await client.get_approval("appr-1")
+
+
+@pytest.mark.asyncio
+async def test_recall_message():
+    seen = {}
+
+    def handler(request):
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        return httpx_response(200, {"ok": True})
+
+    client = build_client(handler)
+    await client.recall_message("m1")
+    assert seen["method"] == "DELETE"
+    assert seen["url"] == "http://localhost:18008/api/messages/m1?scope=recall"
+
+
+@pytest.mark.asyncio
+async def test_list_agent_conversations_type_filter():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx_response(200, {"ok": True, "data": [{"id": "conv-1", "type": "agent_session"}]})
+
+    client = build_client(handler)
+    res = await client.list_agent_conversations("agent_session")
+    assert res == [{"id": "conv-1", "type": "agent_session"}]
+    assert seen["url"] == "http://localhost:18008/api/agents/me/conversations?type=agent_session"
+
+
+@pytest.mark.asyncio
+async def test_list_agent_sessions():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx_response(200, {"ok": True, "data": [{"id": "conv-2", "type": "agent_session"}]})
+
+    client = build_client(handler)
+    res = await client.list_agent_sessions("agent-1")
+    assert res == [{"id": "conv-2", "type": "agent_session"}]
+    assert seen["url"] == "http://localhost:18008/api/agents/agent-1/sessions"

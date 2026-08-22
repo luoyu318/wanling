@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -150,3 +151,47 @@ async def test_report_models_not_connected_drops():
     await c.report_slash_catalog([{"name": "n", "template": "t", "source": "command"}])
     await c.report_capabilities([{"name": "echo", "timeout_hint_ms": 5000}])
     assert c._ws is None
+
+
+def test_approvals_mounted_on_construction(client):
+    # 对齐 TS client.ts:构造时挂事件监听(不依赖 WS 状态,重连不重复挂)
+    assert "approval.decided" in client._listeners
+    assert "approval.expired" in client._listeners
+
+
+@pytest.mark.asyncio
+async def test_aggregate_factory_uses_rest_silent_true(client):
+    calls = []
+
+    async def fake_send_card(conv_id, msg_type, data, silent=True):
+        calls.append((conv_id, msg_type, silent))
+        return "m1"
+
+    async def fake_patch(msg_id, op):
+        calls.append(("patch", msg_id, op["op"]))
+
+    client.rest.send_card_message = fake_send_card
+    client.rest.patch_aggregate_message = fake_patch
+    card = client.aggregate("c1")
+    await card.append("markdown", {"type": "markdown", "text": "hi"})
+    assert calls[0] == ("c1", "aggregate_card", True)  # 建卡 silent=true
+    assert calls[1] == ("patch", "m1", "append")
+
+
+@pytest.mark.asyncio
+async def test_stream_factory_sends_op14_with_aggregate(client):
+    s = client.stream("c1", {"aggregate": {"message_id": "m1", "element_id": "e1"}})
+    s.push("x")
+    await asyncio.sleep(0)
+    sent = json_loads(client._ws.sent[0])
+    assert sent["op"] == 14
+    assert sent["d"]["stream_id"] == s.stream_id
+    assert sent["d"]["text"] == "x"
+    assert sent["d"]["aggregate"] == {"message_id": "m1", "element_id": "e1"}
+
+
+@pytest.mark.asyncio
+async def test_session_mapping_requires_owner_user_id(client, tmp_path):
+    m = client.session_mapping(str(tmp_path / "mapping.json"))
+    with pytest.raises(RuntimeError, match="owner_user_id"):
+        await m.ensure_conversation("s1", {"title": "t"})
