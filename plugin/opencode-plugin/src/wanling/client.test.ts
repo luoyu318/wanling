@@ -228,6 +228,9 @@ describe("WanlingClient.updateSessionMeta", () => {
       agentId: "agent-1",
       secretKey: "secret",
     })
+    // updateSessionMeta 委托 SDK WanlingRestClient(token 注入 + envelope 校验),
+    // 未连接时 getToken fail fast——测试直接注入 token 走 REST 路径。
+    ;(client as any).token = "test-token"
     fetchSpy = vi.spyOn(globalThis, "fetch")
   })
 
@@ -240,7 +243,7 @@ describe("WanlingClient.updateSessionMeta", () => {
     const captured: any[] = []
     fetchSpy.mockImplementation(async (_url: string, init: any) => {
       captured.push(JSON.parse(init.body))
-      return new Response("{}", { status: 200 })
+      return new Response('{"ok":true}', { status: 200 })
     })
 
     await client.updateSessionMeta("conv-1", {
@@ -264,7 +267,7 @@ describe("WanlingClient.updateSessionMeta", () => {
     const captured: any[] = []
     fetchSpy.mockImplementation(async (_url: string, init: any) => {
       captured.push(JSON.parse(init.body))
-      return new Response("{}", { status: 200 })
+      return new Response('{"ok":true}', { status: 200 })
     })
 
     await client.updateSessionMeta("conv-1", {

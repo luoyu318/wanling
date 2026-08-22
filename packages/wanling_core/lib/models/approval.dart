@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// 审批卡片类型
-enum CardType { command, tool, file, slashConfirm, unknown }
+enum CardType { command, tool, file, slashConfirm, question, unknown }
 
 /// 审批状态
 enum ApprovalState { pending, approved, denied, expired, unknown }
@@ -58,6 +58,19 @@ class ApprovalFile {
       );
 }
 
+/// question 卡选项（content.data.options 数组项）
+class ApprovalOption {
+  final String id;
+  final String label;
+
+  const ApprovalOption({required this.id, required this.label});
+
+  factory ApprovalOption.fromJson(Map<String, dynamic> j) => ApprovalOption(
+        id: j['id'] as String? ?? '',
+        label: j['label'] as String? ?? '',
+      );
+}
+
 /// 卡片消息的 data 字段（content.data）
 class ApprovalCard {
   final String approvalId;
@@ -75,6 +88,10 @@ class ApprovalCard {
   final String? decidedBy;
   final DateTime? decidedAt;
   final DateTime expiresAt;
+  // question 类型字段：选项列表 + 是否多选 + 决策结果（终态回显）
+  final List<ApprovalOption> options;
+  final bool multiSelect;
+  final List<String> answers;
 
   const ApprovalCard({
     required this.approvalId,
@@ -92,6 +109,9 @@ class ApprovalCard {
     required this.decidedBy,
     required this.decidedAt,
     required this.expiresAt,
+    required this.options,
+    required this.multiSelect,
+    required this.answers,
   });
 
   factory ApprovalCard.fromJson(Map<String, dynamic> j) {
@@ -104,6 +124,7 @@ class ApprovalCard {
       'tool': CardType.tool,
       'file': CardType.file,
       'slash_confirm': CardType.slashConfirm,
+      'question': CardType.question,
     };
     return ApprovalCard(
       approvalId: j['approval_id'] ?? '',
@@ -130,6 +151,11 @@ class ApprovalCard {
           ? DateTime.parse(j['decided_at'] as String)
           : null,
       expiresAt: DateTime.parse(j['expires_at'] as String),
+      options: ((j['options'] ?? []) as List)
+          .map((e) => ApprovalOption.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      multiSelect: j['multi_select'] as bool? ?? false,
+      answers: (j['answers'] as List?)?.cast<String>() ?? const [],
     );
   }
 

@@ -97,6 +97,12 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		AllowPattern *string                  `json:"allow_pattern"`
 		ConfirmID    *string                  `json:"confirm_id"` // slash_confirm 用
 		TimeoutSec   int                      `json:"timeout_sec"`
+		// question 类型字段：选项列表 + 是否多选
+		Options []struct {
+			ID    string `json:"id" binding:"required"`
+			Label string `json:"label"`
+		} `json:"options"`
+		MultiSelect bool `json:"multi_select"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Err(c, http.StatusBadRequest, "bad_request", "请求体格式错误: "+err.Error())
@@ -114,8 +120,23 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 			Err(c, http.StatusBadRequest, "bad_request", "slash_confirm 必须提供 confirm_id")
 			return
 		}
+	case "question":
+		cardType = model.CardTypeQuestion
+		// question 必须带 options 且 id 非空、唯一
+		if len(req.Options) == 0 {
+			Err(c, http.StatusBadRequest, "bad_request", "question 类型必须提供 options")
+			return
+		}
+		seen := map[string]bool{}
+		for _, o := range req.Options {
+			if o.ID == "" || seen[o.ID] {
+				Err(c, http.StatusBadRequest, "bad_request", "options id 必须非空且唯一")
+				return
+			}
+			seen[o.ID] = true
+		}
 	default:
-		Err(c, http.StatusBadRequest, "bad_request", "card_type 必须是 command/tool/file/slash_confirm")
+		Err(c, http.StatusBadRequest, "bad_request", "card_type 必须是 command/tool/file/slash_confirm/question")
 		return
 	}
 
@@ -158,6 +179,14 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 		cardData.Meta = append(cardData.Meta, model.CardMeta{
 			Icon: getStr(m, "icon"), Text: getStr(m, "text"), Warn: getBool(m, "warn"),
 		})
+	}
+	// question 类型：options + multi_select 双写进 content
+	if cardType == model.CardTypeQuestion {
+		cardData.Options = make([]model.ApprovalOption, 0, len(req.Options))
+		for _, o := range req.Options {
+			cardData.Options = append(cardData.Options, model.ApprovalOption{ID: o.ID, Label: o.Label})
+		}
+		cardData.MultiSelect = req.MultiSelect
 	}
 	contentMap := struct {
 		MsgType string            `json:"msg_type"`
@@ -244,6 +273,7 @@ func (h *ApprovalHandler) CreateApproval(c *gin.Context) {
 //   - tool/file：允许 / 拒绝（action_id: allow_once/deny）
 //   - slash_confirm：执行一次 / 不再询问 / 取消（action_id: once/always/cancel，对齐 hermes
 //     tools/slash_confirm.resolve 的 choice 枚举，adapter 直接透传无需映射）
+//   - question：提交答案 / 拒绝（action_id: answer/reject，answers 在 Decide 请求体里）
 func buildActions(t model.CardType) []model.ApprovalAction {
 	switch t {
 	case model.CardTypeCommand:
@@ -257,6 +287,11 @@ func buildActions(t model.CardType) []model.ApprovalAction {
 			{ID: "once", Label: "执行一次", Icon: "check", Style: "primary"},
 			{ID: "always", Label: "不再询问", Icon: "shield", Style: "info"},
 			{ID: "cancel", Label: "取消", Icon: "x", Style: "danger"},
+		}
+	case model.CardTypeQuestion:
+		return []model.ApprovalAction{
+			{ID: "answer", Label: "提交答案", Style: "primary"},
+			{ID: "reject", Label: "拒绝", Style: "danger"},
 		}
 	default: // tool / file
 		return []model.ApprovalAction{
@@ -297,8 +332,9 @@ func (h *ApprovalHandler) Decide(c *gin.Context) {
 	approvalID := c.Param("id")
 
 	var req struct {
-		ActionID string `json:"action_id" binding:"required"`
-		Reason   string `json:"reason"`
+		ActionID string   `json:"action_id" binding:"required"`
+		Reason   string   `json:"reason"`
+		Answers  []string `json:"answers"` // question 多选答案
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Err(c, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -328,10 +364,10 @@ func (h *ApprovalHandler) Decide(c *gin.Context) {
 	}
 
 	// 调用 service 推进状态机 + 双写 content + 广播(deciderType 固定 user,Decide 入口前置校验)
-	_, err = h.service.Decide(c.Request.Context(), approvalID, req.ActionID, "user", userID, req.Reason)
+	_, err = h.service.Decide(c.Request.Context(), approvalID, req.ActionID, req.Reason, req.Answers, "user", userID)
 	if err != nil {
 		if errors.Is(err, approval.ErrInvalidAction) {
-			Err(c, http.StatusBadRequest, "bad_request", "无效的 action_id")
+			Err(c, http.StatusBadRequest, "invalid_action", "无效的 action_id 或 answers")
 			return
 		}
 		if errors.Is(err, repository.ErrApprovalNotPending) {

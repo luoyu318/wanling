@@ -35,26 +35,27 @@ type DecisionContext struct {
 
 const approvalSelectCols = `id, message_id, conversation_id, initiator_type, initiator_id,
 	decider_type, decider_id,
-	card_type, state, actions, decided_action, decided_by, decided_reason, decided_at,
+	card_type, state, actions, decided_action, decided_by, decided_reason, decided_at, decided_answers,
 	expires_at, session_key, allow_pattern, confirm_id, created_at`
 
 func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	a := &model.Approval{}
 	var (
-		actionsRaw    []byte
-		deciderType   sql.NullString
-		deciderID     sql.NullString
-		decidedAction sql.NullString
-		decidedBy     sql.NullString
-		decidedReason sql.NullString
-		decidedAt     sql.NullTime
-		allowPattern  sql.NullString
-		confirmID     sql.NullString
+		actionsRaw        []byte
+		deciderType       sql.NullString
+		deciderID         sql.NullString
+		decidedAction     sql.NullString
+		decidedBy         sql.NullString
+		decidedReason     sql.NullString
+		decidedAt         sql.NullTime
+		decidedAnswersRaw []byte
+		allowPattern      sql.NullString
+		confirmID         sql.NullString
 	)
 	err := s.Scan(
 		&a.ID, &a.MessageID, &a.ConversationID, &a.InitiatorType, &a.InitiatorID,
 		&deciderType, &deciderID,
-		&a.CardType, &a.State, &actionsRaw, &decidedAction, &decidedBy, &decidedReason, &decidedAt,
+		&a.CardType, &a.State, &actionsRaw, &decidedAction, &decidedBy, &decidedReason, &decidedAt, &decidedAnswersRaw,
 		&a.ExpiresAt, &a.SessionKey, &allowPattern, &confirmID, &a.CreatedAt,
 	)
 	if err != nil {
@@ -81,6 +82,12 @@ func scanApproval(s interface{ Scan(...any) error }) (*model.Approval, error) {
 	}
 	if decidedAt.Valid {
 		a.DecidedAt = &decidedAt.Time
+	}
+	// decided_answers JSONB：仅 question 决策有值（NULL → nil []byte，跳过 unmarshal）
+	if len(decidedAnswersRaw) > 0 {
+		if err := json.Unmarshal(decidedAnswersRaw, &a.DecidedAnswers); err != nil {
+			return nil, err
+		}
 	}
 	if allowPattern.Valid {
 		a.AllowPattern = &allowPattern.String
@@ -173,22 +180,34 @@ func (r *ApprovalRepo) FindExpired(ctx context.Context, now time.Time) ([]*model
 var ErrApprovalNotPending = errors.New("approval not pending")
 
 // MarkDecided 推进到 approved/denied 终态。actionID 必须是 actions 列表内的合法 id（由调用方校验）。
-// reason 仅 deny 时有意义。allowPattern 非 nil 时同时写入 allow_pattern（用于「始终」白名单）。
+// reason 仅 deny 时有意义。allowPattern 语义：NULLIF 空串清列——allow_always 传原 pattern（保留），
+// 其余动作由 service 传空串（显式清掉 Create 时存的 pattern，防白名单污染）。
+// answers 仅 question 决策有值，落 decided_answers JSONB。
 // 同时回填 decider_type/decider_id(决策方信息,particpants 模型下随决策落库)。
 // 已是终态时返回 ErrApprovalNotPending（用 WHERE state='pending' 做乐观锁）。
-func (r *ApprovalRepo) MarkDecided(ctx context.Context, id, actionID, deciderType, deciderID, reason string, allowPattern *string) error {
+func (r *ApprovalRepo) MarkDecided(ctx context.Context, id, actionID, deciderType, deciderID, reason string, allowPattern *string, answers []string) error {
 	state := model.ApprovalStateApproved
-	if actionID == "deny" {
+	// 对齐 service 层语义：deny（exec_approval）、cancel（slash_confirm）、reject（question）都映射 denied。
+	if actionID == "deny" || actionID == "cancel" || actionID == "reject" {
 		state = model.ApprovalStateDenied
+	}
+	var answersRaw any // nil → NULL（非 question 决策不落 decided_answers）
+	if len(answers) > 0 {
+		b, err := json.Marshal(answers)
+		if err != nil {
+			return err
+		}
+		answersRaw = b
 	}
 	res, err := r.exec(ctx,
 		`UPDATE approvals
 		 SET state = $1, decided_action = $2, decided_by = $3,
 		     decided_reason = NULLIF($4, ''), decided_at = now(),
-		     allow_pattern = COALESCE($5, allow_pattern),
-		     decider_type = $6, decider_id = NULLIF($7, '')::uuid
-		 WHERE id = $8 AND state = 'pending'`,
-		state, actionID, deciderID, reason, nullableString(allowPattern), deciderType, deciderID, id,
+		     allow_pattern = NULLIF($5, ''),
+		     decider_type = $6, decider_id = NULLIF($7, '')::uuid,
+		     decided_answers = $8
+		 WHERE id = $9 AND state = 'pending'`,
+		state, actionID, deciderID, reason, nullableString(allowPattern), deciderType, deciderID, answersRaw, id,
 	)
 	if err != nil {
 		return err
@@ -225,6 +244,7 @@ func (r *ApprovalRepo) MarkExpired(ctx context.Context, id string) error {
 
 // MatchAllowPattern 查会话+initiator(agent) 是否有已 approved 且 allow_pattern 匹配 command 的记录。
 // 匹配规则：allow_pattern 中 * → %, ? → _，大小写敏感（与 Linux shell 行为一致）。
+// decided_action='allow_always' 双保险：只有「始终」决策才进白名单（配合 MarkDecided 的清列）。
 func (r *ApprovalRepo) MatchAllowPattern(ctx context.Context, convID, initiatorID, command string) (bool, error) {
 	var matched bool
 	err := r.queryRow(ctx,
@@ -235,6 +255,7 @@ func (r *ApprovalRepo) MatchAllowPattern(ctx context.Context, convID, initiatorI
 		     AND initiator_type = 'agent'
 		     AND state = 'approved'
 		     AND allow_pattern IS NOT NULL
+		     AND decided_action = 'allow_always'
 		     AND $3 LIKE replace(replace(replace(replace(replace(allow_pattern, '\', '\\'), '%', '\%'), '_', '\_'), '*', '%'), '?', '_') ESCAPE '\'
 		   LIMIT 1
 		)`,

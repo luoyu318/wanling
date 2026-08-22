@@ -261,7 +261,7 @@ func TestDecideApprovalConflict(t *testing.T) {
 		SessionKey: "k",
 	})
 	// 推到 approved
-	repo.MarkDecided(t.Context(), a.ID, "allow_once", "user", userID, "", nil)
+	repo.MarkDecided(t.Context(), a.ID, "allow_once", "user", userID, "", nil, nil)
 
 	h := newTestHub(db)
 	svc := approval.NewService(repo, h, repo)
@@ -342,6 +342,167 @@ func TestGetApprovalNotFound(t *testing.T) {
 
 	hnd.Get(c)
 	AssertErr(t, w, http.StatusNotFound, "not_found")
+}
+
+// TestCreateApprovalQuestion question 卡创建：缺 options / id 重复返回 400，
+// 正常创建落 options + multi_select 双写到 message content，actions = answer/reject。
+func TestCreateApprovalQuestion(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	_, agentID, convID := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+	hnd := NewApprovalHandler(
+		repo, msgRepo,
+		repository.NewConversationRepo(db), repository.NewAgentRepo(db),
+		repository.NewParticipantRepo(db),
+		newTestHub(db), nil,
+	)
+
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		bodyBytes, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/api/conversations/"+convID+"/approvals", bytes.NewReader(bodyBytes))
+		c.Params = gin.Params{{Key: "id", Value: convID}}
+		c.Set("userID", agentID)
+		c.Set("role", "agent")
+		hnd.CreateApproval(c)
+		return w
+	}
+
+	// 缺 options → 400
+	w := post(map[string]any{
+		"card_type": "question", "title": "选环境", "session_key": "sk1",
+	})
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+
+	// options id 重复 → 400
+	w = post(map[string]any{
+		"card_type": "question", "title": "选环境", "session_key": "sk1",
+		"options": []map[string]string{{"id": "dev", "label": "测试"}, {"id": "dev", "label": "重复"}},
+	})
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+
+	// 正常创建
+	w = post(map[string]any{
+		"card_type":    "question",
+		"title":        "选环境",
+		"session_key":  "sk1",
+		"options":      []map[string]string{{"id": "dev", "label": "测试"}, {"id": "staging", "label": "预发"}},
+		"multi_select": true,
+	})
+	data := AssertOk(t, w, http.StatusOK)
+	approvalID, _ := data["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatalf("missing approval_id: %v", data)
+	}
+
+	a, _ := repo.GetByID(t.Context(), approvalID)
+	if a == nil || a.CardType != model.CardTypeQuestion || a.State != model.ApprovalStatePending {
+		t.Fatalf("approval wrong: %+v", a)
+	}
+	if len(a.Actions) != 2 || a.Actions[0].ID != "answer" || a.Actions[1].ID != "reject" {
+		t.Fatalf("question actions wrong: %+v", a.Actions)
+	}
+
+	// options + multi_select 双写验证：messages.content.data.options 含两项
+	msg, err := msgRepo.Get(t.Context(), a.MessageID)
+	if err != nil {
+		t.Fatalf("get msg: %v", err)
+	}
+	var wrapper struct {
+		Data model.CardContent `json:"data"`
+	}
+	if err := json.Unmarshal(msg.Content, &wrapper); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+	if len(wrapper.Data.Options) != 2 || wrapper.Data.Options[0].ID != "dev" || wrapper.Data.Options[1].ID != "staging" {
+		t.Fatalf("options not persisted: %+v", wrapper.Data.Options)
+	}
+	if !wrapper.Data.MultiSelect {
+		t.Fatal("multi_select not persisted")
+	}
+}
+
+// TestDecideQuestionMultiSelect question 多选决策：非法 answer → 400 invalid_action，
+// 合法多选 → approved 且 answers 双写到 messages.content.data.answers。
+func TestDecideQuestionMultiSelect(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	userID, agentID, convID := setupApprovalFixture(t, db)
+	repo := repository.NewApprovalRepo(db)
+	msgRepo := repository.NewMessageRepo(db)
+
+	// 直接 repo 建 question 多选卡（创建链路由 TestCreateApprovalQuestion 覆盖）
+	cardData := model.CardContent{
+		CardType: model.CardTypeQuestion, Title: "选环境",
+		Options:     []model.ApprovalOption{{ID: "dev", Label: "测试"}, {ID: "staging", Label: "预发"}},
+		MultiSelect: true,
+		Actions:     buildActions(model.CardTypeQuestion),
+		State:       model.ApprovalStatePending,
+		ExpiresAt:   time.Now().Add(5 * time.Minute).UTC(),
+	}
+	contentMap := struct {
+		MsgType string            `json:"msg_type"`
+		Data    model.CardContent `json:"data"`
+	}{MsgType: "card", Data: cardData}
+	contentBytes, _ := json.Marshal(contentMap)
+	msg, err := msgRepo.Create(t.Context(), convID, "agent", agentID, contentBytes)
+	if err != nil {
+		t.Fatalf("create msg: %v", err)
+	}
+	a, err := repo.Create(t.Context(), model.Approval{
+		MessageID: msg.ID, ConversationID: convID,
+		InitiatorType: "agent", InitiatorID: agentID,
+		CardType: model.CardTypeQuestion, Actions: cardData.Actions,
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "sk2",
+	})
+	if err != nil {
+		t.Fatalf("create approval: %v", err)
+	}
+
+	h := newTestHub(db)
+	svc := approval.NewService(repo, h, repo)
+	hnd := NewApprovalHandler(repo, msgRepo, repository.NewConversationRepo(db),
+		repository.NewAgentRepo(db), repository.NewParticipantRepo(db), h, svc)
+
+	decide := func(body map[string]any) *httptest.ResponseRecorder {
+		bodyBytes, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/api/approvals/"+a.ID+"/decide", bytes.NewReader(bodyBytes))
+		c.Params = gin.Params{{Key: "id", Value: a.ID}}
+		c.Set("userID", userID)
+		c.Set("role", "user")
+		hnd.Decide(c)
+		return w
+	}
+
+	// 非法 answer（不在 options 内）→ 400 invalid_action
+	w := decide(map[string]any{"action_id": "answer", "answers": []string{"dev", "prod"}})
+	AssertErr(t, w, http.StatusBadRequest, "invalid_action")
+
+	// 合法多选 → 200
+	w = decide(map[string]any{"action_id": "answer", "answers": []string{"dev", "staging"}})
+	AssertOk(t, w, http.StatusOK)
+
+	// content 双写验证：state=approved + answers 含两项
+	updated, err := msgRepo.Get(t.Context(), msg.ID)
+	if err != nil {
+		t.Fatalf("get msg: %v", err)
+	}
+	var wrapper struct {
+		Data model.CardContent `json:"data"`
+	}
+	if err := json.Unmarshal(updated.Content, &wrapper); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+	if wrapper.Data.State != model.ApprovalStateApproved {
+		t.Fatalf("content.state=%s, want approved", wrapper.Data.State)
+	}
+	if len(wrapper.Data.Answers) != 2 || wrapper.Data.Answers[0] != "dev" || wrapper.Data.Answers[1] != "staging" {
+		t.Fatalf("answers not double-written: %+v", wrapper.Data.Answers)
+	}
 }
 
 // TestApprovalGet_OwnerCheck 覆盖 IDOR 防护:owner user / owner agent 放行,

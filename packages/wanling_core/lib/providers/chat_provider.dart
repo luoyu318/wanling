@@ -48,8 +48,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId,
       {this.store, this.currentUser})
       : super(const ChatState()) {
-    CardContentRenderer.onDecide = (approvalId, actionId, reason) {
-      return api.decideApproval(approvalId, actionId, reason: reason);
+    CardContentRenderer.onDecide = (approvalId, actionId, reason, answers) {
+      return api.decideApproval(approvalId, actionId,
+          reason: reason, answers: answers);
     };
     _initialize();
     _listenWS();

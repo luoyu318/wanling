@@ -32,7 +32,7 @@ ConversationHandler 是同包多文件结构（Go 同包共享 receiver），物
 
 ## approval_handler.go
 
-审批卡片 3 接口。`CreateApproval`（agent，事务内创建 msg_type=card 消息，事务外创建 approval 记录，广播 MESSAGE_CREATE；不再维护 last_message_content 缓存字段（017 合并进 001_init 已删）；command + allow_pattern 时先查会话级白名单匹配，命中返 auto_approved 不发卡片）、`Decide`（user，调 approval.Service 推进状态机）、`Get`（双角色兜底查询）。**WS payload 必须含 conversation_id/sender_type/sender_id/created_at**（APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填校验，缺字段会被丢弃）
+审批卡片 3 接口。`CreateApproval`（agent，事务内创建 msg_type=card 消息，事务外创建 approval 记录，广播 MESSAGE_CREATE；不再维护 last_message_content 缓存字段（017 合并进 001_init 已删）；command + allow_pattern 时先查会话级白名单匹配（含 decided_action='allow_always' 条件），命中返 auto_approved 不发卡片；card_type=question 时校验 options 非空/id 唯一，options/multi_select 双写 content）、`Decide`（user，body 含 action_id/reason/answers，调 approval.Service 推进状态机）、`Get`（双角色兜底查询，返回 decided_answers）。**WS payload 必须含 conversation_id/sender_type/sender_id/created_at**（APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填校验，缺字段会被丢弃）
 
 ## rpc_handler.go
 

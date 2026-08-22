@@ -15,8 +15,10 @@ class CardContentRenderer implements MessageContentRenderer {
   const CardContentRenderer();
 
   /// 全局决策回调。ChatPage 启动时注入（Phase F Task 21）。
-  /// 调用签名：(approvalId, actionId, reason?) → 错误文案（null 表示成功）
-  static Future<String?> Function(String, String, String?)? onDecide;
+  /// 调用签名：(approvalId, actionId, reason?, answers?) → 错误文案（null 表示成功）
+  /// answers 仅 question 卡 answer 动作携带（选中选项 id 列表）。
+  static Future<String?> Function(String, String, String?, List<String>?)?
+      onDecide;
 
   @override
   bool get selectable => false;
@@ -66,6 +68,8 @@ class _CardViewState extends State<_CardView> {
   ApprovalState? _optimisticState;
   String? _optimisticAction;
   bool _disabled = false;
+  /// question 卡选中选项 id 集合（单选至多 1 项,多选任意）
+  final Set<String> _selected = {};
 
   @override
   Widget build(BuildContext context) {
@@ -254,9 +258,126 @@ class _CardViewState extends State<_CardView> {
           ),
           const SizedBox(height: 6),
         ];
+      case CardType.question:
+        // question：选项列表嵌块。pending 可交互（radio/checkbox），
+        // 终态回显 answers 摘要（id 映射 label 后 join('、')）;
+        // 摘要为空(reject/expired 未答)不渲染空灰块(状态徽章已表达终态)。
+        // 用 Material 而非 Container:ListTile 的 ink 水纹需绘制在 Material 上
+        final state = _optimisticState ?? widget.card.state;
+        final isTerminal = state == ApprovalState.approved ||
+            state == ApprovalState.denied ||
+            state == ApprovalState.expired;
+        final body = isTerminal ? _questionAnswersSummary() : _questionOptions();
+        if (body == null) return const [];
+        return [
+          Material(
+            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
+            color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
+            borderRadius: BorderRadius.circular(4),
+            child: body,
+          ),
+          const SizedBox(height: 6),
+        ];
       default:
         return const [];
     }
+  }
+
+  /// question 选项列表：单选整组包 RadioGroup（tile 只带 value，对齐 desktop
+  /// settings_page 写法，避开 RadioListTile.groupValue/onChanged 弃用），
+  /// 多选直接 CheckboxListTile 列表。
+  Widget _questionOptions() {
+    if (!widget.card.multiSelect) {
+      return RadioGroup<String>(
+        groupValue: _selected.isNotEmpty ? _selected.first : null,
+        // RadioGroup.onChanged 不可空:disabled 时由 handler 内部 no-op
+        onChanged: (v) {
+          if (_disabled || v == null) return;
+          _toggle(v);
+        },
+        child: Column(
+          children: widget.card.options.map((o) => _optionTile(o)).toList(),
+        ),
+      );
+    }
+    return Column(
+      children: widget.card.options.map((o) => _optionTile(o)).toList(),
+    );
+  }
+
+  /// question 选项 tile：单选 radio（点击即选）/ 多选 checkbox（toggle）。
+  Widget _optionTile(ApprovalOption o) {
+    final selected = _selected.contains(o.id);
+    // 卡片 pending 蓝既作左边框语义色,此处复用作选中色
+    const activeColor = Color(0xFF5B8BF7);
+    final title = Text(
+      o.label,
+      style: const TextStyle(fontSize: 13),
+    );
+    if (widget.card.multiSelect) {
+      return CheckboxListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+        controlAffinity: ListTileControlAffinity.leading,
+        activeColor: activeColor,
+        value: selected,
+        title: title,
+        onChanged: _disabled ? null : (_) => _toggle(o.id),
+      );
+    }
+    return RadioListTile<String>(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+      controlAffinity: ListTileControlAffinity.leading,
+      activeColor: activeColor,
+      value: o.id,
+      title: title,
+    );
+  }
+
+  /// question 选项点击：单选替换旧选,多选 toggle。
+  void _toggle(String optionId) {
+    setState(() {
+      if (widget.card.multiSelect) {
+        if (!_selected.remove(optionId)) _selected.add(optionId);
+      } else {
+        _selected
+          ..clear()
+          ..add(optionId);
+      }
+    });
+  }
+
+  /// 提交答案：按 options 顺序输出选中 id（Set 无序,保证请求确定性）。
+  List<String> get _answerIds => widget.card.options
+      .where((o) => _selected.contains(o.id))
+      .map((o) => o.id)
+      .toList();
+
+  /// question 终态 answers 摘要：answers 存选项 id,优先映射 label,未知 id 原样展示。
+  /// 乐观窗口:提交成功但服务器 PATCH 回写前 card.answers 仍空,
+  /// 回退本地已选项（对齐 _buttonLabel 的 _optimisticAction 乐观约定）。
+  /// 摘要文案为空(reject/expired 未答且非乐观窗口)返回 null,由调用方跳过整块。
+  Widget? _questionAnswersSummary() {
+    final labelById = {
+      for (final o in widget.card.options) o.id: o.label,
+    };
+    final answers = widget.card.answers.isNotEmpty
+        ? widget.card.answers
+        : (_optimisticAction == 'answer' ? _answerIds : const <String>[]);
+    final text = answers.map((a) => labelById[a] ?? a).join('、');
+    if (text.isEmpty) return null;
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          // 深色灰阶反转:#888 → #AAAAAA
+          color: widget.isDark ? const Color(0xFFAAAAAA) : const Color(0xFF888888),
+        ),
+      ),
+    );
   }
 
   String _fileMeta(ApprovalFile? f) {
@@ -266,7 +387,15 @@ class _CardViewState extends State<_CardView> {
   }
 
   CardButtonState _buttonState(String actionId, ApprovalState state) {
-    if (state == ApprovalState.pending) return CardButtonState.active;
+    if (state == ApprovalState.pending) {
+      // question:未选任何选项时「提交答案」置灰（拒绝不受限）
+      if (widget.card.cardType == CardType.question &&
+          actionId == 'answer' &&
+          _selected.isEmpty) {
+        return CardButtonState.disabled;
+      }
+      return CardButtonState.active;
+    }
     final decided = widget.card.decidedAction ?? _optimisticAction;
     if (decided == actionId) return CardButtonState.selected;
     return CardButtonState.disabled;
@@ -279,11 +408,15 @@ class _CardViewState extends State<_CardView> {
       if (a.id == 'allow_once' || a.id == 'allow_always') return '已批准';
       // slash_confirm: once/always → 已确认
       if (a.id == 'once' || a.id == 'always') return '已确认';
+      // question: answer → 已回答
+      if (a.id == 'answer') return '已回答';
     }
     if (state == ApprovalState.denied && decided == a.id) {
       // exec_approval: deny → 已拒绝；slash_confirm: cancel → 已取消
       if (a.id == 'deny') return '已拒绝';
       if (a.id == 'cancel') return '已取消';
+      // question: reject → 已拒绝
+      if (a.id == 'reject') return '已拒绝';
     }
     return a.label;
   }
@@ -291,8 +424,15 @@ class _CardViewState extends State<_CardView> {
   Future<void> _onTap(String actionId) async {
     setState(() => _disabled = true);
 
-    // 终态映射：deny/cancel → denied；其余（allow_once/allow_always/once/always）→ approved
-    final isDeny = actionId == 'deny' || actionId == 'cancel';
+    // question:提交答案携带选中选项 id 列表
+    List<String>? answers;
+    if (widget.card.cardType == CardType.question && actionId == 'answer') {
+      answers = _answerIds;
+    }
+
+    // 终态映射：deny/cancel/reject → denied；其余（allow_once/allow_always/once/always/answer）→ approved
+    final isDeny =
+        actionId == 'deny' || actionId == 'cancel' || actionId == 'reject';
     setState(() {
       _optimisticAction = actionId;
       _optimisticState = isDeny ? ApprovalState.denied : ApprovalState.approved;
@@ -302,6 +442,7 @@ class _CardViewState extends State<_CardView> {
       widget.card.approvalId,
       actionId,
       null,
+      answers,
     );
     if (err != null) {
       if (mounted) {

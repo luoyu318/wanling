@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any, Self
+from urllib.parse import quote
 
 import httpx
 
@@ -39,6 +40,11 @@ class WanlingRestClient:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
+
+    def _envelope_ok(self, resp: dict[str, Any]) -> None:
+        """envelope 校验(ok 必须为 true,对齐 docs/ai-handbook/rest-response.md)。"""
+        if not resp.get("ok"):
+            raise ApiError(0, "envelope not ok")
 
     async def _headers(self) -> dict[str, str]:
         token = await self._token_provider()
@@ -110,6 +116,51 @@ class WanlingRestClient:
         """
         content = {"msg_type": "aggregate_card", "data": op}
         await self.request("PATCH", f"/api/messages/{msg_id}", {"content": content})
+
+    async def recall_message(self, msg_id: str) -> None:
+        """撤回自己发的消息(scope=recall:全局软删,双向不可见;server 限 5 分钟内)。
+
+        聚合卡空卡清理(aggregate_card recall_empty)用,对齐 server
+        DELETE /api/messages/:id?scope=recall。
+        """
+        resp = await self.request("DELETE", f"/api/messages/{msg_id}?scope=recall")
+        self._envelope_ok(resp)
+
+    async def get_approval(self, approval_id: str) -> dict[str, Any]:
+        """查审批详情(GET /api/approvals/:id,双角色鉴权)。
+
+        agent 断线重连错过 APPROVAL_DECIDED/EXPIRED 推送时主动查
+        (Approvals.resync 用)。question 决议含 decided_answers(option id
+        列表),其余类型该字段缺省。
+        """
+        resp = await self.request("GET", f"/api/approvals/{approval_id}")
+        self._envelope_ok(resp)
+        return resp.get("data") or {}
+
+    async def list_agent_conversations(self, conv_type: str | None = None) -> list[dict[str, Any]]:
+        """agent 视角列自己的会话(GET /api/agents/me/conversations,agentAuth)。
+
+        envelope data 直接是数组(server ListAsAgent 返 []model.Conversation)。
+        type 可选过滤(如 "agent_session",SessionMapping 恢复映射用)。
+        """
+        query = f"?type={quote(conv_type, safe='')}" if conv_type else ""
+        resp = await self.request("GET", f"/api/agents/me/conversations{query}")
+        self._envelope_ok(resp)
+        data = resp.get("data")
+        return data if isinstance(data, list) else []
+
+    async def list_agent_sessions(self, agent_id: str) -> list[dict[str, Any]]:
+        """列某 agent 的 agent_session 会话(GET /api/agents/:id/sessions)。
+
+        envelope data 直接是数组(server ListAgentSessions 返
+        []ConversationListItem,主键是会话 id,无独立 session_id 字段)。
+        注意:server 该路由当前挂 userAuth(仅 user JWT 可调);agent 侧对账
+        请用 list_agent_conversations("agent_session")。
+        """
+        resp = await self.request("GET", f"/api/agents/{agent_id}/sessions")
+        self._envelope_ok(resp)
+        data = resp.get("data")
+        return data if isinstance(data, list) else []
 
     async def create_group_as_agent(
         self,
