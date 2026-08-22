@@ -401,10 +401,21 @@ class WanlingClient:
         """流式会话工厂:首帧立即 + 节流 + 兜底 flush,终态消息由调用方带 _stream_id 发。"""
 
         def _send(cid: str, frame: dict) -> None:
-            # fire-and-forget,对齐 TS sendStream 同步 void 语义
-            asyncio.ensure_future(
+            # fire-and-forget,对齐 TS sendStream 同步 void 语义;done-callback
+            # 记录异常(对齐 _resync_approvals 兜底记日志风格,防后台 task
+            # 异常无人接触发 "Task exception was never retrieved" 静默丢错)
+            task = asyncio.ensure_future(
                 self.send_stream(cid, frame["stream_id"], frame["msg_type"], frame["text"], frame.get("aggregate"))
             )
+
+            def _log_failure(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
+                exc = t.exception()
+                if exc is not None:
+                    logger.warning("stream send failed: %s", exc)
+
+            task.add_done_callback(_log_failure)
 
         return StreamSession(conv_id, _send, opts)
 
