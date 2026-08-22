@@ -23,10 +23,16 @@ type AgentHandler struct {
 	// slashCatalogRegistry 缓存 plugin 上报的命令清单,SlashCatalog 端点读取,
 	// AGENT_SLASH_CATALOG WS 事件经 message.Processor 写入。
 	slashCatalogRegistry *agent.SlashCatalogRegistry
+	// modeRegistry 缓存 plugin 上报的模式清单,Modes 端点读取,
+	// AGENT_MODES WS 事件经 message.Processor 写入(能力上报管线第四成员)。
+	modeRegistry *agent.ModeRegistry
+	// presetRegistry 缓存 plugin 上报的预设清单,Presets 端点读取,
+	// AGENT_PRESETS WS 事件经 message.Processor 写入(第五成员)。
+	presetRegistry *agent.PresetRegistry
 }
 
-func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry) *AgentHandler {
-	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg}
+func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry, modeReg *agent.ModeRegistry, presetReg *agent.PresetRegistry) *AgentHandler {
+	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg, modeRegistry: modeReg, presetRegistry: presetReg}
 }
 
 func generateSecretKey() (string, error) {
@@ -303,6 +309,71 @@ func (h *AgentHandler) SlashCatalog(c *gin.Context) {
 	Ok(c, gin.H{
 		"agent_id":   id,
 		"commands":   commands,
+		"updated_at": updatedAtAny,
+	})
+}
+
+// Modes 返回某 agent 的模式清单(由 plugin 上报,内存缓存)。
+// IDOR 防护:仅 owner 可查自己 agent 的清单(与 Models/SlashCatalog 一致)。
+// 空清单返 200 + updated_at=null(未上报是合法态)。
+func (h *AgentHandler) Modes(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("userID")
+
+	existing, err := h.agentRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if existing == nil {
+		Err(c, http.StatusNotFound, "not_found", "Agent 不存在")
+		return
+	}
+	if existing.OwnerID != userID {
+		Err(c, http.StatusForbidden, "forbidden", "无权操作该 Agent")
+		return
+	}
+
+	modes, updatedAt := h.modeRegistry.Get(id)
+	var updatedAtAny any
+	if !updatedAt.IsZero() {
+		updatedAtAny = updatedAt
+	}
+	Ok(c, gin.H{
+		"agent_id":   id,
+		"modes":      modes,
+		"updated_at": updatedAtAny,
+	})
+}
+
+// Presets 返回某 agent 的预设清单(由 plugin 上报,内存缓存)。
+// IDOR 防护同 Modes。无预设概念的 plugin 不上报,APP 据空清单隐藏选择步骤。
+func (h *AgentHandler) Presets(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetString("userID")
+
+	existing, err := h.agentRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if existing == nil {
+		Err(c, http.StatusNotFound, "not_found", "Agent 不存在")
+		return
+	}
+	if existing.OwnerID != userID {
+		Err(c, http.StatusForbidden, "forbidden", "无权操作该 Agent")
+		return
+	}
+
+	presets, updatedAt := h.presetRegistry.Get(id)
+	var updatedAtAny any
+	if !updatedAt.IsZero() {
+		updatedAtAny = updatedAt
+	}
+	Ok(c, gin.H{
+		"agent_id":   id,
+		"presets":    presets,
 		"updated_at": updatedAtAny,
 	})
 }

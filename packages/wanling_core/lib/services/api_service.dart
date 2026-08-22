@@ -11,6 +11,8 @@ import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/pairing.dart';
 import 'package:wanling_core/models/register_result.dart';
 import 'package:wanling_core/models/slash_command.dart';
+import 'package:wanling_core/models/agent_mode.dart';
+import 'package:wanling_core/models/agent_preset.dart';
 import 'package:wanling_core/models/rpc_method.dart';
 import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/models/user.dart';
@@ -293,6 +295,29 @@ class ApiService {
     final commands = body['commands'] as List? ?? [];
     return commands
         .map((e) => SlashCommand.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 拉取某 agent 的模式清单(plugin 上报、server 内存缓存)。
+  /// 空清单是合法态(无模式概念的 plugin 未上报 / server 重启)。
+  /// 渲染时按 session-meta mode id 查清单取 label/style。
+  Future<List<AgentMode>> getAgentModes(String agentId) async {
+    final res = await _dio.get('/api/agents/$agentId/modes');
+    final body = res.data as Map<String, dynamic>;
+    final modes = body['modes'] as List? ?? [];
+    return modes
+        .map((e) => AgentMode.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 拉取某 agent 的预设清单(plugin 上报、server 内存缓存)。
+  /// 空清单是合法态(无预设概念的 plugin 不上报,APP 隐藏选择步骤)。
+  Future<List<AgentPreset>> getAgentPresets(String agentId) async {
+    final res = await _dio.get('/api/agents/$agentId/presets');
+    final body = res.data as Map<String, dynamic>;
+    final presets = body['presets'] as List? ?? [];
+    return presets
+        .map((e) => AgentPreset.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 

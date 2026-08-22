@@ -11,6 +11,7 @@ import {
   EVENT_AGENT_ONLINE, EVENT_AGENT_OFFLINE,
   EVENT_APPROVAL_DECIDED, EVENT_APPROVAL_EXPIRED,
   EVENT_AGENT_MODELS, EVENT_AGENT_SLASH_CATALOG, EVENT_PLUGIN_CAPABILITIES,
+  EVENT_AGENT_MODES, EVENT_AGENT_PRESETS,
 } from "./opcodes.js"
 import type {
   WSMessage, HelloPayload, OutboundMessage,
@@ -217,6 +218,54 @@ export class WanlingClient extends EventEmitter {
     }
     this.ws.send(JSON.stringify(payload))
     console.log(`[wanling] sendAgentSlashCatalog agent=${agentId.slice(0, 8)}… ${commands.length} commands`)
+  }
+
+  // plugin 启动/重连时上报该 agent 的模式清单(能力上报管线第四成员)。
+  // server 写 ModeRegistry 内存缓存,APP 渲染模式色条按 session-meta mode
+  // id 查清单取 label/style(不再硬编码各平台枚举)。
+  // style 为受控渲染档位: "default" | "plan" | "warn"。
+  // 与 sendAgentModels 一致:WS 未连接时 silently drop + console.warn。
+  sendAgentModes(agentId: string, modes: Array<{
+    id: string
+    label: string
+    style: "default" | "plan" | "warn"
+  }>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[wanling] sendAgentModes: WS 未连接,跳过")
+      return
+    }
+    const payload: WSMessage = {
+      op: OP_DISPATCH,
+      t: EVENT_AGENT_MODES,
+      d: { agent_id: agentId, modes, reported_at: new Date().toISOString() },
+    }
+    this.ws.send(JSON.stringify(payload))
+    console.log(`[wanling] sendAgentModes agent=${agentId.slice(0, 8)}… ${modes.length} modes`)
+  }
+
+  // plugin 启动/重连时上报该 agent 的预设清单(能力上报管线第五成员)。
+  // 预设是 per-session 能力组合(dsh 等),集合开放(user 可自创)。
+  // server 写 PresetRegistry 内存缓存,APP 新建会话选择器数据源。
+  // trust 区分 "system"(部署内置)/"user"(用户自创);无预设概念的
+  // plugin 不调用本方法即可(APP 据空清单隐藏选择步骤)。
+  sendAgentPresets(agentId: string, presets: Array<{
+    id: string
+    label: string
+    description?: string
+    trust: "system" | "user"
+    order?: number
+  }>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[wanling] sendAgentPresets: WS 未连接,跳过")
+      return
+    }
+    const payload: WSMessage = {
+      op: OP_DISPATCH,
+      t: EVENT_AGENT_PRESETS,
+      d: { agent_id: agentId, presets, reported_at: new Date().toISOString() },
+    }
+    this.ws.send(JSON.stringify(payload))
+    console.log(`[wanling] sendAgentPresets agent=${agentId.slice(0, 8)}… ${presets.length} presets`)
   }
 
   // plugin 启动/重连时上报 RPC 方法清单(dispatcher.listMethods() 结果)。

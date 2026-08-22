@@ -15,8 +15,10 @@ import websockets
 
 from .opcodes import (
     EVENT_AGENT_MODELS,
+    EVENT_AGENT_MODES,
     EVENT_AGENT_OFFLINE,
     EVENT_AGENT_ONLINE,
+    EVENT_AGENT_PRESETS,
     EVENT_AGENT_SLASH_CATALOG,
     EVENT_APPROVAL_DECIDED,
     EVENT_APPROVAL_EXPIRED,
@@ -349,6 +351,30 @@ class WanlingClient:
             logger.warning("report_capabilities: WS 未连接,跳过上报")
             return
         await self._send_dispatch(EVENT_PLUGIN_CAPABILITIES, {"agent_id": self.agent_id, "methods": methods, "reported_at": self._now_iso()})
+
+    async def report_modes(self, modes: list[dict]) -> None:
+        """上报 agent 模式清单(能力上报管线第四成员)。
+
+        server 写 ModeRegistry 内存缓存,APP 渲染模式色条按 session-meta
+        mode id 查清单取 label/style。style 为受控渲染档位:
+        "default" | "plan" | "warn"。
+        """
+        if self._ws is None:
+            logger.warning("report_modes: WS 未连接,跳过上报")
+            return
+        await self._send_dispatch(EVENT_AGENT_MODES, {"agent_id": self.agent_id, "modes": modes, "reported_at": self._now_iso()})
+
+    async def report_presets(self, presets: list[dict]) -> None:
+        """上报 agent 预设清单(能力上报管线第五成员)。
+
+        预设是 per-session 能力组合,集合开放(user 可自创)。
+        trust 区分 "system"(部署内置)/"user"(用户自创);无预设
+        概念的 plugin 不调用本方法即可(APP 据空清单隐藏选择步骤)。
+        """
+        if self._ws is None:
+            logger.warning("report_presets: WS 未连接,跳过上报")
+            return
+        await self._send_dispatch(EVENT_AGENT_PRESETS, {"agent_id": self.agent_id, "presets": presets, "reported_at": self._now_iso()})
 
     def register_method(self, name: str, handler: Callable, timeout_hint_ms: int = 5000) -> None:
         self.dispatcher.register(name, handler, timeout_hint_ms)

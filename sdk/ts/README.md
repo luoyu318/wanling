@@ -35,7 +35,7 @@ await client.connect()
 ## API
 
 - `client.sendMessage(conversationId, content)` / `sendTypedMessage(convId, msgType, data, opts)` / `sendStream` / `sendTyping`
-- `client.sendAgentModels` / `sendAgentSlashCatalog` / `sendPluginCapabilities` — 能力上报
+- `client.sendAgentModels` / `sendAgentSlashCatalog` / `sendAgentModes` / `sendAgentPresets` / `sendPluginCapabilities` — 能力上报
 - `client.rest.sendCardMessage` / `updateMessageContent` / `createGroupAsAgent` / `updateConversationTitle` / `updateSessionMeta` / `uploadFile` / `downloadFile`
 - `RPCDispatcher.register(name, handler, {timeoutHintMs})` — server 侧 RPC 方法
 

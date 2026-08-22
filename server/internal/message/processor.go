@@ -147,6 +147,12 @@ type Processor struct {
 	// slashCatalogRegistry 缓存 plugin 上报的命令清单(AGENT_SLASH_CATALOG 事件写入,
 	// REST /api/agents/:id/slash-catalog 读取)。server 重启清空,plugin 重连后重报。
 	slashCatalogRegistry *agent.SlashCatalogRegistry
+	// modeRegistry 缓存 plugin 上报的模式清单(AGENT_MODES 事件写入,
+	// REST /api/agents/:id/modes 读取)。能力上报管线第四成员。
+	modeRegistry *agent.ModeRegistry
+	// presetRegistry 缓存 plugin 上报的预设清单(AGENT_PRESETS 事件写入,
+	// REST /api/agents/:id/presets 读取)。能力上报管线第五成员。
+	presetRegistry *agent.PresetRegistry
 	// capabilityRegistry 缓存 plugin 上报的 RPC 方法清单(PLUGIN_CAPABILITIES 事件写入,
 	// RPC 路由层 + REST 读取)。server 重启清空,plugin 重连后重报。
 	capabilityRegistry *agent.CapabilityRegistry
@@ -155,7 +161,7 @@ type Processor struct {
 
 // NewProcessor 创建新的消息处理器。
 // 调用方(main.go)负责提前实例化所有 repo 并注入。
-// agentRegistry / slashCatalogRegistry / capabilityRegistry 放在最后,避免破坏现有调用方的位置参数。
+// 各 registry 放在最后,避免破坏现有调用方的位置参数。
 func NewProcessor(
 	h *hub.Hub,
 	convRepo *repository.ConversationRepo,
@@ -168,6 +174,8 @@ func NewProcessor(
 	agentRegistry *agent.AgentRegistry,
 	slashCatalogRegistry *agent.SlashCatalogRegistry,
 	capabilityRegistry *agent.CapabilityRegistry,
+	modeRegistry *agent.ModeRegistry,
+	presetRegistry *agent.PresetRegistry,
 ) *Processor {
 	return &Processor{
 		hub:                  h,
@@ -180,6 +188,8 @@ func NewProcessor(
 		deliveryRepo:         deliveryRepo,
 		agentRegistry:        agentRegistry,
 		slashCatalogRegistry: slashCatalogRegistry,
+		modeRegistry:         modeRegistry,
+		presetRegistry:       presetRegistry,
 		capabilityRegistry:   capabilityRegistry,
 	}
 }
@@ -389,6 +399,64 @@ func (p *Processor) HandleIncoming(ctx context.Context, senderType, senderID str
 		p.slashCatalogRegistry.Update(payload.AgentID, payload.Commands)
 		logpkg.FromCtx(ctx).InfoContext(ctx, "AGENT_SLASH_CATALOG 已缓存",
 			"agent_id", payload.AgentID, "count", len(payload.Commands))
+		return
+	}
+
+	// AGENT_MODES:plugin 上报该 agent 的模式清单(能力上报管线第四成员)。
+	// 与 AGENT_MODELS / AGENT_SLASH_CATALOG 完全同构:仅 agent 角色允许,
+	// payload.agent_id 必须与 WS 鉴权的 sender_id 一致(防 plugin A 冒充上报
+	// plugin B 的清单)。APP 渲染模式色条时按清单取 label/style,不再硬编码。
+	if wsMsg.T == model.EventAgentModes {
+		if senderType != "agent" {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "AGENT_MODES 拒绝非 agent 角色",
+				"sender_type", senderType, "sender_id", senderID)
+			return
+		}
+		var payload struct {
+			AgentID string               `json:"agent_id"`
+			Modes   []model.AgentModeInfo `json:"modes"`
+		}
+		if err := json.Unmarshal(wsMsg.D, &payload); err != nil {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "解析 AGENT_MODES 失败",
+				"sender_id", senderID, "err", err)
+			return
+		}
+		if payload.AgentID == "" || payload.AgentID != senderID {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "AGENT_MODES agent_id 不一致",
+				"sender_id", senderID, "payload_agent_id", payload.AgentID)
+			return
+		}
+		p.modeRegistry.Update(payload.AgentID, payload.Modes)
+		logpkg.FromCtx(ctx).InfoContext(ctx, "AGENT_MODES 已缓存",
+			"agent_id", payload.AgentID, "count", len(payload.Modes))
+		return
+	}
+
+	// AGENT_PRESETS:plugin 上报该 agent 的预设清单(能力上报管线第五成员)。
+	// 同构守卫。无预设概念的 plugin(hermes 等)不上报,APP 隐藏选择步骤。
+	if wsMsg.T == model.EventAgentPresets {
+		if senderType != "agent" {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "AGENT_PRESETS 拒绝非 agent 角色",
+				"sender_type", senderType, "sender_id", senderID)
+			return
+		}
+		var payload struct {
+			AgentID string                  `json:"agent_id"`
+			Presets []model.AgentPresetInfo `json:"presets"`
+		}
+		if err := json.Unmarshal(wsMsg.D, &payload); err != nil {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "解析 AGENT_PRESETS 失败",
+				"sender_id", senderID, "err", err)
+			return
+		}
+		if payload.AgentID == "" || payload.AgentID != senderID {
+			logpkg.FromCtx(ctx).WarnContext(ctx, "AGENT_PRESETS agent_id 不一致",
+				"sender_id", senderID, "payload_agent_id", payload.AgentID)
+			return
+		}
+		p.presetRegistry.Update(payload.AgentID, payload.Presets)
+		logpkg.FromCtx(ctx).InfoContext(ctx, "AGENT_PRESETS 已缓存",
+			"agent_id", payload.AgentID, "count", len(payload.Presets))
 		return
 	}
 

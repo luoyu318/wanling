@@ -11,10 +11,11 @@ import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:wanling_core/models/agent.dart' show AgentCategory, AgentStatus;
 import 'package:wanling_core/models/slash_command.dart';
 import 'package:wanling_core/models/ws_message.dart' show WSMessage;
+import 'package:wanling_core/providers/agent_modes_provider.dart'
+    show agentModesProvider;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart';
-import 'package:wanling_core/providers/agent_status_provider.dart'
-    show AgentStatusType, agentStatusProvider;
+import 'package:wanling_core/providers/agent_status_provider.dart'    show AgentStatusType, agentStatusProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart'
     show ChatNotifier, chatProvider, wsProvider;
@@ -33,6 +34,7 @@ import '../widgets/chat/chat_list_overlays.dart';
 import '../widgets/chat/typing_bubble.dart';
 import '../widgets/chat/env_meta_strip.dart' show EnvMetaStrip;
 import '../widgets/chat/model_picker_sheet.dart' show ModelPickerDialog;
+import '../widgets/chat/mode_picker_sheet.dart' show ModePickerDialog;
 import '../widgets/chat/session_meta_strip.dart' show SessionMetaStrip;
 import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import '../widgets/chat/slash_command_sheet.dart';
@@ -817,6 +819,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
+  /// 模式选择:清单驱动(plugin 上报 AGENT_MODES)。
+  /// 空清单(老插件未上报)回退 build↔plan 二值切换(OC 兼容期)。
+  Future<void> _showModePicker(
+    BuildContext context, WidgetRef ref,
+    ({String convId, String? agentId}) chatKey,
+  ) async {
+    final chatNotifier = ref.read(chatProvider(chatKey).notifier);
+    if (chatKey.agentId != null) {
+      final modes =
+          await ref.read(agentModesProvider(chatKey.agentId!).future);
+      if (modes.isNotEmpty && context.mounted) {
+        final chatState = ref.read(chatProvider(chatKey));
+        final selected = await ModePickerDialog.show(
+          context: context,
+          modes: modes,
+          currentMode: chatState.modeOverride ?? chatState.sessionMeta?.mode,
+        );
+        if (selected != null) chatNotifier.selectMode(selected);
+        return;
+      }
+    }
+    chatNotifier.toggleMode();
+  }
+
   Future<void> _loadSlashCatalog() async {
     if (widget.agentId == null) return;
     try {
@@ -1246,7 +1272,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                       meta: chatState.sessionMeta!,
                                       modeOverride: chatState.modeOverride,
                                       onModeTap: () =>
-                                          ref.read(chatProvider(chatKey).notifier).toggleMode(),
+                                          _showModePicker(context, ref, chatKey),
                                       modelOverride: chatState.modelOverride,
                                       onModelTap: () => _showModelPicker(context, ref, chatKey),
                                     ),

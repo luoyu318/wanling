@@ -82,3 +82,24 @@ type RpcMethod struct {
 	Name          string `json:"name"`
 	TimeoutHintMs int    `json:"timeout_hint_ms"`
 }
+
+// AgentModeInfo 描述一个会话模式，由 plugin 上报、APP 用于模式色条/选择器。
+// Style 是受控渲染档位(default/plan/warn),APP 不理解 mode 的业务语义——
+// 视觉差异由上报数据自描述(docs/research/proposal-agent-modes.md §3.5)。
+type AgentModeInfo struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Style string `json:"style"`
+}
+
+// AgentPresetInfo 描述一个会话预设(能力组合)，由 plugin 上报。
+// Trust 区分 system(部署方内置)/user(用户自创,权限等同 shell 访问),
+// APP 据此显示来源标识。字段核对自 dsh agent-presets 真实 schema
+// (dsh name → 本协议 label;order 排序位可选;broken 由桥接层过滤)。
+type AgentPresetInfo struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Trust       string `json:"trust"`
+	Order       int    `json:"order,omitempty"`
+}

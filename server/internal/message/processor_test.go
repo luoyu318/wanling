@@ -108,7 +108,7 @@ func newProcessorWithNilHub(t *testing.T, fix dmFixture) *Processor {
 	t.Helper()
 	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp, nil)
 	return NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo, fix.fileRepo,
-		fix.participantRp, fix.deliveryRp, nil, nil, nil)
+		fix.participantRp, fix.deliveryRp, nil, nil, nil, nil, nil)
 }
 
 // msgContent 构造 text 消息 content JSON。
@@ -1623,7 +1623,7 @@ func TestProcessor_HandleIncoming_SessionStatus(t *testing.T) {
 	fix := seedDM(t)
 	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp, nil)
 	p := NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo,
-		fix.fileRepo, fix.participantRp, fix.deliveryRp, nil, nil, nil)
+		fix.fileRepo, fix.participantRp, fix.deliveryRp, nil, nil, nil, nil, nil)
 
 	// 注册 user client 捕获 dispatch(nil conn 即可,只读 client.Send channel)
 	userClient := hub.NewClient(t.Context(), fix.userID, "user", nil)
@@ -1689,7 +1689,7 @@ func TestProcessor_HandleIncoming_SessionStatusRejectsNonAgent(t *testing.T) {
 	fix := seedDM(t)
 	h := hub.NewHub(nil, fix.agentRepo, fix.participantRp, nil)
 	p := NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo,
-		fix.fileRepo, fix.participantRp, fix.deliveryRp, nil, nil, nil)
+		fix.fileRepo, fix.participantRp, fix.deliveryRp, nil, nil, nil, nil, nil)
 
 	userClient := hub.NewClient(t.Context(), fix.userID, "user", nil)
 	h.RegisterClient(userClient)
@@ -2310,7 +2310,7 @@ func TestPersistAndDispatch_StripsStreamID(t *testing.T) {
 	}
 	h.RegisterClient(userClient)
 	p := NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo, fix.fileRepo,
-		fix.participantRp, fix.deliveryRp, nil, nil, nil)
+		fix.participantRp, fix.deliveryRp, nil, nil, nil, nil, nil)
 
 	// content.data 含 _stream_id(模拟 plugin 终态消息带流式关联)
 	content, _ := json.Marshal(map[string]any{
@@ -2416,7 +2416,7 @@ func TestAggregateCardSend(t *testing.T) {
 	}
 	h.RegisterClient(userClient)
 	p := NewProcessor(h, fix.convRepo, fix.msgRepo, fix.agentRepo, fix.userRepo, fix.fileRepo,
-		fix.participantRp, fix.deliveryRp, nil, nil, nil)
+		fix.participantRp, fix.deliveryRp, nil, nil, nil, nil, nil)
 
 	// plugin sendCardMessage(convId, "aggregate_card", {state, elements}) 构造的 content。
 	content, _ := json.Marshal(map[string]any{
@@ -2492,5 +2492,150 @@ func TestAggregateCardSend(t *testing.T) {
 	}
 	if userP.UnreadCount != 0 {
 		t.Errorf("silent=true 的 aggregate_card 不应计数未读,实际 unread_count=%d", userP.UnreadCount)
+	}
+}
+
+// ── AGENT_MODES / AGENT_PRESETS(能力上报管线第四/五成员) ──
+// 与 AGENT_MODELS 同构的三个安全用例(happy/冒充/越权),守卫逻辑照抄。
+
+func TestProcessor_AgentModes_UpdatesRegistry(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewModeRegistry()
+	p.modeRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": fix.agentID,
+		"modes": []model.AgentModeInfo{
+			{ID: "build", Label: "构建", Style: "default"},
+			{ID: "plan", Label: "计划", Style: "plan"},
+		},
+	})
+	p.HandleIncoming(t.Context(), "agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentModes,
+		D:  d,
+	})
+
+	got, _ := reg.Get(fix.agentID)
+	if len(got) != 2 || got[1].ID != "plan" || got[1].Style != "plan" {
+		t.Fatalf("期望 registry 缓存 2 个 mode(第 2 个 plan),实际 %v", got)
+	}
+}
+
+func TestProcessor_AgentModes_RejectsUserIDMismatch(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewModeRegistry()
+	p.modeRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": "agt-other", // 伪造:与 sender_id 不一致
+		"modes":    []model.AgentModeInfo{{ID: "plan"}},
+	})
+	p.HandleIncoming(t.Context(), "agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentModes,
+		D:  d,
+	})
+
+	got, _ := reg.Get("agt-other")
+	if len(got) != 0 {
+		t.Fatalf("agent_id 不一致时不应写入,实际 %v", got)
+	}
+	gotSelf, _ := reg.Get(fix.agentID)
+	if len(gotSelf) != 0 {
+		t.Fatalf("sender 自己也不应有残留写入,实际 %v", gotSelf)
+	}
+}
+
+func TestProcessor_AgentModes_RejectsUserRole(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewModeRegistry()
+	p.modeRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": fix.userID,
+		"modes":    []model.AgentModeInfo{{ID: "plan"}},
+	})
+	p.HandleIncoming(t.Context(), "user", fix.userID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentModes,
+		D:  d,
+	})
+
+	got, _ := reg.Get(fix.userID)
+	if len(got) != 0 {
+		t.Fatalf("user 角色上报应被拒,实际 %v", got)
+	}
+}
+
+func TestProcessor_AgentPresets_UpdatesRegistry(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewPresetRegistry()
+	p.presetRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": fix.agentID,
+		"presets": []model.AgentPresetInfo{
+			{ID: "standard", Label: "标准", Trust: "system", Order: 1},
+			{ID: "my-agent", Label: "我的定制", Trust: "user"},
+		},
+	})
+	p.HandleIncoming(t.Context(), "agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentPresets,
+		D:  d,
+	})
+
+	got, _ := reg.Get(fix.agentID)
+	if len(got) != 2 || got[1].Trust != "user" {
+		t.Fatalf("期望 registry 缓存 2 个 preset(第 2 个 user trust),实际 %v", got)
+	}
+}
+
+func TestProcessor_AgentPresets_RejectsUserIDMismatch(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewPresetRegistry()
+	p.presetRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": "agt-other",
+		"presets":  []model.AgentPresetInfo{{ID: "standard"}},
+	})
+	p.HandleIncoming(t.Context(), "agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentPresets,
+		D:  d,
+	})
+
+	got, _ := reg.Get("agt-other")
+	if len(got) != 0 {
+		t.Fatalf("agent_id 不一致时不应写入,实际 %v", got)
+	}
+}
+
+func TestProcessor_AgentPresets_RejectsUserRole(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+	reg := agent.NewPresetRegistry()
+	p.presetRegistry = reg
+
+	d, _ := json.Marshal(map[string]any{
+		"agent_id": fix.userID,
+		"presets":  []model.AgentPresetInfo{{ID: "standard"}},
+	})
+	p.HandleIncoming(t.Context(), "user", fix.userID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventAgentPresets,
+		D:  d,
+	})
+
+	got, _ := reg.Get(fix.userID)
+	if len(got) != 0 {
+		t.Fatalf("user 角色上报应被拒,实际 %v", got)
 	}
 }
