@@ -92,7 +92,7 @@ func TestServiceDecideHappyPath(t *testing.T) {
 	hub := &mockHub{}
 	svc := NewService(approvalRepo, hub, approvalRepo)
 
-	newContent, err := svc.Decide(t.Context(), a.ID, "allow_once", "user", user.ID, "")
+	newContent, err := svc.Decide(t.Context(), a.ID, "allow_once", "", nil, "user", user.ID)
 	if err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestServiceDecideInvalidActionFails(t *testing.T) {
 	hub := &mockHub{}
 	svc := NewService(approvalRepo, hub, approvalRepo)
 
-	_, err := svc.Decide(t.Context(), a.ID, "invalid_action", "user", user.ID, "")
+	_, err := svc.Decide(t.Context(), a.ID, "invalid_action", "", nil, "user", user.ID)
 	if err != ErrInvalidAction {
 		t.Fatalf("expected ErrInvalidAction, got %v", err)
 	}

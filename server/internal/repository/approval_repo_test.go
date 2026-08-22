@@ -128,7 +128,7 @@ func TestApprovalMarkDecidedAllowAlways(t *testing.T) {
 	}
 
 	actionID := "allow_always"
-	if err := repo.MarkDecided(t.Context(), created.ID, actionID, "user", userID, "", &pattern); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, actionID, "user", userID, "", &pattern, nil); err != nil {
 		t.Fatalf("MarkDecided: %v", err)
 	}
 	got, _ := repo.GetByID(t.Context(), created.ID)
@@ -171,7 +171,7 @@ func TestApprovalMarkDecidedDenyWithReason(t *testing.T) {
 	}
 
 	reason := "操作不可逆"
-	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, reason, nil); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, reason, nil, nil); err != nil {
 		t.Fatalf("MarkDecided: %v", err)
 	}
 	got, _ := repo.GetByID(t.Context(), created.ID)
@@ -195,11 +195,11 @@ func TestApprovalMarkDecidedNotPendingFails(t *testing.T) {
 		SessionKey: "tool:1",
 	})
 	// 先 decide 一次
-	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, "", nil); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, "", nil, nil); err != nil {
 		t.Fatalf("first MarkDecided: %v", err)
 	}
 	// 再次 decide 应失败（已是非 pending）
-	err := repo.MarkDecided(t.Context(), created.ID, "allow_once", "user", userID, "", nil)
+	err := repo.MarkDecided(t.Context(), created.ID, "allow_once", "user", userID, "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error on second MarkDecided")
 	}
