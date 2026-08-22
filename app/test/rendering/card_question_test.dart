@@ -127,6 +127,25 @@ void main() {
     expect(capturedAnswers, ['dev', 'staging']);
   });
 
+  testWidgets('question 提交后乐观终态摘要回退本地已选', (tester) async {
+    await tester.pumpWidget(host(questionContent(multiSelect: false)));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 选中 dev 并提交:onDecide 成功后乐观切终态,
+    // card.answers 仍空（服务器 PATCH 回写前）→ 乐观窗口
+    await tester.tap(find.text('开发环境'));
+    await tester.pump();
+    await tester.tap(find.text('提交答案'));
+    await tester.pump();
+
+    expect(capturedActionId, 'answer');
+    // 乐观窗口内摘要回退本地已选项 label,非空白;
+    // 终态后选项列表不再渲染,该文本即摘要本身
+    expect(find.text('开发环境'), findsOneWidget);
+    expect(find.text('✓ 已批准'), findsOneWidget);
+    expect(find.text('已回答'), findsOneWidget);
+  });
+
   testWidgets('question 终态回显 answers 摘要', (tester) async {
     await tester.pumpWidget(host(questionContent(
       multiSelect: true,

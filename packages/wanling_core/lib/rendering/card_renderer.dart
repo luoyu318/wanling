@@ -352,12 +352,16 @@ class _CardViewState extends State<_CardView> {
       .toList();
 
   /// question 终态 answers 摘要：answers 存选项 id,优先映射 label,未知 id 原样展示。
+  /// 乐观窗口:提交成功但服务器 PATCH 回写前 card.answers 仍空,
+  /// 回退本地已选项（对齐 _buttonLabel 的 _optimisticAction 乐观约定）。
   Widget _questionAnswersSummary() {
     final labelById = {
       for (final o in widget.card.options) o.id: o.label,
     };
-    final text =
-        widget.card.answers.map((a) => labelById[a] ?? a).join('、');
+    final answers = widget.card.answers.isNotEmpty
+        ? widget.card.answers
+        : (_optimisticAction == 'answer' ? _answerIds : const <String>[]);
+    final text = answers.map((a) => labelById[a] ?? a).join('、');
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Text(
