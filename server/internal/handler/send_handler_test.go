@@ -64,7 +64,7 @@ func setupSendAsAgentTest(t *testing.T) sendAsAgentEnv {
 	// 与 production main.go 组装方式一致:hub + processor + sendHandler。
 	// 不启动 hub.Run;SendToUser 直接同步写入目标 client 的 Send channel。
 	h := hub.NewHub(nil, agentRepo, participantRepo, nil)
-	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, nil, nil, nil)
+	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, nil, nil, nil, nil, nil)
 	sh := NewSendHandler(processor)
 
 	// 注册在线 user client(模拟 APP 在线),agent 发消息后会广播 MESSAGE_CREATE 到此 client。

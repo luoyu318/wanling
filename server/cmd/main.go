@@ -104,13 +104,19 @@ func main() {
 	// SlashCatalogRegistry 单例:plugin 上报的命令清单内存缓存,与 AgentRegistry 同构。
 	// AGENT_SLASH_CATALOG 事件写入,REST /api/agents/:id/slash-catalog 读取(Task 6 引入)。
 	slashCatalogRegistry := agent.NewSlashCatalogRegistry()
+	// ModeRegistry 单例:plugin 上报的模式清单内存缓存,与 AgentRegistry 同构。
+	// AGENT_MODES 事件写入,REST /api/agents/:id/modes 读取(能力上报管线第四成员)。
+	modeRegistry := agent.NewModeRegistry()
+	// PresetRegistry 单例:plugin 上报的预设清单内存缓存。
+	// AGENT_PRESETS 事件写入,REST /api/agents/:id/presets 读取(第五成员)。
+	presetRegistry := agent.NewPresetRegistry()
 	// CapabilityRegistry 单例:plugin 上报的 RPC 方法清单内存缓存,与 AgentRegistry 同构。
 	// PLUGIN_CAPABILITIES 事件写入,RPC 路由层 + REST 读取(Phase 2 引入)。
 	capabilityRegistry := agent.NewCapabilityRegistry()
-	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, agentRegistry, slashCatalogRegistry, capabilityRegistry)
+	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, agentRegistry, slashCatalogRegistry, capabilityRegistry, modeRegistry, presetRegistry)
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
-	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry)
+	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry)
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
@@ -314,6 +320,12 @@ func main() {
 		userAuth.GET("/api/agents/:id/models", agentHandler.Models)
 		// 命令清单: plugin 通过 WS AGENT_SLASH_CATALOG 上报 → registry 缓存 → 本端点供 APP 读取。
 		userAuth.GET("/api/agents/:id/slash-catalog", agentHandler.SlashCatalog)
+		// 模式清单: plugin 通过 WS AGENT_MODES 上报 → modeRegistry 缓存 → 本端点供 APP 读取。
+		// APP 渲染模式色条按 session-meta mode id 查清单取 label/style(第四成员)。
+		userAuth.GET("/api/agents/:id/modes", agentHandler.Modes)
+		// 预设清单: plugin 通过 WS AGENT_PRESETS 上报 → presetRegistry 缓存 → 本端点供 APP 读取。
+		// APP 新建会话预设选择器的数据源(第五成员)。
+		userAuth.GET("/api/agents/:id/presets", agentHandler.Presets)
 		// RPC 调用:APP → server 转 OpPluginCall WS 给 plugin,等回包后返 HTTP 响应。
 		// JSON-RPC 2.0 envelope(详见 docs/superpowers/specs/2026-07-19-rpc-protocol-design.md §6.1),
 		// 与其他 agent REST 端点的 {ok, data, error} envelope 不同。

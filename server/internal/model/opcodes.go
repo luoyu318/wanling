@@ -75,6 +75,16 @@ const (
 	// APP 通过 REST 拉取本清单渲染斜杠命令选择器,选中后调 plugin 执行。
 	EventAgentSlashCatalog = "AGENT_SLASH_CATALOG"
 
+	// plugin 上报 agent 模式清单(能力上报管线第四成员)。
+	// APP 渲染模式色条时按 session-meta mode id 查清单取 label/style,
+	// 不再硬编码各家平台枚举(docs/research/proposal-agent-modes.md)。
+	EventAgentModes = "AGENT_MODES"
+
+	// plugin 上报 agent 预设清单(能力上报管线第五成员)。
+	// 预设是 per-session 能力组合(dsh 等平台),集合开放(user 可自创),
+	// APP 新建会话选择器的数据源。无预设概念的 plugin 不上报即可。
+	EventAgentPresets = "AGENT_PRESETS"
+
 	EventPluginCapabilities = "PLUGIN_CAPABILITIES"
 
 	// 流式输出事件(op=14 STREAM)。

@@ -56,7 +56,7 @@ if __name__ == "__main__":
 ## API
 
 - `client.send(conversation_id, content)` / `send_typed(conversation_id, msg_type, data, *, silent=False, parent_msg_id=None, root_msg_id=None)` / `send_stream` / `send_typing` — 消息发送
-- `client.report_models(models)` / `report_slash_catalog(commands)` / `report_capabilities(methods)` — 能力上报
+- `client.report_models(models)` / `report_slash_catalog(commands)` / `report_modes(modes)` / `report_presets(presets)` / `report_capabilities(methods)` — 能力上报
 - `client.rest.send_card_message` / `update_message_content` / `create_group_as_agent` / `update_conversation_title` / `update_session_meta` / `upload_file` / `download_file`
 - `client.register_method(name, handler, timeout_hint_ms=5000)` / `RPCDispatcher.register(name, handler, timeout_hint_ms=5000)` — server 侧 RPC 方法
 

@@ -8,6 +8,7 @@ import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 import 'package:wanling_desktop/providers/detail_panel_provider.dart';
 import 'package:wanling_desktop/widgets/chat/desktop_input_bar.dart';
 import 'package:wanling_desktop/widgets/chat/env_meta_strip.dart';
+import 'package:wanling_core/providers/agent_modes_provider.dart';
 import 'package:wanling_desktop/widgets/chat/model_picker_sheet.dart';
 import 'package:wanling_desktop/widgets/chat/session_meta_strip.dart';
 import 'chat_app_bar.dart';
@@ -110,6 +111,13 @@ class ChatView extends ConsumerWidget {
                   child: SessionMetaStrip(
                     meta: chat.sessionMeta!,
                     modeOverride: chat.modeOverride,
+                    // 模式清单(plugin 上报):label/style 档位渲染数据源。
+                    modes: agentId == null
+                        ? const []
+                        : ref
+                                .watch(agentModesProvider(agentId!))
+                                .valueOrNull ??
+                            const [],
                     onModeTap: () => ref
                         .read(chatProvider((convId: convId, agentId: agentId)).notifier)
                         .toggleMode(),

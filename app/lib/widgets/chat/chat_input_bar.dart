@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:wanling_core/models/agent_mode.dart';
+import 'package:wanling_core/providers/agent_modes_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
 import 'message_input_bar.dart';
 import 'quote_preview_bar.dart' show QuotePreviewBar;
@@ -48,9 +50,9 @@ class ChatInputBar extends ConsumerWidget {
     // agent_session 定制:纯白背景 + 模式竖线 + flatInput
     if (chatState.convType == 'agent_session') {
       final effectiveMode = chatState.modeOverride ?? chatState.sessionMeta?.mode ?? '';
-      final modeColor = effectiveMode.toLowerCase() == 'plan'
-          ? const Color(0xFFF4A742)
-          : const Color(0xFF597BFF);
+      // 模式色:清单驱动(plugin 上报 style 档位)→ 未命中回退 'plan'
+      // 特例(老插件兼容期),再兜底品牌蓝。
+      final modeColor = _modeColor(ref, chatKey.agentId, effectiveMode);
 
       return MessageInputBar(
         key: inputBarKey,
@@ -75,5 +77,26 @@ class ChatInputBar extends ConsumerWidget {
       onPickAlbum: inputController.pickAlbum,
       topOverlay: topOverlay,
     );
+  }
+
+  /// 模式色解析:上报清单 style 档位 → 语义色;清单缺失/未命中回退
+  /// 'plan' 特例(plan=橙),再兜底品牌蓝。档位色集中在 core 定义,
+  /// 端侧不维护各平台枚举(proposal-agent-modes.md §3.4)。
+  Color _modeColor(WidgetRef ref, String? agentId, String mode) {
+    final catalog = agentId == null
+        ? const <AgentMode>[]
+        : ref.watch(agentModesProvider(agentId)).valueOrNull ?? const [];
+    final style = findModeById(catalog, mode)?.style;
+    if (style != null) {
+      return switch (style.visualStyle) {
+        AgentModeVisualStyle.plan => const Color(0xFFF4A742),
+        AgentModeVisualStyle.warn => const Color(0xFFE5484D),
+        AgentModeVisualStyle.brand => const Color(0xFF597BFF),
+      };
+    }
+    // 回退:老插件未上报清单,保留 plan 特例。
+    return mode.toLowerCase() == 'plan'
+        ? const Color(0xFFF4A742)
+        : const Color(0xFF597BFF);
   }
 }
