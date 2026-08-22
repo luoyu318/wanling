@@ -284,7 +284,9 @@ export class AggregateCard {
   }
 
   // 降级全量替换:当前卡影子副本(elements + state + segment)经 updateContent
-  // 整体推 server,收敛增量与全量的差异(silent 由 server 全量替换路径保留原值)。
+  // 整体推 server,收敛增量与全量的差异。envelope 不带 silent 键,server
+  // mergePreservedSilent 会并入原值(显式带 silent 用新值,会覆写 set_silent
+  // 已翻转的响铃,导致自愈清掉未读)。
   private async degradedReplace(): Promise<void> {
     await this.io.updateContent(this.messageId, {
       msg_type: "aggregate_card",
@@ -294,7 +296,6 @@ export class AggregateCard {
         elements: this.mirror,
         ...(this.currentSegment !== undefined ? { segment: this.currentSegment } : {}),
       },
-      silent: true,
     })
   }
 

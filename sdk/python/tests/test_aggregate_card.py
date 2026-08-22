@@ -185,6 +185,8 @@ async def test_three_consecutive_failures_degraded_self_heal():
         {"type": "markdown", "element_id": "m2", "data": {"text": "b"}},
         {"type": "markdown", "element_id": "m3", "data": {"text": "c"}},
     ]
+    # 自愈 envelope 不带 silent 键(server merge_preserved_silent 并入原值,防覆写已翻转的响铃)
+    assert "silent" not in content
     # 重试的 op 是幂等 update(全量已含新元素,防重复 append)
     assert io.patches[-1] == ("m1", {"op": "update", "element_id": "m3", "data": {"text": "c"}})
 

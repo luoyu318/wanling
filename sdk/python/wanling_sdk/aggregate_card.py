@@ -275,8 +275,9 @@ class AggregateCard:
 
     async def _degraded_replace(self) -> None:
         """降级全量替换:当前卡影子副本(elements + state + segment)经
-        update_content 整体推 server,收敛增量与全量的差异(silent 由 server
-        全量替换路径保留原值)。"""
+        update_content 整体推 server,收敛增量与全量的差异。envelope 不带
+        silent 键,server merge_preserved_silent 会并入原值(显式带 silent
+        用新值,会覆写 set_silent 已翻转的响铃,导致自愈清掉未读)。"""
         data: dict[str, Any] = {
             "schema_ver": AGGREGATE_SCHEMA_VER,
             "state": self._card_state,
@@ -284,9 +285,7 @@ class AggregateCard:
         }
         if self._current_segment is not None:
             data["segment"] = self._current_segment
-        await self._io.update_content(
-            self._message_id, {"msg_type": "aggregate_card", "data": data, "silent": True}
-        )
+        await self._io.update_content(self._message_id, {"msg_type": "aggregate_card", "data": data})
 
     async def _seal_intermediate_card(self) -> None:
         """中间卡收尾(分卡用):旧卡 set_state done + set_segment(first/middle)

@@ -166,6 +166,8 @@ describe("AggregateCard", () => {
         ],
       },
     })
+    // 自愈 envelope 不带 silent 键(server mergePreservedSilent 并入原值,防覆写已翻转的响铃)
+    expect(updates[0]?.content).not.toHaveProperty("silent")
     // 重试的 op 是幂等 update(全量已含新元素,防重复 append)
     expect(patches.at(-1)?.op).toEqual({ op: "update", element_id: "m3", data: { text: "c" } })
   })
