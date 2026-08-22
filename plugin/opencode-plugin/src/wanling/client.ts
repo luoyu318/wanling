@@ -17,6 +17,7 @@ import { decodeJwtExp } from "./jwt.js"
 import { logger } from "../utils/logger.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
 import { WanlingRestClient, Approvals } from "@wanling/sdk"
+import type { AggregatePatchOp } from "@wanling/sdk"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -378,14 +379,9 @@ export class WanlingClient extends EventEmitter {
 
   // 聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)→ 委托 SDK rest。
   // 全量替换兼容路径(无 op 带 elements)已随 AggregateCardManager 迁移 SDK 移除。
-  // 入参用结构化宽松类型({op} + 任意字段):SDK 的 AggregatePatchOp 判别联合
-  // 未从包入口导出(红线不改 SDK),调用方(aggregate_bridge 透传 SDK io op /
-  // set_silent 直发)均为该结构的子集,委托点收敛成 SDK 期望类型。
-  async patchAggregateMessage(
-    msgId: string,
-    data: { op: string } & Record<string, unknown>,
-  ): Promise<void> {
-    await this.rest.patchAggregateMessage(msgId, data as Parameters<WanlingRestClient["patchAggregateMessage"]>[1])
+  // AggregatePatchOp 已从 SDK 包入口导出,入参直接用判别联合类型(不再双重 as)。
+  async patchAggregateMessage(msgId: string, data: AggregatePatchOp): Promise<void> {
+    await this.rest.patchAggregateMessage(msgId, data)
   }
 
   async updateMessageContent(
