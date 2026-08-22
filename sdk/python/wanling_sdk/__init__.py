@@ -10,6 +10,7 @@ from .stream_session import StreamSession
 from .types import (
     AggregateCardOptions,
     AggregateFooter,
+    ApprovalMetaRow,
     ApprovalOption,
     AskOptions,
     AskResult,
@@ -23,6 +24,7 @@ __all__ = [
     "AggregateCardOptions",
     "AggregateFooter",
     "ApiError",
+    "ApprovalMetaRow",
     "ApprovalOption",
     "Approvals",
     "AskOptions",
