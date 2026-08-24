@@ -627,14 +627,22 @@ export class WanlingClient extends EventEmitter {
   }
 }
 
-async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
+export async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
+  // 帧队列：ws 库对同一 TCP 段内的多个帧是同步连发多个 message 事件，
+  // 而消费者（for await）在两次 next() 之间有微任务空窗——空窗内到达的帧
+  // 若只依赖单一 resolve 会被静默丢弃（APPROVAL_DECIDED 紧跟卡片终态广播
+  // 同段下发时必丢）。到达时无等待者则入队，下次 next() 立即取出。
+  const queue: string[] = []
   let resolve: ((value: string) => void) | null = null
   let reject: ((err: Error) => void) | null = null
+  let closed = false
 
   const onMessage = (data: Buffer | string) => {
     if (resolve) {
       resolve(data.toString())
       resolve = null
+    } else {
+      queue.push(data.toString())
     }
   }
   const onError = (err: Error) => {
@@ -644,6 +652,7 @@ async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
     }
   }
   const onClose = () => {
+    closed = true
     if (reject) {
       reject(new Error("WS closed"))
       reject = null
@@ -655,11 +664,11 @@ async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
   ws.on("close", onClose)
 
   try {
-    while (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      const data = await new Promise<string>((res, rej) => {
-        resolve = res
-        reject = rej
-      })
+    while (!closed && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      const queued = queue.shift()
+      const data = queued !== undefined
+        ? queued
+        : await new Promise<string>((res, rej) => { resolve = res; reject = rej })
       yield data
     }
   } finally {
