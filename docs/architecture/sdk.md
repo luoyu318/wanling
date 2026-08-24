@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph ts[TS SDK @wanling/sdk]
+    subgraph ts[TS SDK wanling-sdk]
         TCLIENT[client.ts<br/>连接 + 事件分发]
         TREST[rest.ts<br/>REST 客户端]
         TRPC[rpc.ts<br/>RPCDispatcher]

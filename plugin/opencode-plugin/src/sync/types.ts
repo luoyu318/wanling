@@ -1,4 +1,4 @@
-import type { StreamSession } from "@wanling/sdk"
+import type { StreamSession } from "wanling-sdk"
 import type { AggregateCardBridge, AggregateElement } from "./domains/aggregate_bridge.js"
 
 export interface SessionState {

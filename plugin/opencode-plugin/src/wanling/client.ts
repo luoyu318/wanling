@@ -16,8 +16,8 @@ import type {
 import { decodeJwtExp } from "./jwt.js"
 import { logger } from "../utils/logger.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
-import { WanlingRestClient, Approvals } from "@wanling/sdk"
-import type { AggregatePatchOp } from "@wanling/sdk"
+import { WanlingRestClient, Approvals } from "wanling-sdk"
+import type { AggregatePatchOp } from "wanling-sdk"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -55,7 +55,7 @@ export class WanlingClient extends EventEmitter {
   private tokenRefreshPromise: Promise<void> | null = null
   private lastIdentifyAt: number = 0
   private dispatcher?: RPCDispatcher
-  // SDK REST 客户端:会话/消息/审批等 HTTP 方法统一走 @wanling/sdk rest 层
+  // SDK REST 客户端:会话/消息/审批等 HTTP 方法统一走 wanling-sdk rest 层
   // (envelope 校验/超时/token 注入由 SDK 承担),本类只保留 OC 协议相关的 WS 通道。
   readonly rest: WanlingRestClient
   // 审批/提问高层封装(SDK Approvals):ask 发卡 + APPROVAL_DECIDED/EXPIRED 决议。

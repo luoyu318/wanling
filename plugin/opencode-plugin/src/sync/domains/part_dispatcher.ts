@@ -1,4 +1,4 @@
-import { StreamSession } from "@wanling/sdk"
+import { StreamSession } from "wanling-sdk"
 import { logger } from "../../utils/logger.js"
 import type { EventEmitter } from "events"
 import type {

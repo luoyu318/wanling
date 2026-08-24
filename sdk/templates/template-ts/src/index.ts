@@ -1,4 +1,4 @@
-import { WanlingClient, RPCDispatcher } from "@wanling/sdk"
+import { WanlingClient, RPCDispatcher } from "wanling-sdk"
 
 const serverUrl = process.env.WANLING_SERVER_URL ?? "http://localhost:18008"
 const agentId = process.env.WANLING_AGENT_ID ?? ""

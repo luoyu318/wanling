@@ -1,5 +1,5 @@
 {
-  "name": "@wanling/sdk",
+  "name": "wanling-sdk",
   "version": "0.2.0",
   "description": "Wanling AI Agent SDK - transport layer for building agent plugins",
   "type": "module",
@@ -17,10 +17,9 @@
     "lint": "eslint src/ test/",
     "test": "vitest run"
   },
-  "files": ["dist"],
-  "publishConfig": {
-    "access": "public"
-  },
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "ws": "^8.18.0"
   },

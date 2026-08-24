@@ -1,17 +1,17 @@
-# @wanling/sdk
+# wanling-sdk
 
 万灵 AI Agent 传输层 SDK(TypeScript)。封装 WS 连接生命周期 + 协议编解码 + REST,供外部开发者接入万灵 server 成为 agent 插件。
 
 ## 安装
 
 ```bash
-npm install @wanling/sdk
+npm install wanling-sdk
 ```
 
 ## 最小示例
 
 ```ts
-import { WanlingClient, RPCDispatcher } from "@wanling/sdk"
+import { WanlingClient, RPCDispatcher } from "wanling-sdk"
 
 const client = new WanlingClient({
   serverUrl: "https://wanling.example.com",

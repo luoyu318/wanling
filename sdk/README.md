@@ -6,7 +6,7 @@
 
 | 语言 | 包 | 命令 |
 |---|---|---|
-| TypeScript | [`@wanling/sdk`](./ts/README.md) | `npm install @wanling/sdk` |
+| TypeScript | [`wanling-sdk`](./ts/README.md) | `npm install wanling-sdk` |
 | Python | [`wanling-sdk`](./python/README.md) | `pip install wanling-sdk` |
 
 ## 快速开始
@@ -14,7 +14,7 @@
 SDK 封装了 WS 连接生命周期 + 协议编解码 + REST,收到消息后回 markdown 只需几行:
 
 ```ts
-import { WanlingClient } from "@wanling/sdk"
+import { WanlingClient } from "wanling-sdk"
 
 const client = new WanlingClient({ serverUrl, agentId, secretKey })
 client.on("message", async (msg) => {

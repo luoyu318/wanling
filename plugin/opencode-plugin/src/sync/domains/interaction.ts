@@ -15,7 +15,7 @@ import type { MessageRouter } from "../messaging.js"
 import type { ToolCardManager } from "./tool_card.js"
 import { getAggregateCard, permissionCardElement } from "./aggregate_bridge.js"
 import { saveCard, getCard, deleteCard, getAllCards, type CardEntry } from "../card_store.js"
-import type { AskResult, ApprovalOption } from "@wanling/sdk"
+import type { AskResult, ApprovalOption } from "wanling-sdk"
 
 // InteractionCards:permission / question 交互卡片领域模块。
 // 职责:交互卡片的正向流(OpenCode 问 → 发 card 到 APP) + 反向流(TUI 答 → PATCH

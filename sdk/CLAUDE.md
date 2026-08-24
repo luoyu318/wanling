@@ -4,7 +4,7 @@
 
 ## 子系统身份
 
-- `sdk/ts` → npm 包 `@wanling/sdk`:连接生命周期 + 协议编解码 + REST + RPC + 流式 + 能力上报
+- `sdk/ts` → npm 包 `wanling-sdk`:连接生命周期 + 协议编解码 + REST + RPC + 流式 + 能力上报
 - `sdk/python` → PyPI 包 `wanling-sdk`(UV 管理):与 TS 对称,`asyncio` + `websockets` + `httpx`
 - `sdk/templates` → 最小 agent 插件脚手架(template-ts / template-py)
 
@@ -35,7 +35,7 @@ make test-sdk   # vitest + pytest
 
 ```mermaid
 flowchart LR
-    DEV[外部开发者] -->|@wanling/sdk / wanling-sdk| SDK[SDK 传输层<br/>TS + Python]
+    DEV[外部开发者] -->|wanling-sdk / wanling-sdk| SDK[SDK 传输层<br/>TS + Python]
     SDK -->|WS op=0/10/12/13/14| SERVER[万灵 Server]
     SDK -->|REST envelope| SERVER
 ```
