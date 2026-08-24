@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
@@ -61,6 +60,9 @@ class AggregateCard:
         # 当前卡状态(降级全量替换时随影子副本携带)
         self._card_state: str = "generating"
         self._footer_seq = 0
+        # element_id 自动生成计数器:单一全局 seq 跨 type/跨卡递增(全卡唯一),
+        # 收尾 _reset_round 归零后下一轮复用(reasoning_1),对齐 plugin aggregateSeq。
+        self._seq = 0
 
     def _enqueue(self, fn: Callable[[], Awaitable[T]]) -> asyncio.Task[T]:
         """串行队列:fn 排在先前所有 op 之后执行;队列本身吞掉前次失败
@@ -124,6 +126,14 @@ class AggregateCard:
         self._current_segment = None
         self._card_state = "generating"
         self._footer_seq = 0
+        self._seq = 0
+
+    def _next_element_id(self, element_type: str) -> str:
+        """element_id 协议规则:type_seq 命名(reasoning_1/tool_card_2),字母开头、
+        ≤20 字符(超长 type 截断,空 type 兜底 element);显式 id 不消耗 seq。"""
+        self._seq += 1
+        type_part = element_type[: max(1, 19 - len(str(self._seq)))] or "element"
+        return f"{type_part}_{self._seq}"
 
     async def append(self, element_type: str, data: dict[str, Any]) -> dict[str, str]:
         """追加元素。data 可选携带 element_id:与卡内已有元素同 id 时自动改发
@@ -133,7 +143,7 @@ class AggregateCard:
         # 拆出显式 element_id;调用方按类型约束携带的 type 字段剔除(以第一参数为准)
         explicit_id = data.get("element_id") if isinstance(data.get("element_id"), str) else None
         element_data = {k: v for k, v in data.items() if k not in ("element_id", "type")}
-        element_id = explicit_id or str(uuid.uuid4())
+        element_id = explicit_id or self._next_element_id(element_type)
         element = {"type": element_type, "element_id": element_id, "data": element_data}
 
         async def _job() -> dict[str, str]:
