@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@wanling/sdk": "file:../../ts"
+    "wanling-sdk": "file:../../ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

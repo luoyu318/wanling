@@ -28,7 +28,7 @@ sync/
 
 ## 组件清单
 
-- **AggregateBridge** (`domains/aggregate_bridge.ts`) — 聚合卡 SDK 接线层(替代原自管 AggregateCardManager)。卡生命周期状态机由 SDK `AggregateCard`(`@wanling/sdk`,幂等建卡/串行 PATCH 队列/20 元素自动分卡/降级全量替换自愈)承担;本模块只做 OC 侧编排:元素构造器(element_id 规则 type_seq)、set_silent 翻转响铃(SDK 无公开入口,经 REST 直发)、cardMessageId 捕获(建卡 io 回调,供 op=14 流式 aggregate 定位与 card_store 记账)、回合边界清理(footer 收尾清 aggregateSeq/流式占位 Set/工具元素映射,防 seq 归零后 element_id 复用受残留干扰)。
+- **AggregateBridge** (`domains/aggregate_bridge.ts`) — 聚合卡 SDK 接线层(替代原自管 AggregateCardManager)。卡生命周期状态机由 SDK `AggregateCard`(`wanling-sdk`,幂等建卡/串行 PATCH 队列/20 元素自动分卡/降级全量替换自愈)承担;本模块只做 OC 侧编排:元素构造器(element_id 规则 type_seq)、set_silent 翻转响铃(SDK 无公开入口,经 REST 直发)、cardMessageId 捕获(建卡 io 回调,供 op=14 流式 aggregate 定位与 card_store 记账)、回合边界清理(footer 收尾清 aggregateSeq/流式占位 Set/工具元素映射,防 seq 归零后 element_id 复用受残留干扰)。
 - **SessionStore** (`session_store.ts`) — 跨事件共享状态仓。收敛 `sessions` / `childSessionTree` / `partIndex` / `idleHandled` / `createStateInflight` 五个 map;`getOrCreateState` 幂等入口(主 session 首次出现调 `ensureConversation` 建群,非主 session 丢弃返回 null,同一 session 跨多次 SSE 事件共享 inflight promise 防重复建群);`registerChild` / `cleanupChild` 子 session 注册与超时兜底清理;`flushReasoning` / `flushText` 缓冲 flush;`stop()` 撤销所有 child 兜底 timer + 清空 map。
 - **MessageRouter** (`messaging.ts`) — 主/子 session 发送路由。`send`(按 part 类型聚合后发普通消息) + `sendCard`(发交互卡片) 走 `wanling` client,内部按 store 的 convId 映射决定目标会话。
 - **MetaSync** (`domains/meta_sync.ts`) — session 元数据同步。`loadAll` 启动并发拉取 providers + slash catalog + capabilities;`onSessionUpdated` / `onVcsBranchUpdated` 增量同步 mode/model/cwd/gitBranch;step-finish `reason=stop` 主动 `session.get` 拉 tokens + `vcs.get` 拉最新 branch 兜底;按 `mode|modelId|directory` 去重防 SSE 抖动。持有 `knownTitles` / `knownMeta` / `knownFullMeta` / `providerNames` 四个状态 map。
@@ -40,7 +40,7 @@ sync/
 
 ## SDK 依赖与 mapper 自管
 
-- package.json 依赖 `@wanling/sdk`(file: 链接本仓库 `sdk/ts`),三域消费:AggregateBridge(AggregateCard)/ PartDispatcher(StreamSession)/ InteractionCards(Approvals)。
+- package.json 依赖 `wanling-sdk`(file: 链接本仓库 `sdk/ts`),三域消费:AggregateBridge(AggregateCard)/ PartDispatcher(StreamSession)/ InteractionCards(Approvals)。
 - `mapper.ts` **保留自管**不迁 SDK `SessionMapping`:SDK 存储格式不兼容存量映射文件,且缺 `messageCount`(OC 侧消息计数)/ `listSessionMaps`(全量列举)能力。
 
 ## 组装根职责 (streamer.ts)

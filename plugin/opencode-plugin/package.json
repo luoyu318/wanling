@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.18.12",
-    "@wanling/sdk": "file:../../sdk/ts",
+    "wanling-sdk": "file:../../sdk/ts",
     "undici": "^8.7.0",
     "ws": "^8.18.0"
   },

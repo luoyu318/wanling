@@ -66,7 +66,7 @@ reasoning 元素 `data.finished`（流式占位 false / 终态 append true），
 
 ## SDK 高层封装（协议不变）
 
-SDK（`@wanling/sdk` / `wanling-sdk`）提供聚合卡/流式高层类，搬运本文各节定义的协议行为（建卡幂等 / 串行 PATCH 队列 / 20 元素自动分卡 / 降级全量替换自愈 / 流式快照节流），**协议本身不变**——不使用 SDK 的 plugin 仍可按本文手工实现。TS/Python 对称：
+SDK（`wanling-sdk` / `wanling-sdk`）提供聚合卡/流式高层类，搬运本文各节定义的协议行为（建卡幂等 / 串行 PATCH 队列 / 20 元素自动分卡 / 降级全量替换自愈 / 流式快照节流），**协议本身不变**——不使用 SDK 的 plugin 仍可按本文手工实现。TS/Python 对称：
 
 | 类 | 工厂 | 关键方法 | 关键选项 |
 |---|---|---|---|

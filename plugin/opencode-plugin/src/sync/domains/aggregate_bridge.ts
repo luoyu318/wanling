@@ -1,4 +1,4 @@
-import { AggregateCard } from "@wanling/sdk"
+import { AggregateCard } from "wanling-sdk"
 import type { WanlingClient } from "../../wanling/client.js"
 import type { SessionState } from "../types.js"
 

@@ -32,7 +32,7 @@
 
 ```
 APP（Flutter, Android）  ↔WebSocket+REST↔  Server（Go/Gin, :18008）  ↔WS（标准接口）↔  Plugin（hermes / opencode-plugin）
-外部开发者通过 SDK 接入:SDK（sdk/,TS+Python 双语言,发布 @wanling/sdk + wanling-sdk）
+外部开发者通过 SDK 接入:SDK（sdk/,TS+Python 双语言,发布 wanling-sdk + wanling-sdk）
                                               ↓
                                         PostgreSQL（PG）
 ```
