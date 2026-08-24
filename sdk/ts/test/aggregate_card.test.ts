@@ -189,6 +189,34 @@ describe("AggregateCard", () => {
     expect(patches[3]?.op).toEqual({ op: "set_silent", silent: false })
   })
 
+  it("未携带 element_id 时按 type_seq 生成（协议:字母开头/≤20字符/全卡唯一）", async () => {
+    const { io, patches } = makeIo()
+    const card = new AggregateCard("c1", io)
+    const r1 = await card.append("reasoning", { type: "reasoning", text: "think" })
+    const r2 = await card.append("tool_card", { type: "tool_card", name: "bash" })
+    // 单一全局 seq 跨 type 递增(对齐 plugin aggregateSeq 口径),跨卡不归零保全卡唯一
+    expect(r1).toEqual({ id: "reasoning_1" })
+    expect(r2).toEqual({ id: "tool_card_2" })
+    expect(patches.map((p) => p.op.op)).toEqual(["append", "append"])
+    // 显式 id 不消耗 seq
+    await card.append("markdown", { type: "markdown", element_id: "custom", text: "x" })
+    const r4 = await card.append("markdown", { type: "markdown", text: "y" })
+    expect(r4).toEqual({ id: "markdown_3" })
+    // 超 20 字符的长 type 截断兜底
+    const long = await card.append("t".repeat(30), { text: "z" })
+    expect(long.id.length).toBeLessThanOrEqual(20)
+    expect(long.id).toMatch(/^[a-z]/)
+  })
+
+  it("收尾后新回合 seq 归零复用（对齐 plugin 跨轮瞬态清理）", async () => {
+    const { io } = makeIo()
+    const card = new AggregateCard("c1", io)
+    await card.append("reasoning", { type: "reasoning", text: "a" })
+    await card.finish({})
+    const r = await card.append("reasoning", { type: "reasoning", text: "b" })
+    expect(r).toEqual({ id: "reasoning_1" })
+  })
+
   it("recallEmpty 空卡撤回（不发 footer/state）", async () => {
     const { io, patches, recalled } = makeIo()
     const card = new AggregateCard("c1", io, { recallEmpty: true })

@@ -208,6 +208,38 @@ async def test_finish_appends_footer_done_unsilent_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_auto_element_id_type_seq():
+    """未携带 element_id 时按 type_seq 生成(协议:字母开头/≤20字符/全卡唯一)。"""
+    io = FakeIo()
+    card = AggregateCard("c1", io)
+    r1 = await card.append("reasoning", {"type": "reasoning", "text": "think"})
+    r2 = await card.append("tool_card", {"type": "tool_card", "name": "bash"})
+    # 单一全局 seq 跨 type 递增(对齐 plugin aggregateSeq 口径),跨卡不归零保全卡唯一
+    assert r1 == {"id": "reasoning_1"}
+    assert r2 == {"id": "tool_card_2"}
+    assert [op["op"] for _, op in io.patches] == ["append", "append"]
+    # 显式 id 不消耗 seq
+    await card.append("markdown", {"type": "markdown", "element_id": "custom", "text": "x"})
+    r4 = await card.append("markdown", {"type": "markdown", "text": "y"})
+    assert r4 == {"id": "markdown_3"}
+    # 超 20 字符的长 type 截断兜底
+    r5 = await card.append("t" * 30, {"text": "z"})
+    assert len(r5["id"]) <= 20
+    assert r5["id"][0].isalpha()
+
+
+@pytest.mark.asyncio
+async def test_seq_reset_across_rounds():
+    """收尾后新回合 seq 归零复用(对齐 plugin 跨轮瞬态清理)。"""
+    io = FakeIo()
+    card = AggregateCard("c1", io)
+    await card.append("reasoning", {"type": "reasoning", "text": "a"})
+    await card.finish({})
+    r = await card.append("reasoning", {"type": "reasoning", "text": "b"})
+    assert r == {"id": "reasoning_1"}
+
+
+@pytest.mark.asyncio
 async def test_recall_empty_card():
     io = FakeIo()
     card = AggregateCard("c1", io, {"recall_empty": True})

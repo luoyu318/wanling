@@ -72,6 +72,9 @@ export class AggregateCard {
   // 当前卡状态(降级全量替换时随影子副本携带)
   private cardState: "generating" | "done" = "generating"
   private footerSeq = 0
+  // element_id 自动生成计数器:单一全局 seq 跨 type/跨卡递增(全卡唯一),
+  // 收尾 resetRound 归零后下一轮复用(reasoning_1),对齐 plugin aggregateSeq。
+  private seq = 0
 
   constructor(
     private readonly convId: string,
@@ -134,6 +137,15 @@ export class AggregateCard {
     this.currentSegment = undefined
     this.cardState = "generating"
     this.footerSeq = 0
+    this.seq = 0
+  }
+
+  // element_id 协议规则:type_seq 命名(reasoning_1/tool_card_2),字母开头、
+  // ≤20 字符(超长 type 截断,空 type 兜底 element);显式 id 不消耗 seq。
+  private nextElementId(type: string): string {
+    this.seq++
+    const typePart = type.slice(0, Math.max(1, 19 - String(this.seq).length)) || "element"
+    return `${typePart}_${this.seq}`
   }
 
   /**
@@ -148,7 +160,7 @@ export class AggregateCard {
     const elementData: Record<string, unknown> = { ...data }
     delete elementData.element_id
     delete elementData.type
-    const elementId = explicitId ?? crypto.randomUUID()
+    const elementId = explicitId ?? this.nextElementId(type)
     const element: WireElement = { type, element_id: elementId, data: elementData }
     return this.enqueue(async () => {
       const existed = this.mirror.some((e) => e.element_id === elementId)
