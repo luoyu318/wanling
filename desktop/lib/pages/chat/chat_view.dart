@@ -9,9 +9,11 @@ import 'package:wanling_desktop/providers/detail_panel_provider.dart';
 import 'package:wanling_desktop/widgets/chat/desktop_input_bar.dart';
 import 'package:wanling_desktop/widgets/chat/env_meta_strip.dart';
 import 'package:wanling_core/providers/agent_modes_provider.dart';
+import 'package:wanling_core/providers/agent_status_provider.dart' show agentStatusProvider;
 import 'package:wanling_desktop/widgets/chat/model_picker_sheet.dart';
 import 'package:wanling_desktop/widgets/chat/mode_picker_sheet.dart';
 import 'package:wanling_desktop/widgets/chat/session_meta_strip.dart';
+import 'package:wanling_desktop/widgets/chat/stop_bar.dart';
 import 'chat_app_bar.dart';
 import 'chat_message_list.dart';
 
@@ -163,6 +165,14 @@ class ChatView extends ConsumerWidget {
                         .read(detailPanelOpenProvider.notifier)
                         .state = true,
                   ),
+                ),
+                // 常驻停止按钮(对齐 app 端 StopBar):双击确认防误触,点击即
+                // POST /api/conversations/:id/abort(server dispatch
+                // GENERATION_ABORT → plugin 中止生成)。
+                StopBar(
+                  isGenerating:
+                      ref.watch(agentStatusProvider.select((s) => s[convId])) != null,
+                  onTap: () => ref.read(apiProvider).abortGeneration(convId),
                 ),
               ],
             ),
