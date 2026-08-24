@@ -12,16 +12,14 @@ afterAll(() => {
   rmSync(TMP, { recursive: true, force: true })
 })
 
-// InteractionCards 迁移 SDK 后单测:mock store/router/wanling/opencode,直接断言
-// 双轨行为:
-// - question(聚合模式)→ wanling.approvals.ask(SDK Approvals):options 映射/决议回填/
-//   TUI 先答回声去重(pendingQuestions 登记表)
-// - permission → 保留自管(聚合模式嵌入聚合卡元素 + card_store 记账)
+// InteractionCards 单测(question/permission 统一自管双轨):mock store/router/wanling/
+// opencode,直接断言:
+// - 聚合模式(主 session)→ 嵌入聚合卡元素(append op + silent 翻转响铃) + card_store 记账
 // - 反向流(TUI 答 → 更新聚合卡内元素 status + silent 状态机)
-// - 开关 false 时完全回退旧逻辑(sendCard 独立卡 + updateMessageContent PATCH)。
+// - 开关 false / 子 session 时回退独立卡(sendCard + updateMessageContent PATCH)。
 // 动态 import(config.js mock 生效后)保证 card_store 写到隔离 TMP,不污染真实配置目录。
 const { InteractionCards } = await import("./interaction.js")
-const { permissionCardElement } = await import("./aggregate_bridge.js")
+const { permissionCardElement, questionCardElement } = await import("./aggregate_bridge.js")
 const { getCard, getAllCards, deleteCard } = await import("../card_store.js")
 function makeFixture(opts: { aggregateCardEnabled?: boolean } = {}) {
   const state: SessionState = {
@@ -138,193 +136,74 @@ describe("InteractionCards 聚合模式 — permission 正向流(pending 元素�
     expect(appendCall[1].element.element_id).toBe("permission_card_3")
     expect(state.aggregateSeq).toBe(3)
   })
+
+  it("onQuestionAsked → 聚合卡追加 question 元素(append op) + set_silent:false 响铃 + card_store 存 element_id", async () => {
+    const { interaction, router, wanling } = makeFixture()
+    await interaction.onQuestionAsked(questionPayload)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(1, "card-1", {
+      op: "append",
+      element: questionCardElement({
+        oc_request_id: "req-q-1",
+        questions: questionPayload.questions,
+        status: "pending",
+      }, 1),
+    })
+    expect(wanling.patchAggregateMessage).toHaveBeenNthCalledWith(2, "card-1", { op: "set_silent", silent: false })
+    expect(router.sendCard).not.toHaveBeenCalled()
+    const entry = getCard("req-q-1")!
+    expect(entry.msgId).toBe("card-1")
+    expect(entry.elementId).toBe("question_card_1")
+    expect(entry.sessionId).toBe("sess-1")
+    expect(entry.type).toBe("question")
+  })
 })
 
-describe("InteractionCards 聚合模式 — question 走 SDK approvals.ask", () => {
+describe("InteractionCards 聚合模式 — question 反向流(更新聚合卡内元素 status + silent 状态机)", () => {
   beforeEach(() => {
     for (const id of Object.keys(getAllCards())) deleteCard(id)
   })
 
-  it("onQuestionAsked → approvals.ask(单问题:options=label 映射,title=header),不 append 元素不 saveCard", async () => {
-    const { interaction, router, wanling, toolCard } = makeFixture()
-    const askP = new Promise(() => {}) // 挂起不决议(测发卡参数)
-    wanling.approvals.ask.mockReturnValue(askP)
-    const p = interaction.onQuestionAsked(questionPayload)
-    await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
-    })
-    expect(wanling.approvals.ask).toHaveBeenCalledWith("conv-1", {
-      cardType: "question",
-      title: "确认",
-      options: [{ id: "是", label: "是" }],
-      multiSelect: false,
-      sessionKey: "req-q-1",
-    })
-    // 不再嵌入聚合卡元素 / 不发独立卡 / card_store 无记账
-    expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
-    expect(router.sendCard).not.toHaveBeenCalled()
-    expect(getCard("req-q-1")).toBeNull()
-    // 发卡即返回,flushPending 不等决议(工具卡不被答题阻塞)
-    expect(toolCard.flushPending).toHaveBeenCalled()
-    void p
-  })
-
-  it("多问题拍平:option id 带 header 前缀防撞,description 拼进 label", async () => {
+  it("onQuestionReplied → 元素 status=answered(update op,data 合并全量) + 单独 set_silent:true + deleteCard", async () => {
     const { interaction, wanling } = makeFixture()
-    const multiPayload = {
-      ...questionPayload,
-      questions: [
-        { question: "选语言?", header: "语言", options: [{ label: "Go", description: "快" }, { label: "TS" }] },
-        { question: "确认?", header: "确认", options: [{ label: "Go", description: "" }], multiple: true },
-      ],
-    }
-    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
-    const p = interaction.onQuestionAsked(multiPayload)
+    await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    expect(wanling.approvals.ask).toHaveBeenCalledWith("conv-1", {
-      cardType: "question",
-      title: "Agent 提问(2 个问题)",
-      options: [
-        { id: "Go", label: "Go — 快" },
-        { id: "TS", label: "TS" },
-        { id: "确认:Go", label: "Go" },
-      ],
-      multiSelect: true,
-      sessionKey: "req-q-1",
-    })
-    void p
-  })
-
-  it("多条单选问题拍平 → multiSelect=true(server 单选限答 1 项,放开多选保全部问题可答)", async () => {
-    const { interaction, wanling } = makeFixture()
-    const twoSinglePayload = {
-      ...questionPayload,
-      questions: [
-        { question: "选语言?", header: "语言", options: [{ label: "Go" }] },
-        { question: "确认?", header: "确认", options: [{ label: "好" }] },
-      ],
-    }
-    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
-    const p = interaction.onQuestionAsked(twoSinglePayload)
-    await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
-    })
-    expect(wanling.approvals.ask.mock.calls[0][1].multiSelect).toBe(true)
-    void p
-  })
-
-  it("同题同名 label → option id 追加序号去重不撞车(防 server 400 丢问题)", async () => {
-    const { interaction, wanling } = makeFixture()
-    const dupPayload = {
-      ...questionPayload,
-      questions: [
-        { question: "选?", header: "选", options: [{ label: "同" }, { label: "同" }, { label: "同" }] },
-      ],
-    }
-    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
-    const p = interaction.onQuestionAsked(dupPayload)
-    await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
-    })
-    const ids = wanling.approvals.ask.mock.calls[0][1].options.map((o: { id: string }) => o.id)
-    expect(ids).toEqual(["同", "同_2", "同_3"])
-    void p
-  })
-
-  it("ask 决议 approved → answers 按问题归属分组回填 replyQuestion", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
-    resolveAsk({ state: "approved", answers: ["是"] })
-    await p
-    expect(opencode.replyQuestion).toHaveBeenCalledWith("req-q-1", [["是"]], "/tmp")
-  })
-
-  it("多问题决议 approved → answers 按 qIdx 分组,未答问题给空数组", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    const multiPayload = {
-      ...questionPayload,
-      questions: [
-        { question: "选语言?", header: "语言", options: [{ label: "Go" }, { label: "TS" }] },
-        { question: "确认?", header: "确认", options: [{ label: "好" }] },
-      ],
-    }
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(multiPayload)
-    // 只答了第一问的 Go
-    resolveAsk({ state: "approved", answers: ["Go"] })
-    await p
-    expect(opencode.replyQuestion).toHaveBeenCalledWith("req-q-1", [["Go"], []], "/tmp")
-  })
-
-  it("ask 决议 denied → rejectQuestion", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
-    resolveAsk({ state: "denied" })
-    await p
-    expect(opencode.rejectQuestion).toHaveBeenCalledWith("req-q-1", "/tmp")
-    expect(opencode.replyQuestion).not.toHaveBeenCalled()
-  })
-
-  it("ask 决议 expired → rejectQuestion(OC 侧 404 类错误静默跳过)", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
-    opencode.rejectQuestion.mockRejectedValueOnce(new Error("question no longer exists"))
-    resolveAsk({ state: "expired" })
-    await expect(p).resolves.toBeUndefined()
-    expect(opencode.rejectQuestion).toHaveBeenCalled()
-  })
-
-  it("回声去重:TUI 先答(onQuestionReplied 置 settled)→ ask 决议后跳过回填", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
-    await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
-    })
-    // TUI 侧先答(回声路径):登记表命中置 settled
     await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
-    resolveAsk({ state: "approved", answers: ["是"] })
-    await p
-    // OC question 已被 TUI 解决,不再回填(防二次回复)
-    expect(opencode.replyQuestion).not.toHaveBeenCalled()
-    expect(opencode.rejectQuestion).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
+    })
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    const update = ops[2]
+    expect(update.op).toBe("update")
+    expect(update.element_id).toBe("question_card_1")
+    expect(update.data.status).toBe("answered")
+    expect(update.data.result).toBe("是")
+    // 合并保留 questions(update 整体替换 data,不能丢既有字段)
+    expect(update.data.questions).toEqual(questionPayload.questions)
+    expect(ops[3]).toEqual({ op: "set_silent", silent: true })
+    expect(wanling.updateMessageContent).not.toHaveBeenCalled()
+    expect(getCard("req-q-1")).toBeNull()
   })
 
-  it("回声去重:TUI 先拒(onQuestionRejected 置 settled)→ ask 决议后跳过回填", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
+  it("onQuestionRejected → 元素 status=rejected + set_silent:true + deleteCard", async () => {
+    const { interaction, wanling } = makeFixture()
+    await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
     await interaction.onQuestionRejected({ sessionID: "sess-1", requestID: "req-q-1" })
-    resolveAsk({ state: "approved", answers: ["是"] })
-    await p
-    expect(opencode.replyQuestion).not.toHaveBeenCalled()
-  })
-
-  it("APP 先答的回声(我们自己 replyQuestion 触发):登记条目已随决议清理,自然跳过", async () => {
-    const { interaction, wanling, opencode } = makeFixture()
-    let resolveAsk!: (r: unknown) => void
-    wanling.approvals.ask.mockReturnValue(new Promise((r) => { resolveAsk = r }))
-    const p = interaction.onQuestionAsked(questionPayload)
-    resolveAsk({ state: "approved", answers: ["是"] })
-    await p
-    expect(opencode.replyQuestion).toHaveBeenCalledTimes(1)
-    // 决议后登记条目已删:OC 回答事件的回声找不到登记也找不到 card entry → 跳过
-    await interaction.onQuestionReplied({ sessionID: "sess-1", requestID: "req-q-1", answers: [["是"]] })
-    expect(opencode.replyQuestion).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBe(4)
+    })
+    const ops = wanling.patchAggregateMessage.mock.calls.map(([, b]) => b)
+    expect(ops[2].op).toBe("update")
+    expect(ops[2].data.status).toBe("rejected")
+    expect(ops[3]).toEqual({ op: "set_silent", silent: true })
+    expect(getCard("req-q-1")).toBeNull()
   })
 })
 
@@ -375,7 +254,7 @@ describe("InteractionCards 聚合模式 — permission 反向流(更新聚合卡
 
   it("仍有其他 pending 交互时不恢复 silent(整卡继续响铃)", async () => {
     const { interaction, wanling } = makeFixture()
-    // 先挂两个 permission pending(question 聚合已走 SDK ask,不再入卡)
+    // 先挂两个 permission pending
     await interaction.onPermissionAsked(permissionPayload)
     await interaction.onPermissionAsked({ ...permissionPayload, id: "req-perm-2" })
     await vi.waitFor(() => {
@@ -499,7 +378,6 @@ describe("InteractionCards 非聚合回退(aggregateCardEnabled=false)", () => {
       false,
     )
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
-    expect(wanling.approvals.ask).not.toHaveBeenCalled()
     const entry = getCard("req-q-1")!
     expect(entry.elementId).toBeUndefined()
     expect(entry.type).toBe("question")
@@ -519,15 +397,13 @@ describe("InteractionCards 非聚合回退(aggregateCardEnabled=false)", () => {
     expect(getCard("req-q-1")).toBeNull()
   })
 
-  it("开关默认开启(不传 aggregateCardEnabled → question 走 ask 聚合路径)", async () => {
+  it("开关默认开启(不传 aggregateCardEnabled → question 走聚合元素路径)", async () => {
     const { interaction, router, wanling } = makeFixture({ aggregateCardEnabled: undefined })
-    wanling.approvals.ask.mockReturnValue(new Promise(() => {}))
-    const p = interaction.onQuestionAsked(questionPayload)
+    await interaction.onQuestionAsked(questionPayload)
     await vi.waitFor(() => {
-      expect(wanling.approvals.ask).toHaveBeenCalled()
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
     expect(router.sendCard).not.toHaveBeenCalled()
-    void p
   })
 })
 
