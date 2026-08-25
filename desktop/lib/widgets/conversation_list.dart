@@ -105,7 +105,9 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                       convId: c.id,
                       name: c.displayName,
                       avatarUrl: c.displayAvatarUrl,
-                      agentType: c.agent?.type ?? '',
+                      // 徽标仅 agent 会话(dm_user_agent)显示;好友/群
+                      // agent=null → 传 null 不渲染(空 type 显示「智能体」)。
+                      agentType: c.isUserAgentDM ? c.agent?.type ?? '' : null,
                       // 多 session agent 行带 session 数第二行(对齐 app);
                       // 不显示消息摘要(入口 DM 行无消息流,摘要无意义)。
                       sessionCount: multi ? c.sessionCount : -1,

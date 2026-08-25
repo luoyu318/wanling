@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../utils/dio_error.dart';
+import 'add_account_dialog.dart';
 
 /// 菜单「添加服务器/账号」项的特殊 value(与账号索引区分)。
 const _addEntry = -1;
@@ -66,10 +66,9 @@ class AccountSwitcher extends ConsumerWidget {
       ],
       onSelected: (i) async {
         if (i == _addEntry) {
-          // 先登出再进登录页(router redirect:已登录访问 /login 会被弹回),
-          // 用户填新服务器+凭据登录即完成添加。
-          await ref.read(authProvider.notifier).logout();
-          if (context.mounted) context.go('/login');
+          // 弹添加框(对齐 app select_account_page):填完保存进
+          // savedLogins,是否立即登录由用户在列表里点选。
+          await showAddAccountDialog(context, ref);
           return;
         }
         try {

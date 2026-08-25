@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:wanling_core/models/saved_login.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import '../utils/dio_error.dart';
-import '../widgets/account_switcher.dart';
+import '../widgets/add_account_dialog.dart';
 
-/// 桌面登录页:居中卡片表单(服务器地址/用户名/密码/记住账号)+
-/// 顶部多账号切换 + 底部配对码绑定入口。
+/// 桌面登录页:已存账号卡片列表(点击直接登录 + 删除) + 「添加服务器」弹框
+/// + 手动登录表单(服务器地址/用户名/密码/记住账号)。
 ///
 /// 服务器地址流程与 app 壳一致:预填上次值(savedLogins.selected 优先,
 /// 退回 settingsProvider 持久化的 baseUrl),提交前 setBaseUrl 同步
@@ -100,11 +101,29 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
                       color: theme.hintColor,
                     ),
                   ),
+                  // 已存账号卡片列表(对齐 app select_account_page):
+                  // 点击直接用保存凭据登录,尾部删除按钮。
+                  if (savedLogins.logins.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    ..._buildAccountCards(savedLogins, theme),
+                  ],
                   const SizedBox(height: 16),
-                  // 多账号切换(有已存账号才渲染)
-                  if (savedLogins.logins.isNotEmpty)
-                    const Center(child: AccountSwitcher()),
-                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    key: const ValueKey('login_add_account'),
+                    onPressed: () => showAddAccountDialog(context, ref),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('添加服务器'),
+                  ),
+                  const SizedBox(height: 20),
+                  Divider(color: theme.dividerColor),
+                  const SizedBox(height: 12),
+                  Text(
+                    '手动登录',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.hintColor,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('login_server_field'),
                     controller: _serverCtrl,
@@ -186,12 +205,6 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
                           )
                         : const Text('登录'),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: _showPairDialog,
-                    icon: const Icon(Icons.qr_code, size: 18),
-                    label: const Text('配对码绑定'),
-                  ),
                 ],
               ),
             ),
@@ -199,6 +212,94 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
         ),
       ),
     );
+  }
+
+  /// 已存账号卡片行:username@server + 备注,点击 loginWith 直接登录。
+  List<Widget> _buildAccountCards(SavedLoginsState savedLogins, ThemeData theme) {
+    final busy = ref.watch(
+      authProvider.select((s) => s.isSwitching || s.isLoading),
+    );
+    return [
+      Text(
+        '点击账号直接登录',
+        style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+      ),
+      const SizedBox(height: 8),
+      for (var i = 0; i < savedLogins.logins.length; i++)
+        Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(
+              color: i == savedLogins.selectedIndex
+                  ? theme.colorScheme.primary
+                  : theme.dividerColor,
+            ),
+          ),
+          child: ListTile(
+            dense: true,
+            enabled: !busy,
+            leading: Icon(
+              Icons.account_circle,
+              size: 28,
+              color: theme.colorScheme.primary,
+            ),
+            title: Text(
+              '${savedLogins.logins[i].username}@${savedLogins.logins[i].server}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: (savedLogins.logins[i].label ?? '').isNotEmpty
+                ? Text(
+                    savedLogins.logins[i].label!,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11),
+                  )
+                : null,
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18),
+              tooltip: '删除',
+              onPressed: () => _confirmRemove(i, savedLogins.logins[i]),
+            ),
+            onTap: busy ? null : () => _loginWith(i),
+          ),
+        ),
+    ];
+  }
+
+  /// 用保存凭据直接登录(loginWith 内部同步 baseUrl → 登录 → 跳转)。
+  Future<void> _loginWith(int index) async {
+    setState(() => _error = null);
+    try {
+      await ref.read(savedLoginsProvider.notifier).loginWith(index);
+      if (mounted) context.go('/messages');
+    } catch (e) {
+      if (mounted) setState(() => _error = extractDioErrorMessage(e));
+    }
+  }
+
+  Future<void> _confirmRemove(int index, SavedLogin login) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确认删除 ${login.username} @ ${login.server}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(savedLoginsProvider.notifier).remove(index);
+    }
   }
 
   void _submit() async {
@@ -226,102 +327,4 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
     }
   }
 
-  /// 配对码手输对话框:输入配对码(ticket)+ 目标 Agent ID,
-  /// 走 core pairComplete RPC 绑定,成功提示绑定的 agent 名。
-  Future<void> _showPairDialog() async {
-    final pairCodeCtrl = TextEditingController();
-    final agentIdCtrl = TextEditingController();
-    String? error;
-    var submitting = false;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => StatefulBuilder(
-        builder: (dialogCtx, setDialogState) => AlertDialog(
-          title: const Text('配对码绑定'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: pairCodeCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '配对码',
-                    hintText: 'Agent 终端展示的配对码',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: agentIdCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Agent ID',
-                    hintText: '绑定到已有 Agent',
-                  ),
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    error!,
-                    key: const ValueKey('pair_error_line'),
-                    style: TextStyle(
-                      color: Theme.of(dialogCtx).colorScheme.error,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogCtx).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final pairCode = pairCodeCtrl.text.trim();
-                      final agentId = agentIdCtrl.text.trim();
-                      if (pairCode.isEmpty || agentId.isEmpty) {
-                        setDialogState(() => error = '请填写完整');
-                        return;
-                      }
-                      setDialogState(() {
-                        submitting = true;
-                        error = null;
-                      });
-                      try {
-                        final result = await ref
-                            .read(apiProvider)
-                            .pairComplete(pairCode, agentId: agentId);
-                        if (!dialogCtx.mounted) return;
-                        Navigator.of(dialogCtx).pop();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('配对成功:${result.agentName}')),
-                          );
-                        }
-                      } catch (e) {
-                        setDialogState(() {
-                          submitting = false;
-                          error = extractDioErrorMessage(e);
-                        });
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('绑定'),
-            ),
-          ],
-        ),
-      ),
-    );
-    pairCodeCtrl.dispose();
-    agentIdCtrl.dispose();
-  }
 }
