@@ -100,23 +100,23 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                   itemCount: filtered.length,
                   itemBuilder: (_, i) {
                     final c = filtered[i];
+                    final multi = c.agent?.isMultiSession ?? false;
                     return ConversationListItem(
                       convId: c.id,
                       name: c.displayName,
                       avatarUrl: c.displayAvatarUrl,
                       agentType: c.agent?.type ?? '',
-                      // 多 session agent 行带 session 数第二行(对齐 app)。
-                      sessionCount: (c.agent?.isMultiSession ?? false)
-                          ? c.sessionCount
-                          : -1,
-                      pendingCount: (c.agent?.isMultiSession ?? false)
-                          ? c.pendingCount
-                          : 0,
-                      subtitle: c.lastMessagePreview(
-                        currentUserId: currentUserId,
-                        isGroup: c.isGroup,
-                        senderDisplayName: c.lastMessageSenderName,
-                      ),
+                      // 多 session agent 行带 session 数第二行(对齐 app);
+                      // 不显示消息摘要(入口 DM 行无消息流,摘要无意义)。
+                      sessionCount: multi ? c.sessionCount : -1,
+                      pendingCount: multi ? c.pendingCount : 0,
+                      subtitle: multi
+                          ? ''
+                          : c.lastMessagePreview(
+                              currentUserId: currentUserId,
+                              isGroup: c.isGroup,
+                              senderDisplayName: c.lastMessageSenderName,
+                            ),
                       time: _formatTime(c.lastMessageAt),
                       unreadCount: c.unreadCount,
                       selected: c.id == selectedId,
