@@ -105,6 +105,13 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                       name: c.displayName,
                       avatarUrl: c.displayAvatarUrl,
                       agentType: c.agent?.type ?? '',
+                      // 多 session agent 行带 session 数第二行(对齐 app)。
+                      sessionCount: (c.agent?.isMultiSession ?? false)
+                          ? c.sessionCount
+                          : -1,
+                      pendingCount: (c.agent?.isMultiSession ?? false)
+                          ? c.pendingCount
+                          : 0,
                       subtitle: c.lastMessagePreview(
                         currentUserId: currentUserId,
                         isGroup: c.isGroup,
