@@ -12,7 +12,7 @@ import 'avatar.dart';
 
 /// agent 二级 session 列表面板(消息页/万灵页左栏共用)。
 ///
-/// 仿 app 逻辑:一级列表按 agent.type 路由(supportsMultiSession → 二级)。
+/// 仿 app 逻辑:一级列表按 agent 拓扑路由(注册表 multi_session → 二级)。
 /// 数据源 core agentSessionsProvider(agentId)(agent_session 会话不在
 /// conversationProvider 内,WS 实时刷新 last_message/unread)。
 ///

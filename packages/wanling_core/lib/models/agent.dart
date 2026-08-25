@@ -1,17 +1,20 @@
-/// Agent 类型分类(集中 type 字面量 + 维度判断)。
+/// Agent 类型分类(集中 type 字面量 + 老 server fallback 判断)。
 ///
 /// 两大类(铺垫):
 ///   - 对话型(Hermes 类): 只看最终文本回复,单会话。
-///   - 开发型(OpenCode 类): 多 session + 工具链 + 富 UI 卡片。
-///     Claude Code / Codex 等同类后期接入只改 [supportsMultiSession]。
+///   - 开发型(OpenCode/DSH 类): 多 session + 工具链 + 富 UI 卡片。
+///
+/// 拓扑判断的正式口径是 server type 注册表下发的 multi_session
+/// (Agent/AgentSummary.isMultiSession);本类 [supportsMultiSession] 仅作
+/// 老 server(无注册表/字段缺失)的 fallback,不再随新类型扩展。
 ///
 /// 存量 agent 的 type 可能为空串(老配对未上报 type),按对话型兼容。
 abstract final class AgentCategory {
   static const hermes = 'hermes';
   static const opencode = 'opencode';
 
-  /// 是否多 session(决定一级列表点击路由:走二级列表 vs 直进聊天窗)。
-  /// 当前仅 opencode 为 true;Claude Code 等同类加入时在此扩展。
+  /// 老 server fallback:仅识别 opencode 为多 session。
+  /// 新类型(dsh 等)接入必须靠注册表,勿在此扩展。
   static bool supportsMultiSession(String type) => type == opencode;
 }
 
@@ -54,6 +57,11 @@ class Agent {
   /// 空串=legacy 对话型;新配对走 hermes/opencode 上报。
   final String type;
 
+  /// 是否多 session 拓扑(server 按 type 注册表注入)。
+  /// 决定一级列表点击路由:二级 sessions 页 vs 直进聊天窗。
+  /// null=老 server 未下发(本地 fallback type=='opencode')。
+  final bool? multiSession;
+
   Agent({
     required this.id,
     required this.name,
@@ -62,6 +70,7 @@ class Agent {
     required this.status,
     this.secretKey,
     this.type = '',
+    this.multiSession,
   });
 
   factory Agent.fromJson(Map<String, dynamic> json) => Agent(
@@ -72,7 +81,12 @@ class Agent {
         status: AgentStatusX.fromString(json['status']),
         secretKey: json['secret_key'],
         type: json['type'] as String? ?? '',
+        multiSession: json['multi_session'] as bool?,
       );
+
+  /// 多 session 路由判定:优先 server 注册表注入值,
+  /// null(老 server 缺字段)时 fallback 旧口径 type=='opencode'。
+  bool get isMultiSession => multiSession ?? type == AgentCategory.opencode;
 
   /// copyWith 用 clearBio bool 区分 bio "不动"和"清空"。
   Agent copyWith({
@@ -117,6 +131,9 @@ class AgentSummary {
   /// 空串=legacy 对话型;新配对走 hermes/opencode 上报。
   final String type;
 
+  /// 是否多 session 拓扑(server 按 type 注册表注入)。null=老 server 缺字段。
+  final bool? multiSession;
+
   /// Agent 简介(可选)。仅二级页面渲染时透传,API JSON 默认不带。
   final String? bio;
 
@@ -126,6 +143,7 @@ class AgentSummary {
     this.avatarUrl,
     required this.status,
     this.type = '',
+    this.multiSession,
     this.bio,
   });
 
@@ -135,6 +153,7 @@ class AgentSummary {
         avatarUrl: json['avatar_url'] as String?,
         status: AgentStatusX.fromString(json['status'] as String?),
         type: json['type'] as String? ?? '',
+        multiSession: json['multi_session'] as bool?,
         bio: json['bio'] as String?,
       );
 
@@ -144,8 +163,12 @@ class AgentSummary {
         'avatar_url': avatarUrl,
         'status': status.value,
         'type': type,
+        if (multiSession != null) 'multi_session': multiSession,
         if (bio != null) 'bio': bio,
       };
+
+  /// 多 session 路由判定(与 [Agent.isMultiSession] 同口径)。
+  bool get isMultiSession => multiSession ?? type == AgentCategory.opencode;
 }
 
 /// 可选模型条目(对应 server model.ModelInfo,Task 3 GET /api/agents/:id/models)。

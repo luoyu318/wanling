@@ -87,17 +87,40 @@ void main() {
       expect(AgentCategory.hermes, 'hermes');
       expect(AgentCategory.opencode, 'opencode');
     });
+  });
 
-    test('supportsMultiSession: opencode 为 true', () {
-      expect(AgentCategory.supportsMultiSession(AgentCategory.opencode),
-          isTrue);
+  group('multiSession(注册表注入 + 老 server fallback)', () {
+    test('Agent: server 注入值优先', () {
+      final dsh = Agent.fromJson({
+        'id': 'a1', 'name': 'n', 'status': 'online', 'type': 'dsh',
+        'multi_session': true,
+      });
+      expect(dsh.isMultiSession, isTrue);
     });
 
-    test('supportsMultiSession: hermes / 空串(legacy) / 未知值为 false', () {
-      expect(AgentCategory.supportsMultiSession(AgentCategory.hermes),
-          isFalse);
-      expect(AgentCategory.supportsMultiSession(''), isFalse);
-      expect(AgentCategory.supportsMultiSession('unknown'), isFalse);
+    test('Agent: null(老 server 缺字段)时 fallback type==opencode', () {
+      final oc = Agent.fromJson({
+        'id': 'a2', 'name': 'n', 'status': 'online', 'type': 'opencode',
+      });
+      expect(oc.multiSession, isNull);
+      expect(oc.isMultiSession, isTrue);
+
+      final dshOld = Agent.fromJson({
+        'id': 'a3', 'name': 'n', 'status': 'online', 'type': 'dsh',
+      });
+      // 老 server 不认识 dsh:路由退单聊(可接受的降级,升级 server 即恢复)
+      expect(dshOld.isMultiSession, isFalse);
+    });
+
+    test('AgentSummary: 注入值与 fallback 同 Agent 口径', () {
+      final s = AgentSummary.fromJson({
+        'id': 'a4', 'name': 'n', 'status': 'offline', 'type': 'dsh',
+        'multi_session': true,
+      });
+      expect(s.isMultiSession, isTrue);
+      final legacy = AgentSummary.fromJson(
+          {'id': 'a5', 'name': 'n', 'status': 'offline', 'type': ''});
+      expect(legacy.isMultiSession, isFalse);
     });
   });
 }

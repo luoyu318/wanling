@@ -15,7 +15,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   /// 是否显示 Agent 类型标签。
   /// convForStatus?.isUserAgentDM ||
-  /// (isAgentSession && AgentCategory.supportsMultiSession(agentTypeForBadge))
+  /// (isAgentSession && multiSessionOfType(ref, agentTypeForBadge))
   final bool showBadge;
 
   /// Agent 类型(convForStatus?.agent?.type ?? agentTypeForBadge ?? '')

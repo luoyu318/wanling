@@ -1,6 +1,6 @@
 # Plugin 架构
 
-插件总目录。主库 plugin/ = 权威源,插件代码与产物统一在主仓库发布(镜像 repo 已废弃)。当前两个插件：hermes-plugin（Python，18 平台 IM 适配）+ opencode-plugin（TypeScript，OpenCode CLI/TUI 桥接）。
+插件总目录。主库 plugin/ = 权威源,插件代码与产物统一在主仓库发布(镜像 repo 已废弃)。当前插件:hermes-plugin（Python，18 平台 IM 适配）+ opencode-plugin（TypeScript，OpenCode CLI/TUI 桥接）+ dsh-wanling（TypeScript，DeepSeek Harness 桥,独立仓 /workspace/nodejs/dsh-wanling,基于 wanling-sdk npm 包,配对 type=dsh）。
 
 ## 子系统拓扑
 

@@ -8,7 +8,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
-import 'package:wanling_core/models/agent.dart' show AgentCategory, AgentStatus;
+import 'package:wanling_core/models/agent.dart' show AgentStatus;
+import 'package:wanling_core/providers/agent_types_provider.dart' show multiSessionOfType;
 import 'package:wanling_core/models/slash_command.dart';
 import 'package:wanling_core/models/ws_message.dart' show WSMessage;
 import 'package:wanling_core/providers/agent_modes_provider.dart'
@@ -1022,7 +1023,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       subtitle: subtitle,
       showBadge: (convForStatus?.isUserAgentDM ?? false) ||
           (isAgentSession &&
-              AgentCategory.supportsMultiSession(agentTypeForBadge ?? '')),
+              multiSessionOfType(
+                  ref, agentTypeForBadge ?? convForStatus?.agent?.type ?? '')),
       badgeType: convForStatus?.agent?.type ?? agentTypeForBadge ?? '',
       onDetailTap: () => context.push('/conversations/${widget.convId}/detail'),
     );

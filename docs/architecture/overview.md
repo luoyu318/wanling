@@ -7,8 +7,9 @@
 ```mermaid
 flowchart LR
     APP[Flutter APP<br/>3-tab IM] <-->|WebSocket+REST| SERVER[Go/Gin Server<br/>:18008]
-    SERVER <-->|WebSocket| PLUGIN[Plugin<br/>hermes / opencode]
-    DEV[外部开发者] -->|wanling-sdk + wanling-sdk| SDK[SDK 传输层]
+    DESKTOP[Flutter Desktop<br/>Linux 自用] <-->|REST+WS| SERVER
+    SERVER <-->|WebSocket| PLUGIN[Plugin<br/>hermes / opencode / dsh]
+    DEV[外部开发者] -->|wanling-sdk TS/Python| SDK[SDK 传输层]
     SDK -->|WS + REST| SERVER
     SERVER <-->|SQL| PG[(PostgreSQL<br/>wanling)]
     SERVER <-.->|presence + token store| REDIS[(Redis<br/>optional)]
@@ -25,9 +26,10 @@ flowchart LR
 ## 子系统边界
 
 - **APP**: Flutter,仅 Android。详见 [app.md](./app.md)
+- **Desktop**: Flutter Linux 桌面端(自用调试)。详见 [../desktop/README.md](../../desktop/README.md)
 - **Server**: Go/Gin,转发+管理。详见 [server.md](./server.md)
-- **Plugin**: hermes + opencode-plugin。详见 [plugin.md](./plugin.md)
-- **SDK**: TS + Python 传输层 SDK。详见 [sdk.md](./sdk.md)
+- **Plugin**: hermes + opencode-plugin + dsh(deepseek-harness 桥,独立仓 dsh-wanling)。详见 [plugin.md](./plugin.md)
+- **SDK**: TS + Python 传输层 SDK(npm `wanling-sdk` / PyPI `wanling-sdk`)。详见 [sdk.md](./sdk.md)
 
 ## 关键设计取舍
 
