@@ -80,7 +80,15 @@ class AccountSwitcher extends ConsumerWidget {
               ref.read(authProvider.select((s) => s.isAuthenticated));
           final notifier = ref.read(savedLoginsProvider.notifier);
           if (loggedIn) {
+            // 已登录:in-place 静默切换(switchTo 内部 silent logout → 切
+            // baseUrl → 保存凭据重登,全程 isSwitching 守卫 router 不跳登录页),
+            // 成功反馈对齐 app account_sidebar。
             await notifier.switchTo(i);
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已切换账号')),
+              );
+            }
           } else {
             await notifier.loginWith(i);
           }

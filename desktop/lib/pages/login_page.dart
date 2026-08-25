@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:wanling_core/models/saved_login.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import '../utils/dio_error.dart';
-import '../widgets/add_account_dialog.dart';
+import '../widgets/account_picker_dialog.dart';
 
 /// 桌面登录页:已存账号卡片列表(点击直接登录 + 删除) + 「添加服务器」弹框
 /// + 手动登录表单(服务器地址/用户名/密码/记住账号)。
@@ -101,19 +100,17 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
                       color: theme.hintColor,
                     ),
                   ),
-                  // 已存账号卡片列表(对齐 app select_account_page):
-                  // 点击直接用保存凭据登录,尾部删除按钮。
+                  // 切换服务器/账号入口(对齐 app 登录页):单独按钮,
+                  // 点击弹出账号选择列表(点卡片直登/删除/添加)。
                   if (savedLogins.logins.isNotEmpty) ...[
                     const SizedBox(height: 16),
-                    ..._buildAccountCards(savedLogins, theme),
+                    OutlinedButton.icon(
+                      key: const ValueKey('login_switch_account'),
+                      onPressed: () => showAccountPickerDialog(context, ref),
+                      icon: const Icon(Icons.swap_horiz, size: 18),
+                      label: const Text('切换服务器/账号'),
+                    ),
                   ],
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    key: const ValueKey('login_add_account'),
-                    onPressed: () => showAddAccountDialog(context, ref),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('添加服务器'),
-                  ),
                   const SizedBox(height: 20),
                   Divider(color: theme.dividerColor),
                   const SizedBox(height: 12),
@@ -212,94 +209,6 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
         ),
       ),
     );
-  }
-
-  /// 已存账号卡片行:username@server + 备注,点击 loginWith 直接登录。
-  List<Widget> _buildAccountCards(SavedLoginsState savedLogins, ThemeData theme) {
-    final busy = ref.watch(
-      authProvider.select((s) => s.isSwitching || s.isLoading),
-    );
-    return [
-      Text(
-        '点击账号直接登录',
-        style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
-      ),
-      const SizedBox(height: 8),
-      for (var i = 0; i < savedLogins.logins.length; i++)
-        Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(
-              color: i == savedLogins.selectedIndex
-                  ? theme.colorScheme.primary
-                  : theme.dividerColor,
-            ),
-          ),
-          child: ListTile(
-            dense: true,
-            enabled: !busy,
-            leading: Icon(
-              Icons.account_circle,
-              size: 28,
-              color: theme.colorScheme.primary,
-            ),
-            title: Text(
-              '${savedLogins.logins[i].username}@${savedLogins.logins[i].server}',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13),
-            ),
-            subtitle: (savedLogins.logins[i].label ?? '').isNotEmpty
-                ? Text(
-                    savedLogins.logins[i].label!,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11),
-                  )
-                : null,
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, size: 18),
-              tooltip: '删除',
-              onPressed: () => _confirmRemove(i, savedLogins.logins[i]),
-            ),
-            onTap: busy ? null : () => _loginWith(i),
-          ),
-        ),
-    ];
-  }
-
-  /// 用保存凭据直接登录(loginWith 内部同步 baseUrl → 登录 → 跳转)。
-  Future<void> _loginWith(int index) async {
-    setState(() => _error = null);
-    try {
-      await ref.read(savedLoginsProvider.notifier).loginWith(index);
-      if (mounted) context.go('/messages');
-    } catch (e) {
-      if (mounted) setState(() => _error = extractDioErrorMessage(e));
-    }
-  }
-
-  Future<void> _confirmRemove(int index, SavedLogin login) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确认删除 ${login.username} @ ${login.server}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await ref.read(savedLoginsProvider.notifier).remove(index);
-    }
   }
 
   void _submit() async {
