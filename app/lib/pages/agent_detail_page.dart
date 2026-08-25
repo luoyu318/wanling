@@ -280,11 +280,18 @@ class AgentDetailPage extends ConsumerWidget {
               // 类型清单来自 server 注册表(GET /api/agent-types):新类型
               // server 侧登记后自动出现,APP 零发版。老 server/加载失败
               // fallback 本地预置三类。
-              items: [
-                const AppDropdownItem(value: '', label: '普通'),
-                ..._typeOptions(ref).map(
-                  (t) => AppDropdownItem(value: t.type, label: t.label)),
-              ],
+              items: () {
+                final types = _typeOptions(ref);
+                return [
+                  const AppDropdownItem(value: '', label: '普通'),
+                  ...types.map(
+                      (t) => AppDropdownItem(value: t.type, label: t.label)),
+                  // 未注册类型兜底 item:防 value 匹配不到触发断言崩溃。
+                  if (agentType.isNotEmpty &&
+                      !types.any((t) => t.type == agentType))
+                    AppDropdownItem(value: agentType, label: agentType),
+                ];
+              }(),
               onChanged: (v) => setState(() => agentType = v ?? ''),
             ),
           ],

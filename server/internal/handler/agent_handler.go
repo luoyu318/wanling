@@ -181,7 +181,8 @@ type UpdateAgentRequest struct {
 	Name      string  `json:"name"       binding:"omitempty,max=128"`
 	AvatarURL string  `json:"avatar_url" binding:"omitempty,max=256"`
 	Bio       *string `json:"bio"        binding:"omitempty,max=200"`
-	Type      string  `json:"type"       binding:"omitempty,max=32"`
+	// Type 用指针区分「未传」(nil,不动)与「传空串」(清空回普通 agent)。
+	Type *string `json:"type" binding:"omitempty,max=32"`
 }
 
 func (h *AgentHandler) Update(c *gin.Context) {
@@ -222,13 +223,14 @@ func (h *AgentHandler) Update(c *gin.Context) {
 		Err(c, http.StatusNotFound, "not_found", "Agent 不存在")
 		return
 	}
-	// type 标签变更（opencode 多 session 功能）：非空且与当前不同时更新
-	if req.Type != "" && req.Type != string(existing.Type) {
-		if err := h.agentRepo.UpdateType(c.Request.Context(), id, req.Type); err != nil {
+	// type 标签变更（opencode 多 session 功能）：显式传入且与当前不同时更新
+	// (含空串:允许 dsh/opencode 切回普通 agent)。
+	if req.Type != nil && *req.Type != string(existing.Type) {
+		if err := h.agentRepo.UpdateType(c.Request.Context(), id, *req.Type); err != nil {
 			ErrMsg(c, http.StatusInternalServerError, "更新 type 失败")
 			return
 		}
-		agent.Type = model.AgentType(req.Type)
+		agent.Type = model.AgentType(*req.Type)
 	}
 
 	// 同步在线状态（与 List 一致）

@@ -106,11 +106,28 @@ func (h *ConversationHandler) List(c *gin.Context) {
 		}
 	}
 
-	// 批量聚合 opencode agent session 统计（未读数 / 待处理数 / session 数量）。
+	// 批量聚合多 session agent 的 session 统计（未读数 / 待处理数 / session 数量）。
 	// 入口行（dm_user_agent）与 agent_session 消息隔离，需聚合才能在一级列表体现。
+	// 拓扑过滤按 type 注册表 multi_session 判断(新类型零发版),与 APP 路由同口径。
+	var multiSessionTypes map[string]bool
 	agentIDs := make([]string, 0, len(items))
 	for _, it := range items {
-		if it.Agent != nil && it.Agent.Type == "opencode" {
+		if it.Agent == nil {
+			continue
+		}
+		if multiSessionTypes == nil {
+			registry, rerr := h.agentTypeRepo.ListAll(c.Request.Context())
+			if rerr != nil {
+				// 查询失败兜底:退老口径 opencode(fail-soft,与 APP fallback 同源)
+				multiSessionTypes = map[string]bool{"opencode": true}
+			} else {
+				multiSessionTypes = make(map[string]bool, len(registry))
+				for _, t := range registry {
+					multiSessionTypes[t.Type] = t.MultiSession
+				}
+			}
+		}
+		if multiSessionTypes[string(it.Agent.Type)] {
 			agentIDs = append(agentIDs, it.Agent.ID)
 		}
 	}
