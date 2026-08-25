@@ -99,8 +99,13 @@ class ChatView extends ConsumerWidget {
       children: [
         ChatAppBar(
           title: chat.convTitle ?? '会话',
+          convId: convId,
           gitBranch: chat.sessionMeta?.gitBranch,
           agentId: agentId,
+          // 单聊 agent(非多 session)不展示右侧详情入口:会话级详情面板
+          // 对 1-1 聊天无增量信息,多聊(agent_session)保留。
+          showDetail: chat.convType != 'dm_user_agent',
+          convType: chat.convType,
         ),
         Expanded(
           child: chat.isInitialLoading
@@ -207,7 +212,16 @@ class _MarkReadOnOpenState extends ConsumerState<_MarkReadOnOpen> {
   @override
   void initState() {
     super.initState();
+    // 对齐 app chat_page:标记激活会话,激活期间 incoming 消息不计未读
+    // (conversationProvider 内部抑制),从源头避免「正在看的会话亮徽章」。
+    ref.read(conversationProvider.notifier).setActiveConv(widget.convId);
     _mark();
+  }
+
+  @override
+  void dispose() {
+    ref.read(conversationProvider.notifier).setActiveConv(null);
+    super.dispose();
   }
 
   @override

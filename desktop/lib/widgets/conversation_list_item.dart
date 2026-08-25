@@ -84,10 +84,9 @@ class ConversationListItem extends StatelessWidget {
                         // agent type 实心小胶囊:样式对齐 app AgentBadge
                         // (文案/配色来自 server 注册表),实心底自带
                         // 对比度,选中绿底上仍清晰,无需反白。
-                        if (agentType.isNotEmpty) ...[
-                          const SizedBox(width: 5),
-                          AgentTypeBadge(type: agentType),
-                        ],
+                        // 空 type(legacy 普通 agent)也渲染,显示「智能体」。
+                        const SizedBox(width: 5),
+                        AgentTypeBadge(type: agentType),
                       ],
                     ),
                     const SizedBox(height: 2),

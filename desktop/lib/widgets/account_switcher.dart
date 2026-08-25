@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../utils/dio_error.dart';
+
+/// 菜单「添加服务器/账号」项的特殊 value(与账号索引区分)。
+const _addEntry = -1;
 
 /// 登录页顶部多账号切换器。
 ///
@@ -46,8 +50,28 @@ class AccountSwitcher extends ConsumerWidget {
                 '${saved.logins[i].username}@${saved.logins[i].server}',
               ),
             ),
+        // 添加新服务器/账号(对齐 app select_account_page「+ 添加服务器」):
+        // 登录页表单即添加流程,勾选记住账号后自动入 savedLogins。
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: _addEntry,
+          child: Row(
+            children: [
+              Icon(Icons.add, size: 18),
+              SizedBox(width: 6),
+              Text('添加服务器/账号'),
+            ],
+          ),
+        ),
       ],
       onSelected: (i) async {
+        if (i == _addEntry) {
+          // 先登出再进登录页(router redirect:已登录访问 /login 会被弹回),
+          // 用户填新服务器+凭据登录即完成添加。
+          await ref.read(authProvider.notifier).logout();
+          if (context.mounted) context.go('/login');
+          return;
+        }
         try {
           // 登录页处于登出态:selectedIndex 仍指上次账号,switchTo 对
           // i==selectedIndex 是 no-op(点了没反应),且未登录时多余 logout 会
