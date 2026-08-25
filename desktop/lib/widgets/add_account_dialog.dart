@@ -52,7 +52,8 @@ Future<void> showAddAccountDialog(
               TextField(
                 key: const ValueKey('add_username_field'),
                 controller: usernameCtrl,
-                autofillHints: const [AutofillHints.username],
+                // 不设 autofillHints:弹窗路由的 autofill 组随 pop 同帧拆除,
+                // 与退出动画竞态会触发 framework「dependents.isEmpty」断言红屏。
                 decoration: const InputDecoration(
                   labelText: '用户名',
                   border: OutlineInputBorder(),
@@ -132,7 +133,12 @@ Future<void> showAddAccountDialog(
       ),
     ),
   );
-  for (final c in [serverCtrl, usernameCtrl, passwordCtrl, labelCtrl]) {
-    c.dispose();
-  }
+  // controller 延迟销毁:showDialog 的 Future 在 pop 动画「开始」时即完成,
+  // 立即 dispose 会让退出动画期间的 TextField 撞已销毁 controller。
+  // 300ms 覆盖默认 150ms 退出动画,之后销毁不阻 GC 太久。
+  Future.delayed(const Duration(milliseconds: 300), () {
+    for (final c in [serverCtrl, usernameCtrl, passwordCtrl, labelCtrl]) {
+      c.dispose();
+    }
+  });
 }
