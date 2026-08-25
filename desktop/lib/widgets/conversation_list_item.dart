@@ -91,15 +91,18 @@ class ConversationListItem extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.55),
+                    // 摘要行:多 session agent 传空串(无消息流,摘要无意义),
+                    // 空串不渲染避免留白,第二行由 sessionCount 接管。
+                    if (subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.55),
+                        ),
                       ),
-                    ),
                     // 多 session agent 第二行:待处理红字优先,否则会话数
                     // (对齐 app messages_page 口径)。
                     if (sessionCount >= 0) ...[
