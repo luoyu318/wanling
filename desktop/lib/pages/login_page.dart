@@ -213,11 +213,13 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
 
   void _submit() async {
     setState(() => _error = null);
-    final server = _serverCtrl.text.trim();
     final username = _usernameCtrl.text.trim();
     final password = _passwordCtrl.text;
+    // 规范化 + 校验(防 http:host:port 形态进 provider 树致灰屏)。
+    final server = normalizeBaseUrl(_serverCtrl.text);
     if (server.isEmpty || username.isEmpty || password.isEmpty) {
-      setState(() => _error = '请填写完整');
+      setState(() => _error =
+          server.isEmpty ? '服务器地址无效' : '请填写完整');
       return;
     }
     // 同步 baseUrl(settingsProvider → apiProvider 重建 → auth.setApi)

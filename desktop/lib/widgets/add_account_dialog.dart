@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:wanling_core/providers/settings_provider.dart' show normalizeBaseUrl;
 
 /// 「添加服务器/账号」弹框(对齐 app select_account_page._showAccountDialog
 /// 的桌面简化版:备注/服务器/用户名/密码四字段,无头像标记编辑器)。
@@ -97,11 +98,12 @@ Future<void> showAddAccountDialog(
             onPressed: submitting
                 ? null
                 : () async {
-                    final s = serverCtrl.text.trim();
+                    final s = normalizeBaseUrl(serverCtrl.text.trim());
                     final u = usernameCtrl.text.trim();
                     final p = passwordCtrl.text;
                     if (s.isEmpty || u.isEmpty || p.isEmpty) {
-                      setDialogState(() => error = '请填写完整');
+                      setDialogState(() =>
+                          error = s.isEmpty ? '服务器地址无效' : '请填写完整');
                       return;
                     }
                     setDialogState(() {
