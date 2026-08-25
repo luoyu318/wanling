@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/models/approval.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/friendship.dart';
@@ -589,6 +590,17 @@ class ApiService {
   /// 进入 ChatPage 时调用，用于定位未读消息。
   Future<UnreadInfo> getUnreadInfo(String convId) async {    final res = await _dio.get('/api/conversations/$convId/unread');
     return UnreadInfo.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// 全量 agent type 注册表。类型下拉(建/改 agent)与徽标查表的数据源;
+  /// 新类型在 server 注册表登记后 APP 自动可见,零发版。
+  Future<List<AgentTypeInfo>> getAgentTypes() async {
+    final res = await _dio.get('/api/agent-types');
+    final body = res.data as Map<String, dynamic>;
+    final list = body['data'] as List? ?? const [];
+    return list
+        .map((e) => AgentTypeInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   /// 游标分页拉取历史消息。

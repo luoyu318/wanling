@@ -148,7 +148,7 @@ func newConvHandler(f *seedConvFixture) *ConversationHandler {
 	hubInstance := hub.NewHub(nil, arepo, f.pRepo, nil)
 	return NewConversationHandler(
 		f.db, f.convRepo, f.pRepo, frepo,
-		f.mRepo, f.dRepo, arepo, urepo, hubInstance, nil,
+		f.mRepo, f.dRepo, arepo, urepo, hubInstance, nil, repository.NewAgentTypeRepo(f.db),
 	)
 }
 
@@ -311,7 +311,7 @@ func TestConversationHandler_Create_NewAgentBody(t *testing.T) {
 	}
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -353,7 +353,7 @@ func TestConversationHandler_Create_DMUserUser_RequiresFriendship(t *testing.T) 
 	// 不建好友关系
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -393,7 +393,7 @@ func TestConversationHandler_Create_DMUserUser_FriendsSucceed(t *testing.T) {
 	}
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -426,7 +426,7 @@ func TestConversationHandler_Create_GroupUser(t *testing.T) {
 	m2, _ := urepo.Create(t.Context(), shortName(t, "gm2"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", creator.ID)
@@ -503,7 +503,7 @@ func TestConversationHandler_Create_GroupUserByUsernames(t *testing.T) {
 	}
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", creator.ID)
@@ -590,7 +590,7 @@ func TestConversationHandler_Create_GroupUser_RejectsAmbiguousMembers(t *testing
 	creator, _ := urepo.Create(t.Context(), shortName(t, "amb"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", creator.ID)
@@ -621,7 +621,7 @@ func TestConversationHandler_Create_GroupUser_RejectsDuplicateUsernames(t *testi
 	m1, _ := urepo.Create(t.Context(), shortName(t, "dupm"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", creator.ID)
@@ -657,7 +657,7 @@ func TestConversationHandler_Create_GroupUser_RejectsTooFewMembers(t *testing.T)
 	m1, _ := urepo.Create(t.Context(), shortName(t, "fewm"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", creator.ID)
@@ -686,7 +686,7 @@ func TestConversationHandler_Create_InvalidType(t *testing.T) {
 	user, _ := urepo.Create(t.Context(), shortName(t, "cit"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -723,7 +723,7 @@ func TestConversationHandler_Create_AgentSession(t *testing.T) {
 	fakeClient := newFakeAgentClient(t, hubInstance, agent.ID)
 	defer fakeClient.Close()
 
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, hubInstance, registry)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, hubInstance, registry, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -789,7 +789,7 @@ func TestConversationHandler_Create_AgentSession_RequiresOwner(t *testing.T) {
 	agent, _ := arepo.Create(t.Context(), owner.ID, shortName(t, "asag2"), "sk", "opencode")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", other.ID) // other 不是 owner
@@ -821,7 +821,7 @@ func TestConversationHandler_Create_AgentSession_RejectsBadMember(t *testing.T) 
 	user, _ := urepo.Create(t.Context(), shortName(t, "asbm"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -860,7 +860,7 @@ func TestConversationHandler_Create_AgentSession_404UnknownAgent(t *testing.T) {
 	user, _ := urepo.Create(t.Context(), shortName(t, "as404"), "$2a$10$hash")
 
 	drepo := repository.NewDeliveryRepo(db)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.POST("/api/conversations", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -942,7 +942,7 @@ func TestConversationHandler_Get_AgentSession_ReturnsAgentSummary(t *testing.T) 
 	}
 
 	hubInstance := hub.NewHub(nil, arepo, prepo, nil)
-	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, hubInstance, nil)
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, hubInstance, nil, repository.NewAgentTypeRepo(db))
 	r := gin.New()
 	r.GET("/api/conversations/:id", func(c *gin.Context) {
 		c.Set("userID", user.ID)
@@ -2091,7 +2091,7 @@ func TestUpdateTitleAsAgent_BroadcastsOnlyToUser(t *testing.T) {
 
 	h := NewConversationHandler(
 		f.db, f.convRepo, f.pRepo, nil, f.mRepo, f.dRepo,
-		repository.NewAgentRepo(f.db), repository.NewUserRepo(f.db), realHub, nil,
+		repository.NewAgentRepo(f.db), repository.NewUserRepo(f.db), realHub, nil, repository.NewAgentTypeRepo(f.db),
 	)
 	r := gin.New()
 	r.PATCH("/api/agents/me/conversations/:id/title", func(c *gin.Context) {
@@ -2208,7 +2208,7 @@ func TestUpdateSessionMetaAsAgent_BroadcastsOnlyToUser(t *testing.T) {
 
 	h := NewConversationHandler(
 		f.db, f.convRepo, f.pRepo, nil, f.mRepo, f.dRepo,
-		repository.NewAgentRepo(f.db), repository.NewUserRepo(f.db), realHub, nil,
+		repository.NewAgentRepo(f.db), repository.NewUserRepo(f.db), realHub, nil, repository.NewAgentTypeRepo(f.db),
 	)
 	r := gin.New()
 	r.PATCH("/api/agents/me/conversations/:id/session-meta", func(c *gin.Context) {

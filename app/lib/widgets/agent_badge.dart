@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:wanling_core/models/agent.dart' show AgentCategory;
+import 'package:wanling_core/models/agent_type_info.dart';
+import 'package:wanling_core/providers/agent_types_provider.dart';
 
 /// Agent 类型标签胶囊。
 ///
-/// 用于会话列表 / Agent 列表项的昵称右侧,按 agent.type 区分:
-/// - Hermes:「Hermes」金色系(浅金底 + 深棕字)
-/// - 开发型(opencode):「OpenCode」绿色系
+/// 文案/配色来自 server type 注册表(GET /api/agent-types,agentTypesProvider
+/// 查表),新类型 server 侧登记后自动正确展示,APP 零发版:
+/// - 注册表命中:label + badge 配色(#RRGGBB)按下发值渲染
+/// - 未命中/老 server/加载失败:label 显示 type 原文 + 紫色默认配色
 /// - legacy / 空 type:「智能体」紫色系
 ///
-/// 背景按 [elevated] 切两档(白底列表 vs 灰底 AppBar 保证对比度)。
-class AgentBadge extends StatelessWidget {
+/// 背景按 [elevated] 切两档(白底列表 vs 灰底 AppBar 保证对比度),
+/// 注册表带 badge_bg / badge_bg_elevated 两列对应。
+class AgentBadge extends ConsumerWidget {
   final String type;
 
   /// 是否在灰底(AppBar)上渲染。true 用更深背景保证对比度。
@@ -19,23 +23,35 @@ class AgentBadge extends StatelessWidget {
   const AgentBadge({super.key, this.type = '', this.elevated = false});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 本地 fallback 仅兜老 server;server 注册表值优先(可覆盖 label/配色)。
+    final registered = {
+      for (final t in AgentTypeInfo.fallbackTypes) t.type: t,
+      for (final t in ref.watch(agentTypesProvider).valueOrNull ??
+          const <AgentTypeInfo>[])
+        t.type: t,
+    };
+    final info = registered[type];
+
     final String label;
     final Color bg;
     final Color fg;
 
-    if (type == AgentCategory.hermes) {
-      label = 'Hermes';
-      bg = elevated ? const Color(0xFFFDE68A) : const Color(0xFFFEF3C7);
-      fg = const Color(0xFF78350F);
-    } else if (AgentCategory.supportsMultiSession(type)) {
-      label = 'OpenCode';
-      bg = elevated ? const Color(0xFFA7F3D0) : const Color(0xFFD1FAE5);
-      fg = const Color(0xFF047857);
-    } else {
+    if (info != null) {
+      label = info.label;
+      bg = _parseColor(elevated ? info.badgeBgElevated : info.badgeBg,
+          _defaultBgFor(elevated));
+      fg = _parseColor(info.badgeFg, _defaultFg);
+    } else if (type.isEmpty) {
+      // legacy 普通 agent(空串):「智能体」紫色系
       label = '智能体';
-      bg = elevated ? const Color(0xFFDDD6FE) : const Color(0xFFEDE9FE);
-      fg = const Color(0xFF6D28D9);
+      bg = _defaultBgFor(elevated);
+      fg = _defaultFg;
+    } else {
+      // 未注册新类型:显示 type 原文 + 默认配色(登记前过渡态)。
+      label = type;
+      bg = _defaultBgFor(elevated);
+      fg = _defaultFg;
     }
 
     return Container(
@@ -54,5 +70,17 @@ class AgentBadge extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static const _defaultBg = Color(0xFFEDE9FE);
+  static const _defaultBgElevated = Color(0xFFDDD6FE);
+  static const _defaultFg = Color(0xFF6D28D9);
+
+  static Color _defaultBgFor(bool elevated) =>
+      elevated ? _defaultBgElevated : _defaultBg;
+
+  static Color _parseColor(String hex, Color fallback) {
+    final v = int.tryParse(hex.replaceFirst('#', ''), radix: 16);
+    return v == null ? fallback : Color(0xFF000000 | v);
   }
 }

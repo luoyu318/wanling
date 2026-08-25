@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
@@ -29,10 +30,53 @@ type AgentHandler struct {
 	// presetRegistry 缓存 plugin 上报的预设清单,Presets 端点读取,
 	// AGENT_PRESETS WS 事件经 message.Processor 写入(第五成员)。
 	presetRegistry *agent.PresetRegistry
+	// agentTypeRepo agent type 注册表:List/Get/Update 响应按 type 填充
+	// multi_session(拓扑属性);GET /api/agent-types 数据源。
+	agentTypeRepo *repository.AgentTypeRepo
 }
 
-func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry, modeReg *agent.ModeRegistry, presetReg *agent.PresetRegistry) *AgentHandler {
-	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg, modeRegistry: modeReg, presetRegistry: presetReg}
+func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry, modeReg *agent.ModeRegistry, presetReg *agent.PresetRegistry, agentTypeRepo *repository.AgentTypeRepo) *AgentHandler {
+	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg, modeRegistry: modeReg, presetRegistry: presetReg, agentTypeRepo: agentTypeRepo}
+}
+
+// multiSessionFor 按 type 查注册表。未注册类型(含空串 legacy)兜底 false;
+// 查库失败也兜底 false(fail-soft:该字段仅影响路由展示,错值代价低于 500)。
+func (h *AgentHandler) multiSessionFor(ctx context.Context, agentType string) bool {
+	info, err := h.agentTypeRepo.GetByType(ctx, agentType)
+	if err != nil || info == nil {
+		return false
+	}
+	return info.MultiSession
+}
+
+// fillMultiSession 批量填充(List 场景;一次 ListAll 避免 N+1)。
+func (h *AgentHandler) fillMultiSession(ctx context.Context, agents []model.Agent) {
+	if len(agents) == 0 {
+		return
+	}
+	types, err := h.agentTypeRepo.ListAll(ctx)
+	if err != nil {
+		return
+	}
+	byType := make(map[string]bool, len(types))
+	for _, t := range types {
+		byType[t.Type] = t.MultiSession
+	}
+	for i := range agents {
+		ms := byType[string(agents[i].Type)]
+		agents[i].MultiSession = &ms
+	}
+}
+
+// ListAgentTypes GET /api/agent-types:全量类型注册表。
+// APP 类型下拉(建/改 agent)与徽标查表的数据源;新类型注册后 APP 自动出现。
+func (h *AgentHandler) ListAgentTypes(c *gin.Context) {
+	types, err := h.agentTypeRepo.ListAll(c.Request.Context())
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "查询失败")
+		return
+	}
+	Ok(c, types)
 }
 
 func generateSecretKey() (string, error) {
@@ -93,6 +137,10 @@ func (h *AgentHandler) Create(c *gin.Context) {
 
 	// secret_key 仅创建时一次性返回（GitHub PAT 模式），后续 List/Get/Update 不返。
 	// model.Agent.SecretKey 已改 json:"-"，这里手动拼字段塞回响应。
+	var multiSession bool
+	if info, err := h.agentTypeRepo.GetByType(c.Request.Context(), string(agent.Type)); err == nil && info != nil {
+		multiSession = info.MultiSession
+	}
 	OkCreated(c, gin.H{
 		"id":              agent.ID,
 		"owner_id":        agent.OwnerID,
@@ -101,6 +149,7 @@ func (h *AgentHandler) Create(c *gin.Context) {
 		"bio":             agent.Bio,
 		"status":          agent.Status,
 		"type":            agent.Type,
+		"multi_session":   multiSession,
 		"created_at":      agent.CreatedAt,
 		"secret_key":      agent.SecretKey,
 		"default_conv_id": defaultConvID,
@@ -124,6 +173,7 @@ func (h *AgentHandler) List(c *gin.Context) {
 			agents[i].Status = model.AgentStatusOffline
 		}
 	}
+	h.fillMultiSession(c.Request.Context(), agents)
 	Ok(c, agents)
 }
 
@@ -187,6 +237,8 @@ func (h *AgentHandler) Update(c *gin.Context) {
 	} else {
 		agent.Status = model.AgentStatusOffline
 	}
+	ms := h.multiSessionFor(c.Request.Context(), string(agent.Type))
+	agent.MultiSession = &ms
 	Ok(c, agent)
 }
 

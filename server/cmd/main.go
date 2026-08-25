@@ -116,8 +116,9 @@ func main() {
 	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, agentRegistry, slashCatalogRegistry, capabilityRegistry, modeRegistry, presetRegistry)
 
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
-	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry)
-	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry)
+	agentTypeRepo := repository.NewAgentTypeRepo(db)
+	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo)
+	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
@@ -309,6 +310,9 @@ func main() {
 
 	userAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "user"))
 	{
+		// agent type 注册表:APP 类型下拉(建/改 agent)与徽标查表的数据源。
+		// 新类型注册表 INSERT 后 APP 自动出现,零发版。
+		userAuth.GET("/api/agent-types", agentHandler.ListAgentTypes)
 		userAuth.GET("/api/agents", agentHandler.List)
 		userAuth.POST("/api/agents", agentHandler.Create)
 		userAuth.PUT("/api/agents/:id", agentHandler.Update)

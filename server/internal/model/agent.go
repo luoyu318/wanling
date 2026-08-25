@@ -40,10 +40,13 @@ type Agent struct {
 	SecretKey string  `json:"-" db:"secret_key"`
 	// Status 不映射 DB 列(002 已删),由 handler 用 presence 实时算后赋值。
 	Status AgentStatus `json:"status" db:"-"`
-	// Type 是 agent 类型标签(hermes 对话型 / opencode 开发型 / 空串 legacy 对话型)。
-	// APP 据 type 分支点击路由:opencode → 二级列表页;其它 → 聊天窗。
-	Type      AgentType `json:"type,omitempty" db:"type"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	// Type 是 agent 类型标签(hermes 对话型 / opencode、dsh 开发型 / 空串 legacy 对话型)。
+	Type AgentType `json:"type,omitempty" db:"type"`
+	// MultiSession 是否多 session 拓扑(handler 按 type 查注册表填充,非 DB 列)。
+	// APP 一级列表点击路由依据:true → 二级 sessions 页;false/nil → 直进聊天窗。
+	// nil 兼容旧 server(字段缺失,APP 侧 fallback type=='opencode')。
+	MultiSession *bool     `json:"multi_session,omitempty" db:"-"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 }
 
 // AgentSummary 是 Agent 的展示型子集，用于 IM 列表等只需要展示信息的场景，
@@ -54,8 +57,10 @@ type AgentSummary struct {
 	AvatarURL string  `json:"avatar_url" db:"avatar_url"`
 	Bio       *string `json:"bio" db:"bio"`
 	// Type 从 Agent 透传(应用层填充,非 DB 列)。供 IM 列表渲染/路由。
-	Type      AgentType `json:"type,omitempty" db:"-"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	Type AgentType `json:"type,omitempty" db:"-"`
+	// MultiSession 从 Agent 透传(应用层按注册表填充,非 DB 列)。
+	MultiSession *bool     `json:"multi_session,omitempty" db:"-"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 	// Status 在线状态(应用层用 hub.GetClient 实时算后赋值,非 DB 列)。
 	Status AgentStatus `json:"status" db:"-"`
 }

@@ -25,7 +25,7 @@ func TestAgentHandler_UpdateDelete_Ownership(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	// presence.New(nil) 安全：IsOnline 对 nil rdb 返回 false，不连 Redis。
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	// 两个 user：owner 与 attacker
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
@@ -109,7 +109,7 @@ func TestAgentCreate_ReturnsSecretKey(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -153,7 +153,7 @@ func TestAgentList_HidesSecretKey(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -211,7 +211,7 @@ func TestAgentHandler_Create_BuildsDefaultConv(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	crepo := repository.NewConversationRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, crepo, presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, crepo, presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -276,7 +276,7 @@ func TestAgentHandler_Models(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewAgentRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), reg, agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), reg, agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -382,7 +382,7 @@ func TestAgentHandler_SlashCatalog(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewSlashCatalogRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), reg, agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), reg, agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -491,7 +491,7 @@ func TestAgentHandler_RotateSecret(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -572,7 +572,7 @@ func TestAgentHandler_Modes(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewModeRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), reg, agent.NewPresetRegistry())
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), reg, agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -658,7 +658,7 @@ func TestAgentHandler_Presets(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewPresetRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), reg)
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), reg, repository.NewAgentTypeRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -729,4 +729,103 @@ func TestAgentHandler_Presets(t *testing.T) {
 		r.ServeHTTP(w, req)
 		AssertErr(t, w, http.StatusNotFound, "not_found")
 	})
+}
+
+// TestAgentHandler_ListAgentTypes 验证 type 注册表端点:
+//   - 200 + 预置三类(hermes/opencode/dsh)全量返回
+//   - dsh/opencode multi_session=true,hermes=false
+//   - 新 INSERT 的类型立即可见(零发版接入的 server 侧验证)
+func TestAgentHandler_ListAgentTypes(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	h := NewAgentHandler(repository.NewAgentRepo(db), repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+
+	r := gin.New()
+	r.GET("/api/agent-types", h.ListAgentTypes)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/agent-types", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	var res struct {
+		Data []model.AgentTypeInfo `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	byType := map[string]model.AgentTypeInfo{}
+	for _, ti := range res.Data {
+		byType[ti.Type] = ti
+	}
+	for _, want := range []struct {
+		typ string
+		ms  bool
+	}{
+		{"hermes", false}, {"opencode", true}, {"dsh", true},
+	} {
+		got, ok := byType[want.typ]
+		if !ok {
+			t.Fatalf("预置类型 %s 缺失, 实际 %v", want.typ, res.Data)
+		}
+		if got.MultiSession != want.ms {
+			t.Fatalf("%s multi_session = %v, want %v", want.typ, got.MultiSession, want.ms)
+		}
+		if got.Label == "" {
+			t.Fatalf("%s label 为空", want.typ)
+		}
+	}
+}
+
+// TestAgentHandler_List_FillsMultiSession 验证 agents List 注入 multi_session:
+//   - dsh 类型 agent → true;legacy 空串 → false;未注册类型 → false(兜底)
+func TestAgentHandler_List_FillsMultiSession(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	arepo := repository.NewAgentRepo(db)
+	urepo := repository.NewUserRepo(db)
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+
+	owner, err := urepo.Create(t.Context(), shortName(t, "own_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if _, err := arepo.Create(t.Context(), owner.ID, "dsh-agent", "sk-1", "dsh"); err != nil {
+		t.Fatalf("create dsh agent: %v", err)
+	}
+	if _, err := arepo.Create(t.Context(), owner.ID, "legacy-agent", "sk-2", ""); err != nil {
+		t.Fatalf("create legacy agent: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/api/agents", func(c *gin.Context) {
+		c.Set("userID", owner.ID)
+		c.Set("role", "user")
+		h.List(c)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/agents", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	var res struct {
+		Data []struct {
+			Type         string `json:"type"`
+			MultiSession *bool  `json:"multi_session"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(res.Data) != 2 {
+		t.Fatalf("agents len = %d, want 2", len(res.Data))
+	}
+	for _, a := range res.Data {
+		if a.MultiSession == nil {
+			t.Fatalf("agent type=%s multi_session 缺失", a.Type)
+		}
+		want := a.Type == "dsh"
+		if *a.MultiSession != want {
+			t.Fatalf("agent type=%s multi_session=%v, want %v", a.Type, *a.MultiSession, want)
+		}
+	}
 }

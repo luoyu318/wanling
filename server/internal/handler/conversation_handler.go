@@ -34,6 +34,8 @@ type ConversationHandler struct {
 	userRepo        *repository.UserRepo
 	hub             *hub.Hub
 	registry        *hub.RPCRegistry
+	// agentTypeRepo agent type 注册表:会话摘要 AgentSummary 填充 multi_session。
+	agentTypeRepo *repository.AgentTypeRepo
 }
 
 // NewConversationHandler 构造 ConversationHandler。
@@ -48,6 +50,7 @@ func NewConversationHandler(
 	userRepo *repository.UserRepo,
 	hub *hub.Hub,
 	registry *hub.RPCRegistry,
+	agentTypeRepo *repository.AgentTypeRepo,
 ) *ConversationHandler {
 	return &ConversationHandler{
 		db:              db,
@@ -60,6 +63,7 @@ func NewConversationHandler(
 		userRepo:        userRepo,
 		hub:             hub,
 		registry:        registry,
+		agentTypeRepo:  agentTypeRepo,
 	}
 }
 
@@ -225,12 +229,18 @@ func (h *ConversationHandler) buildDetail(ctx context.Context, convID, userID st
 					if online {
 						st = model.AgentStatusOnline
 					}
+					var multiSession *bool
+					if info, ierr := h.agentTypeRepo.GetByType(ctx, string(agent.Type)); ierr == nil && info != nil {
+						ms := info.MultiSession
+						multiSession = &ms
+					}
 					item.Agent = &model.AgentSummary{
-						ID:        agent.ID,
-						Name:      agent.Name,
-						AvatarURL: agent.AvatarURL,
-						Type:      agent.Type,
-						Status:    st,
+						ID:            agent.ID,
+						Name:          agent.Name,
+						AvatarURL:     agent.AvatarURL,
+						Type:          agent.Type,
+						MultiSession:  multiSession,
+						Status:        st,
 					}
 				}
 				break
