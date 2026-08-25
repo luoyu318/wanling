@@ -1,17 +1,17 @@
 # wanling_desktop
 
-A new Flutter project.
+万灵桌面端(Linux,debug 自用)。独立 Flutter 工程,复用 `packages/wanling_core`(模型/provider/API 层与 APP 同源)。
 
-## Getting Started
+## 运行
 
-This project is a starting point for a Flutter application.
+```bash
+cd desktop
+flutter run -d linux --debug   # 需 export PUB_HOSTED_URL/FLUTTER_STORAGE_BASE_URL(见根 CLAUDE.md)
+```
 
-A few resources to get you started if this is your first Flutter project:
+## 与 APP 的差异
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- 无 3-tab 壳:NavRail + 消息列表 + 会话窗 + 万灵页(agent sessions 面板)
+- 一级列表多 session agent(opencode/dsh 等)路由进二级 sessions 面板(判据同 APP:`multi_session` 注册表)
+- 徽标/类型下拉查 server type 注册表(GET /api/agent-types,fallback 本地预置)
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.

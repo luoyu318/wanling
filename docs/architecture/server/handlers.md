@@ -16,12 +16,12 @@ HTTP Handler 集合。
 
 ## agent_handler.go
 
-Agent CRUD。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（非空且与当前不同时调 `UpdateType` 落库，让 APP 编辑资料对话框可切换普通/OpenCode 类型）
+Agent CRUD + type 注册表。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（**type 为 `*string`:显式传空串=清空回普通 agent**,与当前不同时调 `UpdateType` 落库,让 APP 编辑资料对话框可切换类型）。响应（Create/List/Update）注入 **`multi_session`**（按 `agents.type` 查 `agent_type_registry`,未注册类型含 legacy 空串兜底 false）。**`ListAgentTypes`**（`GET /api/agent-types`,userAuth）全量下发注册表:APP 类型下拉(建/改 agent)与徽标查表数据源,新类型 INSERT 后 APP 零发版自动出现。
 
 ## conversation_handler.go（+ 5 个同包拆分文件）
 
 ConversationHandler 是同包多文件结构（Go 同包共享 receiver），物理分布：
-- `conversation_handler.go` — struct + constructor + List + Get + buildDetail
+- `conversation_handler.go` — struct + constructor + List + Get + buildDetail。**List 的 session 聚合**(BatchLoadAgentSessionStats)按 type 注册表 `multi_session` 过滤 agent(新类型零发版;查表失败 fallback 老口径 opencode)
 - `conversation_create.go` — Create + CreateConversationReq + resolveMemberUsernames
 - `conversation_agent.go` — CreateAsAgent + ListAsAgent + UpdateTitleAsAgent + UpdateSessionMetaAsAgent + ListAgentSessions
 - `conversation_message.go` — Messages 分页

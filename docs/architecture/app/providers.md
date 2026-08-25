@@ -10,6 +10,10 @@
 
 Agent CRUD
 
+## agentTypesProvider
+
+agent type 注册表(GET `/api/agent-types`,wanling_core)。FutureProvider 非 autoDispose,登录周期内缓存;失败返空列表(调用方 fallback `AgentTypeInfo.fallbackTypes` 本地预置)。类型下拉(建/改 agent)与徽标查表数据源,新类型 server INSERT 后零发版可见。`multiSessionOfType(ref, type)` helper 供只有 type 字符串的场景查拓扑(chat AppBar 徽标显隐)。
+
 ## conversationProvider
 
 IM 列表(订阅 MESSAGE_CREATE 本地更新预览 + 未读计数 + 置顶/隐藏状态;订阅 MESSAGE_DELETE 直接 `load()` 重拉列表,让撤回 / 隐藏即时反映到摘要和未读徽章;订阅 CONVERSATION_UPDATE 本地更新 title/avatarUrl,**空串字段不覆盖**(server Update handler 把未提供字段填空串广播,client ?? 只在 null 时 fallback 不够,空串也 fallback 才不会清空本地群名导致 displayName 走 participants.first 显示「随机成员名」);订阅 **MESSAGE_READ**(多端已读同步,server 推 → `setUnreadCountLocally` 立即刷徽章,不等下拉刷新))。`createGroup({memberUsernames, title, avatarUrl})` 方法(原 memberIds 已废弃,改用 username 因 spec §4.2 client 不持 user_id + server `resolveMemberUsernames` 反查)。`setActiveConv(convId)` 方法:发 WS op=3 上报正在看的会话,同时 `FlutterBackgroundService().invoke('setActiveConv', ...)` 同步到 bg-service isolate(让后台通知逻辑也感知,避免正在看的会话误弹通知)。`load()` 拉列表采用 **cache-first + state.isEmpty 守卫**:首次加载(state=[])用 cached 立即显示,后续下拉刷新(state 非空)跳过 cached 直接走 API,**防止 `_persistList` fire-and-forget 滞后写入时旧 cached 覆盖刚更新的 state**(leaveConversation / hide / removeByAgentId 后立即下拉刷新会闪现已移除会话)。`_mergeConversation` 用 `fresh.unreadCount`(原 max(local, fresh) 在跨设备同步场景下反向 — A 设备已读 server unread=0,B 设备 local 仍是旧 N,max 保留旧值;dispatch 在 commit 后,server 的 IncrUnread 已在 fresh,本地 +1 是冗余 optimistic,直接用 fresh 永远对)。`load()` 拉列表成功后调 `syncAgentAvatarsToBgService`,把每个 agent 的 avatar_url 经 IPC 同步到 isolate(**仅作 bg-service 老 server 兜底用**,主路径走 dispatch payload 的 `sender_avatar_url`,见 `background_chat_service.dart`)。

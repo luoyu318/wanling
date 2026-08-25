@@ -77,6 +77,16 @@ ErrCode(c, status, code, msg)
 
 **状态码**: 200(重置成功，旧 secret_key 立即失效) / 403(非 owner) / 404(agent 不存在)。已签发的 agent JWT 不受影响（自然过期前仍有效，密钥仅用于换新 token）。
 
+## GET /api/agent-types
+
+获取 agent type 注册表全量（migration 011 表,server 统一下发类型属性）。APP 类型下拉（建/改 agent）与徽标查表数据源;新类型 INSERT 一行后 APP 零发版自动出现。
+
+**响应**: `{"ok":true,"data":[{"type":"dsh","multi_session":true,"label":"DSH","badge_bg":"#E0F2FE","badge_bg_elevated":"#BAE6FD","badge_fg":"#075985"},...]}`
+
+**字段语义**: `multi_session` 拓扑属性(APP 一级列表路由:二级 sessions 页 vs 直进聊天窗);`label`/`badge_*` 展示属性,badge 色为 `#RRGGBB`,空串=client 用默认配色。预置 hermes/opencode/dsh 三行。
+
+**Client fallback**: 老 server 无此端点(404)时,client 用本地预置清单兜底(label=type 原文 + 默认紫配色为未注册类型的最终兜底)。agents 相关响应(`GET /api/agents` 等)同步注入 `multi_session` 字段,client 缺字段时 fallback `type=='opencode'` 旧口径。
+
 ## GET /api/agents/:id/models
 
 获取某 agent 的可选模型清单（plugin 上报，server 内存缓存）。供 APP 切换 model（`SessionMetaStrip` 弹底部 sheet 选择）。

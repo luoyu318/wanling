@@ -26,7 +26,7 @@ flowchart TB
     HANDLERS[handler/<br/>14 个 HTTP handler]
     HUB[hub<br/>WS 连接 + dispatch]
     PROC[message/processor<br/>事务 + dispatch]
-    REPO[repository/<br/>10 个 repo]
+    REPO[repository/<br/>11 个 repo]
     SVC[approval + pair<br/>状态机 + cleanup]
     STORAGE[storage + imaging]
     
