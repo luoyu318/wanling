@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:wanling_core/models/saved_login.dart';
+import 'package:wanling_core/providers/settings_provider.dart' show normalizeBaseUrl;
 import 'package:wanling_core/utils/secure_storage.dart';
 import 'auth_provider.dart';
 import 'settings_provider.dart';
@@ -81,8 +82,11 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
     }
     try {
       final plaintext = await _storage.decrypt(ciphertext);
+      // 逐条规范化 server(修复存量误输,如 http:host:port);无效条目剔除。
       final list = (jsonDecode(plaintext) as List)
           .map((e) => SavedLogin.fromJson(e as Map<String, dynamic>))
+          .where((l) => normalizeBaseUrl(l.server).isNotEmpty)
+          .map((l) => l.copyWith(server: normalizeBaseUrl(l.server)))
           .toList();
       final index = _prefs.getInt(_kLastLoginIndexKey) ?? -1;
       // 防御:存的 index 可能因数据变化失效
@@ -101,6 +105,8 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
   }
 
   /// 登录成功后调:存在同 server+username 则更新密码(+label/mark),否则新增;并选中。
+  /// server 先经 [normalizeBaseUrl] 规范化(防 http:host:port 形态坏数据进
+  /// 列表,后续 select → setBaseUrl → apiProvider 构造抛异常灰屏)。
   Future<void> saveOrAdd(
     String server,
     String username,
@@ -109,6 +115,11 @@ class SavedLoginsNotifier extends StateNotifier<SavedLoginsState> {
     AccountMark? mark,
     bool select = true,
   }) async {
+    final fixed = normalizeBaseUrl(server);
+    if (fixed.isEmpty) {
+      throw ArgumentError.value(server, 'server', '不是有效的服务器地址');
+    }
+    server = fixed;
     final idx = state.logins.indexWhere((l) => l.matches(server, username));
     if (idx >= 0) {
       final updated = List<SavedLogin>.from(state.logins);

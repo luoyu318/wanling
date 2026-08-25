@@ -15,8 +15,9 @@ class ConversationListItem extends StatelessWidget {
   final String? avatarUrl;
   final int unreadCount;
   final bool selected;
-  /// agent 类型标签(如 opencode / hermes),空串不渲染。
-  final String agentType;
+  /// agent 类型标签:非 null 渲染徽标(空串=「智能体」),null=不渲染
+  /// (好友/群等非 agent 会话)。仅 dm_user_agent 会话传值。
+  final String? agentType;
   /// 多 session agent 的 session 数(一级列表行摘要下方第二行,
   /// 对齐 app messages_page「N 个会话/待处理」);<0 不渲染。
   final int sessionCount;
@@ -33,7 +34,7 @@ class ConversationListItem extends StatelessWidget {
     this.avatarUrl,
     this.unreadCount = 0,
     this.selected = false,
-    this.agentType = '',
+    this.agentType,
     this.sessionCount = -1,
     this.pendingCount = 0,
     this.onTap,
@@ -82,11 +83,11 @@ class ConversationListItem extends StatelessWidget {
                           ),
                         ),
                         // agent type 实心小胶囊:样式对齐 app AgentBadge
-                        // (文案/配色来自 server 注册表),实心底自带
-                        // 对比度,选中绿底上仍清晰,无需反白。
-                        if (agentType.isNotEmpty) ...[
+                        // (文案/配色来自 server 注册表)。仅 agent 会话渲染
+                        // (agentType 非 null);空 type 显示「智能体」。
+                        if (agentType != null) ...[
                           const SizedBox(width: 5),
-                          AgentTypeBadge(type: agentType),
+                          AgentTypeBadge(type: agentType!),
                         ],
                       ],
                     ),

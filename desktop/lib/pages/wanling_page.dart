@@ -180,10 +180,9 @@ class _AgentCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (agent.type.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        AgentTypeBadge(type: agent.type),
-                      ],
+                      // 空 type(legacy 普通 agent)也渲染徽标,显示「智能体」。
+                      const SizedBox(width: 6),
+                      AgentTypeBadge(type: agent.type),
                     ],
                   ),
                   const SizedBox(height: 3),

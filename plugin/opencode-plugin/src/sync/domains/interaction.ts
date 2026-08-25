@@ -13,29 +13,23 @@ import type { SessionStore } from "../session_store.js"
 import type { SessionState } from "../types.js"
 import type { MessageRouter } from "../messaging.js"
 import type { ToolCardManager } from "./tool_card.js"
-import { getAggregateCard, permissionCardElement } from "./aggregate_bridge.js"
+import { getAggregateCard, permissionCardElement, questionCardElement } from "./aggregate_bridge.js"
 import { saveCard, getCard, deleteCard, getAllCards, type CardEntry } from "../card_store.js"
-import type { AskResult, ApprovalOption } from "wanling-sdk"
 
 // InteractionCards:permission / question 交互卡片领域模块。
 // 职责:交互卡片的正向流(OpenCode 问 → 发 card 到 APP) + 反向流(TUI 答 → PATCH
 // 原 card 切终态) + 启动时孤儿卡片清理(plugin 重启后兜底 PATCH 为 expired)。
 //
-// Task 8 迁移 SDK 后的双轨:
-// - question(主 session 聚合模式)→ SDK Approvals.ask(client.approvals):server 状态机
-//   审批卡(独立 card 消息,APP 审批卡 renderer 渲染单选/多选/answers 终态),
-//   resolve 后调 opencode.replyQuestion/rejectQuestion 回填 OC。卡片状态翻转
-//   (pending → answered/approved/终态)由 server Decide 双写 content 承担,不再
-//   嵌入聚合卡元素。
-// - permission → 保留自管(聚合模式嵌入聚合卡 permission_card 元素 + card_store 记账;
-//   非聚合模式独立卡)。工具审批迁移到 SDK approvals 在 question 验证稳定后单独小步做。
-// - 反向流(TUI 答 → SSE 回声)保留:question 回声经 pendingQuestions 登记表去重
-//   (TUI 先答 → ask 决议后不再回填 OC);permission 回声经 card_store 定位更新元素/
-//   独立卡(TUI 双端场景,isNotFound 去重在 engine 侧)。
-// - 子 session 恒走独立卡(question/permission 均不聚合,聚合卡上无法表达 child 层级)。
-//   子 session 的 question 走独立 question_card + card_store(engine 反向流消费)。
-// 开关 false 时完全回退旧逻辑(独立卡)。
-// 不持有可变状态(card_store 是模块级单例,跨实例共享;pendingQuestions 进程内登记)。
+// question/permission 统一自管双轨(对齐 SDK 迁移前的原始交互逻辑):
+// - 聚合模式(主 session)→ 嵌入聚合卡元素(permission_card/question_card element,
+//   pending 交互 → 整卡翻转 silent=false 响铃),card_store 存聚合卡 msgId +
+//   element_id + sessionId(供反向流定位);APP 端抽屉渲染器点开答题/审批,
+//   reply 消息经 engine 反向流 PATCH 元素终态。
+// - 非聚合模式/子 session → 独立卡(router.sendCard)。子 session 恒走独立卡
+//   (聚合卡上无法表达 child 层级),带 sub_session_id 供 APP 挂载到对应 task 卡。
+// - 反向流(TUI 答 → SSE 回声)经 card_store 定位更新元素/独立卡(TUI 双端场景,
+//   isNotFound 去重在 engine 侧)。
+// 不持有可变状态(card_store 是模块级单例,跨实例共享)。
 // 错误经注入的 emitter(Streamer extends EventEmitter,传 this 作 emitter)上抛。
 export class InteractionCards {
   private readonly store: SessionStore
@@ -46,9 +40,6 @@ export class InteractionCards {
   private readonly emitter: EventEmitter
   // 聚合卡开关:false 回退旧逐条发送(独立 permission/question 卡)。默认 true。
   private readonly aggregateCardEnabled: boolean
-  // 进行中的 question ask 登记表:oc_request_id → { settled }(TUI 先答回声置位,
-  // ask 决议后检查跳过回填,防 OC question 被二次回复)。ask 决议/超时后条目清理。
-  private readonly pendingQuestions = new Map<string, { settled: boolean }>()
 
   constructor(deps: {
     store: SessionStore
@@ -126,10 +117,9 @@ export class InteractionCards {
     }
   }
 
-  // question 正向流:
-  // - 主 session(聚合模式)→ SDK approvals.ask:OC questions 映射审批卡 options
-  //   (多问题拍平,option id = 标签;多问题时带 header 前缀防撞),resolve 后回填 OC。
-  //   TUI 先答回声(SSE question.replied)会置位 settled,决议后跳过回填(双向去重)。
+  // question 正向流(与 permission 同款自管双轨):
+  // - 聚合模式(主 session)→ 嵌入聚合卡 question_card 元素(pending 交互 →
+  //   整卡翻转 silent=false 响铃),card_store 记账 element_id 供反向流定位。
   // - 子 session / 开关关闭 → 独立 question_card + card_store(engine 反向流消费)。
   async onQuestionAsked(payload: QuestionAskedPayload): Promise<void> {
     try {
@@ -137,7 +127,27 @@ export class InteractionCards {
       if (!state) return
 
       if (this.useAggregate(state)) {
-        await this.askViaApprovals(payload, state)
+        const element = questionCardElement({
+          oc_request_id: payload.id,
+          questions: payload.questions,
+          status: "pending",
+        }, this.nextSeq(state))
+        // pending 交互元素出现 → PATCH 整卡翻转 silent=false 响铃(需要用户介入)
+        await getAggregateCard(state, this.wanling).appendElement(element, { silent: false })
+        const msgId = getAggregateCard(state, this.wanling).cardMessageId
+        if (!msgId) {
+          throw new Error(`question 元素追加后聚合卡 msgId 缺失: request=${payload.id}`)
+        }
+        await saveCard(payload.id, {
+          msgId,
+          convId: state.convId,
+          type: "question",
+          directory: payload.directory,
+          data: { questions: payload.questions },
+          elementId: element.element_id,
+          sessionId: payload.sessionID,
+        })
+        this.toolCard.flushPending(state)
         return
       }
 
@@ -154,81 +164,6 @@ export class InteractionCards {
       this.toolCard.flushPending(state)
     } catch (err) {
       this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
-    }
-  }
-
-  // SDK approvals.ask 接线(主 session question):
-  // 1. OC questions → 审批卡 options 映射(拍平 + 归属登记,答案回填时按 qIdx 分组)
-  // 2. ask 决议 → approved.answers → replyQuestion(按 qIdx 分组);denied/expired →
-  //    rejectQuestion(OC 侧可能已超时,404 静默跳过)
-  // 3. pendingQuestions.settled(TUI 先答)→ 跳过回填
-  // 审批卡创建即 REST 发卡(不等决议),toolCard.flushPending 紧随(审批卡→工具卡顺序)。
-  private async askViaApprovals(payload: QuestionAskedPayload, state: SessionState): Promise<void> {
-    const questions = payload.questions
-    if (questions.length === 0) return
-    // 多问题拍平:option id 全卡唯一(单问题直接用 label,多问题带 header 前缀防撞,
-    // 仍撞车时追加 _2/_3 序号兜底,防 server 因 id 重复 400 导致整次 ask 抛错丢问题),
-    // optionOwners 登记 id → qIdx 供答案分组;multiSelect 见下方发卡处说明。
-    const optionOwners = new Map<string, number>()
-    const options: ApprovalOption[] = []
-    for (let qIdx = 0; qIdx < questions.length; qIdx++) {
-      const q = questions[qIdx]
-      for (const o of q.options) {
-        const base = questions.length > 1 && qIdx > 0 ? `${q.header || `Q${qIdx + 1}`}:${o.label}` : o.label
-        let id = base
-        let n = 2
-        while (optionOwners.has(id)) id = `${base}_${n++}`
-        optionOwners.set(id, qIdx)
-        options.push({ id, label: o.description ? `${o.label} — ${o.description}` : o.label })
-      }
-    }
-    const title = questions.length === 1
-      ? (questions[0].header || questions[0].question || "Agent 提问")
-      : `Agent 提问(${questions.length} 个问题)`
-    const entry = { settled: false }
-    this.pendingQuestions.set(payload.id, entry)
-    // 发卡(REST)即返回 pending 卡;pendingToolCard 刷新不等决议(工具卡不被答题阻塞)
-    // multiSelect:多问题恒 true(server 单选限答 1 项,多条单选问题拍平后
-    // 若仍单选只能答一问其余空数组,放开多选保全部可答);单问题按题意
-    // (仅 multiple 题允许多选)。
-    const askP = this.wanling.approvals.ask(state.convId, {
-      cardType: "question",
-      title,
-      options,
-      multiSelect: questions.length > 1 || questions.some((q) => q.multiple),
-      sessionKey: payload.id,
-    })
-    this.toolCard.flushPending(state)
-    let result: AskResult
-    try {
-      result = await askP
-    } catch (err) {
-      this.pendingQuestions.delete(payload.id)
-      throw err instanceof Error ? err : new Error(String(err))
-    }
-    this.pendingQuestions.delete(payload.id)
-    // TUI 双端:TUI 已答(回声先到置位)→ OC question 已被 TUI 解决,不再回填
-    if (entry.settled) {
-      logger.info(`[interaction] question ${payload.id.slice(0, 16)} 已由 TUI 答复,跳过回填`)
-      return
-    }
-    try {
-      if (result.state === "approved") {
-        // answers(option id 列表)按归属分组回填;未覆盖的问题给空数组(该问题未答)
-        const answers = Array.from({ length: questions.length }, (_, qIdx) =>
-          (result.answers ?? []).filter((a) => optionOwners.get(a) === qIdx))
-        await this.opencode.replyQuestion(payload.id, answers, payload.directory)
-      } else {
-        // denied(用户点拒绝)/ expired(超时):rejectQuestion;OC 侧可能已自行
-        // 超时清理,404 类错误静默跳过(与 engine 反向流同款 isNotFound 口径)
-        await this.opencode.rejectQuestion(payload.id, payload.directory)
-      }
-    } catch (err) {
-      if (isNotFound(err)) {
-        logger.info(`[interaction] question ${payload.id.slice(0, 16)} 已处理(404),跳过`)
-        return
-      }
-      throw err instanceof Error ? err : new Error(String(err))
     }
   }
 
@@ -266,16 +201,6 @@ export class InteractionCards {
 
   async onQuestionReplied(payload: QuestionRepliedPayload): Promise<void> {
     try {
-      // SDK approvals 路径的 question:无 card_store 记账,登记表置位(TUI 先答 →
-      // ask 决议后跳过回填);APP 先答的回声(我们自己的 replyQuestion 触发)时
-      // 登记条目已随决议清理,此处自然跳过 —— 双向回声去重。
-      const pending = this.pendingQuestions.get(payload.requestID)
-      if (pending) {
-        pending.settled = true
-        logger.info(`[interaction] question ${payload.requestID.slice(0, 16)} 由 TUI 答复,标记 ask 不再回填`)
-        return
-      }
-
       const entry = await getCard(payload.requestID)
       if (!entry) return
 
@@ -304,13 +229,6 @@ export class InteractionCards {
 
   async onQuestionRejected(payload: QuestionRejectedPayload): Promise<void> {
     try {
-      const pending = this.pendingQuestions.get(payload.requestID)
-      if (pending) {
-        pending.settled = true
-        logger.info(`[interaction] question ${payload.requestID.slice(0, 16)} 由 TUI 拒绝,标记 ask 不再回填`)
-        return
-      }
-
       const entry = await getCard(payload.requestID)
       if (!entry) return
 
@@ -439,26 +357,11 @@ export class InteractionCards {
   }
 
   // 聚合卡元素序号计数器:与 PartDispatcher / ToolCardManager 共用 state.aggregateSeq,
-  // permission 与 reasoning/markdown/tool/footer 全卡唯一递增。
+  // 聚合卡元素序号计数器:与 PartDispatcher / ToolCardManager 共用 state.aggregateSeq,
+  // permission/question 与 reasoning/markdown/tool/footer 全卡唯一递增。
   private nextSeq(state: SessionState): number {
     const seq = (state.aggregateSeq ?? 0) + 1
     state.aggregateSeq = seq
     return seq
   }
-}
-
-/**
- * 判断"未找到"类错误(OC question/permission 请求已被另一端处理或已超时)。
- * 与 engine.ts 的 isNotFound 同口径;interaction 的 ask 回填路径复用。
- */
-function isNotFound(err: unknown): boolean {
-  const e = err as { sdkError?: { code?: number; status?: number; statusCode?: number }; message?: string }
-  const code = e?.sdkError?.code ?? e?.sdkError?.status ?? e?.sdkError?.statusCode
-  if (code === 404) return true
-  const lower = (e?.message ?? "").toLowerCase()
-  return lower.includes("404")
-    || lower.includes("not found")
-    || lower.includes("does not exist")
-    || lower.includes("no longer exists")
-    || (lower.includes("session") && lower.includes("ended"))
 }
