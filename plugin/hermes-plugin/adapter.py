@@ -297,7 +297,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._aggregate_consumer_task.cancel()
             try:
                 await self._aggregate_consumer_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
             self._aggregate_consumer_task = None
         _aggregate_card.unregister_adapter(self)
@@ -315,7 +315,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         self._heartbeat_task = None
 
@@ -386,7 +386,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task  # 等取消完成
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(interval_s))
 
@@ -2558,10 +2558,87 @@ if __name__ == "__main__":
         finally:
             srv.shutdown()
 
+    async def _run_shutdown_tests():
+        """关停泄漏测试：cancel 后 await 已取消任务，CancelledError 不得穿透 disconnect()。
+
+        真实事故：disconnect() 里 except Exception 拦不住 CancelledError
+        （Python 3.8+ 是 BaseException），异常穿透到 hermes 的有界等待，
+        把整个 gateway stop 任务静默杀死 → 进程挂 210s 被 SIGKILL。
+        """
+        import threading as _th
+
+        # ── 场景 1：disconnect() 内部 await 已取消任务，不得泄漏 CancelledError ──
+        async def _scenario_disconnect_leak():
+            adapter = WanlingAdapter.__new__(WanlingAdapter)
+            adapter._stopping = False
+            adapter._aggregate_stop = _th.Event()
+            # 永不主动退出的消费者任务（模拟 run_event_consumer 阻塞在队列 get）
+            async def _stuck_consumer():
+                await _asyncio.sleep(3600)
+            adapter._aggregate_consumer_task = _asyncio.create_task(_stuck_consumer())
+            adapter._edit_meta = {}
+            adapter._ws = None
+            adapter._heartbeat_task = None
+            adapter._recv_task = None
+            adapter._rest_close = lambda: None  # type: ignore[method-assign]
+
+            # _aggregate_card.unregister_adapter 需要的注册表不存在时容忍
+            orig_unreg = getattr(_aggregate_card, "unregister_adapter", None)
+            if orig_unreg is not None:
+                _aggregate_card.unregister_adapter = lambda *a, **k: None  # type: ignore
+
+            leak = None
+            try:
+                await _asyncio.wait_for(adapter.disconnect(), timeout=5)
+            except BaseException as e:  # noqa: BLE001 — 测试就是要抓 BaseException
+                leak = e
+            finally:
+                if orig_unreg is not None:
+                    _aggregate_card.unregister_adapter = orig_unreg  # type: ignore
+            _check(leak is None, f"disconnect() 不泄漏 CancelledError/异常（实际 {leak!r}）")
+
+        await _scenario_disconnect_leak()
+
+        # ── 场景 2：hermes 视角 — disconnect 任务被 await 时不得把取消传给调用方 ──
+        async def _scenario_hermes_bounded_wait():
+            adapter = WanlingAdapter.__new__(WanlingAdapter)
+            adapter._stopping = False
+            adapter._aggregate_stop = _th.Event()
+            async def _stuck_consumer():
+                await _asyncio.sleep(3600)
+            adapter._aggregate_consumer_task = _asyncio.create_task(_stuck_consumer())
+            adapter._edit_meta = {}
+            adapter._ws = None
+            adapter._heartbeat_task = None
+            adapter._recv_task = None
+            adapter._rest_close = lambda: None  # type: ignore[method-assign]
+            orig_unreg = getattr(_aggregate_card, "unregister_adapter", None)
+            if orig_unreg is not None:
+                _aggregate_card.unregister_adapter = lambda *a, **k: None  # type: ignore
+
+            # 复刻 hermes _await_adapter_cleanup_with_timeout 的结构：
+            # 把 disconnect() 包成 task 并 await —— 若 disconnect 泄漏取消，
+            # 这个 await 会抛 CancelledError，与线上死法一致。
+            task = _asyncio.create_task(adapter.disconnect())
+            try:
+                await _asyncio.wait_for(_asyncio.shield(_asyncio.wait({task}, timeout=5)), timeout=8)
+                _check(task.done() and not task.cancelled(),
+                       "hermes 有界等待视角：disconnect 正常完成而非被取消")
+            except BaseException as e:  # noqa: BLE001
+                _check(False, f"hermes 有界等待视角：泄漏了 {type(e).__name__}")
+            finally:
+                if orig_unreg is not None:
+                    _aggregate_card.unregister_adapter = orig_unreg  # type: ignore
+                if not task.done():
+                    task.cancel()
+
+        await _scenario_hermes_bounded_wait()
+
     async def _main():
         await _run_tests()
         await _run_aggregate_tests()
         await _run_rest_channel_tests()
+        await _run_shutdown_tests()
         print()
         if failures:
             print(f"== 自检失败：{len(failures)} 项 ==")
