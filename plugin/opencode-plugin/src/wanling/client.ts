@@ -6,7 +6,7 @@ import {
   OP_PLUGIN_CALL, OP_PLUGIN_RESULT, OP_STREAM,
   EVENT_MESSAGE_CREATE, EVENT_TYPING_START, EVENT_GENERATION_ABORT,
   EVENT_CONVERSATION_UPDATE, EVENT_AGENT_MODELS, EVENT_AGENT_SLASH_CATALOG,
-  EVENT_PLUGIN_CAPABILITIES,
+  EVENT_PLUGIN_CAPABILITIES, EVENT_APPROVAL_DECIDED, EVENT_APPROVAL_EXPIRED,
 } from "./opcodes.js"
 import type {
   WSMessage, HelloPayload, MessageCreatePayload,
@@ -16,7 +16,8 @@ import type {
 import { decodeJwtExp } from "./jwt.js"
 import { logger } from "../utils/logger.js"
 import type { RPCDispatcher, JSONRPCRequest } from "../rpc/dispatcher.js"
-import type { AggregatePatchData } from "../sync/domains/aggregate_card.js"
+import { WanlingRestClient, Approvals } from "wanling-sdk"
+import type { AggregatePatchOp } from "wanling-sdk"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -54,11 +55,25 @@ export class WanlingClient extends EventEmitter {
   private tokenRefreshPromise: Promise<void> | null = null
   private lastIdentifyAt: number = 0
   private dispatcher?: RPCDispatcher
+  // SDK REST 客户端:会话/消息/审批等 HTTP 方法统一走 wanling-sdk rest 层
+  // (envelope 校验/超时/token 注入由 SDK 承担),本类只保留 OC 协议相关的 WS 通道。
+  readonly rest: WanlingRestClient
+  // 审批/提问高层封装(SDK Approvals):ask 发卡 + APPROVAL_DECIDED/EXPIRED 决议。
+  // 构造时挂事件监听(this.on 不依赖 WS 状态,挂一次即可,重连不重复挂),
+  // 断线重连后 resync 主动兜底未决项(runReceiveLoop connected 处调用)。
+  readonly approvals: Approvals
 
   constructor(opts: WanlingClientOptions) {
     super()
     this.opts = opts
     this.dispatcher = opts.dispatcher
+    this.rest = new WanlingRestClient(opts.serverUrl, this.getToken.bind(this))
+    this.approvals = new Approvals(
+      (convId, body) => this.rest.createApproval(convId, body as Parameters<WanlingRestClient["createApproval"]>[1]),
+      (id) => this.rest.getApproval(id),
+      (name, cb) => { this.on(name, cb as (...args: unknown[]) => void) },
+      (msg) => logger.info(`[wanling] ${msg}`),
+    )
   }
 
   // agentId 只读访问器:Streamer 上报 AGENT_MODELS 时读取,
@@ -331,6 +346,9 @@ export class WanlingClient extends EventEmitter {
     logger.info(`[wanling] token 刷新已计划: ${Math.round(delay / 1000 / 60)}min 后`)
   }
 
+  // 发卡片消息(HTTP 通道,agent 视角)。
+  // ⚠️ 保留自管实现(不走 SDK rest.sendCardMessage):OC 子 session 串树依赖
+  // parent_msg_id/root_msg_id 透传(messaging.sendCard),SDK rest 层暂不携带该字段。
   async sendCardMessage(
     convId: string,
     msgType: string,
@@ -359,41 +377,18 @@ export class WanlingClient extends EventEmitter {
     return json.data.message_id as string
   }
 
-  // 聚合卡 PATCH:复用 updateMessageContent 的 REST PATCH 通道。
-  // data 带 op(append/update/remove/reorder/set_state/set_silent)→ 增量 op,
-  // server 合并到全量存储、广播带增量(长任务不再全量替换,解决 content 超限 + O(n²))。
-  // data 无 op 带 elements → 全量替换兼容路径(旧 plugin / 建卡兜底)。
-  // silent 翻转走 data {op:"set_silent"}(不再放 content 顶层)。
-  async patchAggregateMessage(
-    msgId: string,
-    data: AggregatePatchData,
-  ): Promise<void> {
-    const content: Record<string, unknown> = {
-      msg_type: "aggregate_card",
-      data,
-    }
-    await this.updateMessageContent(msgId, content as { msg_type: string; data: Record<string, unknown> })
+  // 聚合卡增量 PATCH(data.op 走 server applyContentOp 增量合并)→ 委托 SDK rest。
+  // 全量替换兼容路径(无 op 带 elements)已随 AggregateCardManager 迁移 SDK 移除。
+  // AggregatePatchOp 已从 SDK 包入口导出,入参直接用判别联合类型(不再双重 as)。
+  async patchAggregateMessage(msgId: string, data: AggregatePatchOp): Promise<void> {
+    await this.rest.patchAggregateMessage(msgId, data)
   }
 
   async updateMessageContent(
     msgId: string,
     content: { msg_type: string; data: Record<string, unknown>; silent?: boolean },
   ): Promise<void> {
-    const resp = await fetch(this.apiUrl(`/api/messages/${msgId}`), {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      },
-      body: JSON.stringify({ content }),
-    })
-    if (!resp.ok) {
-      throw new Error(`updateMessageContent failed: ${resp.status}`)
-    }
-    const json = await resp.json()
-    if (!json.ok) {
-      throw new Error("updateMessageContent: invalid response")
-    }
+    await this.rest.updateMessageContent(msgId, content)
   }
 
   // agent 视角建会话(POST /api/agents/me/conversations),用于为主 session 建对应群
@@ -403,49 +398,17 @@ export class WanlingClient extends EventEmitter {
     title: string,
     members: { userId: string; directory?: string },
   ): Promise<string> {
-    const resp = await fetch(this.apiUrl(`/api/agents/me/conversations`), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      },
-      body: JSON.stringify({
-        user_id: members.userId,
-        type,
-        title,
-        ...(members.directory ? { directory: members.directory } : {}),
-      }),
-    })
-    if (!resp.ok) {
-      throw new Error(`createGroupAsAgent failed: ${resp.status}`)
-    }
-    const json = await resp.json()
-    if (!json.ok || !json.data?.id) {
-      throw new Error("createGroupAsAgent: invalid response")
-    }
-    return json.data.id as string
+    return this.rest.createGroupAsAgent(type, title, members)
   }
 
-  // 改会话名(agent 视角 PATCH /api/agents/me/conversations/:id/title)。
-  // 走 agentAuth 组,plugin 持 agent JWT 可直接调,不再 403。
+  // 改会话名(agent 视角 PATCH /api/agents/me/conversations/:id/title)→ 委托 SDK rest。
   async updateConversationTitle(convId: string, title: string): Promise<void> {
-    const resp = await fetch(this.apiUrl(`/api/agents/me/conversations/${convId}/title`), {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      },
-      body: JSON.stringify({ title }),
-    })
-    if (!resp.ok) {
-      throw new Error(`updateConversationTitle failed: ${resp.status}`)
-    }
+    await this.rest.updateConversationTitle(convId, title)
   }
 
-  // 更新 agent_session 元数据(agent 视角 PATCH /api/agents/me/conversations/:id/session-meta)。
-  // session.updated 事件触发:mode/model/variant 变化时同步到 server,
-  // APP 从 conversation API 读取渲染副标题。
-  // 注意:cwd 字段已彻底剔除(升级到 conversations.directory 一级列)。
+  // 更新 agent_session 元数据(agent 视角 PATCH /api/agents/me/conversations/:id/session-meta)
+  // → 委托 SDK rest。session.updated 事件触发:mode/model/variant 变化时同步到 server,
+  // APP 从 conversation API 读取渲染副标题。cwd 字段已彻底剔除(一级列化)。
   async updateSessionMeta(
     convId: string,
     meta: {
@@ -461,17 +424,7 @@ export class WanlingClient extends EventEmitter {
       contextLimit?: number
     },
   ): Promise<void> {
-    const resp = await fetch(this.apiUrl(`/api/agents/me/conversations/${convId}/session-meta`), {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      },
-      body: JSON.stringify(meta),
-    })
-    if (!resp.ok) {
-      throw new Error(`updateSessionMeta failed: ${resp.status}`)
-    }
+    await this.rest.updateSessionMeta(convId, meta)
   }
 
   private async runReceiveLoop(): Promise<void> {
@@ -484,6 +437,9 @@ export class WanlingClient extends EventEmitter {
         this.ws = await this.establishWS()
         this.retry.backoff = 1
         this.emit("connected")
+        // 重连后未决审批可能错过 WS 推送,REST 兜底查询一次(与 SDK client 同款;
+        // 首次连接 pending 为空,空跑无害)。
+        void this.approvals.resync()
         await this.receiveLoop()
       } catch {
         if (this.retry.stopping) return
@@ -592,6 +548,11 @@ export class WanlingClient extends EventEmitter {
         } else if (t === EVENT_CONVERSATION_UPDATE) {
           const payload = msg.d as unknown as ConvUpdatePayload
           this.emit("conv_update", payload)
+        } else if (t === EVENT_APPROVAL_DECIDED) {
+          // 审批决议(SDK Approvals 决议通道):payload 带 approval_id/decision/answers
+          this.emit("approval.decided", msg.d)
+        } else if (t === EVENT_APPROVAL_EXPIRED) {
+          this.emit("approval.expired", msg.d)
         }
         break
       }

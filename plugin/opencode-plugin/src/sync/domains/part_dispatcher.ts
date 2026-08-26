@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto"
+import { StreamSession } from "wanling-sdk"
 import { logger } from "../../utils/logger.js"
 import type { EventEmitter } from "events"
 import type {
@@ -11,31 +11,32 @@ import type { SessionStore } from "../session_store.js"
 import type { MessageRouter } from "../messaging.js"
 import type { MetaSync } from "./meta_sync.js"
 import type { CompactionTracker } from "./compaction.js"
-import { AggregateCardManager, type AggregateElement } from "./aggregate_card.js"
+import { getAggregateCard, reasoningElement, markdownElement, type AggregateElement } from "./aggregate_bridge.js"
 
-// 流式 holder 类型:reasoning/text part 的累积状态(streamId/lastFlushAt/lastFlushedLen/flushTimer
-// + 聚合卡元素预留序号 seq)。与 SessionState.reasoning/text 结构一致。
+// 流式 holder 类型:reasoning/text part 的累积状态(text/partID + SDK StreamSession
+// 流式会话 + 聚合卡元素预留序号 seq)。与 SessionState.reasoning/text 结构一致。
 type StreamHolder = NonNullable<SessionState["reasoning"]>
 
 // PartDispatcher:part_updated / part_delta 分发领域模块。
 // 职责:reasoning / text / step-finish 三类 part 的状态机分发 + part_delta 增量
-// 追加 + flush 缓冲(reasoning/text 兜底输出)+ reasoning/text 流式快照(300ms 节流)。
+// 追加 + flush 缓冲(reasoning/text 兜底输出)+ reasoning/text 流式快照。
+// 流式会话(Task 8 迁移 SDK):节流(首帧立即/300ms 间隔)与尾部兜底由 SDK
+// StreamSession 承担,本模块只做 holder 累积 + 惰性建会话 + 终态收口:
+//   - 聚合模式:占位元素 append(REST)落地后才建会话(帧带 aggregate 定位,
+//     element_id 与终态 append 同一预留 seq,APP 定位连续);飞行中 delta 只累积,
+//     建会话时以全量快照种子化(协议语义:帧是累积全量快照)。
+//   - 非聚合模式:同步建会话首帧立即(保持旧 sendStream 同步语义)。
+//   - 终态(endStream = session.end):清 SDK 兜底定时器并 flush 余量;终态消息/
+//     元素由调用方带 _stream_id / element_id 发,finalText 不经流式通道。
+// 子 session 恒不流式(保持攒满发整条 + parent/root 串树语义)。
 // tool/compaction case 不在此处:ToolCardManager 和 CompactionTracker 各自订阅 part_updated
 // 事件按 part.type 自行过滤处理,本模块的 onPartUpdated switch 只保留 reasoning/text/step-finish。
-// 聚合卡改造(Task 3):AGGREGATE_CARD_ENABLED=true(默认)时 reasoning/markdown/step_finish
-// 不再发独立消息,而是追加到聚合卡(AggregateCardManager.appendElement 增量 append):
+// 聚合卡(Task 8 迁移 SDK):AGGREGATE_CARD_ENABLED=true(默认)时 reasoning/markdown/step_finish
+// 不再发独立消息,而是经 aggregate_bridge 追加到 SDK AggregateCard:
 // reasoning 终态 → reasoning 元素;markdown 终态 → markdown 元素(缓存 pendingText 等
-// step-finish 判定 silent);step_finish → footer 元素 + 整卡翻转 {set_silent:false,set_state:"done"}。
-// 子 session 恒走旧独立消息(保持 parent/root 串树语义);流式 maybeFlushStream/forceFlushStream
-// 保留 op=14(正文打字机体验,终态才上聚合卡),聚合模式下帧带 aggregate:{message_id, element_id}
-// 指向聚合卡内正在流式的元素(避免 APP 建独立流式占位)。开关 false 时完全回退旧逻辑。
-// 聚合卡元素序号(aggregateSeq)/累计(aggregateElements)/patch 串行队列(aggregatePatchQueue)
-// 都在 SessionState 上维护,跨 manager 实例共享。不持有状态,错误经注入的 emitter 上抛。
-// 流式元素定位(Task 3.5):聚合模式下 op=14 帧带 aggregate:{message_id, element_id} 指向聚合卡内
-// 正在流式的元素。element_id 用"预留 seq"(streamSeq 首次推帧时取 nextSeq 并缓存到 holder),
-// 流式期间所有帧 + 终态 append 用同一 element_id(APP 按 element_id 定位,若终态换号会导致
-// 流式定位断裂 → 内容显示在错误元素)。无 aggregate 字段 = 非聚合模式,APP 走旧独立占位。
-// holder.seq 即预留序号;reasoning/text holder 与 pendingText 的 seq 字段见 SessionState。
+// step-finish 判定 silent);step_finish → footerDraft 暂存(completed 事件收尾)。
+// 元素序号(aggregateSeq)/流式占位 Set 在 SessionState 上维护,跨模块共享。
+// 不持有状态,错误经注入的 emitter 上抛。
 export class PartDispatcher {
   private readonly store: SessionStore
   private readonly router: MessageRouter
@@ -45,10 +46,6 @@ export class PartDispatcher {
   private readonly wanling: WanlingClient
   // 聚合卡开关:false 回退旧逐条发送(router.send)。默认 true。
   private readonly aggregateCardEnabled: boolean
-
-  // 流式节流间隔:主 session reasoning/text 累积满 300ms 推一次 STREAM(op=14)全量快照。
-  // 首块立即推(用户看到流式瞬间启动),后续 300ms 一次平衡 WS 帧数与流畅度。
-  private static readonly FLUSH_INTERVAL_MS = 300
 
   constructor(deps: {
     store: SessionStore
@@ -76,14 +73,14 @@ export class PartDispatcher {
       const part = payload.part
 
       // 流式补帧:收到非 reasoning/text 的 part_updated(tool/step-start 等,不含 step-finish)=
-      // LLM 已切换走,该 part 的 delta 不会再来了。若 state.text/reasoning 还有未推完的
-      // 累积值(被 300ms 节流跳过的最后几个 delta),强制补推一帧 op=14 全量快照,让 APP
-      // 占位立即显示完整文本。不发终态(终态仍等 part_updated(time.end) 用 OC 权威值)。
+      // LLM 已切换走,该 part 的 delta 不会再来了。收口流式会话(SDK end:flush 节流
+      // 窗口内漏推的尾部 delta),让 APP 占位立即显示完整文本。不发终态(终态仍等
+      // part_updated(time.end) 用 OC 权威值)。
       // 注:step-finish 不在此列——它要判定 isLoopEnd 决定 pendingText 的 silent,
-      // 若在此强制 flush 会把缓存的最终回复以 silent=true 提前发掉,根治失效。
+      // 若在此强制收口会把缓存的最终回复以 silent=true 提前发掉,根治失效。
       if (part.type !== "reasoning" && part.type !== "text" && part.type !== "step-finish") {
-        this.forceFlushStream(state, "reasoning")
-        this.forceFlushStream(state, "text")
+        this.endStream(state, "reasoning")
+        this.endStream(state, "text")
         // 消息顺序修复(tool/text 乱序根因):OC 的 part.updated(text, time.end) 会延迟到
         // 整个 LLM 响应阶段(含工具调用)结束才推。若 text 终态只等 end,markdown 会晚于
         // tool_card 落库,app 按 createdAt 排序显示成「思考→工具→文本」与 TUI 不一致。
@@ -102,8 +99,8 @@ export class PartDispatcher {
             if (!state.textPartsFlushed.has(part.id)) {
               const text = part.text || ""
               const sid = state.reasoning?.streamId
-              // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
-              if (state.reasoning) this.forceFlushStream(state, "reasoning")
+              // 收口流式会话(SDK end:flush 尾部余量),发终态前让 APP 占位补全。
+              if (state.reasoning) this.endStream(state, "reasoning")
               if (text.trim()) {
                 if (this.useAggregate(state)) {
                   // 流式已预留 seq 则复用(终态与流式帧同一 element_id),未流式走 nextSeq
@@ -118,7 +115,7 @@ export class PartDispatcher {
                     }
                     return undefined
                   })()
-                  await this.appendElement(state, AggregateCardManager.reasoning(
+                  await this.appendElement(state, reasoningElement(
                     text,
                     state.reasoning?.seq ?? this.nextSeq(state),
                     true,
@@ -147,8 +144,8 @@ export class PartDispatcher {
             if (!state.textPartsFlushed.has(part.id)) {
               const text = part.text || ""
               const sid = state.text?.streamId
-              // 补推最后一帧流式(300ms 窗口漏推的尾部 delta),发终态前让 APP 占位补全。
-              if (state.text) this.forceFlushStream(state, "text")
+              // 收口流式会话(SDK end:flush 尾部余量),发终态前让 APP 占位补全。
+              if (state.text) this.endStream(state, "text")
               // 根治(未读锚点=真实内容):text 终态缓存到 pendingText,不立即发。
               // 最终回复(step-finish isLoopEnd)以 silent=false 发(markdown 计未读),
               // 中间步骤以 silent=true 发。子 agent 文本恒 silent=true。
@@ -194,9 +191,11 @@ export class PartDispatcher {
           if (state.text) {
             const t = state.text
             state.text = null
-            if (t.flushTimer) { clearTimeout(t.flushTimer) }
+            // 关闭流式会话不 flush 尾帧:终态 markdown 紧随其后(APP 按 _stream_id/
+            // element_id 定位替换),尾帧冗余,对齐旧实现 clear 定时器不补推的语义。
+            t.stream?.abort()
             if (this.useAggregate(state)) {
-              const element = AggregateCardManager.markdown(t.text, t.seq ?? this.nextSeq(state))
+              const element = markdownElement(t.text, t.seq ?? this.nextSeq(state))
               void this.appendElement(state, element).catch((err) => {
                 this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
               })
@@ -270,113 +269,110 @@ export class PartDispatcher {
 
     if (state.reasoning?.partID === payload.partID) {
       state.reasoning.text += payload.delta
-      this.maybeFlushStream(state, "reasoning")
+      this.pushStreamDelta(state, "reasoning", payload.delta)
     } else if (state.text?.partID === payload.partID) {
       state.text.text += payload.delta
-      this.maybeFlushStream(state, "text")
+      this.pushStreamDelta(state, "text", payload.delta)
     } else {
       this.store.dropPart(payload.partID)
     }
   }
 
-  // 流式节流:主 session 的 reasoning/text 累积满 FLUSH_INTERVAL_MS 推一次 STREAM(op=14)全量快照。
-  // 首块立即推(用户看到流式瞬间启动),后续 300ms 一次。子 session 不流式(保持攒满发整条)。
-  // streamId 惰性生成:避免空 part(只有 part_updated 无 delta)也建 stream。
-  // 守卫用 trim:与终态 case "text"/case "reasoning" 的 `text.trim()` 口径一致,
-  // 纯空白(如 OC 在 reasoning 后 / tool_use 前输出的 "\n\n")不建占位,否则终态因
-  // trim 为空不发 MESSAGE_CREATE,占位无法被替换 → 永久滞留成空气泡。
-  //
-  // 尾部兜底定时器:delta 密集时(全在 300ms 窗口内到达),节流只推首块就更新 lastFlushAt,
-  // 后续 delta 全跳过。之后 OC 可能数秒不推任何事件(reasoning end 要等整个 LLM 响应结束),
-  // APP 占位卡在首块。定时器在 delta 停止 500ms 后兜底 forceFlush 补推完整累积值,
-  // 对齐 TUI 的 delta 实时拼接体验。每次 delta 到达重置定时器(滑动窗口)。
-  private static readonly FLUSH_TAIL_MS = 500
-
-  private maybeFlushStream(state: SessionState, kind: "reasoning" | "text"): void {
+  // 流式 delta 推送(SDK StreamSession 接线):
+  // - 会话已建 → session.push(delta)(首帧立即/300ms 节流/尾部兜底由 SDK 承担)。
+  // - 未建会话 → 惰性创建。守卫用 trim:与终态 case 的 `text.trim()` 口径一致,
+  //   纯空白(如 OC 在 reasoning 后 / tool_use 前输出的 "\n\n")不建占位,否则终态因
+  //   trim 为空不发 MESSAGE_CREATE,占位无法被替换 → 永久滞留成空气泡。
+  //   - 非聚合模式:同步建会话 + 全量种子 push(保持旧 sendStream 首帧立即语义)。
+  //   - 聚合模式:占位 append(REST)落地后才建会话(帧带 aggregate 定位且能命中),
+  //     经 streamEnsure 防并发双建;飞行中的 delta 只累积在 holder.text,建会话时
+  //     以 holder.text 全量种子化(协议语义:帧是累积全量快照,不丢不重)。
+  // 子 session 不流式(保持攒满发整条 + parent/root 串树语义)。
+  private pushStreamDelta(state: SessionState, kind: "reasoning" | "text", delta: string): void {
     if (state.isChildSession) return
     const holder = kind === "reasoning" ? state.reasoning : state.text
-    if (!holder || !holder.text.trim()) return
-    if (!holder.streamId) {
-      holder.streamId = randomUUID()
-      holder.lastFlushAt = 0
-    }
-    // 重置尾部兜底定时器(滑动窗口:每个 delta 都把"无 delta 超时"推迟 500ms)
-    if (holder.flushTimer) clearTimeout(holder.flushTimer)
-    const now = Date.now()
-    if (holder.lastFlushAt === 0 || now - (holder.lastFlushAt ?? 0) >= PartDispatcher.FLUSH_INTERVAL_MS) {
-      this.pushStreamFrame(state, kind, holder)
-      holder.lastFlushAt = now
-      holder.lastFlushedLen = holder.text.length
-    }
-    // 设尾部兜底定时器:500ms 内若无新 delta,forceFlush 补推节流跳过的残留内容。
-    // 箭头函数捕获 state/kind/holder,holder 可能在定时器触发前被终态置 null,
-    // forceFlushStream 内部已有 holder 守卫(null 则 return)。
-    holder.flushTimer = setTimeout(() => {
-      this.forceFlushStream(state, kind)
-    }, PartDispatcher.FLUSH_TAIL_MS)
-  }
-
-  // 强制补推流式帧:绕过 300ms 节流,把累积值全量推给 APP。
-  // 触发时机:onPartUpdated 收到非 reasoning/text 类型(tool/step-start 等)=
-  // LLM 已切换走,该 part 的 delta 不会再来,300ms 节流窗口内的残留 delta 需强制补推。
-  // 仅在已有 streamId(APP 已建占位)且累积长度 > 上次推的长度(有新内容)时推,
-  // 避免重复推相同内容。不清空 holder(终态仍等 part_updated(time.end))。
-  private forceFlushStream(state: SessionState, kind: "reasoning" | "text"): void {
-    if (state.isChildSession) return
-    const holder = kind === "reasoning" ? state.reasoning : state.text
-    if (!holder || !holder.streamId) return
-    if (holder.flushTimer) { clearTimeout(holder.flushTimer); holder.flushTimer = undefined }
-    if (holder.text.length <= (holder.lastFlushedLen ?? 0)) return
-    this.pushStreamFrame(state, kind, holder)
-    holder.lastFlushedLen = holder.text.length
-  }
-
-  // 推一帧 op=14 全量快照。聚合模式下 payload 附加 aggregate:{message_id, element_id}:
-  // - element_id = 预留序号的 markdown/reasoning 元素(与终态 append 同一 element_id,APP 定位连续)
-  // - message_id 需 ensureCard 异步拿(首次建卡走 REST),fire-and-forget 发送 + 失败 emit error,
-  //   与 appendElement 的既有错误处理风格一致;流式帧为瞬态,建卡失败由终态 append 兜底报错
-  // 非聚合模式不加 aggregate 字段(APP 走旧独立占位逻辑)。
-  private pushStreamFrame(state: SessionState, kind: "reasoning" | "text", holder: StreamHolder): void {
-    const prefix: "reasoning" | "markdown" = kind === "reasoning" ? "reasoning" : "markdown"
-    const payload = {
-      stream_id: holder.streamId as string,
-      msg_type: prefix,
-      text: holder.text,
-    }
-    if (!this.useAggregate(state)) {
-      this.wanling.sendStream(state.convId, payload)
+    if (!holder) return
+    if (holder.stream) {
+      holder.stream.push(delta)
       return
     }
-    const elementId = `${prefix}_${this.streamSeq(state, holder)}`
-    const manager = new AggregateCardManager(this.wanling, state)
-    void manager.ensureCard().then(async (messageId) => {
-      // I1:流式首帧前先确保目标元素已 append 进聚合卡(占位),否则 APP 端
-      // _applyAggregateStreamUpdate 因元素不存在丢弃帧 → 整个生成期无中间文本,
-      // 直到 step-finish 才一次性出全文。占位元素 PATCH 落地后才发帧(帧能命中)。
-      await this.ensureStreamElement(state, holder, prefix)
-      this.wanling.sendStream(state.convId, { ...payload, aggregate: { message_id: messageId, element_id: elementId } })
-    }).catch((err) => {
-      this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
-    })
+    if (!holder.text.trim()) return
+    if (this.useAggregate(state)) {
+      // 防并发双建(首帧占位 REST 飞行中后续 delta 只累积);失败清句柄允许重试
+      // 并 emit error(流式为瞬态,终态 append 兜底)。
+      if (!holder.streamEnsure) {
+        holder.streamEnsure = this.ensureAggregateStream(state, kind, holder).catch((err) => {
+          holder.streamEnsure = undefined
+          this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
+        })
+      }
+      return
+    }
+    this.attachStreamSession(state, kind, holder).push(holder.text)
   }
 
-  // I1 流式占位:把目标元素(reasoning/markdown,用 holder 预留 seq)append 进聚合卡。
-  // aggregateStreamedElementIds 同步去重:并发首帧/后续帧到达时只占位一次,
-  // 不会重复 append(否则同一 element_id 在卡里出现两次)。
-  private async ensureStreamElement(
+  // 挂载 SDK 流式会话到 holder(发送经 wanling.sendStream,op=14 全量快照)。
+  // aggregate 定位(聚合模式):帧指向聚合卡内占位元素,APP 不建独立流式占位。
+  // 返回 session:调用方拿返回值 push(TS 对 holder.stream 的跨函数收窄不可见)。
+  private attachStreamSession(
     state: SessionState,
+    kind: "reasoning" | "text",
     holder: StreamHolder,
-    prefix: "reasoning" | "markdown",
+    aggregate?: { messageId: string; elementId: string },
+  ): StreamSession {
+    const msgType = kind === "reasoning" ? "reasoning" : "markdown"
+    const session = new StreamSession(
+      state.convId,
+      (convId, frame) => this.wanling.sendStream(convId, frame as { stream_id: string; msg_type: string; text: string; aggregate?: { message_id: string; element_id: string } }),
+      { msgType, ...(aggregate !== undefined ? { aggregate } : {}) },
+    )
+    holder.stream = session
+    holder.streamId = session.streamId
+    return session
+  }
+
+  // 聚合模式建流式会话(异步):先取预留 seq → 占位元素 append 进聚合卡
+  // (I1:占位 PATCH 落地后帧才能命中,否则 APP 端 _applyAggregateStreamUpdate 因
+  // 元素不存在丢弃帧 → 整个生成期无中间文本)→ 建会话(aggregate 定位指向
+  // 占位元素)→ 全量种子 push。
+  private async ensureAggregateStream(
+    state: SessionState,
+    kind: "reasoning" | "text",
+    holder: StreamHolder,
   ): Promise<void> {
-    if (holder.seq === undefined) return
-    const elementId = `${prefix}_${holder.seq}`
-    if (state.aggregateStreamedElementIds?.has(elementId)) return
+    const prefix = kind === "reasoning" ? "reasoning" : "markdown"
+    const seq = this.streamSeq(state, holder)
+    const elementId = `${prefix}_${seq}`
+    // 同步去重:并发首帧只占位一次(占位 append 携带当前累积文本)
     if (!state.aggregateStreamedElementIds) state.aggregateStreamedElementIds = new Set()
-    state.aggregateStreamedElementIds.add(elementId)
-    const element = prefix === "reasoning"
-      ? AggregateCardManager.reasoning(holder.text, holder.seq, false)
-      : AggregateCardManager.markdown(holder.text, holder.seq)
-    await this.appendElement(state, element)
+    if (!state.aggregateStreamedElementIds.has(elementId)) {
+      state.aggregateStreamedElementIds.add(elementId)
+      const element = prefix === "reasoning"
+        ? reasoningElement(holder.text, seq, false)
+        : markdownElement(holder.text, seq)
+      await this.appendElement(state, element)
+    }
+    const bridge = getAggregateCard(state, this.wanling)
+    if (!bridge.cardMessageId) {
+      throw new Error("aggregate stream: 聚合卡 message id 不可用(建卡未完成)")
+    }
+    this.attachStreamSession(state, kind, holder, { messageId: bridge.cardMessageId, elementId })
+    holder.stream?.push(holder.text)
+  }
+
+  // 收口流式会话:flush=true(SDK end,清兜底定时器并 flush 余量,发终态前让
+  // APP 占位补全)或 flush=false(SDK abort,丢弃尾帧——终态紧随其后,替换占位)。
+  // holder.streamId 保留(终态消息/元素定位复用),会话关闭后 push 不再生效。
+  private endStream(state: SessionState, kind: "reasoning" | "text", flush = true): void {
+    if (state.isChildSession) return
+    const holder = kind === "reasoning" ? state.reasoning : state.text
+    const session = holder?.stream
+    if (!session) return
+    if (flush) {
+      void session.end(holder?.text ?? "")
+    } else {
+      session.abort()
+    }
   }
 
   // 流式元素预留序号:首次推帧时取"下一个 seq"并缓存到 holder。
@@ -387,14 +383,11 @@ export class PartDispatcher {
     return holder.seq
   }
 
-  // flush 缓冲 reasoning(public 暴露:SessionLifecycle Task 8 单 session flush 调用)。
+  // flush 缓冲 reasoning(public 暴露:SessionLifecycle 单 session flush 调用)。
   flushReasoning(state: SessionState): void {
     if (!state.reasoning?.text.trim()) return
-    // 清尾部兜底定时器(终态发出后不再需要补推)
-    if (state.reasoning.flushTimer) { clearTimeout(state.reasoning.flushTimer); state.reasoning.flushTimer = undefined }
-    // 发终态前先补推最后一帧流式(300ms 节流窗口内漏推的尾部 delta),
-    // 让 APP 占位在终态替换前显示完整文本(对齐 TUI 的 delta 实时拼接)。
-    this.forceFlushStream(state, "reasoning")
+    // 收口流式会话(SDK end:flush 尾部余量),让 APP 占位在终态替换前显示完整文本。
+    this.endStream(state, "reasoning")
     const sid = state.reasoning.streamId
     if (this.useAggregate(state)) {
       // 思考耗时:flush 时 part.end 未到(LLM 已切走,reasoning 已完整),用 now - timeStart
@@ -407,7 +400,7 @@ export class PartDispatcher {
         }
         return undefined
       })()
-      const element = AggregateCardManager.reasoning(
+      const element = reasoningElement(
         state.reasoning.text,
         state.reasoning.seq ?? this.nextSeq(state),
         true,
@@ -428,14 +421,11 @@ export class PartDispatcher {
     // 兜底:缓存的最终 text 终态(未等来 step-finish 判定)→ 以 silent=true 发掉,避免滞留。
     this.flushPendingText(state, true)
     if (!state.text?.text.trim()) return
-    // 清尾部兜底定时器(终态发出后不再需要补推)
-    if (state.text.flushTimer) { clearTimeout(state.text.flushTimer); state.text.flushTimer = undefined }
-    // 发终态前先补推最后一帧流式(300ms 节流窗口内漏推的尾部 delta),
-    // 让 APP 占位在终态替换前显示完整文本(对齐 TUI 的 delta 实时拼接)。
-    this.forceFlushStream(state, "text")
+    // 收口流式会话(SDK end:flush 尾部余量),让 APP 占位在终态替换前显示完整文本。
+    this.endStream(state, "text")
     const sid = state.text.streamId
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.markdown(state.text.text, state.text.seq ?? this.nextSeq(state))
+      const element = markdownElement(state.text.text, state.text.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -457,7 +447,7 @@ export class PartDispatcher {
     const pt = state.pendingText
     state.pendingText = undefined
     if (this.useAggregate(state)) {
-      const element = AggregateCardManager.markdown(pt.text, pt.seq ?? this.nextSeq(state))
+      const element = markdownElement(pt.text, pt.seq ?? this.nextSeq(state))
       void this.appendElement(state, element).catch((err) => {
         this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)))
       })
@@ -482,16 +472,16 @@ export class PartDispatcher {
     return seq
   }
 
-  // 追加聚合卡元素并 PATCH 增量 op(append;同 element_id 已存在则 update 原位替换)。
-  // 队列(aggregatePatchQueue)/累计(aggregateElements)由 AggregateCardManager.appendElement
-  // 统一维护,与 tool_card / interaction 共用同一串行队列,并发 flush 按序执行不覆盖。
-  // opts 透传:opts.state → 单独 set_state op;opts.silent → 单独 set_silent op。
+  // 追加聚合卡元素(SDK AggregateCard.append:同 element_id 已存在自动改 update)。
+  // 队列/镜像/分卡由 SDK 卡实例(state.aggregateCard 桥持有)统一维护,与 tool_card /
+  // interaction 共用同一实例,并发 flush 按序执行不覆盖。
+  // opts 透传:opts.silent → append 后单独 set_silent op(pending 交互响铃/恢复)。
   // 返回 Promise 不吞错误:调用方 await 走外层 try/catch,fire-and-forget 处自行 catch emit。
   private appendElement(
     state: SessionState,
     element: AggregateElement,
-    opts?: { silent?: boolean; state?: "generating" | "done" },
+    opts?: { silent?: boolean },
   ): Promise<void> {
-    return new AggregateCardManager(this.wanling, state).appendElement(element, opts)
+    return getAggregateCard(state, this.wanling).appendElement(element, opts)
   }
 }

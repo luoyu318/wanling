@@ -6,6 +6,7 @@ import (
 	"time"
 
 	logpkg "github.com/wanling/server/internal/log"
+	"github.com/wanling/server/internal/model"
 )
 
 // ExpiredApproval cleanup goroutine 扫描结果（精简字段，避免把整张审批表行透传）。
@@ -106,8 +107,21 @@ func (s *Service) FindExpired(ctx context.Context, now time.Time) ([]*ExpiredApp
 }
 
 // MarkExpired 让 *Service 满足 Marker 接口。
+// 缺陷 C 修复：expired 与 Decide 终态对齐——双写 messages.content(state=expired)
+// + 广播 MESSAGE_UPDATE，APP 端卡片不再停留在 pending；APPROVAL_EXPIRED 仍由 cleanupOnce 发。
 func (s *Service) MarkExpired(ctx context.Context, id string) error {
-	return s.repo.MarkExpired(ctx, id)
+	decCtx, err := s.approvalRepo.GetForDecision(ctx, id)
+	if err != nil {
+		return err
+	}
+	if decCtx == nil {
+		return ErrApprovalNotFound
+	}
+	if err := s.repo.MarkExpired(ctx, id); err != nil {
+		return err
+	}
+	_, err = s.writeTerminalState(ctx, decCtx, model.ApprovalStateExpired, "", nil)
+	return err
 }
 
 // 编译期检查 *Service 满足 cleanup 需要的接口

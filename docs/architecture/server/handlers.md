@@ -16,12 +16,12 @@ HTTP Handler 集合。
 
 ## agent_handler.go
 
-Agent CRUD。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（非空且与当前不同时调 `UpdateType` 落库，让 APP 编辑资料对话框可切换普通/OpenCode 类型）
+Agent CRUD + type 注册表。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（**type 为 `*string`:显式传空串=清空回普通 agent**,与当前不同时调 `UpdateType` 落库,让 APP 编辑资料对话框可切换类型）。响应（Create/List/Update）注入 **`multi_session`**（按 `agents.type` 查 `agent_type_registry`,未注册类型含 legacy 空串兜底 false）。**`ListAgentTypes`**（`GET /api/agent-types`,userAuth）全量下发注册表:APP 类型下拉(建/改 agent)与徽标查表数据源,新类型 INSERT 后 APP 零发版自动出现。
 
 ## conversation_handler.go（+ 5 个同包拆分文件）
 
 ConversationHandler 是同包多文件结构（Go 同包共享 receiver），物理分布：
-- `conversation_handler.go` — struct + constructor + List + Get + buildDetail
+- `conversation_handler.go` — struct + constructor + List + Get + buildDetail。**List 的 session 聚合**(BatchLoadAgentSessionStats)按 type 注册表 `multi_session` 过滤 agent(新类型零发版;查表失败 fallback 老口径 opencode)
 - `conversation_create.go` — Create + CreateConversationReq + resolveMemberUsernames
 - `conversation_agent.go` — CreateAsAgent + ListAsAgent + UpdateTitleAsAgent + UpdateSessionMetaAsAgent + ListAgentSessions
 - `conversation_message.go` — Messages 分页
@@ -32,7 +32,7 @@ ConversationHandler 是同包多文件结构（Go 同包共享 receiver），物
 
 ## approval_handler.go
 
-审批卡片 3 接口。`CreateApproval`（agent，事务内创建 msg_type=card 消息，事务外创建 approval 记录，广播 MESSAGE_CREATE；不再维护 last_message_content 缓存字段（017 合并进 001_init 已删）；command + allow_pattern 时先查会话级白名单匹配，命中返 auto_approved 不发卡片）、`Decide`（user，调 approval.Service 推进状态机）、`Get`（双角色兜底查询）。**WS payload 必须含 conversation_id/sender_type/sender_id/created_at**（APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填校验，缺字段会被丢弃）
+审批卡片 3 接口。`CreateApproval`（agent，事务内创建 msg_type=card 消息，事务外创建 approval 记录，广播 MESSAGE_CREATE；不再维护 last_message_content 缓存字段（017 合并进 001_init 已删）；command + allow_pattern 时先查会话级白名单匹配（含 decided_action='allow_always' 条件），命中返 auto_approved 不发卡片；card_type=question 时校验 options 非空/id 唯一，options/multi_select 双写 content）、`Decide`（user，body 含 action_id/reason/answers，调 approval.Service 推进状态机）、`Get`（双角色兜底查询，返回 decided_answers）。**WS payload 必须含 conversation_id/sender_type/sender_id/created_at**（APP chatProvider 按 conversation_id 过滤 + ChatMessage.fromJson 必填校验，缺字段会被丢弃）
 
 ## rpc_handler.go
 

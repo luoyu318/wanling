@@ -6,10 +6,10 @@ import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import '../utils/dio_error.dart';
-import '../widgets/account_switcher.dart';
+import '../widgets/account_picker_dialog.dart';
 
-/// 桌面登录页:居中卡片表单(服务器地址/用户名/密码/记住账号)+
-/// 顶部多账号切换 + 底部配对码绑定入口。
+/// 桌面登录页:已存账号卡片列表(点击直接登录 + 删除) + 「添加服务器」弹框
+/// + 手动登录表单(服务器地址/用户名/密码/记住账号)。
 ///
 /// 服务器地址流程与 app 壳一致:预填上次值(savedLogins.selected 优先,
 /// 退回 settingsProvider 持久化的 baseUrl),提交前 setBaseUrl 同步
@@ -100,11 +100,27 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
                       color: theme.hintColor,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  // 多账号切换(有已存账号才渲染)
-                  if (savedLogins.logins.isNotEmpty)
-                    const Center(child: AccountSwitcher()),
-                  const SizedBox(height: 16),
+                  // 切换服务器/账号入口(对齐 app 登录页):单独按钮,
+                  // 点击弹出账号选择列表(点卡片直登/删除/添加)。
+                  if (savedLogins.logins.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      key: const ValueKey('login_switch_account'),
+                      onPressed: () => showAccountPickerDialog(context, ref),
+                      icon: const Icon(Icons.swap_horiz, size: 18),
+                      label: const Text('切换服务器/账号'),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Divider(color: theme.dividerColor),
+                  const SizedBox(height: 12),
+                  Text(
+                    '手动登录',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.hintColor,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('login_server_field'),
                     controller: _serverCtrl,
@@ -186,12 +202,6 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
                           )
                         : const Text('登录'),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: _showPairDialog,
-                    icon: const Icon(Icons.qr_code, size: 18),
-                    label: const Text('配对码绑定'),
-                  ),
                 ],
               ),
             ),
@@ -203,11 +213,13 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
 
   void _submit() async {
     setState(() => _error = null);
-    final server = _serverCtrl.text.trim();
     final username = _usernameCtrl.text.trim();
     final password = _passwordCtrl.text;
+    // 规范化 + 校验(防 http:host:port 形态进 provider 树致灰屏)。
+    final server = normalizeBaseUrl(_serverCtrl.text);
     if (server.isEmpty || username.isEmpty || password.isEmpty) {
-      setState(() => _error = '请填写完整');
+      setState(() => _error =
+          server.isEmpty ? '服务器地址无效' : '请填写完整');
       return;
     }
     // 同步 baseUrl(settingsProvider → apiProvider 重建 → auth.setApi)
@@ -226,102 +238,4 @@ class _DesktopLoginPageState extends ConsumerState<DesktopLoginPage> {
     }
   }
 
-  /// 配对码手输对话框:输入配对码(ticket)+ 目标 Agent ID,
-  /// 走 core pairComplete RPC 绑定,成功提示绑定的 agent 名。
-  Future<void> _showPairDialog() async {
-    final pairCodeCtrl = TextEditingController();
-    final agentIdCtrl = TextEditingController();
-    String? error;
-    var submitting = false;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => StatefulBuilder(
-        builder: (dialogCtx, setDialogState) => AlertDialog(
-          title: const Text('配对码绑定'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: pairCodeCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '配对码',
-                    hintText: 'Agent 终端展示的配对码',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: agentIdCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Agent ID',
-                    hintText: '绑定到已有 Agent',
-                  ),
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    error!,
-                    key: const ValueKey('pair_error_line'),
-                    style: TextStyle(
-                      color: Theme.of(dialogCtx).colorScheme.error,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogCtx).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final pairCode = pairCodeCtrl.text.trim();
-                      final agentId = agentIdCtrl.text.trim();
-                      if (pairCode.isEmpty || agentId.isEmpty) {
-                        setDialogState(() => error = '请填写完整');
-                        return;
-                      }
-                      setDialogState(() {
-                        submitting = true;
-                        error = null;
-                      });
-                      try {
-                        final result = await ref
-                            .read(apiProvider)
-                            .pairComplete(pairCode, agentId: agentId);
-                        if (!dialogCtx.mounted) return;
-                        Navigator.of(dialogCtx).pop();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('配对成功:${result.agentName}')),
-                          );
-                        }
-                      } catch (e) {
-                        setDialogState(() {
-                          submitting = false;
-                          error = extractDioErrorMessage(e);
-                        });
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('绑定'),
-            ),
-          ],
-        ),
-      ),
-    );
-    pairCodeCtrl.dispose();
-    agentIdCtrl.dispose();
-  }
 }

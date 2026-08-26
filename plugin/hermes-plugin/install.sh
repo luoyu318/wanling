@@ -296,8 +296,76 @@ ensure_plugin_enabled() {
             END {
                 # 兜底：若 plugins 块里没 enabled: 行（异常），在 plugins: 后补
                 # 这里无法回溯，依赖 config.yaml 结构正常
+             }
+         ' "$config_yaml" > "$tmp"
+         mv "$tmp" "$config_yaml"
+     fi
+ }
+
+# ─── 确保 display.platforms.wanling 关断工具进度气泡 ────────────────────────
+# adapter 实现 edit_message 后（流式续帧需要），hermes 会把本平台视为
+# 「可编辑平台」并推送工具进度气泡（💻 Running ...）等中间态消息。
+# 这些气泡在万灵 APP 里是噪音（聚合卡已覆盖该信息）——按 hermes 官方
+# 按平台降级口径关断（telegram/slack/weixin 均 off）。幂等：已有
+# wanling 条目则跳过（尊重用户自定义），无则插入或补全块。
+ensure_wanling_display_defaults() {
+    local config_yaml="$1"
+    [[ -f "$config_yaml" ]] || { warn "$config_yaml 不存在，跳过 display 配置"; return; }
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}[DRY]${NC} 确保 $config_yaml 的 display.platforms.wanling 关断工具进度"
+        return
+    fi
+
+    # display.platforms 块下已有 wanling: 条目 → 用户已自定义，跳过
+    if awk '
+        /^display:/ { in_display=1; next }
+        /^[^[:space:]]/ { in_display=0 }
+        in_display && /^  platforms:/ { in_platforms=1; next }
+        in_display && in_platforms && /^  [^[:space:]]/ { in_platforms=0 }
+        in_platforms && /^    wanling:/ { found=1; exit }
+        END { exit !found }
+    ' "$config_yaml"; then
+        return
+    fi
+
+    local tmp inserted
+    tmp=$(mktemp)
+    # 有顶层 display: 块且含 platforms: 行 → 原地插入；否则末尾补全整块。
+    # 先探测结构再走对应分支，避免单遍 awk 的 END 补全与原地插入打架。
+    if grep -q '^display:' "$config_yaml" && awk '
+        /^display:/ { in_display=1; next }
+        /^[^[:space:]]/ { in_display=0 }
+        in_display && /^  platforms:/ { found=1; exit }
+        END { exit !found }
+    ' "$config_yaml"; then
+        awk '
+            BEGIN { in_display=0; inserted=0 }
+            /^display:/ { in_display=1; print; next }
+            /^[^[:space:]]/ { in_display=0 }
+            in_display && /^  platforms:/ && !inserted {
+                print
+                printf "    wanling:\n"
+                printf "      tool_progress: \"off\"\n"
+                printf "      interim_assistant_messages: false\n"
+                printf "      long_running_notifications: false\n"
+                printf "      busy_ack_detail: false\n"
+                inserted=1
+                next
             }
+            { print }
         ' "$config_yaml" > "$tmp"
+        mv "$tmp" "$config_yaml"
+    else
+        {
+            cat "$config_yaml"
+            printf '\ndisplay:\n  platforms:\n'
+            printf '    wanling:\n'
+            printf '      tool_progress: "off"\n'
+            printf '      interim_assistant_messages: false\n'
+            printf '      long_running_notifications: false\n'
+            printf '      busy_ack_detail: false\n'
+        } > "$tmp"
         mv "$tmp" "$config_yaml"
     fi
 }
@@ -415,6 +483,7 @@ run_config_mode() {
     [[ -n "$HOME_USER" && -z "$HOME_CONV" ]] && fetch_conv_id "$HOME_USER"
     write_env_block "$ENV_FILE"
     ensure_plugin_enabled "$CONFIG_YAML"
+    ensure_wanling_display_defaults "$CONFIG_YAML"
     write_wanling_block "$CONFIG_YAML"
 
     echo
@@ -571,6 +640,7 @@ qr.print_ascii(tty=False)
         sync_plugin_files "$PLUGIN_DIR"
         write_env_block "$ENV_FILE"
         ensure_plugin_enabled "$CONFIG_YAML"
+        ensure_wanling_display_defaults "$CONFIG_YAML"
         write_wanling_block "$CONFIG_YAML"
 
         echo
@@ -677,6 +747,7 @@ run_install_mode() {
     [[ -n "$HOME_USER" && -z "$HOME_CONV" ]] && fetch_conv_id "$HOME_USER"
     write_env_block "$ENV_FILE"
     ensure_plugin_enabled "$CONFIG_YAML"
+    ensure_wanling_display_defaults "$CONFIG_YAML"
     write_wanling_block "$CONFIG_YAML"
 
     echo

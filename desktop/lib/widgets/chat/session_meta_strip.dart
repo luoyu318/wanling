@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'package:wanling_core/models/agent_mode.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/providers/chat_state.dart' show ModelOverride;
 
@@ -8,10 +9,14 @@ import 'package:wanling_core/providers/chat_state.dart' show ModelOverride;
 /// 「mode icon + Build · model icon + glm-5.2 zhipuai · max」
 /// mode 段支持点击切换 Build↔Plan, model 段支持点击换模型。
 ///
+/// mode 渲染清单驱动:[modes] 为 plugin 上报的模式清单,命中时取
+/// label/style 档位;未命中/空清单回退既有 'plan' 特例(老插件兼容期)。
 /// StatefulWidget 持有 TapGestureRecognizer,在 dispose 时释放。
 class SessionMetaStrip extends StatefulWidget {
   final SessionMeta meta;
   final String? modeOverride;
+  /// plugin 上报的模式清单(空 = 未上报,走回退渲染)。
+  final List<AgentMode> modes;
   final VoidCallback? onModeTap;
   final ModelOverride? modelOverride;
   final VoidCallback? onModelTap;
@@ -20,6 +25,7 @@ class SessionMetaStrip extends StatefulWidget {
     super.key,
     required this.meta,
     this.modeOverride,
+    this.modes = const [],
     this.onModeTap,
     this.modelOverride,
     this.onModelTap,
@@ -66,10 +72,21 @@ class _SessionMetaStripState extends State<SessionMetaStrip> {
 
     if (m.mode.isNotEmpty) {
       final effectiveMode = widget.modeOverride ?? m.mode;
+      // 清单驱动:命中取 label + style 档位;未命中回退 id 首字母大写
+      // + 'build 蓝其余橙' 既有特例(老插件兼容期)。
+      final hit = findModeById(widget.modes, effectiveMode);
+      final displayMode = hit?.label ??
+          (effectiveMode[0].toUpperCase() + effectiveMode.substring(1));
+      final modeColor = hit != null
+          ? switch (hit.style.visualStyle) {
+              AgentModeVisualStyle.plan => const Color(0xFFF4A742),
+              AgentModeVisualStyle.warn => const Color(0xFFE5484D),
+              AgentModeVisualStyle.brand => const Color(0xFF597BFF),
+            }
+          : (effectiveMode.toLowerCase() == 'build'
+              ? const Color(0xFF597BFF)
+              : const Color(0xFFF4A742));
       final isBuild = effectiveMode.toLowerCase() == 'build';
-      // mode 品牌色不分深浅(app 同款):Build 蓝 / Plan 橙。
-      final modeColor =
-          isBuild ? const Color(0xFF597BFF) : const Color(0xFFF4A742);
 
       if (widget.onModeTap != null) {
         _modeTapRecognizer ??= TapGestureRecognizer();
@@ -85,7 +102,7 @@ class _SessionMetaStripState extends State<SessionMetaStrip> {
       ));
       children.add(TextSpan(text: ' ', style: baseStyle.copyWith(color: modeColor)));
       children.add(TextSpan(
-        text: effectiveMode[0].toUpperCase() + effectiveMode.substring(1),
+        text: displayMode,
         style: baseStyle.copyWith(
           color: modeColor,
           fontWeight: isBuild ? FontWeight.w400 : FontWeight.w500,

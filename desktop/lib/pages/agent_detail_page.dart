@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_types_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 
@@ -55,7 +57,8 @@ class AgentDetailPage extends ConsumerWidget {
     }
 
     final online = agent.status == AgentStatus.online;
-    final multi = AgentCategory.supportsMultiSession(agent.type);
+    // server 注册表注入的 multi_session(null 老 server 时 fallback opencode)
+    final multi = agent.isMultiSession;
 
     return CardContainer(
       color: DesktopTheme.chatCardColor(Theme.of(context).brightness),
@@ -214,6 +217,12 @@ class AgentDetailPage extends ConsumerWidget {
     final nameCtrl = TextEditingController(text: agent.name);
     final bioCtrl = TextEditingController(text: agent.bio ?? '');
     String agentType = agent.type;
+    // 类型清单来自 server 注册表(新类型 server 登记后自动出现),
+    // 老 server/加载失败 fallback 本地预置。
+    final typeOptions = ref.read(agentTypesProvider).valueOrNull;
+    final types = (typeOptions == null || typeOptions.isEmpty)
+        ? AgentTypeInfo.fallbackTypes
+        : typeOptions;
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -238,16 +247,16 @@ class AgentDetailPage extends ConsumerWidget {
               DropdownButtonFormField<String>(
                 initialValue: agentType,
                 decoration: const InputDecoration(labelText: '类型'),
-                items: const [
-                  DropdownMenuItem(value: '', child: Text('普通')),
-                  DropdownMenuItem(
-                    value: AgentCategory.hermes,
-                    child: Text('Hermes'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('普通')),
+                  ...types.map(
+                    (t) => DropdownMenuItem(value: t.type, child: Text(t.label)),
                   ),
-                  DropdownMenuItem(
-                    value: AgentCategory.opencode,
-                    child: Text('OpenCode'),
-                  ),
+                  // 未注册类型兜底 item:防 initialValue 匹配不到触发断言崩溃,
+                  // 保留原值可选(登记后此 item 自然消失)。
+                  if (agentType.isNotEmpty &&
+                      !types.any((t) => t.type == agentType))
+                    DropdownMenuItem(value: agentType, child: Text(agentType)),
                 ],
                 onChanged: (v) => setDialogState(() => agentType = v ?? ''),
               ),

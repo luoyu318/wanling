@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:wanling_core/models/agent.dart' show AgentCategory;
 import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
@@ -78,8 +77,9 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                     //   对话型 agent / user-user → 单聊页
                     // 老服务器 ag.type 缺字段时 fallback '',走单聊分支(向后兼容)。
                     onTap: () {
-                      final agentType = c.agent?.type ?? '';
-                      if (AgentCategory.supportsMultiSession(agentType)) {
+                      // server 按 type 注册表注入 multi_session;null(老
+                      // server)fallback type=='opencode'(AgentSummary 内)。
+                      if (c.agent?.isMultiSession ?? false) {
                         context.push(sessionsRoute(c.agent!.id));
                       } else {
                         context.push(chatRoute(c.id, c.agent?.id));
@@ -285,8 +285,7 @@ class _ConvTileState extends State<_ConvTile> {
                             ),
                             const SizedBox(height: 2),
                             if (conv.isUserAgentDM &&
-                                AgentCategory.supportsMultiSession(
-                                    conv.agent?.type ?? ''))
+                                (conv.agent?.isMultiSession ?? false))
                               Text(
                                 conv.pendingCount > 0
                                     ? '待处理 ${conv.pendingCount} 项'

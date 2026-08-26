@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:wanling_core/models/agent.dart' show AgentCategory;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../providers/selected_conv_provider.dart';
@@ -101,25 +100,34 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                   itemCount: filtered.length,
                   itemBuilder: (_, i) {
                     final c = filtered[i];
+                    final multi = c.agent?.isMultiSession ?? false;
                     return ConversationListItem(
                       convId: c.id,
                       name: c.displayName,
                       avatarUrl: c.displayAvatarUrl,
-                      agentType: c.agent?.type ?? '',
-                      subtitle: c.lastMessagePreview(
-                        currentUserId: currentUserId,
-                        isGroup: c.isGroup,
-                        senderDisplayName: c.lastMessageSenderName,
-                      ),
+                      // 徽标仅 agent 会话(dm_user_agent)显示;好友/群
+                      // agent=null → 传 null 不渲染(空 type 显示「智能体」)。
+                      agentType: c.isUserAgentDM ? c.agent?.type ?? '' : null,
+                      // 多 session agent 行带 session 数第二行(对齐 app);
+                      // 不显示消息摘要(入口 DM 行无消息流,摘要无意义)。
+                      sessionCount: multi ? c.sessionCount : -1,
+                      pendingCount: multi ? c.pendingCount : 0,
+                      subtitle: multi
+                          ? ''
+                          : c.lastMessagePreview(
+                              currentUserId: currentUserId,
+                              isGroup: c.isGroup,
+                              senderDisplayName: c.lastMessageSenderName,
+                            ),
                       time: _formatTime(c.lastMessageAt),
                       unreadCount: c.unreadCount,
                       selected: c.id == selectedId,
                       onTap: () {
-                        // 一级列表按 agent.type 路由(仿 app):
-                        // 多 session 开发型(opencode 类)→ 二级 session 列表;
-                        // 其余 → 直接选中开聊。type 缺字段 fallback '' 走单聊。
-                        final agentType = c.agent?.type ?? '';
-                        if (AgentCategory.supportsMultiSession(agentType)) {
+                        // 一级列表按 agent 拓扑路由(仿 app):
+                        // 多 session(server 注册表 multi_session,含 opencode/dsh)
+                        // → 二级 session 列表;其余 → 直接选中开聊。
+                        // null(老 server)时 fallback type=='opencode'。
+                        if (c.agent?.isMultiSession ?? false) {
                           widget.onOpenSessions?.call(c.agent!.id);
                           return;
                         }

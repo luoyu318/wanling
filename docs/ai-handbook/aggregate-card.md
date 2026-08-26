@@ -64,6 +64,17 @@ reasoning 元素 `data.finished`（流式占位 false / 终态 append true），
 | `question_card` | `{oc_request_id, questions, status}` | 选择题卡片（嵌入聚合卡，交互需回调故不折叠） |
 | `permission_card` | `{oc_request_id, action, resources, status}` | 权限审批卡（嵌入聚合卡，交互需回调故不折叠） |
 
+## SDK 高层封装（协议不变）
+
+SDK（`wanling-sdk` / `wanling-sdk`）提供聚合卡/流式高层类，搬运本文各节定义的协议行为（建卡幂等 / 串行 PATCH 队列 / 20 元素自动分卡 / 降级全量替换自愈 / 流式快照节流），**协议本身不变**——不使用 SDK 的 plugin 仍可按本文手工实现。TS/Python 对称：
+
+| 类 | 工厂 | 关键方法 | 关键选项 |
+|---|---|---|---|
+| `AggregateCard` | `client.aggregate(convId, opts?)` | `append(type, data)` / `update(elementId, data)` / `finish(footer)` / `interrupt()` | `degradedSelfHeal`（连续 3 次 PATCH 失败降级全量替换，默认开）/ `recallEmpty`（finish 时空卡撤回删卡，默认关，需 io.recall 通道） |
+| `StreamSession` | `client.stream(convId, opts?)` | `push(delta)` / `end(finalText)` / `abort()` | `aggregate:{messageId, elementId}`（聚合定位）/ `throttleMs`（默认 300）/ `tailMs`（默认 500）/ `msgType`（默认 text） |
+
+流式帧语义：op=14 帧为**累积全量快照**（APP 按 stream_id 定位占位后整体替换 text，非增量拼接），详见 websocket-protocol.md「流式输出(op=14 Stream)」。会话映射类（`SessionMapping`，`client.sessionMapping(path)`）与审批（`client.approvals.ask`）见 sdk/CLAUDE.md 与 approval-card.md。
+
 ## 保持独立（不进聚合卡）
 
 permission_card / question_card（交互需回调）、task 工具（子 agent 需 parent/root 串树）、子 session 所有消息；历史独立消息照常渲染（双轨兼容）。

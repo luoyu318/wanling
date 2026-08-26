@@ -48,8 +48,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId,
       {this.store, this.currentUser})
       : super(const ChatState()) {
-    CardContentRenderer.onDecide = (approvalId, actionId, reason) {
-      return api.decideApproval(approvalId, actionId, reason: reason);
+    CardContentRenderer.onDecide = (approvalId, actionId, reason, answers) {
+      return api.decideApproval(approvalId, actionId,
+          reason: reason, answers: answers);
     };
     _initialize();
     _listenWS();
@@ -144,6 +145,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final currentMode = state.modeOverride ?? meta.mode;
     final newMode = currentMode.toLowerCase() == 'build' ? 'plan' : 'build';
     state = state.copyWith(modeOverride: newMode);
+  }
+
+  /// 清单驱动选模式:plugin 上报的 AGENT_MODES 清单里选中一项,
+  /// 下一条消息携带 _mode 下发,插件切换会话模式。
+  /// 与 OC 的 build↔plan 二值 toggleMode 不同,mode id 全由插件定义。
+  void selectMode(String modeId) {
+    state = state.copyWith(modeOverride: modeId);
   }
 
   /// 初始化：获取未读信息 → 拉首屏消息 → 定位。

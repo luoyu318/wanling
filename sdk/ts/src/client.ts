@@ -11,6 +11,7 @@ import {
   EVENT_AGENT_ONLINE, EVENT_AGENT_OFFLINE,
   EVENT_APPROVAL_DECIDED, EVENT_APPROVAL_EXPIRED,
   EVENT_AGENT_MODELS, EVENT_AGENT_SLASH_CATALOG, EVENT_PLUGIN_CAPABILITIES,
+  EVENT_AGENT_MODES, EVENT_AGENT_PRESETS,
 } from "./opcodes.js"
 import type {
   WSMessage, HelloPayload, OutboundMessage,
@@ -18,6 +19,14 @@ import type {
 import { decodeJwtExp } from "./jwt.js"
 import type { RPCDispatcher, JSONRPCRequest } from "./rpc.js"
 import { WanlingRestClient } from "./rest.js"
+import type { AggregatePatchOp, CreateApprovalBody } from "./rest.js"
+import { Approvals } from "./approvals.js"
+import { AggregateCard } from "./aggregate_card.js"
+import type { AggregateCardOptions } from "./aggregate_card.js"
+import { StreamSession } from "./stream_session.js"
+import type { StreamSessionOptions } from "./stream_session.js"
+import { SessionMapping } from "./session_mapping.js"
+import type { SessionMappingOptions } from "./session_mapping.js"
 
 export interface WanlingClientOptions {
   serverUrl: string
@@ -56,11 +65,20 @@ export class WanlingClient extends EventEmitter {
   private dispatcher: RPCDispatcher | null = null
   // REST 客户端:会话/消息/文件/审批等 HTTP 方法统一走 rest.ts,WS 只管转发与状态。
   rest: WanlingRestClient
+  // 审批/提问高层封装(ask 发卡等决策)。构造时挂事件监听(this.on 不依赖 WS 状态,
+  // 挂一次即可,重连不重复挂),断线重连后 resync 主动兜底未决项。
+  approvals: Approvals
 
   constructor(opts: WanlingClientOptions) {
     super()
     this.opts = opts
     this.rest = new WanlingRestClient(opts.serverUrl, this.getToken.bind(this))
+    this.approvals = new Approvals(
+      (convId, body) => this.rest.createApproval(convId, body as CreateApprovalBody),
+      (id) => this.rest.getApproval(id),
+      (name, cb) => { this.on(name, cb) },
+      (msg) => console.log(`[wanling] ${msg}`),
+    )
   }
 
   // 注入 RPC 分发器(可选)。未注入时 OpPluginCall 会被安全忽略;
@@ -147,11 +165,13 @@ export class WanlingClient extends EventEmitter {
   // 流式输出:把生成中的文本全量快照推给"正在看本会话"的 user 连接。
   // op=14 绕过 dispatchBuffer/Resume,不带 seq、不落库、不计未读。
   // 终态仍由 sendTypedMessage 发 MESSAGE_CREATE(带 _stream_id 让 APP 替换占位)。
+  // aggregate 定位(聚合模式卡内元素流式):帧不建独立占位,APP 定位
+  // aggregate_card 消息内 element_id 匹配元素整体替换 data.text。
   // 与 sendTyping 一致:WS 未连接时 silently drop,不 emit error 不 warn
   // (流式为瞬态,终态消息兜底;agent 建会话期间短窗口掉帧可接受)。
   sendStream(
     convId: string,
-    payload: { stream_id: string; msg_type: string; text: string },
+    payload: { stream_id: string; msg_type: string; text: string; aggregate?: { message_id: string; element_id: string } },
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return
@@ -171,6 +191,39 @@ export class WanlingClient extends EventEmitter {
       d: { conversation_id: convId },
     }
     this.ws.send(JSON.stringify(payload))
+  }
+
+  // 聚合卡工厂:一次问答一张卡(append/update/finish/interrupt)。
+  // 建卡 silent=true(回合进行中不打扰,计未读由 finish 翻转 set_silent 承接)。
+  aggregate(convId: string, opts?: AggregateCardOptions): AggregateCard {
+    return new AggregateCard(convId, {
+      sendCard: (data) => this.rest.sendCardMessage(convId, data.msg_type, data.data, true),
+      patch: (messageId, op) => this.rest.patchAggregateMessage(messageId, op as AggregatePatchOp),
+      updateContent: (messageId, content) => this.rest.updateMessageContent(messageId, content),
+      recall: (messageId) => this.rest.recallMessage(messageId),
+    }, opts)
+  }
+
+  // 流式会话工厂:首帧立即 + 节流 + 兜底 flush,终态消息由调用方带 _stream_id 发。
+  stream(convId: string, opts?: StreamSessionOptions): StreamSession {
+    return new StreamSession(convId, (cid, frame) => this.sendStream(cid, frame), opts)
+  }
+
+  // 会话映射工厂:外部 session ↔ conversation 持久映射(miss 时建 agent_session 群)。
+  // ownerUserId 可在工厂注入或 ensureConversation 时传入(server 强制 user_id
+  // 必须是 agent 的 owner,缺失时 fail fast 不发请求)。
+  sessionMapping(opts: SessionMappingOptions & { ownerUserId?: string }): SessionMapping {
+    const factoryOwner = opts.ownerUserId
+    return new SessionMapping(opts.path, async (_sessionId, o) => {
+      const ownerUserId = o.ownerUserId ?? factoryOwner
+      if (!ownerUserId) {
+        throw new Error("sessionMapping 需要 ownerUserId(工厂 opts 或 ensureConversation opts 提供)")
+      }
+      return this.rest.createGroupAsAgent("agent_session", o.title, {
+        userId: ownerUserId,
+        ...(o.directory !== undefined ? { directory: o.directory } : {}),
+      })
+    })
   }
 
   // 上报 agent 可选模型清单(plugin 启动/重连时拉 opencode providers)。
@@ -217,6 +270,54 @@ export class WanlingClient extends EventEmitter {
     }
     this.ws.send(JSON.stringify(payload))
     console.log(`[wanling] sendAgentSlashCatalog agent=${agentId.slice(0, 8)}… ${commands.length} commands`)
+  }
+
+  // plugin 启动/重连时上报该 agent 的模式清单(能力上报管线第四成员)。
+  // server 写 ModeRegistry 内存缓存,APP 渲染模式色条按 session-meta mode
+  // id 查清单取 label/style(不再硬编码各平台枚举)。
+  // style 为受控渲染档位: "default" | "plan" | "warn"。
+  // 与 sendAgentModels 一致:WS 未连接时 silently drop + console.warn。
+  sendAgentModes(agentId: string, modes: Array<{
+    id: string
+    label: string
+    style: "default" | "plan" | "warn"
+  }>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[wanling] sendAgentModes: WS 未连接,跳过")
+      return
+    }
+    const payload: WSMessage = {
+      op: OP_DISPATCH,
+      t: EVENT_AGENT_MODES,
+      d: { agent_id: agentId, modes, reported_at: new Date().toISOString() },
+    }
+    this.ws.send(JSON.stringify(payload))
+    console.log(`[wanling] sendAgentModes agent=${agentId.slice(0, 8)}… ${modes.length} modes`)
+  }
+
+  // plugin 启动/重连时上报该 agent 的预设清单(能力上报管线第五成员)。
+  // 预设是 per-session 能力组合(dsh 等),集合开放(user 可自创)。
+  // server 写 PresetRegistry 内存缓存,APP 新建会话选择器数据源。
+  // trust 区分 "system"(部署内置)/"user"(用户自创);无预设概念的
+  // plugin 不调用本方法即可(APP 据空清单隐藏选择步骤)。
+  sendAgentPresets(agentId: string, presets: Array<{
+    id: string
+    label: string
+    description?: string
+    trust: "system" | "user"
+    order?: number
+  }>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[wanling] sendAgentPresets: WS 未连接,跳过")
+      return
+    }
+    const payload: WSMessage = {
+      op: OP_DISPATCH,
+      t: EVENT_AGENT_PRESETS,
+      d: { agent_id: agentId, presets, reported_at: new Date().toISOString() },
+    }
+    this.ws.send(JSON.stringify(payload))
+    console.log(`[wanling] sendAgentPresets agent=${agentId.slice(0, 8)}… ${presets.length} presets`)
   }
 
   // plugin 启动/重连时上报 RPC 方法清单(dispatcher.listMethods() 结果)。
@@ -324,6 +425,8 @@ export class WanlingClient extends EventEmitter {
         this.ws = await this.establishWS()
         this.retry.backoff = 1
         this.emit("connected")
+        // 重连后未决审批可能错过 WS 推送，REST 兜底查询一次（首次连接 pending 为空，空跑无害）。
+        void this.approvals.resync()
         await this.receiveLoop()
       } catch {
         if (this.retry.stopping) return
@@ -524,14 +627,22 @@ export class WanlingClient extends EventEmitter {
   }
 }
 
-async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
+export async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
+  // 帧队列：ws 库对同一 TCP 段内的多个帧是同步连发多个 message 事件，
+  // 而消费者（for await）在两次 next() 之间有微任务空窗——空窗内到达的帧
+  // 若只依赖单一 resolve 会被静默丢弃（APPROVAL_DECIDED 紧跟卡片终态广播
+  // 同段下发时必丢）。到达时无等待者则入队，下次 next() 立即取出。
+  const queue: string[] = []
   let resolve: ((value: string) => void) | null = null
   let reject: ((err: Error) => void) | null = null
+  let closed = false
 
   const onMessage = (data: Buffer | string) => {
     if (resolve) {
       resolve(data.toString())
       resolve = null
+    } else {
+      queue.push(data.toString())
     }
   }
   const onError = (err: Error) => {
@@ -541,6 +652,7 @@ async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
     }
   }
   const onClose = () => {
+    closed = true
     if (reject) {
       reject(new Error("WS closed"))
       reject = null
@@ -552,11 +664,11 @@ async function* iterateWebSocket(ws: WebSocket): AsyncGenerator<string> {
   ws.on("close", onClose)
 
   try {
-    while (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      const data = await new Promise<string>((res, rej) => {
-        resolve = res
-        reject = rej
-      })
+    while (!closed && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      const queued = queue.shift()
+      const data = queued !== undefined
+        ? queued
+        : await new Promise<string>((res, rej) => { resolve = res; reject = rej })
       yield data
     }
   } finally {

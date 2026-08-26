@@ -1,6 +1,6 @@
 # wanling-agent-template-ts
 
-万灵 Agent 插件(TypeScript)最小脚手架。基于 `@wanling/sdk` 的 WS 传输层,可直接连上万灵 server 收发消息。
+万灵 Agent 插件(TypeScript)最小脚手架。基于 `wanling-sdk` 的 WS 传输层,可直接连上万灵 server 收发消息。
 
 ## 配置
 
@@ -40,4 +40,4 @@ npm start          # node dist/index.js
 
 1. 按需调整 `src/index.ts`,接入你自己的业务逻辑与 RPC 方法。
 2. 构建产物在 `dist/`,发布时随包带上(或按插件平台要求上传)。
-3. SDK 发布到 npm 后,把 package.json 的 `@wanling/sdk` 依赖从 `file:../../ts` 改回 `^0.1.0` 即可独立安装。协议权威源见 `docs/ai-handbook/websocket-protocol.md`。
+3. SDK 发布到 npm 后,把 package.json 的 `wanling-sdk` 依赖从 `file:../../ts` 改回 `^0.1.0` 即可独立安装。协议权威源见 `docs/ai-handbook/websocket-protocol.md`。

@@ -11,7 +11,7 @@ flowchart TB
     HANDLERS[handler/<br/>14 个 HTTP handler]
     HUB[hub<br/>WS 连接 + dispatch]
     PROC[message/processor<br/>事务 + dispatch]
-    REPO[repository/<br/>10 个 repo]
+    REPO[repository/<br/>11 个 repo]
     SVC[approval + pair<br/>状态机 + cleanup]
     STORAGE[storage + imaging<br/>文件 + 缩略图]
 
@@ -46,7 +46,7 @@ flowchart TB
 - `internal/agent/slash_catalog_registry.go` — **`SlashCatalogRegistry`** 与 `AgentRegistry` 同构，存 plugin 上报的命令清单。`AGENT_SLASH_CATALOG` 事件写入，`GET /api/agents/:id/slash-catalog` 读取。server 重启清空，plugin 重连重报
 
 ### 数据层
-- `internal/repository/` — 10 个 repo:核心 IM 五件套(Conversation / Participant / Message / Delivery / File,含四档放行 CheckAccess)+ 账户与社交(User / Agent / Friendship)+ 状态机持久化(Approval / Pairing)。详见 [data.md](./server/data.md)
+- `internal/repository/` — 11 个 repo:核心 IM 五件套(Conversation / Participant / Message / Delivery / File,含四档放行 CheckAccess)+ 账户与社交(User / Agent / Friendship)+ 状态机持久化(Approval / Pairing)+ 类型注册表(AgentType,011)。详见 [data.md](./server/data.md)
 - `internal/model/null_json.go` — NullJSON 类型(可空 JSONB 字段处理)。详见 [data.md](./server/data.md#modelnull_jsongo)
 
 ### 支撑组件

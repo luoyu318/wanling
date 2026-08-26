@@ -94,7 +94,7 @@ IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选�
 
 ## AgentBadge
 
-Agent 类型标签胶囊（StatelessWidget）。按 `agent.type` 区分：默认（type=空串）「智能体」紫色系（bg `#EDE9FE`/`#DDD6FE`，fg `#6D28D9`）；opencode「OpenCode」绿色系（bg `#D1FAE5`/`#A7F3D0`，fg `#047857`）。`elevated` 参数切灰底 AppBar 对比度。用于消息列表 / Agent 列表项 / Agent 详情页昵称右侧
+Agent 类型标签胶囊（ConsumerWidget）。文案/配色来自 server type 注册表（`agentTypesProvider` 查表,server 值优先;本地 `AgentTypeInfo.fallbackTypes` 兜老 server;未注册类型显示 type 原文 + 默认紫配色;legacy 空串「智能体」紫色系 bg `#EDE9FE`/`#DDD6FE`，fg `#6D28D9`）。`elevated` 参数切灰底 AppBar 对比度。用于消息列表 / Agent 列表项 / Agent 详情页昵称右侧
 
 ## UnreadBadge
 

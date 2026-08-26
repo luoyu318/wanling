@@ -1,6 +1,6 @@
 # OpenCode Plugin Streamer 模块结构
 
-> `sync/streamer.ts` 是 SSE 事件流→万灵 WS 的过程同步引擎。已拆解为组装根 + 共享状态仓 + 发送路由 + 6 个领域模块,streamer 本身只负责构造组装、`start()` wire 订阅、`stop()` 生命周期委托,不再持有业务状态。
+> `sync/streamer.ts` 是 SSE 事件流→万灵 WS 的过程同步引擎。已拆解为组装根 + 共享状态仓 + 发送路由 + 7 个领域模块,streamer 本身只负责构造组装、`start()` wire 订阅、`stop()` 生命周期委托,不再持有业务状态。
 
 ## 目录结构
 
@@ -12,7 +12,9 @@ sync/
 ├── types.ts             # SessionState / ChildSessionEntry 等共享类型
 ├── ensure_conversation.ts  # 主 session 首次出现建群 + 改名(in-flight 防重)
 ├── card_store.ts        # 交互卡片内存 cache + 持久化备份
-├── domains/             # 6 个领域模块(按事件语义切分)
+├── mapper.ts            # session↔conversation 映射(自管,未迁 SDK SessionMapping)
+├── domains/             # 7 个领域模块(按事件语义切分)
+│   ├── aggregate_bridge.ts
 │   ├── meta_sync.ts
 │   ├── tool_card.ts
 │   ├── interaction.ts
@@ -26,14 +28,20 @@ sync/
 
 ## 组件清单
 
+- **AggregateBridge** (`domains/aggregate_bridge.ts`) — 聚合卡 SDK 接线层(替代原自管 AggregateCardManager)。卡生命周期状态机由 SDK `AggregateCard`(`wanling-sdk`,幂等建卡/串行 PATCH 队列/20 元素自动分卡/降级全量替换自愈)承担;本模块只做 OC 侧编排:元素构造器(element_id 规则 type_seq)、set_silent 翻转响铃(SDK 无公开入口,经 REST 直发)、cardMessageId 捕获(建卡 io 回调,供 op=14 流式 aggregate 定位与 card_store 记账)、回合边界清理(footer 收尾清 aggregateSeq/流式占位 Set/工具元素映射,防 seq 归零后 element_id 复用受残留干扰)。
 - **SessionStore** (`session_store.ts`) — 跨事件共享状态仓。收敛 `sessions` / `childSessionTree` / `partIndex` / `idleHandled` / `createStateInflight` 五个 map;`getOrCreateState` 幂等入口(主 session 首次出现调 `ensureConversation` 建群,非主 session 丢弃返回 null,同一 session 跨多次 SSE 事件共享 inflight promise 防重复建群);`registerChild` / `cleanupChild` 子 session 注册与超时兜底清理;`flushReasoning` / `flushText` 缓冲 flush;`stop()` 撤销所有 child 兜底 timer + 清空 map。
 - **MessageRouter** (`messaging.ts`) — 主/子 session 发送路由。`send`(按 part 类型聚合后发普通消息) + `sendCard`(发交互卡片) 走 `wanling` client,内部按 store 的 convId 映射决定目标会话。
 - **MetaSync** (`domains/meta_sync.ts`) — session 元数据同步。`loadAll` 启动并发拉取 providers + slash catalog + capabilities;`onSessionUpdated` / `onVcsBranchUpdated` 增量同步 mode/model/cwd/gitBranch;step-finish `reason=stop` 主动 `session.get` 拉 tokens + `vcs.get` 拉最新 branch 兜底;按 `mode|modelId|directory` 去重防 SSE 抖动。持有 `knownTitles` / `knownMeta` / `knownFullMeta` / `providerNames` 四个状态 map。
-- **ToolCardManager** (`domains/tool_card.ts`) — tool/task 卡片状态机。普通 tool + task 工具的 running/completed/error;inflight Promise 修复「同 partId 两次推送」竞态;子 session 注册经 store 委托。不持有状态(toolPartsSent/toolCardMsgIds 等随 SessionState 流动),错误经注入的 emitter 上抛。
-- **PartDispatcher** (`domains/part_dispatcher.ts`) — part_updated/part_delta 文本/推理分发。reasoning/text case 聚合 + step-finish loopEnd 处理;delta 增量;idle/stop 时 flush 缓冲。tool/compaction case 由 ToolCard/Compaction 各自独立订阅 part_updated 自行过滤,本模块不处理。错误经注入的 emitter 上抛。
+- **ToolCardManager** (`domains/tool_card.ts`) — tool/task 卡片状态机。普通 tool + task 工具的 running/completed/error;inflight Promise 修复「同 partId 两次推送」竞态;子 session 注册经 store 委托;聚合模式下经 AggregateBridge 发 tool_card 元素。不持有状态(toolPartsSent/toolCardMsgIds 等随 SessionState 流动),错误经注入的 emitter 上抛。
+- **PartDispatcher** (`domains/part_dispatcher.ts`) — part_updated/part_delta 文本/推理分发。reasoning/text case 聚合 + step-finish loopEnd 处理;delta 增量(聚合模式下经 SDK `StreamSession` 节流推送全量快照帧);idle/stop 时 flush 缓冲。tool/compaction case 由 ToolCard/Compaction 各自独立订阅 part_updated 自行过滤,本模块不处理。错误经注入的 emitter 上抛。
 - **CompactionTracker** (`domains/compaction.ts`) — compaction part 处理。running/done 状态机(OC 1.18.3 实测不发第二次 done,靠 step-finish loopEnd 兜底 PATCH);发压缩分隔符消息。持有 `compactionParts` 状态 map。
-- **InteractionCards** (`domains/interaction.ts`) — permission/question 交互卡片。正向流发卡(approval_request/question_asked)+ 反向流 PATCH 终态(permission_replied/question_replied/question_rejected)+ 启动孤儿卡片清理(`cleanupOrphans` PATCH 超时残留为 expired)。不持有状态(card_store 是模块级单例),错误经注入的 emitter 上抛。
+- **InteractionCards** (`domains/interaction.ts`) — permission/question 交互卡片。正向流发卡经 SDK `Approvals.ask`(Promise 决议)+ 反向流 PATCH 终态(permission_replied/question_replied/question_rejected)+ 启动孤儿卡片清理(`cleanupOrphans` PATCH 超时残留为 expired)。不持有状态(card_store 是模块级单例),错误经注入的 emitter 上抛。
 - **SessionLifecycle** (`domains/session_lifecycle.ts`) — session 状态/心跳/flush 兜底。busy/retry/idle 状态透传;20s 心跳保活;session.idle flush 缓冲兜底。持有 `activeSessions` + `heartbeatTimer` 两个状态。
+
+## SDK 依赖与 mapper 自管
+
+- package.json 依赖 `wanling-sdk`(file: 链接本仓库 `sdk/ts`),三域消费:AggregateBridge(AggregateCard)/ PartDispatcher(StreamSession)/ InteractionCards(Approvals)。
+- `mapper.ts` **保留自管**不迁 SDK `SessionMapping`:SDK 存储格式不兼容存量映射文件,且缺 `messageCount`(OC 侧消息计数)/ `listSessionMaps`(全量列举)能力。
 
 ## 组装根职责 (streamer.ts)
 

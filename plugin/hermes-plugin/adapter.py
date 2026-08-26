@@ -297,7 +297,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._aggregate_consumer_task.cancel()
             try:
                 await self._aggregate_consumer_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
             self._aggregate_consumer_task = None
         _aggregate_card.unregister_adapter(self)
@@ -315,7 +315,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         self._heartbeat_task = None
 
@@ -386,7 +386,7 @@ class WanlingAdapter(BasePlatformAdapter):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task  # 等取消完成
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(interval_s))
 
@@ -2221,7 +2221,11 @@ if __name__ == "__main__":
         _check(not r.success, "REST 建消息失败 → send 显式失败")
 
     async def _run_aggregate_tests():
-        """聚合卡核心自检：mock REST server，验证建卡/工具/正文/收尾全流程。"""
+        """聚合卡核心自检：mock adapter REST（io 边界），SDK AggregateCard 真跑。
+
+        mock 边界在 adapter._rest（记录 wire 调用并返回结果），SDK AggregateCard
+        与 _HermesAggregateIO 全程真实执行 —— 分卡/自愈/收尾状态机验证不打折。
+        """
         agg = _aggregate_card
 
         class _MockServer:
@@ -2240,81 +2244,87 @@ if __name__ == "__main__":
                     self.deletes.append(path)
                     return {"ok": True}
                 return {"ok": False}
-        _srv = _MockServer()
-        _orig = agg.AggregateCardManager._rest_sync
-        agg.AggregateCardManager._rest_sync = lambda self, m, p, b: _srv.handle(m, p, b)
 
         class _MockAdapter:
+            """io 边界 mock：REST 走 _MockServer；fail_remaining>0 时增量
+            PATCH（body 带 op）注入失败（模拟传输故障，驱动 SDK 降级自愈）。"""
+            def __init__(self, srv):
+                self._srv = srv
+                self.fail_remaining = 0
             def aggregate_token(self):
                 return "t"
             def lookup_conv_by_user(self, user_id):
                 return "conv"
-        _mock_adapter = _MockAdapter()
+            async def _rest(self, method, path, body):
+                data = (body or {}).get("content", {}).get("data") if isinstance(body, dict) else None
+                if (
+                    method == "PATCH"
+                    and isinstance(data, dict)
+                    and "op" in data
+                    and self.fail_remaining > 0
+                ):
+                    self.fail_remaining -= 1
+                    return {"ok": False, "error": "injected failure"}
+                return self._srv.handle(method, path, body)
+
+        _srv = _MockServer()
+        _mock_adapter = _MockAdapter(_srv)
+
+        def _ops():
+            return [p[1]["content"]["data"] for p in _srv.patches]
+
         try:
             print("== 聚合卡自检 ==")
-            _manager = agg.AggregateCardManager(
-                "sess", "conv", "http://localhost:18008", lambda: "t"
-            )
-            agg.register_session(_manager)
-            # 建卡
-            await agg._dispatch_event(object(), {"kind": "pre_llm_call", "session_id": "sess", "turn_id": "t1", "sender_id": "u"}, "http://localhost:18008")
+            # 建卡（SDK 幂等建卡 + reasoning 占位）
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "sess", "turn_id": "t1", "sender_id": "u"})
             _check(len(_srv.cards) == 1, "回合开始建 1 张卡")
             _check(_srv.cards[0][1]["content"]["data"]["state"] == "generating", "建卡 state=generating")
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "reasoning" for d in _ops()), "建卡 append reasoning 占位")
             # 工具开始
-            await agg._dispatch_event(object(), {"kind": "tool_start", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            _check(any(d.get("op") == "append" and d["element"]["type"] == "tool_card" for d in ops), "工具开始 append tool_card")
-            # 工具结束
-            await agg._dispatch_event(object(), {"kind": "tool_end", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}, "result": "out", "status": "ok", "duration_ms": 500}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            upd = [d for d in ops if d.get("op") == "update"]
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}})
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "tool_card" for d in _ops()), "工具开始 append tool_card")
+            # 工具结束（全量 data：SDK merge 后 wire 含 name/input/status/output）
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_end", "session_id": "sess", "turn_id": "t1", "tool_name": "bash", "args": {"command": "ls"}, "result": "out", "status": "ok", "duration_ms": 500})
+            upd = [d for d in _ops() if d.get("op") == "update"]
             _check(len(upd) == 1 and upd[0]["data"]["status"] == "completed" and upd[0]["data"]["output"] == "out", "工具结束 update tool_card（output/status）")
-            # 审批卡嵌入聚合卡（特殊路由：按 conv_id 定位活跃 manager）
-            await agg._dispatch_event(object(), {"kind": "permission_card", "conv_id": "conv", "session_key": "sk-1", "action": "dangerous command", "resources": ["rm -rf /"]}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            pc = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "permission_card"]
+            _check(upd[0]["data"].get("name") == "bash" and upd[0]["data"].get("input") == {"command": "ls"}, "工具终态 update 全量传参（name/input 不丢，防旧卡整体替换丢字段）")
+            # 审批卡嵌入聚合卡（特殊路由：按 conv_id 定位活跃 session）
+            await agg._dispatch_event(_mock_adapter, {"kind": "permission_card", "conv_id": "conv", "session_key": "sk-1", "action": "dangerous command", "resources": ["rm -rf /"]})
+            pc = [d for d in _ops() if d.get("op") == "append" and d["element"]["type"] == "permission_card"]
             _check(len(pc) == 1 and pc[0]["element"]["data"]["status"] == "pending" and pc[0]["element"]["data"]["oc_request_id"] == "sk-1", "审批卡嵌入 permission_card 元素（pending）")
-            _check(any(d.get("op") == "set_silent" and d.get("silent") is False for d in ops), "审批 pending 翻转 silent=false 响铃（需用户介入）")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is False for d in _ops()), "审批 pending 翻转 silent=false 响铃（需用户介入）")
             # 审批决策（permission_reply once → approved）
-            await agg._dispatch_event(object(), {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "once"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            upd = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("permission_card")]
+            await agg._dispatch_event(_mock_adapter, {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "once"})
+            upd = [d for d in _ops() if d.get("op") == "update" and d.get("element_id", "").startswith("permission_card")]
             _check(len(upd) == 1 and upd[0]["data"]["status"] == "approved", "审批决策后 permission_card 状态 approved")
-            _check(any(d.get("op") == "set_silent" and d.get("silent") is True for d in ops), "审批终态翻转 silent=true 恢复安静")
+            _check(any(d.get("op") == "set_silent" and d.get("silent") is True for d in _ops()), "审批终态翻转 silent=true 恢复安静")
             # markdown：不同中间文本独立元素；相邻前缀重叠（最终正文=中间文本展开）合并
-            await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "刚抓的页面已经有 8月12日 的新内容了。提取一下："}, "http://localhost:18008")
-            await agg._dispatch_event(object(), {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（"}, "http://localhost:18008")
-            await agg._dispatch_event(object(), {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（AIHOT 已更新）：\n\n**🔥 头条**..."}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            md_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "markdown"]
-            md_updates = [d for d in ops if d.get("op") == "update" and str(d.get("element_id", "")).startswith("markdown")]
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "刚抓的页面已经有 8月12日 的新内容了。提取一下："})
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown_update", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "8月12日 的热点来了（AIHOT 已更新）：\n\n**🔥 头条**..."})
+            md_appends = [d for d in _ops() if d.get("op") == "append" and d["element"]["type"] == "markdown"]
+            md_updates = [d for d in _ops() if d.get("op") == "update" and str(d.get("element_id", "")).startswith("markdown")]
             _check(len(md_appends) == 2, f"不同中间文本独立元素（实际 {len(md_appends)}）")
             _check(len(md_updates) == 1 and md_updates[-1]["data"]["text"].startswith("8月12日 的热点来了（AIHOT 已更新）"), "最终正文与相邻中间文本前缀合并（update 展开版）")
             # reasoning 增量（post_api_request 每轮触发）：对齐 opencode 多思考块。
-            # 首块 update 空文本占位（无新增 append）；第二轮思考到达前块标终态 + append 新块。
-            ops_before = [p[1]["content"]["data"] for p in _srv.patches]
-            append_before = len([d for d in ops_before if d.get("op") == "append" and d["element"]["type"] == "reasoning"])
-            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第一轮思考"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
-            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            append_before = len([d for d in _ops() if d.get("op") == "append" and d["element"]["type"] == "reasoning"])
+            await agg._dispatch_event(_mock_adapter, {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第一轮思考"})
+            reasoning_updates = [d for d in _ops() if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            reasoning_appends = [d for d in _ops() if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
             _check(len(reasoning_updates) == 1 and reasoning_updates[-1]["data"]["finished"] is False and reasoning_updates[-1]["data"]["text"] == "第一轮思考" and len(reasoning_appends) == append_before, "首块 delta update 空占位(无新 append)")
             # 第二轮思考：前块标终态 + append 新块（finished=false）
-            await agg._dispatch_event(object(), {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第二轮思考"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
-            reasoning_appends = [d for d in ops if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
+            await agg._dispatch_event(_mock_adapter, {"kind": "reasoning_delta", "session_id": "sess", "turn_id": "t1", "text": "第二轮思考"})
+            reasoning_updates = [d for d in _ops() if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            reasoning_appends = [d for d in _ops() if d.get("op") == "append" and d["element"]["type"] == "reasoning"]
             _check(len(reasoning_updates) == 2 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "第一轮思考", "第二轮 delta 前块标终态")
             _check(len(reasoning_appends) == append_before + 1 and reasoning_appends[-1]["element"]["data"]["finished"] is False and reasoning_appends[-1]["element"]["data"]["text"] == "第二轮思考", "第二轮 delta append 新块(finished=false)")
             # reasoning 终态（post_llm_call 回合末）：update 最后一个未终态块为 finished=true
-            await agg._dispatch_event(object(), {"kind": "reasoning", "session_id": "sess", "turn_id": "t1", "text": "最终思考"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            reasoning_updates = [d for d in ops if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
+            await agg._dispatch_event(_mock_adapter, {"kind": "reasoning", "session_id": "sess", "turn_id": "t1", "text": "最终思考"})
+            reasoning_updates = [d for d in _ops() if d.get("op") == "update" and d.get("element_id", "").startswith("reasoning")]
             _check(len(reasoning_updates) == 3 and reasoning_updates[-1]["data"]["finished"] is True and reasoning_updates[-1]["data"]["text"] == "最终思考", "终态 reasoning 覆盖最后思考块为 finished=true")
             # 正文归位：最终正文后 reorder，markdown 移到末尾（reasoning/工具卡后）
-            await agg._dispatch_event(object(), {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "总结"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            reorder_ops = [d for d in ops if d.get("op") == "reorder"]
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "sess", "turn_id": "t1", "text": "总结"})
+            reorder_ops = [d for d in _ops() if d.get("op") == "reorder"]
             _check(len(reorder_ops) >= 1, "最终正文后发 reorder 归位")
             if reorder_ops:
                 order = reorder_ops[-1]["order"]
@@ -2329,62 +2339,62 @@ if __name__ == "__main__":
                     f"reorder 后 markdown 全部在末尾（order={order}）",
                 )
             # 收尾
-            await agg._dispatch_event(object(), {"kind": "finish", "session_id": "sess", "turn_id": "t1", "model": "gpt-4o"}, "http://localhost:18008")
-            ops = [p[1]["content"]["data"] for p in _srv.patches]
-            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" for d in ops), "正文 append markdown")
-            _check(any(d.get("op") == "append" and d["element"]["type"] == "footer" for d in ops), "收尾 append footer")
-            _check(any(d.get("op") == "set_state" and d["state"] == "done" for d in ops), "收尾 set_state done")
-            _check(any(d.get("op") == "set_silent" and d["silent"] is False for d in ops), "收尾 set_silent false（计未读）")
-            # 断卡（interrupt）：Agent 执行中用户发新消息 → 旧卡 finish interrupt + 下回合开新卡
-            await agg._dispatch_event(_mock_adapter, {"kind": "interrupt", "conv_id": "conv"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "sess", "turn_id": "t1", "model": "gpt-4o"})
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" for d in _ops()), "正文 append markdown")
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "footer" for d in _ops()), "收尾 append footer")
+            _check(any(d.get("op") == "set_state" and d["state"] == "done" for d in _ops()), "收尾 set_state done")
+            _check(any(d.get("op") == "set_silent" and d["silent"] is False for d in _ops()), "收尾 set_silent false（计未读）")
+            _check(_srv.deletes == [], "有内容回合不撤回")
+            # 断卡（interrupt）：用户新消息 → 当前卡 finish(interrupt) + 复位，下回合开新卡
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s9", "turn_id": "t9", "sender_id": "u"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s9", "turn_id": "t9", "tool_name": "bash", "args": {}})
+            _patches_before_interrupt = len(_srv.patches)
+            _deletes_before = len(_srv.deletes)
+            await agg._dispatch_event(_mock_adapter, {"kind": "interrupt", "conv_id": "conv"})
+            _ops_interrupt = _ops()[_patches_before_interrupt:]
+            _check(any(d.get("op") == "update" and d.get("element_id", "").startswith("tool_card") and d.get("data", {}).get("status") == "error" and d["data"].get("name") == "bash" for d in _ops_interrupt), "interrupt 把 running 工具卡标 error（全量 data 含 name）")
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "footer" and d["element"]["data"].get("reason") == "interrupt" for d in _ops_interrupt), "interrupt finish 带 reason=interrupt footer")
+            _check(len(_srv.deletes) == _deletes_before, "interrupt 有内容卡不撤回")
             cards_before = len(_srv.cards)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "sess", "turn_id": "t2", "sender_id": "u"}, "http://localhost:18008")
-            _check(len(_srv.cards) > cards_before, "interrupt 后下回合新建卡")
-            new_card = _srv.cards[-1][1]["content"]["data"]
-            _check(new_card["state"] == "generating", "新卡 state=generating")
-            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "sess", "turn_id": "t2", "text": "第二条回复"}, "http://localhost:18008")
-            ops2 = [p[1]["content"]["data"] for p in _srv.patches]
-            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" and d["element"]["data"]["text"] == "第二条回复" for d in ops2), "新卡承载第二条回复")
-            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "sess", "turn_id": "t2", "model": "gpt-4o"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s9", "turn_id": "t10", "sender_id": "u"})
+            _check(len(_srv.cards) > cards_before, "interrupt 复位后下回合新建卡")
+            _check(_srv.cards[-1][1]["content"]["data"]["state"] == "generating", "新卡 state=generating")
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s9", "turn_id": "t10", "text": "第二条回复"})
+            _check(any(d.get("op") == "append" and d["element"]["type"] == "markdown" and d["element"]["data"]["text"] == "第二条回复" for d in _ops()), "新卡承载第二条回复")
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s9", "turn_id": "t10", "model": "gpt-4o"})
             # finish 收尾兜底：假思考占位被 remove、running 工具卡标 error
-            agg.unregister_session("sess")
-            _m3 = agg.AggregateCardManager("s3", "conv", "http://localhost:18008", lambda: "t")
-            agg.register_session(_m3)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s3", "turn_id": "t3", "sender_id": "u"}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s3", "turn_id": "t3", "tool_name": "browser_snapshot", "args": {}}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s3", "turn_id": "t3", "sender_id": "u"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s3", "turn_id": "t3", "tool_name": "browser_snapshot", "args": {}})
             _p_before = len(_srv.patches)
-            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s3", "turn_id": "t3", "model": "gpt-4o"}, "http://localhost:18008")
-            ops3 = [p[1]["content"]["data"] for p in _srv.patches]
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s3", "turn_id": "t3", "model": "gpt-4o"})
+            ops3 = _ops()
             _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for d in ops3), "finish 移除假思考占位")
             _check(any(d.get("op") == "update" and d.get("element_id", "").startswith("tool_card") and d.get("data", {}).get("status") == "error" for d in ops3), "finish 兜底 running 工具卡标 error")
             _check(len(_srv.patches) > _p_before, "finish 兜底发 PATCH")
-            # 空卡清理：回合只有占位（无内容），finish 后 DELETE 隐藏
+            # 空卡清理：回合只有占位（无内容），finish 后 DELETE recall
             _srv.deletes.clear()
-            agg.unregister_session("s3")
-            _m4 = agg.AggregateCardManager("s4", "conv", "http://localhost:18008", lambda: "t")
-            agg.register_session(_m4)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s4", "turn_id": "t4", "sender_id": "u"}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s4", "turn_id": "t4", "model": "gpt-4o"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s4", "turn_id": "t4", "sender_id": "u"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "finish", "session_id": "s4", "turn_id": "t4", "model": "gpt-4o"})
             _check(len(_srv.deletes) == 1 and "scope=recall" in _srv.deletes[0], "空卡（仅占位）finish 后 DELETE recall 撤回")
-            _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for p in _srv.patches for d in [p[1]["content"]["data"]]), "空卡占位 reasoning 被 remove")
+            _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for d in _ops()), "空卡占位 reasoning 被 remove")
             # 分卡 + 跨卡元素定位：元素超 20 自动切卡；旧卡元素 update 走归属映射 PATCH 旧卡
             _srv.cards.clear(); _srv.patches.clear()
-            agg.unregister_session("sess")
-            _m5 = agg.AggregateCardManager("s5", "conv", "http://localhost:18008", lambda: "t")
-            agg.register_session(_m5)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s5", "turn_id": "t5", "sender_id": "u"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s5", "turn_id": "t5", "sender_id": "u"})
             for _i in range(21):  # 21 个 markdown 段(建卡占位 reasoning_1 + markdown_2..markdown_22)
-                await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s5", "turn_id": "t5", "text": f"段{_i}"}, "http://localhost:18008")
+                await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s5", "turn_id": "t5", "text": f"段{_i}"})
             _check(len(_srv.cards) == 2, f"元素超 20 分卡(建 {len(_srv.cards)} 张卡,应为 2)")
+            # 分卡 seal 前置收尾：旧卡空占位被 remove（settle 语义保持）
+            _check(any(d.get("op") == "remove" and d.get("element_id", "").startswith("reasoning") for d in _ops()), "分卡 seal 前收尾旧卡空占位（remove）")
+            _m5 = agg.get_session("s5")
             # 分卡后旧卡元素(reasoning_1 落 msg-1)update → PATCH 到旧卡 msg-1(而非新卡 msg-2)
             _pb = len(_srv.patches)
             await _m5.update_element("reasoning_1", {"text": "x", "finished": True})
             _cross = _srv.patches[_pb:]
             _cu = [(mid, p) for mid, p in _cross if p["content"]["data"].get("op") == "update"]
-            _check(len(_cu) == 1 and _cu[0][0] == _m5._element_card_ids.get("reasoning_1") and _cu[0][1]["content"]["data"]["element_id"] == "reasoning_1", f"分卡后旧卡元素 update 定位归属卡(实际 {_cu[0][0] if _cu else '无'})")
+            _check(len(_cu) == 1 and _cu[0][0] == _m5.io.element_cards.get("reasoning_1") and _cu[0][1]["content"]["data"]["element_id"] == "reasoning_1", f"分卡后旧卡元素 update 定位归属卡(实际 {_cu[0][0] if _cu else '无'})")
             # 分卡后 reorder 只作用于当前卡元素(旧卡元素不参与,不 400)。
             # 新卡先 append 一个 tool_card,验证 reorder 后 markdown 归位且旧卡元素排除。
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s5", "turn_id": "t5", "tool_name": "browser_click", "args": {}}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s5", "turn_id": "t5", "tool_name": "browser_click", "args": {}})
             _pb = len(_srv.patches)
             await _m5.reorder_markdown_to_end()
             _ro = _srv.patches[_pb:]
@@ -2400,53 +2410,39 @@ if __name__ == "__main__":
             else:
                 _check(False, "分卡后 reorder 应只作用当前卡")
             agg.unregister_session("s5")
-            # 审批映射兜底：回合结束后（manager 已注销）审批决策仍 PATCH 历史消息。
-            # sk-1 已在回合内决策时被终态清理（drop），重新落一条映射模拟
-            # 「回合已收尾、审批仍 pending」场景。
-            agg.unregister_session("sess")
+            # 审批映射兜底：回合结束后（session 已注销）审批决策仍 PATCH 历史消息。
             agg.remember_permission_card("sk-1", "conv", "msg-1", "permission_card_3")
             _patch_before = len(_srv.patches)
-            await agg._dispatch_event(_mock_adapter, {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "reject"}, "http://localhost:18008")
-            _check(len(_srv.patches) > _patch_before, "manager 注销后审批决策仍发 PATCH（映射兜底）")
+            await agg._dispatch_event(_mock_adapter, {"kind": "permission_decided", "conv_id": "conv", "session_key": "sk-1", "decision": "reject"})
+            _check(len(_srv.patches) > _patch_before, "session 注销后审批决策仍发 PATCH（映射兜底）")
             _check(any(p[1]["content"]["data"].get("op") == "update" and p[1]["content"]["data"].get("element_id", "").startswith("permission_card") and p[1]["content"]["data"]["data"]["status"] == "denied" for p in _srv.patches), "映射兜底 PATCH 更新 permission_card 为 denied")
             # 审批终态后清理持久映射（防泄漏）
             _rec = agg.get_permission_card("sk-1")
             _check(_rec is None, "审批终态后持久映射被清理（drop_permission_card）")
             # reorder 短路：markdown 已在末尾时不再发 reorder PATCH
-            agg.unregister_session("sess")
-            _m6 = agg.AggregateCardManager("s6", "conv", "http://localhost:18008", lambda: "t")
-            agg.register_session(_m6)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s6", "turn_id": "t6", "sender_id": "u"}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s6", "turn_id": "t6", "tool_name": "bash", "args": {}}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s6", "turn_id": "t6", "sender_id": "u"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s6", "turn_id": "t6", "tool_name": "bash", "args": {}})
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"})
             _p6 = len(_srv.patches)
-            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"}, "http://localhost:18008")
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s6", "turn_id": "t6", "text": "正文"})
             _ro6 = [p for p in _srv.patches[_p6:] if p[1]["content"]["data"].get("op") == "reorder"]
             _check(len(_ro6) == 0, "markdown 已在末尾时 reorder 短路（不发 PATCH）")
             agg.unregister_session("s6")
-            # 失败自愈：PATCH 失败置 degraded → 下次 op 前发全量替换（影子副本覆盖）
-            agg.unregister_session("sess")
-            _m7 = agg.AggregateCardManager("s7", "conv", "http://localhost:18008", lambda: "t")
-            agg.register_session(_m7)
-            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s7", "turn_id": "t7", "sender_id": "u"}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}}, "http://localhost:18008")
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_end", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}, "result": "ok", "status": "ok"}, "http://localhost:18008")
-            # 注入一次传输失败（返回 None）
-            _orig_rest = _m7._rest
-            async def _fail_once(m, p, b):
-                if not getattr(_fail_once, "used", False):
-                    _fail_once.used = True  # type: ignore[attr-defined]
-                    return None
-                return await _orig_rest(m, p, b)
-            _m7._rest = _fail_once  # type: ignore[method-assign]
-            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s7", "turn_id": "t7", "text": "正文A"}, "http://localhost:18008")
-            _check(_m7._degraded is True, "PATCH 传输失败置 degraded")
-            _pb7 = len(_srv.patches)
-            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "grep", "args": {}}, "http://localhost:18008")
-            _ops7 = [p[1]["content"]["data"] for p in _srv.patches[_pb7:]]
+            # 降级自愈：连续 3 次增量 PATCH 失败 → SDK 全量替换（影子副本覆盖）+
+            # 窗口内 append 改写幂等 update（防 server 双元素）
+            await agg._dispatch_event(_mock_adapter, {"kind": "pre_llm_call", "session_id": "s7", "turn_id": "t7", "sender_id": "u"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_end", "session_id": "s7", "turn_id": "t7", "tool_name": "bash", "args": {}, "result": "ok", "status": "ok"})
+            _heal_base = len(_srv.patches)
+            _mock_adapter.fail_remaining = 3
+            await agg._dispatch_event(_mock_adapter, {"kind": "markdown", "session_id": "s7", "turn_id": "t7", "text": "正文A"})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "grep", "args": {}})
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_start", "session_id": "s7", "turn_id": "t7", "tool_name": "find", "args": {}})
+            _check(_mock_adapter.fail_remaining == 0, "失败注入全部被消费（3 连败触发自愈）")
+            _ops7 = _ops()[_heal_base:]
             _full = [d for d in _ops7 if "op" not in d and "elements" in d]
-            _check(len(_full) == 1, "degraded 后下次 op 前发全量替换")
-            # M4 顺序锁定：全量替换必须是该窗口内第一个 PATCH
+            _check(len(_full) == 1, "3 连败后 SDK 发全量替换（降级自愈）")
+            # 全量替换必须是自愈窗口内 server 收到的第一个 PATCH（失败请求在 mock 层拦截）
             _check(
                 bool(_ops7) and "op" not in _ops7[0] and "elements" in _ops7[0],
                 "全量替换是自愈窗口内第一个 PATCH（顺序锁定）",
@@ -2458,37 +2454,39 @@ if __name__ == "__main__":
                     and _full[0].get("state") == "generating",
                     "全量替换含失败窗口内的元素（影子副本覆盖）",
                 )
-            # C1 回归：server append 无 upsert（直接追加），自愈全量已含新元素，
-            # 再发 append 会同 element_id 双条 → APP 双渲染。窗口内禁止 append。
+            # server append 无 upsert（直接追加），自愈全量已含新元素，再发 append 会
+            # 同 element_id 双条 → APP 双渲染。窗口内禁止 append，改写幂等 update。
             _check(
                 not any(d.get("op") == "append" for d in _ops7),
-                "C1 回归：自愈成功后窗口内无 append（防重复元素双渲染）",
+                "回归：自愈成功后窗口内无 append（防重复元素双渲染）",
             )
-            # C1 回归：原 append 改写为幂等 update，命中本窗口新元素（grep 工具卡）
             _check(
                 any(
                     d.get("op") == "update"
                     and str(d.get("element_id", "")).startswith("tool_card")
-                    and d.get("data", {}).get("name") == "grep"
+                    and d.get("data", {}).get("name") == "find"
                     for d in _ops7
                 ),
-                "C1 回归：新元素 append 被改写为幂等 update 命中该元素",
+                "回归：新元素 append 被改写为幂等 update 命中该元素",
             )
-            _check(_m7._degraded is False, "自愈成功后 degraded 复位")
+            # 自愈后恢复增量模式：后续 op 正常落地（find 工具终态 update 全量）
+            _heal_after = len(_srv.patches)
+            await agg._dispatch_event(_mock_adapter, {"kind": "tool_end", "session_id": "s7", "turn_id": "t7", "tool_name": "find", "args": {}, "result": "done", "status": "ok"})
+            _ops7b = _ops()[_heal_after:]
+            _check(
+                any(d.get("op") == "update" and d.get("data", {}).get("name") == "find" and d["data"]["status"] == "completed" for d in _ops7b),
+                "自愈后恢复增量模式（后续终态 update 正常）",
+            )
             agg.unregister_session("s7")
-            # I2 回归：degraded 不跨卡泄漏 —— 分卡自愈失败后旧标记残留，
-            # 新卡创建成功即复位（新卡 server 状态 = 创建全量，天然干净）
-            _m8 = agg.AggregateCardManager("s8", "conv", "http://localhost:18008", lambda: "t")
-            _m8._degraded = True  # 模拟旧卡 PATCH 失败残留
-            _m8._card_msg_id = None  # 模拟分卡后重开新卡
-            await _m8.ensure_card()
-            _check(_m8._degraded is False, "I2 回归：新卡创建成功后 degraded 复位（不跨卡泄漏）")
-            agg.unregister_session("s8")
         finally:
-            agg.AggregateCardManager._rest_sync = _orig
+            agg._SESSIONS.clear()
+            agg._SESSION_TURNS.clear()
+            agg._SESSION_CONVS.clear()
+            agg._PERMISSION_CARDS.clear()
 
     async def _run_rest_channel_tests():
-        """REST 通道自检：keep-alive 连接复用 + 401 刷新重试 + 超时 5s。"""
+        """REST 通道自检（io 边界，真 HTTP 服务）：keep-alive 连接复用 +
+        401 刷新重试 + 超时 5s。经 _HermesAggregateIO 驱动 adapter._rest_sync。"""
         import http.server
         import threading as _th
         agg = _aggregate_card
@@ -2543,25 +2541,104 @@ if __name__ == "__main__":
             return tok["cur"]
 
         try:
-            m = agg.AggregateCardManager(
-                "s", "c", f"http://127.0.0.1:{port}", lambda: tok["cur"], token_refresher=_refresh,
-            )
-            r1 = await m._rest("POST", "/api/conversations/c/messages", {"content": {}})
-            _check(isinstance(r1, dict) and r1.get("ok"), "keep-alive POST 成功")
-            r2 = await m._rest("PATCH", "/api/messages/m1", {"content": {}})
-            _check(isinstance(r2, dict) and r2.get("ok"), "401 后刷新 token 重试成功")
-            _check(refreshes["n"] == 1, "401 触发恰好一次 token 刷新")
-            await m._rest("PATCH", "/api/messages/m1", {"content": {}})
-            await m._rest("PATCH", "/api/messages/m1", {"content": {}})
+            adapter = WanlingAdapter.__new__(WanlingAdapter)
+            adapter.server_url = f"http://127.0.0.1:{port}"
+            adapter._rest_conn = None
+            adapter.aggregate_token = lambda: tok["cur"]  # type: ignore[method-assign]
+            adapter.refresh_aggregate_token = _refresh  # type: ignore[method-assign]
+            io = agg._HermesAggregateIO(adapter, "c")
+            mid = await io.send_card({"msg_type": "aggregate_card", "data": {"state": "generating"}})
+            _check(mid == "m1", "keep-alive POST 建卡成功（返回 message_id）")
+            await io.patch(mid, {"op": "set_silent", "silent": False})
+            _check(refreshes["n"] == 1, "401 后刷新 token 重试成功（恰好一次刷新）")
+            await io.patch(mid, {"op": "set_state", "state": "done"})
+            await io.patch(mid, {"op": "set_segment", "segment": "last"})
             _check(state["conns"] == 1, f"4 次请求仅 1 条 TCP 连接（实际 {state['conns']}）")
-            m.close()
+            adapter._rest_close()
         finally:
             srv.shutdown()
+
+    async def _run_shutdown_tests():
+        """关停泄漏测试：cancel 后 await 已取消任务，CancelledError 不得穿透 disconnect()。
+
+        真实事故：disconnect() 里 except Exception 拦不住 CancelledError
+        （Python 3.8+ 是 BaseException），异常穿透到 hermes 的有界等待，
+        把整个 gateway stop 任务静默杀死 → 进程挂 210s 被 SIGKILL。
+        """
+        import threading as _th
+
+        # ── 场景 1：disconnect() 内部 await 已取消任务，不得泄漏 CancelledError ──
+        async def _scenario_disconnect_leak():
+            adapter = WanlingAdapter.__new__(WanlingAdapter)
+            adapter._stopping = False
+            adapter._aggregate_stop = _th.Event()
+            # 永不主动退出的消费者任务（模拟 run_event_consumer 阻塞在队列 get）
+            async def _stuck_consumer():
+                await _asyncio.sleep(3600)
+            adapter._aggregate_consumer_task = _asyncio.create_task(_stuck_consumer())
+            adapter._edit_meta = {}
+            adapter._ws = None
+            adapter._heartbeat_task = None
+            adapter._recv_task = None
+            adapter._rest_close = lambda: None  # type: ignore[method-assign]
+
+            # _aggregate_card.unregister_adapter 需要的注册表不存在时容忍
+            orig_unreg = getattr(_aggregate_card, "unregister_adapter", None)
+            if orig_unreg is not None:
+                _aggregate_card.unregister_adapter = lambda *a, **k: None  # type: ignore
+
+            leak = None
+            try:
+                await _asyncio.wait_for(adapter.disconnect(), timeout=5)
+            except BaseException as e:  # noqa: BLE001 — 测试就是要抓 BaseException
+                leak = e
+            finally:
+                if orig_unreg is not None:
+                    _aggregate_card.unregister_adapter = orig_unreg  # type: ignore
+            _check(leak is None, f"disconnect() 不泄漏 CancelledError/异常（实际 {leak!r}）")
+
+        await _scenario_disconnect_leak()
+
+        # ── 场景 2：hermes 视角 — disconnect 任务被 await 时不得把取消传给调用方 ──
+        async def _scenario_hermes_bounded_wait():
+            adapter = WanlingAdapter.__new__(WanlingAdapter)
+            adapter._stopping = False
+            adapter._aggregate_stop = _th.Event()
+            async def _stuck_consumer():
+                await _asyncio.sleep(3600)
+            adapter._aggregate_consumer_task = _asyncio.create_task(_stuck_consumer())
+            adapter._edit_meta = {}
+            adapter._ws = None
+            adapter._heartbeat_task = None
+            adapter._recv_task = None
+            adapter._rest_close = lambda: None  # type: ignore[method-assign]
+            orig_unreg = getattr(_aggregate_card, "unregister_adapter", None)
+            if orig_unreg is not None:
+                _aggregate_card.unregister_adapter = lambda *a, **k: None  # type: ignore
+
+            # 复刻 hermes _await_adapter_cleanup_with_timeout 的结构：
+            # 把 disconnect() 包成 task 并 await —— 若 disconnect 泄漏取消，
+            # 这个 await 会抛 CancelledError，与线上死法一致。
+            task = _asyncio.create_task(adapter.disconnect())
+            try:
+                await _asyncio.wait_for(_asyncio.shield(_asyncio.wait({task}, timeout=5)), timeout=8)
+                _check(task.done() and not task.cancelled(),
+                       "hermes 有界等待视角：disconnect 正常完成而非被取消")
+            except BaseException as e:  # noqa: BLE001
+                _check(False, f"hermes 有界等待视角：泄漏了 {type(e).__name__}")
+            finally:
+                if orig_unreg is not None:
+                    _aggregate_card.unregister_adapter = orig_unreg  # type: ignore
+                if not task.done():
+                    task.cancel()
+
+        await _scenario_hermes_bounded_wait()
 
     async def _main():
         await _run_tests()
         await _run_aggregate_tests()
         await _run_rest_channel_tests()
+        await _run_shutdown_tests()
         print()
         if failures:
             print(f"== 自检失败：{len(failures)} 项 ==")

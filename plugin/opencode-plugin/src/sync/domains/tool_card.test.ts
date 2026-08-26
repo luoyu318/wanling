@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { EventEmitter } from "events"
 import { ToolCardManager } from "./tool_card.js"
-import { AggregateCardManager } from "./aggregate_card.js"
+import { getAggregateCard, toolCardElement } from "./aggregate_bridge.js"
 import { MessageRouter } from "../messaging.js"
 import { SessionStore } from "../session_store.js"
 import type { WanlingClient } from "../../wanling/client.js"
@@ -61,6 +61,42 @@ function toolPart(
 function lastPatch(wanling: ReturnType<typeof makeFixture>["wanling"]) {
   const calls = wanling.patchAggregateMessage.mock.calls
   return calls[calls.length - 1]
+}
+
+// 真实 SessionStore + ToolCardManager fixture(聚合开):session_store 的 working/
+// 超时兜底 PATCH 走真实 childSessionTree 注册链路,断言全量 data 不丢字段。
+function makeRealFixture(childTimeoutMs: number) {
+  const wanling = {
+    sendCardMessage: vi.fn().mockResolvedValue("card-1"),
+    patchAggregateMessage: vi.fn().mockResolvedValue(undefined),
+    updateMessageContent: vi.fn().mockResolvedValue(undefined),
+    sendTypedMessage: vi.fn(),
+  } as any
+  const router = new MessageRouter(wanling)
+  const store = new SessionStore({
+    mainSessionId: "sess-main",
+    ensureDeps: {} as any,
+    wanling,
+    router,
+    childTimeoutMs,
+  })
+  const manager = new ToolCardManager({
+    store,
+    router,
+    wanling,
+    emitter: new EventEmitter(),
+    aggregateCardEnabled: true,
+  })
+  const state: SessionState = {
+    reasoning: null,
+    text: null,
+    convId: "conv-1",
+    toolPartsSent: new Set(),
+    textPartsFlushed: new Set(),
+    toolCardMsgIds: new Map(),
+    toolCardInflight: new Map(),
+  }
+  return { wanling, store, manager, state }
 }
 
 describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态修复)", () => {
@@ -160,9 +196,9 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
       textPartsFlushed: new Set(),
       toolCardMsgIds: new Map(),
       toolCardInflight: new Map(),
-      // 思考/正文已先追加 → 聚合卡已建
-      aggregateCardMsgId: "card-exists",
     }
+    // 思考/正文已先追加 → 聚合卡已建:预设 bridge 的卡消息 id(惰性桥复用)
+    getAggregateCard(state, wanling as any).cardMessageId = "card-exists"
 
     await manager.onPartUpdated(
       toolPart("p-task-1", "task", "running", {
@@ -187,6 +223,73 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
 
     store.stop()
   })
+
+  it("聚合模式子 session 首事件 working PATCH 携带全量 data(name/input/sub_session_id 不丢)", async () => {
+    const { wanling, store, manager, state } = makeRealFixture(60_000)
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+    // 等 append 落地(元素进 SDK 镜像)后再触发首事件
+    await new Promise((r) => setImmediate(r))
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+
+    await store.getOrCreateState("sess-child")
+
+    // 全量 data:partial {status:"working"} 会把分卡旧卡元素整体替换丢 name/input
+    expect(lastPatch(wanling)).toEqual([
+      "card-1",
+      {
+        op: "update",
+        element_id: "tool_card_1",
+        data: { name: "task", input: { description: "子任务", prompt: "..." }, status: "working", sub_session_id: "sess-child" },
+      },
+    ])
+    store.stop()
+  })
+
+  it("聚合模式子 session 超时兜底 PATCH 携带全量 data(分卡旧卡整体替换不丢字段)", async () => {
+    const { wanling, store, manager, state } = makeRealFixture(30)
+    await manager.onPartUpdated(
+      toolPart("p-task-1", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "sess-main", sessionId: "sess-child" },
+      }),
+      state, "sess-main",
+    )
+    await new Promise((r) => setImmediate(r))
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage).toHaveBeenCalled()
+    })
+
+    // 不 cleanupChild,30ms 兜底 timer 触发超时 PATCH
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    await vi.waitFor(() => {
+      expect(wanling.patchAggregateMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+    warnSpy.mockRestore()
+
+    expect(lastPatch(wanling)).toEqual([
+      "card-1",
+      {
+        op: "update",
+        element_id: "tool_card_1",
+        data: {
+          name: "task",
+          input: { description: "子任务", prompt: "..." },
+          output: "子 Agent 超时未完成(>30min)",
+          status: "error",
+          sub_session_id: "sess-child",
+        },
+      },
+    ])
+    store.stop()
+  })
 })
 
 describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合卡元素)", () => {
@@ -204,7 +307,7 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     expect(msgId).toBe("card-1")
     expect(body).toEqual({
       op: "append",
-      element: AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
+      element: toolCardElement({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
     })
     // 不再发独立 tool_card(sendCard 不被调)
     expect(router.sendCard).not.toHaveBeenCalled()
@@ -261,30 +364,29 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     )
   })
 
-  it("I3 done 后迟到工具 completed PATCH 不把卡片翻回 generating(state 保持 done)", async () => {
+  it("I3 收尾后迟到工具 completed:零 wire 流量(不 PATCH 已收尾卡/不建孤儿卡)", async () => {
     const { manager, state, wanling } = makeFixture()
-    // 模拟回合已结束:聚合卡 state 已翻 done,工具 running 元素在卡上
-    state.aggregateCardState = "done"
-    state.aggregateSeq = 2
-    state.aggregateElements = [
-      AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 1),
-      AggregateCardManager.markdown("最终回复", 2),
-    ]
-    state.aggregateToolElementIds = new Map([["p-bash-1", "tool_card_1"]])
-    // 回合结束(done)后,迟到的 tool completed 事件 PATCH 更新目标元素
+    // 工具 running 元素 append 落地(建卡 + append)
     await manager.onPartUpdated(
-      toolPart("p-bash-1", "bash", "completed", { input: { command: "ls" }, output: "done" }),
+      toolPart("p-bash-1", "bash", "running", { input: { command: "ls" } }),
       state, "sess-1",
     )
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
-    const [, body] = lastPatch(wanling)
-    // 迟到 completed 发 update op,无 set_state —— 增量下 server 保留 done,不翻回 generating
-    expect(body.op).toBe("update")
-    expect(body.element_id).toBe("tool_card_1")
-    expect(body.data.status).toBe("completed")
-    expect(wanling.patchAggregateMessage.mock.calls.every(([, b]) => b.op !== "set_state")).toBe(true)
+    // 真实收尾(finalizeCard:footer + set_state done + set_silent false,
+    // sealRound 清工具元素映射 + bridge/SDK 双双 sealed)
+    await getAggregateCard(state, wanling as any).finalizeCard({ reason: "stop", duration: 1 })
+    const baseline = wanling.patchAggregateMessage.mock.calls.length
+    // 回合结束后,迟到的 tool completed 事件:定位映射已清 + SDK sealed 缓存双防线,
+    // 不再 PATCH 已收尾卡(增量下不误建新卡/不翻回 generating)
+    await manager.onPartUpdated(
+      toolPart("p-bash-1", "bash", "completed", { input: { command: "ls" }, output: "done" }),
+      state, "sess-1",
+    )
+    await new Promise((r) => setImmediate(r))
+    expect(wanling.patchAggregateMessage.mock.calls.length).toBe(baseline)
+    expect(wanling.sendCardMessage).toHaveBeenCalledTimes(1)
   })
 
   it("工具 error → 更新目标元素 status:error + error 字段", async () => {
@@ -314,7 +416,6 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
   it("tool element_id 与 reasoning/markdown 共用序号计数器(全卡唯一)", async () => {
     const { manager, state, wanling } = makeFixture()
     state.aggregateSeq = 2
-    state.aggregateElements = [AggregateCardManager.reasoning("思考", 1), AggregateCardManager.markdown("正文", 2)]
     await manager.onPartUpdated(
       toolPart("p-bash-1", "bash", "running", { input: { command: "ls" } }),
       state, "sess-1",
@@ -325,7 +426,7 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     const [, body] = lastPatch(wanling)
     expect(body).toEqual({
       op: "append",
-      element: AggregateCardManager.toolCard({ name: "bash", input: { command: "ls" }, status: "running" }, 3),
+      element: toolCardElement({ name: "bash", input: { command: "ls" }, status: "running" }, 3),
     })
     expect(state.aggregateSeq).toBe(3)
   })
@@ -372,7 +473,7 @@ describe("ToolCardManager 聚合模式(工具 running/completed/error 走聚合�
     expect(msgId).toBe("card-1")
     expect(body).toEqual({
       op: "append",
-      element: AggregateCardManager.toolCard(
+      element: toolCardElement(
         { name: "task", input: { description: "子任务", prompt: "..." }, status: "starting", sub_session_id: "sess-child" },
         1,
       ),

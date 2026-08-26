@@ -16,7 +16,7 @@ String chatRoute(String convId, [String? agentId]) {
 
 /// 拼接多 session 开发型 agent(opencode 类)的二级列表页路由。
 ///
-/// 入口:一级消息列表点多 session agent(满足 AgentCategory.supportsMultiSession)行。
+/// 入口:一级消息列表点多 session agent(server 注册表 multi_session)行。
 /// agentId 走 path 参数,二级页据此调 getAgentSessions 拉取 session 群列表。
 String sessionsRoute(String agentId) => '/agent/$agentId/sessions';
 

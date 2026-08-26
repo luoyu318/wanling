@@ -3,10 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/providers/agent_status_provider.dart' show agentStatusProvider;
 import 'package:wanling_core/providers/chat_provider.dart';
+import 'package:wanling_core/providers/chat_state.dart';
+import 'package:wanling_core/providers/conversation_provider.dart' show conversationProvider;
+import 'package:wanling_core/providers/typing_provider.dart' show typingProvider;
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/utils/gallery_image.dart';
 import '../../widgets/image_viewer.dart';
+import '../../widgets/chat/typing_bubble.dart';
 
 /// 桌面消息列表:单列表 oldest-first 贴底(chat-single-list 重构结论,不用 reverse:true)。
 ///
@@ -189,8 +194,28 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
             conversationMessages: items,
           ),
         ),
+        // 单聊打字气泡(trailing 插槽,对齐 app):typing(TYPING_START)或
+        // agent 生成中(agentStatus 有值)时显示。多聊(agent_session)恒不显:
+        // 运行状态由 AppBar「灵光涌动」+ StopBar + 聚合卡承载(同 app 口径)。
+        if (_showTypingBubble(chat))
+          const SliverToBoxAdapter(child: TypingBubble()),
       ],
     );
+  }
+
+  /// 打字气泡显隐判定(对齐 app chat_page._refreshExtraItems 口径)。
+  bool _showTypingBubble(ChatState chat) {
+    final conv = ref
+        .read(conversationProvider)
+        .where((c) => c.id == widget.convId)
+        .firstOrNull;
+    final isAgentSession =
+        conv?.isAgentSession ?? (chat.convType == 'agent_session');
+    if (isAgentSession) return false;
+    final typing = ref.watch(typingProvider.select((m) => m[widget.convId] ?? false));
+    final generating =
+        ref.watch(agentStatusProvider.select((s) => s[widget.convId])) != null;
+    return typing || generating;
   }
 }
 

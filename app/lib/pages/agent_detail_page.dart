@@ -8,7 +8,9 @@ import 'package:go_router/go_router.dart';
 
 import 'crop_avatar_page.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_types_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/conversation_provider.dart';
 import '../router_helpers.dart';
@@ -189,16 +191,14 @@ class AgentDetailPage extends ConsumerWidget {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                     ),
                     onPressed: () {
-                      if (AgentCategory.supportsMultiSession(agent.type)) {
+                      if (agent.isMultiSession) {
                         context.push(sessionsRoute(agent.id));
                       } else {
                         startChatAndPush(context, ref, agent);
                       }
                     },
                     child: Text(
-                      AgentCategory.supportsMultiSession(agent.type)
-                          ? '进入会话'
-                          : '发消息',
+                      agent.isMultiSession ? '进入会话' : '发消息',
                       style: const TextStyle(fontSize: 15),
                     ),
                   ),
@@ -277,13 +277,21 @@ class AgentDetailPage extends ConsumerWidget {
             AppDropdownFormField<String>(
               value: agentType,
               label: '类型',
-              items: const [
-                AppDropdownItem(value: '', label: '普通'),
-                AppDropdownItem(
-                    value: AgentCategory.hermes, label: 'Hermes'),
-                AppDropdownItem(
-                    value: AgentCategory.opencode, label: 'OpenCode'),
-              ],
+              // 类型清单来自 server 注册表(GET /api/agent-types):新类型
+              // server 侧登记后自动出现,APP 零发版。老 server/加载失败
+              // fallback 本地预置三类。
+              items: () {
+                final types = _typeOptions(ref);
+                return [
+                  const AppDropdownItem(value: '', label: '普通'),
+                  ...types.map(
+                      (t) => AppDropdownItem(value: t.type, label: t.label)),
+                  // 未注册类型兜底 item:防 value 匹配不到触发断言崩溃。
+                  if (agentType.isNotEmpty &&
+                      !types.any((t) => t.type == agentType))
+                    AppDropdownItem(value: agentType, label: agentType),
+                ];
+              }(),
               onChanged: (v) => setState(() => agentType = v ?? ''),
             ),
           ],
@@ -424,3 +432,10 @@ class _NewSecretContentState extends State<_NewSecretContent> {
     );
   }
 }
+
+/// 类型下拉数据源:server 注册表优先,老 server/加载失败 fallback 本地预置。
+/// 放顶层函数供「详情改类型」「新建 agent」两处下拉共用。
+List<AgentTypeInfo> _typeOptions(WidgetRef ref) =>
+    ref.read(agentTypesProvider).valueOrNull?.isNotEmpty == true
+        ? ref.read(agentTypesProvider).valueOrNull!
+        : AgentTypeInfo.fallbackTypes;

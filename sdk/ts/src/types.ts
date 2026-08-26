@@ -48,3 +48,36 @@ export interface OutboundMessage {
   conversation_id: string
   content: MessageContent
 }
+
+/** question 选项。 */
+export interface ApprovalOption { id: string; label: string }
+
+/** 审批卡 meta 行（icon/text/warn，建卡时随卡下发展示，对齐 CreateApprovalBody）。 */
+export interface ApprovalMetaRow { icon?: string; text?: string; warn?: boolean }
+
+/** approvals.ask 入参（command/tool/file/slash_confirm/question 通用）。 */
+export interface AskOptions {
+  cardType: "command" | "tool" | "file" | "slash_confirm" | "question"
+  title: string
+  preview?: string
+  /** preview 代码块语言（command 卡常用 "shell"，JSON 参数用 "json"）。 */
+  previewLanguage?: string
+  /** 卡片补充展示行（如权限决策说明 reason）。 */
+  meta?: ApprovalMetaRow[]
+  toolName?: string
+  sessionKey: string
+  /** question 专用 */
+  options?: ApprovalOption[]
+  multiSelect?: boolean
+  /** command 白名单 glob（* % 差异由 server 转换，这里传 glob） */
+  allowPattern?: string
+  /** slash_confirm 专用 */
+  confirmId?: string
+  timeoutSec?: number
+}
+
+/** approvals.ask 结果。 */
+export type AskResult =
+  | { state: "approved"; decision: string; answers?: string[]; decidedBy?: string; reason?: string }
+  | { state: "denied"; decision: string; decidedBy?: string; reason?: string }
+  | { state: "expired" }

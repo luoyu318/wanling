@@ -6,15 +6,17 @@
 
 ```mermaid
 flowchart TB
-    subgraph ts[TS SDK @wanling/sdk]
+    subgraph ts[TS SDK wanling-sdk]
         TCLIENT[client.ts<br/>连接 + 事件分发]
         TREST[rest.ts<br/>REST 客户端]
         TRPC[rpc.ts<br/>RPCDispatcher]
+        THIGH[高层封装<br/>approvals/aggregate_card/stream_session/session_mapping]
     end
     subgraph py[Python SDK wanling-sdk]
         PCLIENT[client.py]
         PREST[rest.py]
         PRPC[rpc.py]
+        PHIGH[高层封装<br/>approvals/aggregate_card/stream_session/session_mapping]
     end
     subgraph tmpl[模板]
         TPLT[template-ts]
@@ -22,6 +24,10 @@ flowchart TB
     end
     SERVER[万灵 Server]
 
+    THIGH --> TCLIENT
+    THIGH --> TREST
+    PHIGH --> PCLIENT
+    PHIGH --> PREST
     TCLIENT --> SERVER
     TREST --> SERVER
     PCLIENT --> SERVER
@@ -33,8 +39,12 @@ flowchart TB
 ## 组件清单
 
 - `sdk/ts/src/client.ts` / `sdk/python/wanling_sdk/client.py` — WS 连接生命周期(token 换取 + Hello/Identify/Heartbeat/Resume + 重连)+ 事件分发 + 发送/上报方法。从 opencode-plugin `wanling/client.ts` 抽取演进
-- `sdk/ts/src/rest.ts` / `sdk/python/wanling_sdk/rest.py` — REST 客户端(agent 视角会话/消息/文件/审批)。方法:sendCardMessage/updateMessageContent/**createApproval**(审批状态机,含 allow_pattern 白名单)/**patchAggregateMessage**(聚合卡增量 op,对齐 aggregate-card.md)/上传上限可配置(默认 32MB 对齐 server UPLOAD_MAX_BYTES);sendCardMessage 默认 silent=true 仅适合卡片/过程消息,发普通回复须显式 silent=false
+- `sdk/ts/src/rest.ts` / `sdk/python/wanling_sdk/rest.py` — REST 客户端(agent 视角会话/消息/文件/审批)。方法:sendCardMessage/updateMessageContent/**createApproval**(审批状态机,含 allow_pattern 白名单/question 的 options+multi_select)/**getApproval**(decided/decided_answers 兜底查询)/listAgentConversations/listAgentSessions/**patchAggregateMessage**(聚合卡增量 op,对齐 aggregate-card.md)/recallMessage/上传上限可配置(默认 32MB 对齐 server UPLOAD_MAX_BYTES);sendCardMessage 默认 silent=true 仅适合卡片/过程消息,发普通回复须显式 silent=false
 - `sdk/ts/src/rpc.ts` / `sdk/python/wanling_sdk/rpc.py` — RPCDispatcher(`register`(TS) / `register_method`(Python) 注册 + PluginCall 分发 + PluginResult 回发)
+- `sdk/ts/src/approvals.ts` / `sdk/python/wanling_sdk/approvals.py` — **Approvals** 审批/提问高层封装:`ask(convId, opts)` 建卡 + 监听 APPROVAL_DECIDED/EXPIRED 决议 Promise,超时兜底 + 重连 resync;协议对齐 approval-card.md
+- `sdk/ts/src/aggregate_card.ts` / `sdk/python/wanling_sdk/aggregate_card.py` — **AggregateCard** 聚合卡状态机:append/update/finish/interrupt,建卡幂等 + PATCH 串行队列 + 20 元素自动分卡 + 降级全量替换自愈;协议对齐 aggregate-card.md
+- `sdk/ts/src/stream_session.ts` / `sdk/python/wanling_sdk/stream_session.py` — **StreamSession** op=14 流式会话:push/end/abort,节流 + 累积全量快照帧
+- `sdk/ts/src/session_mapping.ts` / `sdk/python/wanling_sdk/session_mapping.py` — **SessionMapping** session↔conversation 本地 JSON 映射:ensureConversation 幂等建会话 + bySession/byConversation 查询
 - `sdk/templates/` — 最小 agent 插件脚手架
 
 ## 事件映射(两语言一致)

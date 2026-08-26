@@ -3,6 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../utils/dio_error.dart';
+import 'add_account_dialog.dart';
+
+/// 菜单「添加服务器/账号」项的特殊 value(与账号索引区分)。
+const _addEntry = -1;
 
 /// 登录页顶部多账号切换器。
 ///
@@ -46,8 +50,27 @@ class AccountSwitcher extends ConsumerWidget {
                 '${saved.logins[i].username}@${saved.logins[i].server}',
               ),
             ),
+        // 添加新服务器/账号(对齐 app select_account_page「+ 添加服务器」):
+        // 登录页表单即添加流程,勾选记住账号后自动入 savedLogins。
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: _addEntry,
+          child: Row(
+            children: [
+              Icon(Icons.add, size: 18),
+              SizedBox(width: 6),
+              Text('添加服务器/账号'),
+            ],
+          ),
+        ),
       ],
       onSelected: (i) async {
+        if (i == _addEntry) {
+          // 弹添加框(对齐 app select_account_page):填完保存进
+          // savedLogins,是否立即登录由用户在列表里点选。
+          await showAddAccountDialog(context, ref);
+          return;
+        }
         try {
           // 登录页处于登出态:selectedIndex 仍指上次账号,switchTo 对
           // i==selectedIndex 是 no-op(点了没反应),且未登录时多余 logout 会
@@ -57,7 +80,15 @@ class AccountSwitcher extends ConsumerWidget {
               ref.read(authProvider.select((s) => s.isAuthenticated));
           final notifier = ref.read(savedLoginsProvider.notifier);
           if (loggedIn) {
+            // 已登录:in-place 静默切换(switchTo 内部 silent logout → 切
+            // baseUrl → 保存凭据重登,全程 isSwitching 守卫 router 不跳登录页),
+            // 成功反馈对齐 app account_sidebar。
             await notifier.switchTo(i);
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已切换账号')),
+              );
+            }
           } else {
             await notifier.loginWith(i);
           }

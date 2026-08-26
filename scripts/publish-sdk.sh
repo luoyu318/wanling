@@ -12,7 +12,7 @@ target="${1:-all}"
 publish_ts() {
   echo "🔧 [TS] 构建 + 测试 + lint..."
   (cd "$TS_DIR" && npm install --include=dev && npx tsc && npx vitest run && npx eslint src/ test/)
-  echo "🚀 [TS] npm publish @wanling/sdk..."
+  echo "🚀 [TS] npm publish wanling-sdk..."
   (cd "$TS_DIR" && npm publish)
 }
 

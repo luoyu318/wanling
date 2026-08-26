@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_types_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/agent_badge.dart';
@@ -80,12 +82,11 @@ class _AgentListPageState extends ConsumerState<AgentListPage>
             AppDropdownFormField<String>(
               value: agentType,
               label: '类型',
-              items: const [
-                AppDropdownItem(value: '', label: '普通'),
-                AppDropdownItem(
-                    value: AgentCategory.hermes, label: 'Hermes'),
-                AppDropdownItem(
-                    value: AgentCategory.opencode, label: 'OpenCode'),
+              // 类型清单来自 server 注册表:新类型 server 侧登记后自动出现。
+              items: [
+                const AppDropdownItem(value: '', label: '普通'),
+                ..._typeOptions(ref).map(
+                  (t) => AppDropdownItem(value: t.type, label: t.label)),
               ],
               onChanged: (v) => setState(() => agentType = v ?? ''),
             ),
@@ -297,3 +298,9 @@ class _AgentTileState extends State<_AgentTile> {
     );
   }
 }
+
+/// 类型下拉数据源:server 注册表优先,老 server/加载失败 fallback 本地预置。
+List<AgentTypeInfo> _typeOptions(WidgetRef ref) =>
+    ref.read(agentTypesProvider).valueOrNull?.isNotEmpty == true
+        ? ref.read(agentTypesProvider).valueOrNull!
+        : AgentTypeInfo.fallbackTypes;

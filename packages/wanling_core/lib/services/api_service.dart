@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/models/approval.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/friendship.dart';
@@ -11,6 +12,8 @@ import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/models/pairing.dart';
 import 'package:wanling_core/models/register_result.dart';
 import 'package:wanling_core/models/slash_command.dart';
+import 'package:wanling_core/models/agent_mode.dart';
+import 'package:wanling_core/models/agent_preset.dart';
 import 'package:wanling_core/models/rpc_method.dart';
 import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/models/user.dart';
@@ -296,6 +299,29 @@ class ApiService {
         .toList();
   }
 
+  /// 拉取某 agent 的模式清单(plugin 上报、server 内存缓存)。
+  /// 空清单是合法态(无模式概念的 plugin 未上报 / server 重启)。
+  /// 渲染时按 session-meta mode id 查清单取 label/style。
+  Future<List<AgentMode>> getAgentModes(String agentId) async {
+    final res = await _dio.get('/api/agents/$agentId/modes');
+    final body = res.data as Map<String, dynamic>;
+    final modes = body['modes'] as List? ?? [];
+    return modes
+        .map((e) => AgentMode.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 拉取某 agent 的预设清单(plugin 上报、server 内存缓存)。
+  /// 空清单是合法态(无预设概念的 plugin 不上报,APP 隐藏选择步骤)。
+  Future<List<AgentPreset>> getAgentPresets(String agentId) async {
+    final res = await _dio.get('/api/agents/$agentId/presets');
+    final body = res.data as Map<String, dynamic>;
+    final presets = body['presets'] as List? ?? [];
+    return presets
+        .map((e) => AgentPreset.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// 拉取某 agent 的 RPC 方法清单(plugin 上报、server 内存缓存)。
   /// 空清单是合法态(plugin 未上报 / server 重启)。
   Future<List<RpcMethod>> getRpcMethods(String agentId) async {
@@ -566,6 +592,17 @@ class ApiService {
     return UnreadInfo.fromJson(res.data as Map<String, dynamic>);
   }
 
+  /// 全量 agent type 注册表。类型下拉(建/改 agent)与徽标查表的数据源;
+  /// 新类型在 server 注册表登记后 APP 自动可见,零发版。
+  Future<List<AgentTypeInfo>> getAgentTypes() async {
+    final res = await _dio.get('/api/agent-types');
+    final body = res.data as Map<String, dynamic>;
+    final list = body['data'] as List? ?? const [];
+    return list
+        .map((e) => AgentTypeInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// 游标分页拉取历史消息。
   /// [before] 为指定时间戳（RFC3339），返回 created_at < before 的消息。
   /// 不传 before 时返回最新 limit 条。
@@ -806,13 +843,15 @@ class ApiService {
   }
 
   /// 决策审批。actionId 必须是卡片 actions 列表内的合法 id。
+  /// answers 仅 question 卡的 answer 动作携带（选中选项 id 列表）。
   /// 返回 null 表示成功（HTTP 200），非 null 为错误文案。
   Future<String?> decideApproval(String approvalId, String actionId,
-      {String? reason}) async {
+      {String? reason, List<String>? answers}) async {
     try {
       await _dio.post('/api/approvals/$approvalId/decide', data: {
         'action_id': actionId,
         if (reason != null && reason.isNotEmpty) 'reason': reason,
+        if (answers != null) 'answers': answers,
       });
       return null;
     } on DioException catch (e) {

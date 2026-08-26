@@ -6,7 +6,7 @@ import type { SessionStore } from "../session_store.js"
 import type { MessageRouter } from "../messaging.js"
 import { buildDiff } from "../utils/diff.js"
 import { extractDuration, extractTaskMetadata } from "../utils/task_meta.js"
-import { AggregateCardManager, type ToolCardData } from "./aggregate_card.js"
+import { getAggregateCard, toolCardElement, type ToolCardData } from "./aggregate_bridge.js"
 
 // 聚合卡 msgId 占位符:聚合模式 task running 同步注册 childSessionTree 时,
 // 聚合卡可能尚未建卡(首次工具即 task),ensureCard 的建卡 REST 往返未完成,
@@ -366,11 +366,16 @@ export class ToolCardManager {
     }
     this.store.registerChild(
       state,
-      state.aggregateCardMsgId ?? AGGREGATE_MSG_PENDING,
+      getAggregateCard(state, this.wanling).cardMessageId ?? AGGREGATE_MSG_PENDING,
       childSessionId,
       parentSessionId,
       taskInput,
-      { elementId: `tool_card_${seq}` },
+      {
+        elementId: `tool_card_${seq}`,
+        // 全量元素 data 记账(与 flushAggregateTool append 的 data 一致):
+        // working/超时兜底 PATCH 经 updateElement 需全量(分卡旧卡整体替换契约)。
+        data: { name: "task", input: taskInput, status: "starting", sub_session_id: childSessionId },
+      },
     )
   }
 
@@ -466,7 +471,7 @@ export class ToolCardManager {
         // 子 session 消息才能正确经 parent/root 串到聚合卡下。
         // entry 缺失时兜底补注册(等价旧实现,理论上不发生)。
         if (isTask && effectiveChild) {
-          const msgId = state.aggregateCardMsgId
+          const msgId = getAggregateCard(state, this.wanling).cardMessageId
           if (!msgId) {
             console.error(`[streamer] task 聚合追加后聚合卡 msgId 缺失,childSessionTree 未注册: part=${pending.partId}`)
             return
@@ -477,7 +482,7 @@ export class ToolCardManager {
             if (entry.rootMsgId === AGGREGATE_MSG_PENDING) entry.rootMsgId = msgId
           } else {
             console.error(`[streamer] task 聚合追加后 childSessionTree 未注册(提前注册缺失),补注册: part=${pending.partId}`)
-            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId })
+            this.store.registerChild(state, msgId, effectiveChild, effectiveParent, pending.input, { elementId, data: { ...data } })
           }
         }
       })
@@ -487,16 +492,14 @@ export class ToolCardManager {
       })
   }
 
-  // 追加工具元素并 PATCH 增量 op(append)。队列/累计由 AggregateCardManager.appendElement
+  // 追加工具元素(SDK AggregateCard.append)。队列/镜像由聚合卡桥(state.aggregateCard)
   // 统一维护,与 reasoning/markdown/footer 的追加共用同一串行队列,并发全量不再互相覆盖。
   private appendToolElement(
     state: SessionState,
     data: ToolCardData,
     seq: number,
   ): Promise<void> {
-    return new AggregateCardManager(this.wanling, state).appendElement(
-      AggregateCardManager.toolCard(data, seq),
-    )
+    return getAggregateCard(state, this.wanling).appendElement(toolCardElement(data, seq))
   }
 
   // 聚合模式 completed/error:按 partId 定位聚合卡内目标工具元素,增量 update(合并 data)。
@@ -521,7 +524,7 @@ export class ToolCardManager {
       console.warn(`[streamer] 聚合卡工具元素定位缺失,跳过更新: conv=${state.convId.slice(0, 12)} part=${part.id}`)
       return
     }
-    await new AggregateCardManager(this.wanling, state).updateElement(elementId, patchData)
+    await getAggregateCard(state, this.wanling).updateElement(elementId, patchData)
   }
 
   // 聚合卡是否对本 state 生效:开关开启且非子 session。

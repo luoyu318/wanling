@@ -31,17 +31,18 @@
 ## 顶层架构
 
 ```
-APP（Flutter, Android）  ↔WebSocket+REST↔  Server（Go/Gin, :18008）  ↔WS（标准接口）↔  Plugin（hermes / opencode-plugin）
-外部开发者通过 SDK 接入:SDK（sdk/,TS+Python 双语言,发布 @wanling/sdk + wanling-sdk）
-                                              ↓
-                                        PostgreSQL（PG）
+APP（Flutter, Android）      ↔WebSocket+REST↔  Server（Go/Gin, :18008）  ↔WS（标准接口）↔  Plugin（hermes / opencode-plugin / dsh-wanling）
+Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
+外部开发者通过 SDK 接入:SDK（sdk/,TS+Python 双语言,npm/PyPI `wanling-sdk`）    PostgreSQL（PG）
 ```
 
 - APP 三 tab（消息/万灵/我的）,server 仅做转发+管理,不含 Agent 适配层
+- agent 类型(hermes/opencode/dsh…)由 server 注册表统一下发(`agent_type_registry`,011):拓扑 multi_session 驱动路由,新类型 INSERT 一行即接入、APP 零发版
 - 详细架构按目录分:
   - **改 Go 代码 → 读 [server/CLAUDE.md](./server/CLAUDE.md)**（路由 / Handler / Repo / migration 列表 / WS 协议 / 认证 / 测试规约）
   - **改 Flutter 代码 → 读 [app/CLAUDE.md](./app/CLAUDE.md)**（router / providers / pages / widgets / models / 测试规约）
-  - **改 plugin（hermes / opencode）→ 读 [plugin/CLAUDE.md](./plugin/CLAUDE.md)**（分发 / install 模式 / adapter 协议 / streamer）
+  - **改桌面端 → 读 [desktop/README.md](./desktop/README.md)**（与 APP 复用 wanling_core,差异点清单）
+  - **改 plugin（hermes / opencode）→ 读 [plugin/CLAUDE.md](./plugin/CLAUDE.md)**（分发 / install 模式 / adapter 协议 / streamer;dsh 桥在独立仓 dsh-wanling）
   - **改 SDK（TS / Python）→ 读 [sdk/CLAUDE.md](./sdk/CLAUDE.md)**（双语言传输层 / 协议常量 / 发布）
 
 ## 维护规则（改 X 看 Y）

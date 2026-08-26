@@ -128,7 +128,7 @@ func TestApprovalMarkDecidedAllowAlways(t *testing.T) {
 	}
 
 	actionID := "allow_always"
-	if err := repo.MarkDecided(t.Context(), created.ID, actionID, "user", userID, "", &pattern); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, actionID, "user", userID, "", &pattern, nil); err != nil {
 		t.Fatalf("MarkDecided: %v", err)
 	}
 	got, _ := repo.GetByID(t.Context(), created.ID)
@@ -171,7 +171,7 @@ func TestApprovalMarkDecidedDenyWithReason(t *testing.T) {
 	}
 
 	reason := "操作不可逆"
-	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, reason, nil); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, reason, nil, nil); err != nil {
 		t.Fatalf("MarkDecided: %v", err)
 	}
 	got, _ := repo.GetByID(t.Context(), created.ID)
@@ -195,13 +195,71 @@ func TestApprovalMarkDecidedNotPendingFails(t *testing.T) {
 		SessionKey: "tool:1",
 	})
 	// 先 decide 一次
-	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, "", nil); err != nil {
+	if err := repo.MarkDecided(t.Context(), created.ID, "deny", "user", userID, "", nil, nil); err != nil {
 		t.Fatalf("first MarkDecided: %v", err)
 	}
 	// 再次 decide 应失败（已是非 pending）
-	err := repo.MarkDecided(t.Context(), created.ID, "allow_once", "user", userID, "", nil)
+	err := repo.MarkDecided(t.Context(), created.ID, "allow_once", "user", userID, "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error on second MarkDecided")
+	}
+}
+
+// question 决策的 answers 落 decided_answers 后，GetByID 必须能读回
+// （agent 重连 resync 依赖 GET /api/approvals/:id 返回 decided_answers 恢复决议）。
+func TestApprovalDecidedAnswersRoundTrip(t *testing.T) {
+	repo, _, userID, agentID, convID, msgID := approvalTestFixture(t)
+	created, err := repo.Create(t.Context(), model.Approval{
+		ID:        uuid.New().String(),
+		MessageID: msgID, ConversationID: convID,
+		InitiatorType: "agent", InitiatorID: agentID,
+		CardType: model.CardTypeQuestion,
+		Actions: []model.ApprovalAction{
+			{ID: "answer", Label: "提交答案", Style: "primary"},
+			{ID: "reject", Label: "拒绝", Style: "danger"},
+		},
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "question:1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	answers := []string{"opt_a", "opt_c"}
+	if err := repo.MarkDecided(t.Context(), created.ID, "answer", "user", userID, "", nil, answers); err != nil {
+		t.Fatalf("MarkDecided: %v", err)
+	}
+
+	got, err := repo.GetByID(t.Context(), created.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v %v", got, err)
+	}
+	if len(got.DecidedAnswers) != 2 || got.DecidedAnswers[0] != "opt_a" || got.DecidedAnswers[1] != "opt_c" {
+		t.Fatalf("decided_answers not read back: %v", got.DecidedAnswers)
+	}
+
+	// 非 question 决策（无 answers）读回应为 nil，不报错
+	created2, _ := repo.Create(t.Context(), model.Approval{
+		ID:        uuid.New().String(),
+		MessageID: msgID, ConversationID: convID,
+		InitiatorType: "agent", InitiatorID: agentID,
+		CardType: model.CardTypeTool,
+		Actions: []model.ApprovalAction{
+			{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"},
+			{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"},
+		},
+		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		SessionKey: "tool:2",
+	})
+	if err := repo.MarkDecided(t.Context(), created2.ID, "allow_once", "user", userID, "", nil, nil); err != nil {
+		t.Fatalf("MarkDecided tool: %v", err)
+	}
+	got2, err := repo.GetByID(t.Context(), created2.ID)
+	if err != nil || got2 == nil {
+		t.Fatalf("GetByID tool: %v %v", got2, err)
+	}
+	if got2.DecidedAnswers != nil {
+		t.Fatalf("expected nil decided_answers for tool approval, got %v", got2.DecidedAnswers)
 	}
 }
 

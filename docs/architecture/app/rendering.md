@@ -23,7 +23,7 @@
 
 ## card_renderer
 
-**审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行。按钮终态映射：deny/cancel→denied，allow_once/allow_always/once/always→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，ChatNotifier 构造时注入（避免 Riverpod 循环依赖）。**`_CardView` 整体包 AnimatedSize**(250ms easeOut, alignment topCenter):pending→终态 PATCH 回写高度变化时平滑向下展开
+**审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行，**question 选项列表**（options 渲染单选 chip/多选 checkbox，multi_select 决定；提交走 `decideApproval(action_id:answer, answers)`，reject 拒绝按钮；终态回显 `data.answers` 所选选项，乐观窗口内 MESSAGE_UPDATE 与本地不一致则回退本地已选）。按钮终态映射：deny/cancel/reject→denied，allow_once/allow_always/once/always/answer→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，ChatNotifier 构造时注入（避免 Riverpod 循环依赖）。**`_CardView` 整体包 AnimatedSize**(250ms easeOut, alignment topCenter):pending→终态 PATCH 回写高度变化时平滑向下展开
 
 ## Agent 过程渲染器（v1.0.7，opencode-plugin streamer 发的过程消息）
 

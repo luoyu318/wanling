@@ -13,6 +13,7 @@ const (
 	CardTypeTool         CardType = "tool"
 	CardTypeFile         CardType = "file"
 	CardTypeSlashConfirm CardType = "slash_confirm"
+	CardTypeQuestion     CardType = "question"
 )
 
 // ApprovalState 审批状态机：pending → approved/denied/expired（终态不可逆）。
@@ -36,6 +37,12 @@ type ApprovalAction struct {
 	Label string `json:"label"`
 	Icon  string `json:"icon"`  // check / shield / x
 	Style string `json:"style"` // primary / info / danger
+}
+
+// ApprovalOption question 类型的选项定义。
+type ApprovalOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // Approval 审批记录。
@@ -65,6 +72,10 @@ type Approval struct {
 	SessionKey   string    `json:"session_key" db:"session_key"`
 	AllowPattern *string   `json:"allow_pattern,omitempty" db:"allow_pattern"`
 
+	// DecidedAnswers 仅 question 类型用：多选决策的 option id 列表。
+	// 单选卡沿用 DecidedAction（"answered"/"rejected"）。
+	DecidedAnswers []string `json:"decided_answers,omitempty" db:"decided_answers"`
+
 	// ConfirmID 仅 slash_confirm 类型用。hermes tools/slash_confirm.resolve
 	// 需要 (session_key, confirm_id, choice) 三元组定位 pending confirm。
 	// exec_approval（command/tool/file）不用此字段，保持 NULL。
@@ -91,6 +102,10 @@ type CardContent struct {
 	DecidedBy     *string          `json:"decided_by,omitempty"`
 	DecidedAt     *time.Time       `json:"decided_at,omitempty"`
 	ExpiresAt     time.Time        `json:"expires_at"`
+	// question 类型字段：选项列表 + 是否多选 + 决策结果。
+	Options     []ApprovalOption `json:"options,omitempty"`
+	MultiSelect bool             `json:"multi_select,omitempty"`
+	Answers     []string         `json:"answers,omitempty"`
 	// ConfirmID 仅 slash_confirm 类型用（双写到 content，APP 不直接消费）。
 	ConfirmID *string `json:"confirm_id,omitempty"`
 }

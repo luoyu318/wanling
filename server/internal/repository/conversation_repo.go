@@ -169,6 +169,12 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 		          JOIN conversation_participants pa
 		            ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
 		          LIMIT 1) AS agent_type,
+		       (SELECT atr.multi_session FROM agent_type_registry atr
+		          WHERE atr.type = (
+		            SELECT ag.type FROM agents ag
+		              JOIN conversation_participants pa
+		                ON pa.member_id = ag.id AND pa.member_type = 'agent' AND pa.conv_id = c.id
+		              LIMIT 1)) AS agent_multi_session,
 		       (SELECT u.username FROM users u
 		          JOIN conversation_participants pa
 		            ON pa.member_id = u.id AND pa.member_type = 'user' AND pa.conv_id = c.id
@@ -219,6 +225,7 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 			agentName      sql.NullString
 			agentAvatar    sql.NullString
 			agentTypeNS    sql.NullString
+			agentMultiSessionNS sql.NullBool
 			otherUsername  sql.NullString
 			otherNickname  sql.NullString
 			otherAvatarURL sql.NullString
@@ -229,7 +236,7 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 			&item.UnreadCount, &item.PinnedAt, &item.HiddenAt,
 			&item.LastMessageContent, &item.LastMessageAt,
 			&senderIDNS, &senderTypeNS, &senderNameNS,
-			&agentID, &agentName, &agentAvatar, &agentTypeNS,
+			&agentID, &agentName, &agentAvatar, &agentTypeNS, &agentMultiSessionNS,
 			&otherUsername, &otherNickname, &otherAvatarURL,
 		); err != nil {
 			return nil, err
@@ -241,11 +248,17 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 		item.LastMessageSenderName = senderNameNS.String
 		// dm_user_agent 才填 Agent 摘要;其他 type 留 nil(UI 走 Title/AvatarURL)
 		if agentID.Valid {
+			var multiSession *bool
+			if agentMultiSessionNS.Valid {
+				ms := agentMultiSessionNS.Bool
+				multiSession = &ms
+			}
 			item.Agent = &model.AgentSummary{
-				ID:        agentID.String,
-				Name:      agentName.String,
-				AvatarURL: agentAvatar.String,
-				Type:      model.AgentType(agentTypeNS.String),
+				ID:            agentID.String,
+				Name:          agentName.String,
+				AvatarURL:     agentAvatar.String,
+				Type:          model.AgentType(agentTypeNS.String),
+				MultiSession:  multiSession,
 			}
 		}
 		// dm_user_user 才填 OtherUser 摘要(对方 user);其他 type 留 nil。

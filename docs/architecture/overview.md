@@ -7,8 +7,9 @@
 ```mermaid
 flowchart LR
     APP[Flutter APP<br/>3-tab IM] <-->|WebSocket+REST| SERVER[Go/Gin Server<br/>:18008]
-    SERVER <-->|WebSocket| PLUGIN[Plugin<br/>hermes / opencode]
-    DEV[外部开发者] -->|@wanling/sdk + wanling-sdk| SDK[SDK 传输层]
+    DESKTOP[Flutter Desktop<br/>Linux 自用] <-->|REST+WS| SERVER
+    SERVER <-->|WebSocket| PLUGIN[Plugin<br/>hermes / opencode / dsh]
+    DEV[外部开发者] -->|wanling-sdk TS/Python| SDK[SDK 传输层]
     SDK -->|WS + REST| SERVER
     SERVER <-->|SQL| PG[(PostgreSQL<br/>wanling)]
     SERVER <-.->|presence + token store| REDIS[(Redis<br/>optional)]
@@ -25,9 +26,10 @@ flowchart LR
 ## 子系统边界
 
 - **APP**: Flutter,仅 Android。详见 [app.md](./app.md)
+- **Desktop**: Flutter Linux 桌面端(自用调试)。详见 [../desktop/README.md](../../desktop/README.md)
 - **Server**: Go/Gin,转发+管理。详见 [server.md](./server.md)
-- **Plugin**: hermes + opencode-plugin。详见 [plugin.md](./plugin.md)
-- **SDK**: TS + Python 传输层 SDK。详见 [sdk.md](./sdk.md)
+- **Plugin**: hermes + opencode-plugin + dsh(deepseek-harness 桥,独立仓 dsh-wanling)。详见 [plugin.md](./plugin.md)
+- **SDK**: TS + Python 传输层 SDK(npm `wanling-sdk` / PyPI `wanling-sdk`)。详见 [sdk.md](./sdk.md)
 
 ## 关键设计取舍
 
@@ -46,5 +48,5 @@ flowchart LR
 - `init_db.sh` — 一键建库 + 跑 migrations；`deploy.sh` — 本地编译 → rsync → systemctl restart(生产部署)
 - `admin.sh` — 交互式管理菜单(加用户/重置密码/构建 APK/重启服务等)
 - `build-plugin-binaries.sh` — 构建 opencode 插件单文件二进制产物（bun compile，免 NodeJS），输出 `release/`，发布时上传主仓库 Gitee release（镜像 repo 已废弃）
-- `publish-sdk.sh` — 发布 SDK:TS `npm publish @wanling/sdk` + Python `uv publish wanling-sdk`(版本独立演进)
+- `publish-sdk.sh` — 发布 SDK:TS `npm publish wanling-sdk` + Python `uv publish wanling-sdk`(版本独立演进)
 - `send_test_message.py` — **消息测试工具**(开发调试用)。以 agent 身份给指定 user 发消息,支持 `--count N --interval X` 连发测试未读浮标链路。流程: agent_id+secret_key 换 JWT → 连 WS 完成 Hello/Identify → 发 MESSAGE_CREATE。环境变量 `WANLING_AGENT_ID` / `WANLING_SECRET_KEY` / `WANLING_USER_ID` 兜底(凭证可写在 `scripts/.test_env.local`,被 `scripts/.gitignore` 忽略)

@@ -13,10 +13,14 @@ from typing import Any
 
 import websockets
 
+from .aggregate_card import AggregateCard
+from .approvals import Approvals
 from .opcodes import (
     EVENT_AGENT_MODELS,
+    EVENT_AGENT_MODES,
     EVENT_AGENT_OFFLINE,
     EVENT_AGENT_ONLINE,
+    EVENT_AGENT_PRESETS,
     EVENT_AGENT_SLASH_CATALOG,
     EVENT_APPROVAL_DECIDED,
     EVENT_APPROVAL_EXPIRED,
@@ -44,8 +48,31 @@ from .opcodes import (
 )
 from .rest import WanlingRestClient
 from .rpc import RPCDispatcher
+from .session_mapping import SessionMapping
+from .stream_session import StreamSession
 
 logger = logging.getLogger(__name__)
+
+
+class _RestAggregateIO:
+    """聚合卡 io 适配器:rest 四方法包一层(client.aggregate 工厂用)。"""
+
+    def __init__(self, rest: WanlingRestClient, conv_id: str) -> None:
+        self._rest = rest
+        self._conv_id = conv_id
+
+    async def send_card(self, data: dict) -> str:
+        # 建卡 silent=True:回合进行中不打扰,计未读由 finish 翻转 set_silent 承接
+        return await self._rest.send_card_message(self._conv_id, data["msg_type"], data["data"], True)
+
+    async def patch(self, message_id: str, op: dict) -> None:
+        await self._rest.patch_aggregate_message(message_id, op)
+
+    async def update_content(self, message_id: str, content: dict) -> None:
+        await self._rest.update_message_content(message_id, content)
+
+    async def recall(self, message_id: str) -> None:
+        await self._rest.recall_message(message_id)
 
 
 def _ws_url(server_url: str) -> str:
@@ -90,6 +117,14 @@ class WanlingClient:
         self._refresh_task: asyncio.Task | None = None
         self.dispatcher = RPCDispatcher()
         self.rest = WanlingRestClient(server_url, self.get_token)
+        # 审批/提问高层封装(ask 发卡等决策)。构造时挂事件监听(self.on 不依赖
+        # WS 状态,挂一次即可,重连不重复挂),断线重连后 resync 主动兜底未决项
+        self.approvals = Approvals(
+            self.rest.create_approval,
+            self.rest.get_approval,
+            self.on,
+            lambda msg: logger.info("[wanling] %s", msg),
+        )
 
     def on(self, event: str, callback: Callable) -> None:
         self._listeners[event].append(callback)
@@ -218,6 +253,9 @@ class WanlingClient:
                 interval_ms = await self._establish_ws()
                 backoff = 1.0
                 await self._emit("connected")
+                # 重连后未决审批可能错过 WS 推送,REST 兜底查询一次
+                # (首次连接 pending 为空,空跑无害)
+                asyncio.create_task(self._resync_approvals())
                 if self._heartbeat_task and not self._heartbeat_task.done():
                     self._heartbeat_task.cancel()
                 self._heartbeat_task = asyncio.create_task(
@@ -312,15 +350,31 @@ class WanlingClient:
             content["root_msg_id"] = root_msg_id
         await self.send(conversation_id, content)
 
-    async def send_stream(self, conversation_id: str, stream_id: str, msg_type: str, text: str) -> None:
+    async def send_stream(
+        self,
+        conversation_id: str,
+        stream_id: str,
+        msg_type: str,
+        text: str,
+        aggregate: dict | None = None,
+    ) -> None:
+        """op=14 流式帧(累积全量快照,不落库/不计未读/不补发)。
+
+        aggregate 定位(聚合模式卡内元素流式)展开为 snake_case,
+        APP 定位 aggregate_card 消息内 element_id 匹配元素整体替换 data.text。
+        WS 未连接时静默丢弃(流式为瞬态,终态消息兜底)。
+        """
         if self._ws is None:
             return
-        await self._ws.send(
-            json.dumps({
-                "op": OP_STREAM,
-                "d": {"conversation_id": conversation_id, "stream_id": stream_id, "msg_type": msg_type, "text": text},
-            })
-        )
+        d: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "stream_id": stream_id,
+            "msg_type": msg_type,
+            "text": text,
+        }
+        if aggregate is not None:
+            d["aggregate"] = aggregate
+        await self._ws.send(json.dumps({"op": OP_STREAM, "d": d}))
 
     async def send_typing(self, conversation_id: str) -> None:
         if self._ws is None:
@@ -331,6 +385,55 @@ class WanlingClient:
         import datetime
 
         return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    async def _resync_approvals(self) -> None:
+        """重连后审批兜底查询(失败仅记日志,不影响连接循环)。"""
+        try:
+            await self.approvals.resync()
+        except Exception as e:  # noqa: BLE001 - 兜底查询失败不影响连接循环
+            logger.warning("approvals resync failed: %s", e)
+
+    def aggregate(self, conv_id: str, opts: dict | None = None) -> AggregateCard:
+        """聚合卡工厂:一次问答一张卡(append/update/finish/interrupt)。"""
+        return AggregateCard(conv_id, _RestAggregateIO(self.rest, conv_id), opts)
+
+    def stream(self, conv_id: str, opts: dict | None = None) -> StreamSession:
+        """流式会话工厂:首帧立即 + 节流 + 兜底 flush,终态消息由调用方带 _stream_id 发。"""
+
+        def _send(cid: str, frame: dict) -> None:
+            # fire-and-forget,对齐 TS sendStream 同步 void 语义;done-callback
+            # 记录异常(对齐 _resync_approvals 兜底记日志风格,防后台 task
+            # 异常无人接触发 "Task exception was never retrieved" 静默丢错)
+            task = asyncio.ensure_future(
+                self.send_stream(cid, frame["stream_id"], frame["msg_type"], frame["text"], frame.get("aggregate"))
+            )
+
+            def _log_failure(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
+                exc = t.exception()
+                if exc is not None:
+                    logger.warning("stream send failed: %s", exc)
+
+            task.add_done_callback(_log_failure)
+
+        return StreamSession(conv_id, _send, opts)
+
+    def session_mapping(self, path: str, owner_user_id: str | None = None) -> SessionMapping:
+        """会话映射工厂:外部 session ↔ conversation 持久映射(miss 时建 agent_session 群)。
+
+        owner_user_id 可在工厂注入或 ensure_conversation 时传入(server 强制
+        user_id 必须是 agent 的 owner,缺失时 fail fast 不发请求)。
+        """
+        factory_owner = owner_user_id
+
+        async def _create_conversation(_session_id: str, o: dict) -> str | None:
+            owner = o.get("owner_user_id") or factory_owner
+            if not owner:
+                raise RuntimeError("session_mapping 需要 owner_user_id(工厂参数或 ensure_conversation 参数提供)")
+            return await self.rest.create_group_as_agent(owner, "agent_session", o["title"], o.get("directory"))
+
+        return SessionMapping(path, _create_conversation)
 
     async def report_models(self, models: list[dict]) -> None:
         if self._ws is None:
@@ -349,6 +452,30 @@ class WanlingClient:
             logger.warning("report_capabilities: WS 未连接,跳过上报")
             return
         await self._send_dispatch(EVENT_PLUGIN_CAPABILITIES, {"agent_id": self.agent_id, "methods": methods, "reported_at": self._now_iso()})
+
+    async def report_modes(self, modes: list[dict]) -> None:
+        """上报 agent 模式清单(能力上报管线第四成员)。
+
+        server 写 ModeRegistry 内存缓存,APP 渲染模式色条按 session-meta
+        mode id 查清单取 label/style。style 为受控渲染档位:
+        "default" | "plan" | "warn"。
+        """
+        if self._ws is None:
+            logger.warning("report_modes: WS 未连接,跳过上报")
+            return
+        await self._send_dispatch(EVENT_AGENT_MODES, {"agent_id": self.agent_id, "modes": modes, "reported_at": self._now_iso()})
+
+    async def report_presets(self, presets: list[dict]) -> None:
+        """上报 agent 预设清单(能力上报管线第五成员)。
+
+        预设是 per-session 能力组合,集合开放(user 可自创)。
+        trust 区分 "system"(部署内置)/"user"(用户自创);无预设
+        概念的 plugin 不调用本方法即可(APP 据空清单隐藏选择步骤)。
+        """
+        if self._ws is None:
+            logger.warning("report_presets: WS 未连接,跳过上报")
+            return
+        await self._send_dispatch(EVENT_AGENT_PRESETS, {"agent_id": self.agent_id, "presets": presets, "reported_at": self._now_iso()})
 
     def register_method(self, name: str, handler: Callable, timeout_hint_ms: int = 5000) -> None:
         self.dispatcher.register(name, handler, timeout_hint_ms)

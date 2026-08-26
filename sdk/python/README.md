@@ -53,11 +53,37 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## 高层封装示例
+
+```python
+# 审批/提问:发卡并等待用户决策(await 决议)
+result = await client.approvals.ask(conv_id, {
+    "card_type": "question", "title": "选择部署环境", "session_key": session_key,
+    "options": [{"id": "prod", "label": "生产"}, {"id": "staging", "label": "预发"}],
+})
+if result["state"] == "approved":
+    print(result["answers"])
+
+# 聚合卡:一次问答一张卡
+card = client.aggregate(conv_id)
+await card.append("markdown", {"text": "处理中..."})
+await card.finish({"duration_ms": 1200})
+
+# 流式输出:累积全量快照,节流推送
+s = client.stream(conv_id)
+s.push("生成中...")
+await s.end("最终全文")
+```
+
 ## API
 
 - `client.send(conversation_id, content)` / `send_typed(conversation_id, msg_type, data, *, silent=False, parent_msg_id=None, root_msg_id=None)` / `send_stream` / `send_typing` — 消息发送
-- `client.report_models(models)` / `report_slash_catalog(commands)` / `report_capabilities(methods)` — 能力上报
-- `client.rest.send_card_message` / `update_message_content` / `create_group_as_agent` / `update_conversation_title` / `update_session_meta` / `upload_file` / `download_file`
+- `client.report_models(models)` / `report_slash_catalog(commands)` / `report_modes(modes)` / `report_presets(presets)` / `report_capabilities(methods)` — 能力上报
+- `client.approvals.ask(conv_id, opts)` / `resync()` — 审批/提问高层封装(opts 含 card_type/title/options/multi_select/preview_language/meta/allow_pattern/confirm_id)
+- `client.aggregate(conv_id, opts)` — 聚合卡(`append`/`update`/`finish`/`interrupt`,degraded_self_heal/recall_empty)
+- `client.stream(conv_id, opts)` — 流式会话(`push`/`end`/`abort`,aggregate 定位/throttle_ms)
+- `client.session_mapping(path)` — session↔conversation 映射(`ensure_conversation`/`by_session`/`by_conversation`)
+- `client.rest.send_card_message` / `update_message_content` / `create_approval` / `get_approval` / `list_agent_conversations` / `list_agent_sessions` / `create_group_as_agent` / `update_conversation_title` / `update_session_meta` / `upload_file` / `download_file`
 - `client.register_method(name, handler, timeout_hint_ms=5000)` / `RPCDispatcher.register(name, handler, timeout_hint_ms=5000)` — server 侧 RPC 方法
 
 ## 事件

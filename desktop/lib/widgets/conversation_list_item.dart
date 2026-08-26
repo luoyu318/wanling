@@ -15,8 +15,14 @@ class ConversationListItem extends StatelessWidget {
   final String? avatarUrl;
   final int unreadCount;
   final bool selected;
-  /// agent 类型标签(如 opencode / hermes),空串不渲染。
-  final String agentType;
+  /// agent 类型标签:非 null 渲染徽标(空串=「智能体」),null=不渲染
+  /// (好友/群等非 agent 会话)。仅 dm_user_agent 会话传值。
+  final String? agentType;
+  /// 多 session agent 的 session 数(一级列表行摘要下方第二行,
+  /// 对齐 app messages_page「N 个会话/待处理」);<0 不渲染。
+  final int sessionCount;
+  /// 多 session agent 的待处理交互卡数(>0 时第二行红字显示)。
+  final int pendingCount;
   final VoidCallback? onTap;
 
   const ConversationListItem({
@@ -28,7 +34,9 @@ class ConversationListItem extends StatelessWidget {
     this.avatarUrl,
     this.unreadCount = 0,
     this.selected = false,
-    this.agentType = '',
+    this.agentType,
+    this.sessionCount = -1,
+    this.pendingCount = 0,
     this.onTap,
   });
 
@@ -75,24 +83,43 @@ class ConversationListItem extends StatelessWidget {
                           ),
                         ),
                         // agent type 实心小胶囊:样式对齐 app AgentBadge
-                        // (Hermes 琥珀/OpenCode 绿/智能体紫),实心底自带
-                        // 对比度,选中绿底上仍清晰,无需反白。
-                        if (agentType.isNotEmpty) ...[
+                        // (文案/配色来自 server 注册表)。仅 agent 会话渲染
+                        // (agentType 非 null);空 type 显示「智能体」。
+                        if (agentType != null) ...[
                           const SizedBox(width: 5),
-                          AgentTypeBadge(type: agentType),
+                          AgentTypeBadge(type: agentType!),
                         ],
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.55),
+                    // 摘要行:多 session agent 传空串(无消息流,摘要无意义),
+                    // 空串不渲染避免留白,第二行由 sessionCount 接管。
+                    if (subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.55),
+                        ),
                       ),
-                    ),
+                    // 多 session agent 第二行:待处理红字优先,否则会话数
+                    // (对齐 app messages_page 口径)。
+                    if (sessionCount >= 0) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        pendingCount > 0
+                            ? '待处理 $pendingCount 项'
+                            : (sessionCount > 0 ? '$sessionCount 个会话' : '暂无会话'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: pendingCount > 0
+                              ? scheme.error
+                              : scheme.onSurface.withValues(alpha: 0.45),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

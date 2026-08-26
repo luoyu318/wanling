@@ -28,7 +28,7 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AgentSessionsPage
 
-**opencode agent session 群二级列表页**。从 AgentListPage 点 opencode type agent 入口进入（普通 type 直接跳 ChatPage）。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
+**多 session agent(opencode/dsh 等)session 群二级列表页**。从一级列表/AgentListPage 点多 session type agent 入口进入（路由判据:server 注册表 `multi_session`,普通 type 直接跳 ChatPage）。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
 
 ## ChatPage
 

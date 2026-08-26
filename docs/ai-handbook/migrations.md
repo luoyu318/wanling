@@ -28,6 +28,8 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 - `007_messages_parent_null_index.sql` — `idx_messages_parent_null`(conversation_id, created_at DESC) WHERE parent_msg_id IS NULL 部分索引,加速主列表 6+ 处查询的「仅顶层消息」过滤。
 - `008_messages_main_stream.sql` — messages 加 `is_main_stream boolean` STORED 生成列 `(parent_msg_id IS NULL OR content->>'msg_type' IN ('permission_card','question_card'))`,收敛 22+ 处 SQL 的主对话流判据;替换 `idx_messages_parent_null` 为 `idx_messages_main_stream` WHERE is_main_stream。让子 agent 审批卡浮顶(可见+计未读+计入待办),同时保留 parent/root 供 ListByRoot 回溯。
 - `009_conversation_directory.sql` — conversations 加 `directory TEXT`(nullable)。OC session 的物理工作目录固化在一级列,不再塞 session_meta JSONB(避免 server 整 JSON 覆盖写时与可变字段 mode/model/git_branch 互相覆盖)。写入时机:APP user 视角 `POST /api/conversations`(type=agent_session)传 directory,server CreateAgentSession 事务内写入。NULL = 用户选「默认」(plugin 用 OC 启动目录)。
+- `010_approval_question.sql` — 审批卡 question 类型:approvals.card_type CHECK 放宽加 `question` + `decided_answers JSONB`(多选答案持久化;decisions 落库后 GET /api/approvals/:id 返回)。协议见 [approval-card.md](./approval-card.md)。
+- `011_agent_type_registry.sql` — agent type 注册表:`agent_type_registry` 表(type PK / multi_session / label / badge_bg / badge_bg_elevated / badge_fg),server 统一下发类型属性,新类型 INSERT 一行即接入(APP 零发版)。预置 hermes/opencode/dsh 三行。拓扑判断(multi_session)驱动 APP 一级列表路由与会话列表 session 聚合;展示属性(label/badge 配色)供徽标与类型下拉。
 
 新 migration 文件命名:`NNN_<feature>.sql`(NNN 递增,如 `005_add_xxx.sql`),不要修改 001_init.sql(会让已部署实例无法重跑 init)。
 
@@ -47,6 +49,7 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 | file_conv_links | 文件↔会话 N:N 授权(四档放行用) |
 | approvals | 审批卡片(initiator/decider 通用字段) |
 | pairing_tickets | 扫码配对票据(5min TTL,非业务表) |
+| agent_type_registry | agent type 注册表(type → multi_session/label/badge 配色,011) |
 
 ## 关键设计
 
