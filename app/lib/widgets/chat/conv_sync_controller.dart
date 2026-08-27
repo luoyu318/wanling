@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -58,6 +60,32 @@ class ConvSyncController {
     } catch (_) {
       // server 同步失败不影响本地已读清零,静默。
     }
+  }
+
+  /// ChatPage 退出时的兜底 markRead(场景:长回合翻转落在退出后)。
+  ///
+  /// 聚合卡回合结束 set_silent=false 时 server 无条件 IncrUnread+1
+  /// (message_handler.go 不看用户是否在场)。会话内的 (2.7) 翻转补偿依赖
+  /// chatProvider 的 WS 订阅,而 chatProvider 是 autoDispose——退出即销毁,
+  /// 「退出后翻转」无人补偿,列表下拉刷新拉回 server 真值导致徽标复活。
+  ///
+  /// 语义:「我在场期间出现过新 agent 内容 → 离场时一律视为已读」。
+  /// sawNewAgentContent=false(纯看历史无新内容)不做任何事——未读不被误清。
+  Future<void> markReadOnExit({required bool sawNewAgentContent}) async {
+    if (!sawNewAgentContent) return;
+    debugLog('[convSync] markReadOnExit conv=${_ctx.convId}');
+    // 本地立即清零(列表徽章),再同步 server。与 markRead 相同的组合拳,
+    // 但退出路径不等待结果(fire-and-forget)。
+    _ctx.ref.read(conversationProvider.notifier).markReadLocally(_ctx.convId);
+    _ctx.getSessionsNotifier()?.markReadLocally(_ctx.convId);
+    unawaited(() async {
+      try {
+        await _ctx.ref.read(apiProvider).markConversationRead(_ctx.convId);
+        syncParentConvUnread();
+      } catch (_) {
+        // 已离开页面,失败无法提示;server 未读由下次进入会话的 markRead 兜住。
+      }
+    }());
   }
 
   /// agent_session markRead 后同步父 dm_user_agent 会话未读数。
