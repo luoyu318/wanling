@@ -1,6 +1,13 @@
 import { readFileSync, statSync } from "node:fs"
 import type { ApprovalMetaRow, MessageContent } from "./types.js"
 
+/** GET /api/files/:id 的返回:字节流附 server 端嗅探矫正过的 Content-Type。 */
+export interface DownloadedFile {
+  buffer: Buffer
+  /** server 端嗅探矫正过的 Content-Type(未知时 octet-stream);权威文件名在 headers 略,桥接层 magic bytes 兜底。 */
+  contentType?: string
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -294,7 +301,7 @@ export class WanlingRestClient {
     return json.data.id
   }
 
-  async downloadFile(fileId: string): Promise<Buffer> {
+  async downloadFile(fileId: string): Promise<DownloadedFile> {
     const token = await this.tokenProvider()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 30000)
@@ -310,6 +317,11 @@ export class WanlingRestClient {
       clearTimeout(timer)
     }
     if (!resp.ok) throw new ApiError(resp.status, `download failed: HTTP ${resp.status}`)
-    return Buffer.from(await resp.arrayBuffer())
+    const contentType = resp.headers.get("content-type") ?? undefined
+    const buffer: Buffer<ArrayBuffer> = Buffer.from(await resp.arrayBuffer())
+    return {
+      buffer,
+      ...(contentType !== undefined ? { contentType } : {}),
+    }
   }
 }

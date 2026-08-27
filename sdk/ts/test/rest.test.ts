@@ -57,6 +57,23 @@ describe("WanlingRestClient", () => {
     await expect(client.downloadFile("f1")).rejects.toThrow("request failed: The operation was aborted.")
   })
 
+  it("downloadFile 返回 {buffer, contentType},消费 server 嗅探矫正的 Content-Type", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(Buffer.from([0x89, 0x50, 0x4e, 0x47]), { status: 200, headers: { "Content-Type": "image/png" } }),
+    )
+    const res = await client.downloadFile("f-img")
+    expect(res.buffer).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    expect(res.contentType).toBe("image/png")
+  })
+
+  it("downloadFile 响应无 Content-Type 头时 contentType 缺省(属性不存在或 undefined)", async () => {
+    // ArrayBufferView body 不携带 MIME,undici 不会补默认 Content-Type
+    fetchSpy.mockResolvedValue(new Response(Buffer.from([9]), { status: 200 }))
+    const res = await client.downloadFile("f-raw")
+    expect(res.buffer).toEqual(Buffer.from([9]))
+    expect(res.contentType).toBeUndefined()
+  })
+
   it("createApproval POST /api/conversations/:id/approvals 返 approval_id", async () => {
     fetchSpy.mockResolvedValue(okJson({ approval_id: "appr-1" }))
     const res = await client.createApproval("conv-1", {
