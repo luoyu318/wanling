@@ -417,6 +417,45 @@ write_wanling_block() {
     } >> "$config_yaml"
 }
 
+# ─── 确保 wanling_sdk 已装入 Hermes venv ───────────────────────────────────
+# aggregate_card.py 依赖 sdk/python 的 wanling_sdk 包（8/26 聚合卡迁移引入）。
+# 该包不发布 PyPI，必须从仓库本地安装。缺失时 adapter 导入链断裂、gateway
+# 起不来（2026-08-27 真实事故：另一台机器 --update 后 ModuleNotFoundError）。
+# 幂等：已可导入则跳过。uv 优先（hermes venv 自带），无 uv 回退 venv pip。
+ensure_wanling_sdk_installed() {
+    local hermes_venv="$HERMES_HOME/hermes-agent/venv"
+    local python_bin="$hermes_venv/bin/python"
+    local src_dir="$SCRIPT_DIR/../../sdk/python"
+
+    if [[ ! -x "$python_bin" ]]; then
+        warn "未找到 Hermes venv（$python_bin），跳过 SDK 检查——若 aggregate_card 导入失败请手动安装"
+        return
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}[DRY]${NC} 确保 $python_bin 可导入 wanling_sdk"
+        return
+    fi
+    if "$python_bin" -c 'import wanling_sdk' >/dev/null 2>&1; then
+        return
+    fi
+
+    if [[ ! -d "$src_dir" ]]; then
+        die "wanling_sdk 源目录不存在：$src_dir（请在本仓 plugin/hermes-plugin/ 下运行 install.sh）"
+    fi
+
+    info "Hermes venv 缺少 wanling_sdk，开始安装（源：$src_dir）"
+    if command -v uv >/dev/null 2>&1; then
+        run "uv pip install --python '$python_bin' '$src_dir'"
+    else
+        run "'$python_bin' -m pip install '$src_dir'"
+    fi
+    # 安装后复验：失败即 fail fast（防止静默半安装状态再次埋雷）。
+    if ! "$python_bin" -c 'import wanling_sdk' >/dev/null 2>&1; then
+        die "wanling_sdk 安装后仍不可导入，gateway 将无法加载插件；请检查上方安装输出"
+    fi
+    ok "✓ wanling_sdk 已装入 Hermes venv"
+}
+
 # ─── 模式：update（只同步代码） ────────────────────────────────────────────
 run_update_mode() {
     info "模式：更新插件代码（不动配置）"
@@ -434,6 +473,9 @@ run_update_mode() {
         [[ ${#targets[@]} -gt 0 ]] || die "未找到任何已安装的 wanling 插件。先用默认安装模式装一次。"
         info "目标：所有已装位置（${#targets[@]} 个）"
     fi
+
+    # SDK 依赖检查放在同步前：依赖断了同步完也起不来。
+    ensure_wanling_sdk_installed
 
     for t in "${targets[@]}"; do
         echo
@@ -482,6 +524,7 @@ run_config_mode() {
     # 用户输入 user_id(语义友好),写 .env 前自动 find_or_create 转 conv_id
     [[ -n "$HOME_USER" && -z "$HOME_CONV" ]] && fetch_conv_id "$HOME_USER"
     write_env_block "$ENV_FILE"
+    ensure_wanling_sdk_installed
     ensure_plugin_enabled "$CONFIG_YAML"
     ensure_wanling_display_defaults "$CONFIG_YAML"
     write_wanling_block "$CONFIG_YAML"
@@ -639,6 +682,7 @@ qr.print_ascii(tty=False)
         fi
         sync_plugin_files "$PLUGIN_DIR"
         write_env_block "$ENV_FILE"
+        ensure_wanling_sdk_installed
         ensure_plugin_enabled "$CONFIG_YAML"
         ensure_wanling_display_defaults "$CONFIG_YAML"
         write_wanling_block "$CONFIG_YAML"
@@ -746,6 +790,7 @@ run_install_mode() {
     # 用户输入 user_id(语义友好),写 .env 前自动 find_or_create 转 conv_id
     [[ -n "$HOME_USER" && -z "$HOME_CONV" ]] && fetch_conv_id "$HOME_USER"
     write_env_block "$ENV_FILE"
+    ensure_wanling_sdk_installed
     ensure_plugin_enabled "$CONFIG_YAML"
     ensure_wanling_display_defaults "$CONFIG_YAML"
     write_wanling_block "$CONFIG_YAML"
