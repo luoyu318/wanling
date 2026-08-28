@@ -5,10 +5,12 @@ import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'message_bubble.dart';
 
-/// mixed(图文混合)渲染:拆「图片气泡+文字气泡」两个连续气泡。
-/// wrapInBubble=false:双气泡各自包 BubbleWithTail,外层不再包壳。
+/// mixed(图文混合)渲染:拆「裸图+文字气泡」连续渲染。
+/// wrapInBubble=false:图片条目走裸图(同普通图片消息,带 Hero/画廊),
+/// 文本条目包 BubbleWithTail,外层不再包壳。
+/// 条目间距对齐相邻两条普通消息(各行 outerPadding vertical:8 → 16)。
 /// 文本取顶层 data.text(发送合同,dsh 桥同款);items 中图片条目复用
-/// image renderer 渲染(取首条;协议数组天然支持多图,渲染逐条循环即可)。
+/// image renderer 渲染(协议数组天然支持多图,渲染逐条循环即可)。
 class MixedContentRenderer implements MessageContentRenderer {
   const MixedContentRenderer();
 
@@ -35,27 +37,30 @@ class MixedContentRenderer implements MessageContentRenderer {
     final text = (data['text'] as String?) ?? '';
 
     const imageRenderer = ImageContentRenderer();
+    final children = <Widget>[
+      for (final fileId in imageIds)
+        imageRenderer.build(context, {
+          'msg_type': 'image',
+          'data': {'file_id': fileId},
+        }, rc),
+      if (text.isNotEmpty)
+        BubbleWithTail(
+          isMe: rc.isMe,
+          child: const TextContentRenderer().build(context, {
+            'msg_type': 'text',
+            'data': {'text': text},
+          }, rc),
+        ),
+    ];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment:
           rc.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        for (final fileId in imageIds)
-          BubbleWithTail(
-            isMe: rc.isMe,
-            child: imageRenderer.build(context, {
-              'msg_type': 'image',
-              'data': {'file_id': fileId},
-            }, rc),
-          ),
-        if (text.isNotEmpty)
-          BubbleWithTail(
-            isMe: rc.isMe,
-            child: const TextContentRenderer().build(context, {
-              'msg_type': 'text',
-              'data': {'text': text},
-            }, rc),
-          ),
+        for (final (i, child) in children.indexed) ...[
+          if (i > 0) const SizedBox(height: 16),
+          child,
+        ],
       ],
     );
   }

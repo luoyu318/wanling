@@ -36,7 +36,7 @@ void main() {
     );
   }
 
-  testWidgets('mixed: 渲染图片+文字两个气泡', (tester) async {
+  testWidgets('mixed: 图片裸图渲染+文字气泡,条目间距 16', (tester) async {
     final content = {
       'msg_type': 'mixed',
       'data': {
@@ -47,12 +47,18 @@ void main() {
       },
     };
     await tester.pumpWidget(host(content));
-    // 断言:两个 BubbleWithTail;文字'看这张'可见
-    expect(find.byType(BubbleWithTail), findsNWidgets(2));
+    // 断言:图片走裸图(Hero,同普通图片消息),仅文字包 BubbleWithTail;
+    // 条目间有 16px 间距(对齐相邻两条普通消息的视觉间距)
+    expect(find.byType(Hero), findsOneWidget);
+    expect(find.byType(BubbleWithTail), findsOneWidget);
     expect(find.text('看这张'), findsOneWidget);
+    final gap = find.byWidgetPredicate(
+      (w) => w is SizedBox && w.height == 16,
+    );
+    expect(gap, findsOneWidget);
   });
 
-  testWidgets('mixed: 无 text 只渲染图片单气泡', (tester) async {
+  testWidgets('mixed: 无 text 只渲染裸图,无气泡', (tester) async {
     final content = {
       'msg_type': 'mixed',
       'data': {
@@ -62,8 +68,9 @@ void main() {
       },
     };
     await tester.pumpWidget(host(content));
-    // 断言:仅图片一个气泡,无文字气泡
-    expect(find.byType(BubbleWithTail), findsNWidgets(1));
+    // 断言:仅裸图(Hero),无任何气泡壳
+    expect(find.byType(Hero), findsOneWidget);
+    expect(find.byType(BubbleWithTail), findsNothing);
     expect(find.text('看这张'), findsNothing);
   });
 }
