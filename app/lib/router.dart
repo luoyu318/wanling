@@ -103,7 +103,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final loggedIn = auth.isAuthenticated || auth.isSwitching;
       // 未登录白名单：登录页 + 账号选择页（后者从登录页 push 进入，必须放行，
       // 否则会被踢回 /login 导致 SelectAccountPage 进不去）。
-      final authFlowPaths = const {'/login', '/select-account'};
+      const authFlowPaths = {'/login', '/select-account'};
       final isAuthFlow = authFlowPaths.contains(state.matchedLocation);
 
       // 冷启动从通知拉起：如果未消费的 launchPayload 存在 + 已登录，

@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('NotificationService 参数构造与计数前缀', () {
     test('NotificationPayload 构造与 agentName 取值', () {
-      final payload = NotificationPayload(
+      const payload = NotificationPayload(
         convId: 'conv-1',
         agentId: 'agent-1',
         agentName: '白羽',

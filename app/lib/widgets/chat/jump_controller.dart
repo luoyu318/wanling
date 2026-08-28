@@ -156,6 +156,7 @@ class JumpController {
       await WidgetsBinding.instance.endOfFrame;
       if (observer.sliverContexts.isEmpty) return;
     }
+    if (sliverContext != null && !sliverContext.mounted) return;
     await observer.jumpTo(
       index: index,
       alignment: 0.3,
@@ -164,7 +165,7 @@ class JumpController {
     if (!_ctx.isMounted()) return;
     // jumpTo 完成后 target 必然已渲染,从 bubbleKeys 拿 ctx 做 ensureVisible 兜底
     final ctx = _ctx.getBubbleKeys()[messageId]?.currentContext;
-    if (ctx == null) return;
+    if (ctx == null || !ctx.mounted) return;
     await Scrollable.ensureVisible(
       ctx,
       alignment: 0.3,

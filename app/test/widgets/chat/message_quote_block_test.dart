@@ -6,12 +6,12 @@ import 'package:app/widgets/chat/message_quote_block.dart';
 void main() {
   group('MessageQuoteBlock', () {
     testWidgets('单行格式:@昵称 + preview 同行(冒号分隔)', (tester) async {
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文预览',
       );
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 
@@ -22,12 +22,12 @@ void main() {
     });
 
     testWidgets('Agent 名旁显示「智能体」小标', (tester) async {
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'agent', senderId: 'a1',
         senderName: '小灵', msgType: 'text', preview: '原文',
       );
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 
@@ -36,12 +36,12 @@ void main() {
     });
 
     testWidgets('user sender 不显示「智能体」标', (tester) async {
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文',
       );
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 
@@ -50,7 +50,7 @@ void main() {
 
     testWidgets('点击引用块触发 onTap 回调', (tester) async {
       var tapped = false;
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文',
       );
@@ -67,12 +67,12 @@ void main() {
     });
 
     testWidgets('isRevoked=true 时显示「原消息已撤回」', (tester) async {
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文',
       );
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: MessageQuoteBlock(quote: quote, isRevoked: true)),
       ));
 
@@ -81,12 +81,12 @@ void main() {
     });
 
     testWidgets('isRevoked=false 时显示 preview', (tester) async {
-      final quote = Quote(
+      const quote = Quote(
         messageId: 'm1', senderType: 'user', senderId: 'u1',
         senderName: '洛羽', msgType: 'text', preview: '原文',
       );
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: MessageQuoteBlock(quote: quote)),
       ));
 

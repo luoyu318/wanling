@@ -32,7 +32,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
+      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
     ));
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
@@ -56,7 +56,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
+      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
     ));
     await tester.pumpAndSettle();
 
@@ -94,7 +94,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
+      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
     ));
     await tester.pumpAndSettle();
 
@@ -124,7 +124,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
+      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
     ));
     await tester.pumpAndSettle();
 
@@ -157,7 +157,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: const MaterialApp(
         home: FileBrowserPage(
           agentId: 'a',
           convId: 'c',

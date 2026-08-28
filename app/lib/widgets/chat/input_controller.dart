@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -98,7 +100,7 @@ class InputController {
       final ext = dotIdx >= 0 ? lower.substring(dotIdx) : '';
       final msgType = _imageExts.contains(ext) ? MsgType.image : MsgType.file;
       final mimeType = mimeFromExt(ext);
-      _ctx.getNotifier().sendFile(
+      unawaited(_ctx.getNotifier().sendFile(
             fileId,
             msgType,
             filename: file.name,
@@ -107,7 +109,7 @@ class InputController {
             // 往返即可正确展示。
             mimeType: mimeType,
             fileSize: file.size,
-          );
+          ));
     } catch (e) {
       if (_ctx.isMounted()) {
         showAppSnackBar(_ctx.getContext(), extractDioErrorMessage(e),
@@ -153,7 +155,7 @@ class InputController {
       final api = _ctx.ref.read(apiProvider);
       final fileId =
           await api.uploadFile(file.path, convId: _ctx.chatKey.convId);
-      _ctx.getNotifier().sendFile(fileId, msgType);
+      unawaited(_ctx.getNotifier().sendFile(fileId, msgType));
     } catch (e) {
       if (_ctx.isMounted()) {
         showAppSnackBar(_ctx.getContext(), extractDioErrorMessage(e),

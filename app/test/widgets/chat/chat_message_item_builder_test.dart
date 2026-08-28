@@ -52,6 +52,8 @@ void main() {
         chatState: ChatState(historyMessages: [pendingChild]),
         currentUserId: 'me',
         convForStatus: null,
+        // bubbleKeys 供 builder putIfAbsent 写入,须保持可变
+        // ignore: prefer_const_constructors, prefer_const_literals_to_create_immutables
         bubbleKeys: {},
         isTyping: false,
         isAgentBubble: false,
@@ -86,6 +88,8 @@ void main() {
         chatState: ChatState(historyMessages: [approvedChild]),
         currentUserId: 'me',
         convForStatus: null,
+        // bubbleKeys 供 builder putIfAbsent 写入,须保持可变
+        // ignore: prefer_const_constructors, prefer_const_literals_to_create_immutables
         bubbleKeys: {},
         isTyping: false,
         isAgentBubble: false,
@@ -195,7 +199,7 @@ void main() {
   group('实时新消息入场展开动画(animateEntry)', () {
     late BuildContext bc;
 
-    ChatMessageItemBuildContext _buildCtx() {
+    ChatMessageItemBuildContext buildCtx() {
       final ref = _MockRef();
       // MessageRow 构造读 settingsProvider(baseUrl)/authProvider(token)。
       when(() => ref.read(settingsProvider)).thenReturn('');
@@ -204,9 +208,11 @@ void main() {
       when(() => multi.isSelectionMode).thenReturn(false);
       when(() => multi.isSelected(any())).thenReturn(false);
       return ChatMessageItemBuildContext(
-        chatState: ChatState(historyMessages: const []),
+        chatState: const ChatState(historyMessages: []),
         currentUserId: 'me',
         convForStatus: null,
+        // bubbleKeys 供 builder putIfAbsent 写入,须保持可变
+        // ignore: prefer_const_constructors, prefer_const_literals_to_create_immutables
         bubbleKeys: {},
         isTyping: false,
         isAgentBubble: false,
@@ -228,7 +234,7 @@ void main() {
       ));
     }
 
-    ChatMessage _reasoning(bool isStreaming) => ChatMessage(
+    ChatMessage reasoning(bool isStreaming) => ChatMessage(
           id: 's1',
           conversationId: 'c1',
           senderType: 'agent',
@@ -241,7 +247,7 @@ void main() {
     testWidgets('卡片 + animateEntry=true → 包 EnterExpand 入场动画', (tester) async {
       await pumpBc(tester);
       final msg = _mkMsg(msgType: 'card', status: 'running');
-      final w = ChatMessageItemBuilder.buildMessage(bc, msg, _buildCtx(),
+      final w = ChatMessageItemBuilder.buildMessage(bc, msg, buildCtx(),
           animateEntry: true);
       expect(w, isA<EnterExpand>());
     });
@@ -249,20 +255,20 @@ void main() {
     testWidgets('卡片 + animateEntry=false(历史加载)→ 不包动画', (tester) async {
       await pumpBc(tester);
       final msg = _mkMsg(msgType: 'card', status: 'completed');
-      final w = ChatMessageItemBuilder.buildMessage(bc, msg, _buildCtx());
+      final w = ChatMessageItemBuilder.buildMessage(bc, msg, buildCtx());
       expect(w, isNot(isA<EnterExpand>()));
     });
 
     testWidgets('流式 reasoning + animateEntry=true → 包 EnterExpand', (tester) async {
       await pumpBc(tester);
-      final w = ChatMessageItemBuilder.buildMessage(bc, _reasoning(true), _buildCtx(),
+      final w = ChatMessageItemBuilder.buildMessage(bc, reasoning(true), buildCtx(),
           animateEntry: true);
       expect(w, isA<EnterExpand>());
     });
 
     testWidgets('reasoning 终态替换(isStreaming=false)→ 不重播动画', (tester) async {
       await pumpBc(tester);
-      final w = ChatMessageItemBuilder.buildMessage(bc, _reasoning(false), _buildCtx(),
+      final w = ChatMessageItemBuilder.buildMessage(bc, reasoning(false), buildCtx(),
           animateEntry: true);
       expect(w, isNot(isA<EnterExpand>()));
     });

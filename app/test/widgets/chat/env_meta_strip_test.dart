@@ -213,7 +213,7 @@ void main() {
         body: SizedBox(
           width: 200,
           child: EnvMetaStrip(
-            cwd: '/home/user/projects/${longBranch}',
+            cwd: '/home/user/projects/$longBranch',
             gitBranch: longBranch,
             contextUsed: 123456,
             contextLimit: 1000000,

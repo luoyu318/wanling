@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wanling_core/models/message.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
-import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/widgets/markdown_view.dart';
 import 'package:app/widgets/chat/message_bubble.dart';
 
@@ -43,7 +42,7 @@ void main() {
 
   group('BubbleWithTail', () {
     testWidgets('agent 气泡渲染 child 文本', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: BubbleWithTail(isMe: false, child: Text('hello')),
         ),
@@ -52,7 +51,7 @@ void main() {
     });
 
     testWidgets('user 气泡也渲染 child', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: BubbleWithTail(isMe: true, child: Text('mine')),
         ),
@@ -61,7 +60,7 @@ void main() {
     });
 
     testWidgets('包含 CustomPaint（三角）', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: BubbleWithTail(isMe: false, child: Text('x')),
         ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -218,7 +220,7 @@ class _ConvTileState extends State<_ConvTile> {
       },
       child: GestureDetector(
         onLongPressStart: (details) async {
-          HapticFeedback.selectionClick();
+          unawaited(HapticFeedback.selectionClick());
           // long press wins arena 后 InkWell.onTapCancel 会清 _isPressed，
           // 这里设回 true 覆盖，保持长按期间按下色。两次 setState 同帧合并无闪烁。
           _setPressed(true);

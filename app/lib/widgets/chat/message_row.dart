@@ -183,7 +183,7 @@ class MessageRow extends ConsumerWidget {
         ),
       );
     } else if (reserveAvatarSpace) {
-      avatarSlot = SizedBox(width: _avatarSize);
+      avatarSlot = const SizedBox(width: _avatarSize);
     } else {
       avatarSlot = const SizedBox.shrink();
     }
@@ -213,7 +213,7 @@ class MessageRow extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (status != null) status,
+          ?status,
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxBubbleWidth),
             // 方案 B:仅在此处把 bubble 包到 Column 中,引用块条件渲染在 bubble 上方,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,10 +42,10 @@ void main() {
     final router = GoRouter(
       initialLocation: '/',
       routes: [
-        GoRoute(path: '/', builder: (_, __) => const SizedBox.shrink()),
+        GoRoute(path: '/', builder: (_, _) => const SizedBox.shrink()),
         GoRoute(
             path: '/select-account',
-            builder: (_, __) => const SelectAccountPage()),
+            builder: (_, _) => const SelectAccountPage()),
       ],
     );
     await tester.pumpWidget(
@@ -53,7 +55,7 @@ void main() {
       ),
     );
     await tester.pump();
-    router.push('/select-account');
+    unawaited(router.push('/select-account'));
     await tester.pumpAndSettle();
   }
 
@@ -100,10 +102,10 @@ void main() {
     final router = GoRouter(
       initialLocation: '/',
       routes: [
-        GoRoute(path: '/', builder: (_, __) => const SizedBox.shrink()),
+        GoRoute(path: '/', builder: (_, _) => const SizedBox.shrink()),
         GoRoute(
             path: '/select-account',
-            builder: (_, __) => const SelectAccountPage()),
+            builder: (_, _) => const SelectAccountPage()),
       ],
     );
     await tester.pumpWidget(
@@ -113,7 +115,7 @@ void main() {
       ),
     );
     await tester.pump();
-    router.push('/select-account');
+    unawaited(router.push('/select-account'));
     await tester.pumpAndSettle();
 
     // 点已选中卡片(index==selectedIndex==0)
@@ -150,10 +152,10 @@ void main() {
     final router = GoRouter(
       initialLocation: '/',
       routes: [
-        GoRoute(path: '/', builder: (_, __) => const SizedBox.shrink()),
+        GoRoute(path: '/', builder: (_, _) => const SizedBox.shrink()),
         GoRoute(
             path: '/select-account',
-            builder: (_, __) => const SelectAccountPage()),
+            builder: (_, _) => const SelectAccountPage()),
       ],
     );
     await tester.pumpWidget(
@@ -163,7 +165,7 @@ void main() {
       ),
     );
     await tester.pump();
-    router.push('/select-account');
+    unawaited(router.push('/select-account'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('u2'));
     await tester.pump(); // 让 onTap 回调 + setState 执行

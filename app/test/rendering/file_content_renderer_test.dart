@@ -12,7 +12,7 @@ void main() {
   });
 
   testWidgets('FileContentRenderer: PDF 渲染 FileCard', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -34,7 +34,7 @@ void main() {
 
   testWidgets('FileContentRenderer: text/plain 渲染 _TextPreviewCard',
       (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -55,7 +55,7 @@ void main() {
   });
 
   testWidgets('FileContentRenderer: text/markdown 走预览卡片', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -73,7 +73,7 @@ void main() {
   });
 
   testWidgets('FileContentRenderer: text/csv 走预览卡片', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -91,7 +91,7 @@ void main() {
   });
 
   testWidgets('FileContentRenderer: Word docx 走 FileCard', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -110,7 +110,7 @@ void main() {
 
   testWidgets('FileContentRenderer: fileDownloadSnapshots 注入下载中状态',
       (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,
@@ -131,7 +131,7 @@ void main() {
 
   testWidgets('FileContentRenderer: fileDownloadSnapshots 注入已下载状态',
       (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: _RendererHost(
           msgType: MsgType.file,

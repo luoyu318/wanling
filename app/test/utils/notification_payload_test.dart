@@ -4,7 +4,7 @@ import 'package:wanling_core/utils/notification_payload.dart';
 void main() {
   group('NotificationPayload', () {
     test('toJson + fromJson 往返', () {
-      final p = NotificationPayload(convId: 'c1', agentId: 'a1', agentName: '黑羽');
+      const p = NotificationPayload(convId: 'c1', agentId: 'a1', agentName: '黑羽');
       final json = p.toJson();
       final restored = NotificationPayload.fromJson(json);
       expect(restored.convId, 'c1');
@@ -13,7 +13,7 @@ void main() {
     });
 
     test('fromJson 兼容字符串 payload', () {
-      final json = '{"convId":"c2","agentId":"a2","agentName":"白羽"}';
+      const json = '{"convId":"c2","agentId":"a2","agentName":"白羽"}';
       final restored = NotificationPayload.fromJsonString(json);
       expect(restored!.agentName, '白羽');
     });

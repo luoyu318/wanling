@@ -290,15 +290,15 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
       body: NestedPageView(
         controller: _innerCtrl,
         onPageChanged: widget.onAIndexChanged,
-        children: [
+        children: const [
           Column(
-            children: const [
+            children: [
               ConnectionBanner(),
               LocalStoreBanner(),
               Expanded(child: MessagesPage()),
             ],
           ),
-          const AgentListPage(),
+          AgentListPage(),
         ],
       ),
     );

@@ -459,7 +459,7 @@ void main() {
   // 位置失真。卡片渲染用 AnimatedSize 平滑增高(高度渐进变化),一次性
   // scrollToBottom 目标会随动画增长而过时 → 改周期 jumpTo 实时底部持续跟随。
   group('卡片 PATCH 增高平滑跟随(非流式 content 更新)', () {
-    ChatState _cardState(String preview) => ChatState(
+    ChatState cardState(String preview) => ChatState(
           liveMessages: [_card('card-1', preview)],
           isInitialLoading: false,
         );
@@ -477,7 +477,7 @@ void main() {
       when(() => pos.viewportDimension).thenReturn(600.0);
       // 周期跟随读 chatProvider 的 liveMessages 算 liveEmpty。
       when(() => ref.read(chatProvider((convId: 'c1', agentId: 'agent-1'))))
-          .thenReturn(_cardState('long preview content increases height'));
+          .thenReturn(cardState('long preview content increases height'));
       final listener = ChatStateListener(_ctx(
         ref: ref,
         notifier: notifier,
@@ -486,8 +486,8 @@ void main() {
       ));
 
       listener.onChatStateChanged(
-        _cardState('short'),
-        _cardState('long preview content increases height'),
+        cardState('short'),
+        cardState('long preview content increases height'),
       );
       // 卡片展开期间(AnimatedSize ~250ms)周期 jumpTo 跟随,pump 推进时间;
       // 400ms > 320ms 兜底让周期 timer 自停(否则测试结束报 Timer pending)。
@@ -508,8 +508,8 @@ void main() {
       ));
 
       listener.onChatStateChanged(
-        _cardState('short'),
-        _cardState('long preview content increases height'),
+        cardState('short'),
+        cardState('long preview content increases height'),
       );
       await tester.pump(const Duration(milliseconds: 80));
 
@@ -658,7 +658,7 @@ void main() {
   // 占位、displayMessages 长度不变,(2) 分支 newLen>oldLen 不成立 → 不再 markRead,
   // server 端 unread 逐条累积。修复:检测「占位被终态替换」,贴底时补 markRead。
   group('流式占位→终态替换补 markRead(server 未读归零)', () {
-    ChatMessage _placeholder(String streamId) => ChatMessage(
+    ChatMessage placeholder(String streamId) => ChatMessage(
           id: 'stream:$streamId',
           conversationId: 'c1',
           senderType: 'agent',
@@ -680,7 +680,7 @@ void main() {
       ));
 
       final prev = ChatState(
-        liveMessages: [_placeholder('sid-1')],
+        liveMessages: [placeholder('sid-1')],
         isInitialLoading: false,
       );
       // 终态替换占位:长度不变,id 从 stream:sid-1 → server id
@@ -709,7 +709,7 @@ void main() {
       ));
 
       final prev = ChatState(
-        liveMessages: [_placeholder('sid-1')],
+        liveMessages: [placeholder('sid-1')],
         isInitialLoading: false,
       );
       final next = ChatState(

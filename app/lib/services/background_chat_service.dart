@@ -238,7 +238,7 @@ class BackgroundChatService {
 
     // 先 cancel 旧 subscription 再 close sink，避免 onDone 触发 _scheduleReconnect
     // 引入自循环（_autoRestore 与 IPC 'start' 几乎同时触发 _safeConnect 时尤甚）。
-    _channelSub?.cancel();
+    unawaited(_channelSub?.cancel());
     _channelSub = null;
     if (_channel != null) {
       try {

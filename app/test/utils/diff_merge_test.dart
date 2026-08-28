@@ -11,7 +11,7 @@ void main() {
   group('diffMerge', () {
     test('fresh 全新增(local 空)', () {
       final fresh = [_Item('a', 1), _Item('b', 2)];
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: const [],
         freshList: fresh,
         idOf: (i) => i.id,
@@ -25,7 +25,7 @@ void main() {
 
     test('fresh 全删除(local 有但 fresh 没,keepLocal=false 删)', () {
       final local = [_Item('a', 1)];
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: local,
         freshList: const [],
         idOf: (i) => i.id,
@@ -38,7 +38,7 @@ void main() {
     test('keepLocal=true 时本地多余项保留', () {
       final local = [_Item('a', 1), _Item('b', 2)];
       final fresh = [_Item('a', 10)];
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: local,
         freshList: fresh,
         idOf: (i) => i.id,
@@ -53,7 +53,7 @@ void main() {
     test('字段级 merge: 走 mergeItem 函数', () {
       final local = [_Item('a', 100)];
       final fresh = [_Item('a', 1)];
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: local,
         freshList: fresh,
         idOf: (i) => i.id,
@@ -66,7 +66,7 @@ void main() {
     test('混合场景:新增 + 删除 + 字段 merge 同时发生', () {
       final local = [_Item('a', 1), _Item('b', 2), _Item('c', 3)];
       final fresh = [_Item('a', 10), _Item('d', 4)];  // a 更新, b/c 删, d 新增
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: local,
         freshList: fresh,
         idOf: (i) => i.id,
@@ -80,7 +80,7 @@ void main() {
 
     test('fresh 有重复 id 时只保留首次', () {
       final fresh = [_Item('a', 1), _Item('a', 99), _Item('b', 2)];
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: const [],
         freshList: fresh,
         idOf: (i) => i.id,
@@ -94,7 +94,7 @@ void main() {
 
     test('local 有重复 id 且 keepLocal=true 时只保留首次', () {
       final local = [_Item('x', 1), _Item('x', 99)]; // 重复
-      final merged = diffMerge(
+      final merged = diffMerge<_Item>(
         localList: local,
         freshList: const [],
         idOf: (i) => i.id,

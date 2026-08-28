@@ -514,7 +514,7 @@ void main() {
   // AND silent IS DISTINCT FROM 'true' 规则对齐)。
   // WS MESSAGE_CREATE 实时派生避免下拉刷新才看到最新摘要。
   group('lastAgentReplyContent 实时派生', () {
-    WSMessage _agentReply({
+    WSMessage agentReply({
       required String id,
       required String msgType,
       required String text,
@@ -544,7 +544,7 @@ void main() {
       // 初始为空(server SQL 未返回 last_agent_reply_content 时为 null)
       expect(notifier.state!.first.lastAgentReplyContent, isNull);
 
-      ws.emit(_agentReply(id: 'm-a1', msgType: 'markdown', text: '已经改好了'));
+      ws.emit(agentReply(id: 'm-a1', msgType: 'markdown', text: '已经改好了'));
       await Future.delayed(Duration.zero);
 
       expect(notifier.state!.first.lastAgentReplyContent, '已经改好了');
@@ -553,7 +553,7 @@ void main() {
     test('agent 发非 silent text → lastAgentReplyContent 也更新', () async {
       final notifier = await boot();
 
-      ws.emit(_agentReply(id: 'm-a2', msgType: 'text', text: '文字回复'));
+      ws.emit(agentReply(id: 'm-a2', msgType: 'text', text: '文字回复'));
       await Future.delayed(Duration.zero);
 
       expect(notifier.state!.first.lastAgentReplyContent, '文字回复');
@@ -562,17 +562,17 @@ void main() {
     test('agent 发 silent 过程消息 → lastAgentReplyContent 不变', () async {
       final notifier = await boot();
       // 先一条最终回复设基线
-      ws.emit(_agentReply(id: 'm-a3', msgType: 'markdown', text: '基线回复'));
+      ws.emit(agentReply(id: 'm-a3', msgType: 'markdown', text: '基线回复'));
       await Future.delayed(Duration.zero);
       expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
 
       // silent 过程消息(中间步骤 markdown / reasoning / step_finish)不应覆盖
-      ws.emit(_agentReply(
+      ws.emit(agentReply(
           id: 'm-a4', msgType: 'markdown', text: '中间步骤', silent: true));
       await Future.delayed(Duration.zero);
       expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
 
-      ws.emit(_agentReply(
+      ws.emit(agentReply(
           id: 'm-a5', msgType: 'reasoning', text: '思考中', silent: true));
       await Future.delayed(Duration.zero);
       expect(notifier.state!.first.lastAgentReplyContent, '基线回复');
@@ -581,7 +581,7 @@ void main() {
     test('user 发消息 → lastAgentReplyContent 不变(只跟踪 agent 回复)', () async {
       final notifier = await boot();
       // 先 agent 发一条回复
-      ws.emit(_agentReply(id: 'm-a6', msgType: 'markdown', text: '我的答复'));
+      ws.emit(agentReply(id: 'm-a6', msgType: 'markdown', text: '我的答复'));
       await Future.delayed(Duration.zero);
       expect(notifier.state!.first.lastAgentReplyContent, '我的答复');
 

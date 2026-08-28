@@ -17,7 +17,7 @@ void main() {
               MsgType.stepFinish,
               {'msg_type': MsgType.stepFinish.value, 'data': data},
               ctx,
-              MessageRenderContext(
+              const MessageRenderContext(
                 isMe: false,
                 baseUrl: 'http://localhost',
                 token: 'test',

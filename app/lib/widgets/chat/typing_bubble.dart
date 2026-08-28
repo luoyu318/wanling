@@ -48,7 +48,7 @@ class _TypingBubbleState extends State<TypingBubble>
           isMe: false,
           child: AnimatedBuilder(
             animation: _dots,
-            builder: (_, __) => Text(
+            builder: (_, _) => Text(
               '.' * _dots.value,
               style: const TextStyle(
                 fontSize: 17,

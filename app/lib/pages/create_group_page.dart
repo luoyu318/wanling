@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -69,12 +71,12 @@ class _CreateGroupPageState extends ConsumerState<CreateGroupPage> {
       context.pushReplacement('/chat/$convId');
     } catch (e) {
       if (mounted) {
-        showAppDialog(
+        unawaited(showAppDialog(
           context: context,
           title: '创建失败',
           content: Text('$e'),
           confirmText: '知道了',
-        );
+        ));
       }
     } finally {
       if (mounted) setState(() => _creating = false);

@@ -9,11 +9,11 @@ import 'package:flutter_test/flutter_test.dart';
 /// 恒定,不会因动画初期内容不足触发 ranOut → viewport correctBy 硬拉回 px。
 void main() {
   testWidgets('animate=true: 高度恒定,透明度从 0 淡入到 1', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: EnterExpand(
           animate: true,
-          child: const SizedBox(key: ValueKey('probe'), height: 100, width: 100),
+          child: SizedBox(key: ValueKey('probe'), height: 100, width: 100),
         ),
       ),
     ));
@@ -42,11 +42,11 @@ void main() {
   });
 
   testWidgets('animate=false: 直接显示完整高度,不播动画', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: EnterExpand(
           animate: false,
-          child: const SizedBox(key: ValueKey('probe'), height: 100, width: 100),
+          child: SizedBox(key: ValueKey('probe'), height: 100, width: 100),
         ),
       ),
     ));

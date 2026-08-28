@@ -25,7 +25,7 @@ Map<String, dynamic> _agentJson(String id, {String? secretKey}) => {
       'avatar_url': null,
       'bio': null,
       'status': 'offline',
-      if (secretKey != null) 'secret_key': secretKey,
+      'secret_key': ?secretKey,
     };
 
 /// Conversation 测试用 fixture（字段对齐 server ConversationListItem json tag）。

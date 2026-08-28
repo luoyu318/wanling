@@ -51,11 +51,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       body: CustomScrollView(
         slivers: [
           // SliverAppBar 自动占 status bar 区，背景与用户资料卡一致 #FFFFFF
-          SliverAppBar(
+          const SliverAppBar(
             pinned: true,
             backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFF111111),
-            title: const Text(''),
+            foregroundColor: Color(0xFF111111),
+            title: Text(''),
           ),
           // 顶部用户区域：紧贴 AppBar 下方，无 top padding
           SliverToBoxAdapter(

@@ -47,7 +47,7 @@ void main() {
     // 新 _initialize 重跑），导致 emitCreate 注入的消息丢失、_initialize 抛
     // `Bad state: Tried to use ChatNotifier after dispose`。
     // 测试用例统一用 c1/a1 key，在 makeContainer 内建立长期 listener 锁定实例。
-    container.listen(chatProvider((convId: 'c1', agentId: 'a1')), (_, __) {});
+    container.listen(chatProvider((convId: 'c1', agentId: 'a1')), (_, _) {});
     return container;
   }
 
@@ -63,7 +63,7 @@ void main() {
         'sender_id': 'u1',
         'content': {'msg_type': 'text', 'data': {'text': text}},
         'created_at': '2026-06-20T10:00:00Z',
-        if (parentMsgId != null) 'parent_msg_id': parentMsgId,
+        'parent_msg_id': ?parentMsgId,
       },
     ));
   }
@@ -71,7 +71,7 @@ void main() {
   group('WS MESSAGE_CREATE 子 agent 事件过滤(parent_msg_id)', () {
     test('带 parent_msg_id 的消息不入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       // 子 agent 的 reasoning/tool_calls/text 透传带 parent_msg_id(指向 task 卡片)
@@ -84,7 +84,7 @@ void main() {
 
     test('无 parent_msg_id 的主对话消息正常入列表(回归保护)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreate('main-1', '主对话消息');
@@ -123,7 +123,7 @@ void main() {
 
     test('pending 子审批卡(permission_card)入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApproval('perm-pending-1');
@@ -136,7 +136,7 @@ void main() {
 
     test('pending 子审批卡(question_card)入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApproval('qa-pending-1', msgType: 'question_card');
@@ -147,7 +147,7 @@ void main() {
 
     test('非 pending 子审批卡(approved)不入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApproval('perm-approved-1', status: 'approved');
@@ -158,7 +158,7 @@ void main() {
 
     test('非 pending 子审批卡(denied)不入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApproval('perm-denied-1', status: 'denied');
@@ -169,7 +169,7 @@ void main() {
 
     test('普通子事件(reasoning)仍不入列表(回归)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       // emitCreate 带 parentMsgId 的 text 消息(非审批卡)应被过滤
@@ -205,7 +205,7 @@ void main() {
 
     test('finished 主循环汇总条入主聊天列表(tokens 小字,定位锚点)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitStepFinish('sf-finished');
@@ -219,7 +219,7 @@ void main() {
 
     test('推理步元信息行(无 finished)不入主聊天列表', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitStepFinish('sf-process', finished: false);
@@ -230,7 +230,7 @@ void main() {
 
     test('普通 text 消息不受影响(回归保护)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreate('plain-1', '正常消息');
@@ -244,7 +244,7 @@ void main() {
 
   test('deleteMessages 单条:乐观移除 + 调 deleteMessage API', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
 
     emitCreate('m1', 'one');
@@ -264,7 +264,7 @@ void main() {
 
   test('deleteMessages 批量:调 batchDeleteMessages API', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
 
     emitCreate('m1', '1');
@@ -281,7 +281,7 @@ void main() {
 
   test('MESSAGE_DELETE WS 事件移除对应消息(多端同步)', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     container.read(chatProvider(key).notifier); // 触发订阅
 
     emitCreate('m1', '1');
@@ -304,7 +304,7 @@ void main() {
 
   test('MESSAGE_DELETE 不影响其他会话的消息', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     container.read(chatProvider(key).notifier);
 
     emitCreate('m1', '1', convId: 'c1');
@@ -327,7 +327,7 @@ void main() {
 
   test('incrementUnread: unreadCount 累加 +1（合并 newMessageCount）', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
     await Future.delayed(const Duration(milliseconds: 50));
 
@@ -342,7 +342,7 @@ void main() {
   test('markReadAtBottom: 清零 unread/separator + 清空 firstUnreadMessageId',
       () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
     await Future.delayed(const Duration(milliseconds: 50));
 
@@ -362,7 +362,7 @@ void main() {
   test('jumpToBottom: 清零 unread/separator + 清空 firstUnreadMessageId',
       () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
     await Future.delayed(const Duration(milliseconds: 50));
 
@@ -388,7 +388,7 @@ void main() {
   test('jumpToBottom: 合并后按 createdAt 降序排序（修复历史/最新顺序颠倒）',
       () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     final notifier = container.read(chatProvider(key).notifier);
     await Future.delayed(const Duration(milliseconds: 50));
 
@@ -429,7 +429,7 @@ void main() {
   group('decrementUnread', () {
     test('单条减少: unreadCount -= n', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -444,7 +444,7 @@ void main() {
 
     test('n=0 或负数: no-op', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -460,7 +460,7 @@ void main() {
 
     test('超减 clamp 到 0: unreadCount=2 → decrement(5) → 0', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -495,7 +495,7 @@ void main() {
               ]);
 
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -630,7 +630,7 @@ void main() {
   group('pendingQuote state management', () {
     test('setPendingQuote / clearPendingQuote 状态切换', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -657,7 +657,7 @@ void main() {
 
     test('send 时合并 pendingQuote 到 content.data.quote 后清空', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -704,7 +704,7 @@ void main() {
 
     test('无 pendingQuote 时 send 不向 content.data 写 quote 键', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -729,7 +729,7 @@ void main() {
     test('clearPendingQuote 在 pendingQuote 已为 null 时是 no-op(不触发 state 写入)',
         () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -745,7 +745,7 @@ void main() {
 
     test('sendText 失败时 pendingQuote 也被清空(失败也清契约)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -769,7 +769,7 @@ void main() {
 
     test('sendFile 时合并 pendingQuote 到 content.data.quote 后清空', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -817,7 +817,7 @@ void main() {
 
     test('sendFile 失败时 pendingQuote 也被清空(失败也清契约)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -855,7 +855,7 @@ void main() {
 
     test('本地未命中:target + before + after 全部合并,按时间倒序', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
 
       // 让 state 有 1 条已有消息 m0(最早,WS 注入固定 createdAt=2026-06-20)
@@ -884,7 +884,7 @@ void main() {
 
     test('去重:已存在的 id 不重复加入', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
 
       // 已有 m3(通过 WS 注入,createdAt 固定 2026-06-20)
@@ -908,7 +908,7 @@ void main() {
 
     test('全部已存在时不触发 state 写入(返回前 messages 不变)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
 
       emitCreate('m3', 'three');
@@ -938,11 +938,11 @@ void main() {
   group('modelOverride', () {
     test('selectModel 设置 modelOverride', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
-      notifier.selectModel(ModelOverride(
+      notifier.selectModel(const ModelOverride(
         providerID: 'zhipuai', modelID: 'glm-5.2-airx',
       ));
 
@@ -954,7 +954,7 @@ void main() {
 
     test('sendText 注入 _model 到 content.data(有 modelOverride)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -964,7 +964,7 @@ void main() {
         return (messageId: 'srv_m1', createdAt: DateTime.utc(2026, 7, 17));
       });
 
-      notifier.selectModel(ModelOverride(
+      notifier.selectModel(const ModelOverride(
         providerID: 'zhipuai', modelID: 'glm-5.2-airx',
       ));
       await notifier.sendText('你好');
@@ -979,7 +979,7 @@ void main() {
 
     test('sendText 无 modelOverride 时不注入 _model', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       final notifier = container.read(chatProvider(key).notifier);
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -1034,7 +1034,7 @@ void main() {
 
     test('pending→approved 从列表移除', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApprovalLocal('perm-pend-1');
@@ -1048,7 +1048,7 @@ void main() {
 
     test('pending→denied 从列表移除', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       emitCreateApprovalLocal('perm-pend-2');
@@ -1061,7 +1061,7 @@ void main() {
 
     test('普通消息 MESSAGE_UPDATE 走 content 替换不移除', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       // 先建一条顶层 text 消息
@@ -1086,7 +1086,7 @@ void main() {
 
       final msgs = container.read(chatProvider(key)).displayMessages;
       expect(msgs.length, 1); // 不移除
-      expect(msgs.first.content['data']['text'], '更新后'); // content 被替换
+      expect(((msgs.first.content['data'] as Map)['text']) as String, '更新后'); // content 被替换
     });
   });
 
@@ -1239,7 +1239,7 @@ void main() {
   group('聚合卡增量合并回归(分卡 bug)', () {
     test('建卡空 elements + append 增量 → 元素被填充,不空白', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
 
       // 1. 建聚合卡:MESSAGE_CREATE, elements=[] (plugin ensureCard)
@@ -1304,7 +1304,7 @@ void main() {
   group('聚合卡 silent 翻转 MESSAGE_UPDATE 反映到 content(未读清除前提)', () {
     test('翻转广播后 chatProvider content.silent true→false', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       // 聚合卡创建(silent=true)
       ws.emit(WSMessage(
         op: 0,

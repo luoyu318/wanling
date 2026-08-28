@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:flutter/physics.dart';
 import 'package:flutter/widgets.dart';
 
 /// 双 sliver center 几何专用的滚动物理。

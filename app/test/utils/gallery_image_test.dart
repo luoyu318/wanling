@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 
 import 'package:app/utils/gallery_saver.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,8 +14,7 @@ class _FakeAdapter implements HttpClientAdapter {
   _FakeAdapter({
     required this.statusCode,
     required this.body,
-    this.contentLength,
-  }) : chunks = [body];
+  }) : contentLength = null, chunks = [body];
 
   _FakeAdapter.chunked({
     required this.statusCode,
@@ -140,10 +138,10 @@ void main() {
         body: [0x89, 0x50, 0x4E, 0x47], // 假 PNG 字节
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {'Authorization': 'Bearer test-token'},
+        headers: {'Authorization': 'Bearer test-token'},
       );
 
       final result = await saveToGallery(image, dio: dio);
@@ -155,10 +153,10 @@ void main() {
       final dio = Dio();
       dio.httpClientAdapter = _FakeAdapter(statusCode: 404, body: []);
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final result = await saveToGallery(image, dio: dio);
@@ -190,10 +188,10 @@ void main() {
         contentLength: 300,
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final received = <int>[];
@@ -230,10 +228,10 @@ void main() {
         body: List.filled(50, 0x89),
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final totals = <int>[];
@@ -258,10 +256,10 @@ void main() {
         body: [0x89, 0x50, 0x4E, 0x47],
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final result = await saveToGallery(image, dio: dio);

@@ -126,7 +126,7 @@ class MessageMenuController {
     showAppDialog(
       context: _ctx.getContext(),
       title: '重新发送?',
-      content: Text('该消息发送失败,是否重新发送?'),
+      content: const Text('该消息发送失败,是否重新发送?'),
       confirmText: '重新发送',
       onConfirm: () {
         _ctx.ref

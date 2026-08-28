@@ -24,8 +24,8 @@ class MessageQuoteBlock extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0x1A597BFF), // 浅紫底(主题色 10% alpha)
           borderRadius: BorderRadius.circular(3),
-          border: Border(
-            left: BorderSide(color: const Color(0xFF597BFF), width: 2),
+          border: const Border(
+            left: BorderSide(color: Color(0xFF597BFF), width: 2),
           ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
