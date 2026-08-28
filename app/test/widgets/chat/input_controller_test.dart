@@ -80,7 +80,6 @@ class _RecordingNotifier implements ChatNotifier {
     String fileId, {
     String filename = '',
     String mimeType = '',
-    int fileSize = 0,
   }) async {
     mixedCalls.add((text, fileId));
   }
@@ -97,7 +96,10 @@ class _NoopNotifier implements ChatNotifier {
 
 /// 可配置 [ApiService]：uploadFile 返预设值或抛预设异常。
 class _FakeApi implements ApiService {
-  _FakeApi({this.uploadResult});
+  _FakeApi({this.uploadResult, this.uploadError});
+
+  /// 非 null 时 uploadFile 抛此异常，注入上传失败路径。
+  final Object? uploadError;
   final String? uploadResult;
   int uploadCalls = 0;
   List<String> uploadedPaths = [];
@@ -108,6 +110,7 @@ class _FakeApi implements ApiService {
     uploadCalls++;
     uploadedPaths.add(filePath);
     uploadedConvIds.add(convId);
+    if (uploadError != null) throw uploadError!;
     return uploadResult!;
   }
 
@@ -238,6 +241,50 @@ void main() {
       expect(notifier.mixedCalls, isEmpty, reason: '无文字不应发 mixed');
       expect(container.read(pendingImageProvider(key)), isNull,
           reason: '发送后挂图应清空');
+    });
+
+    test('上传失败 → 保留挂图可重试，不触发 sendMixed/sendFile', () async {
+      final api = _FakeApi(uploadError: Exception('network down'));
+      final (container, key) = _mountAsset(
+        api,
+        _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png'))),
+      );
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+        // 单测环境未挂载:跳过失败 snackbar（getContext 未 stub 会抛）
+        isMounted: () => false,
+      ));
+
+      await ctrl.send('看这张');
+
+      expect(api.uploadCalls, 1);
+      expect(notifier.mixedCalls, isEmpty, reason: '上传失败不应发 mixed');
+      expect(notifier.fileCalls, isEmpty, reason: '上传失败不应发 file');
+      expect(container.read(pendingImageProvider(key)), isNotNull,
+          reason: '失败保留挂图可重试');
+    });
+
+    test('挂图 file 读取为 null → 不上传不发送，挂图保留', () async {
+      final api = _FakeApi(uploadResult: 'file-9');
+      final (container, key) = _mountAsset(api, _FakeAssetEntity());
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+        isMounted: () => false,
+      ));
+
+      await ctrl.send('');
+
+      expect(api.uploadCalls, 0, reason: '读不到文件不应触发上传');
+      expect(notifier.mixedCalls, isEmpty);
+      expect(notifier.fileCalls, isEmpty);
+      expect(container.read(pendingImageProvider(key)), isNotNull,
+          reason: '挂图保留，用户可重试或删除');
     });
   });
 

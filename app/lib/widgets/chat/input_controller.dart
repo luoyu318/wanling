@@ -104,7 +104,11 @@ class InputController {
       final api = _ctx.ref.read(apiProvider);
       final fileId =
           await api.uploadFile(file.path, convId: _ctx.chatKey.convId);
-      _clearPendingImage();
+      // 上传是长耗时异步,期间用户可能点 × 移除挂图或重选新图。
+      // 清除前校验 provider 里还是当初捕获的那个 asset:已被移除/替换则不清,
+      // 防止已取消的图仍被发出、或重选的新图被静默吞掉。
+      final current = _ctx.ref.read(pendingImageProvider(_ctx.chatKey));
+      if (identical(current, image)) _clearPendingImage();
       if (text.isNotEmpty) {
         unawaited(_ctx.getNotifier().sendMixed(text, fileId));
       } else {

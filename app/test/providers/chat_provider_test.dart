@@ -857,14 +857,14 @@ void main() {
       });
 
       await notifier.sendMixed('看这张图', 'file-1',
-          filename: 'a.png', mimeType: 'image/png', fileSize: 10);
+          filename: 'a.png', mimeType: 'image/png');
 
       expect(sent, hasLength(1));
       expect(sent.first['msg_type'], 'mixed');
       final data = sent.first['data'] as Map<String, dynamic>;
       expect(data['text'], '看这张图');
-      // brief 原断言漏 mime_type,与其传入的 mimeType: 'image/png' 及同构实现
-      // (sendFile 同样条件写入 mime_type)矛盾,此处按实现合同补全。
+      // mime_type 非空时随载荷写入 items 图片条目（与 sendFile 同构：字段
+      // 条件写入，空串省略），客户端无需网络往返即可正确展示。
       expect(data['items'], [
         {
           'type': 'image',

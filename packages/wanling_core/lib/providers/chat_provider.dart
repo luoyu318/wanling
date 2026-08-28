@@ -1367,9 +1367,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 不发空串）；items 至少 1 个 {type:'image', file_id}，图片条目 file_id 非空，
   /// 否则 agent 桥整条拒收。文字不放进 items。渲染层把 mixed 拆为图+文双气泡。
   Future<void> sendMixed(String text, String fileId,
-      {String filename = '',
-      String mimeType = '',
-      int fileSize = 0}) async {
+      {String filename = '', String mimeType = ''}) async {
     final content = {
       'msg_type': 'mixed',
       'data': {
