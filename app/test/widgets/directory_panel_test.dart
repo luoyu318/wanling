@@ -1,4 +1,6 @@
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/services/api_service.dart';
 import 'package:app/utils/directory_utils.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/directory_panel.dart';
@@ -6,8 +8,19 @@ import 'package:app/widgets/directory_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+class MockApi extends Mock implements ApiService {}
 
 void main() {
+  // header 的 AgentBadge watch agentTypesProvider → getAgentTypes():
+  // 不打桩会发真实 Dio 请求,fake_async 下 Timer 永远 pending,测试必挂。
+  final api = MockApi();
+
+  setUp(() {
+    when(() => api.getAgentTypes()).thenAnswer((_) async => const []);
+  });
+
   final dirs = [
     const DirectoryInfo(path: '/proj/src', sessionCount: 3, unreadCount: 2),
     const DirectoryInfo(path: '/proj/docs', sessionCount: 1, unreadCount: 0),
@@ -29,7 +42,7 @@ void main() {
     VoidCallback? onNewSession,
   }) {
     return ProviderScope(
-      overrides: const [],
+      overrides: [apiProvider.overrideWithValue(api)],
       child: MaterialApp(
         home: Scaffold(
           body: DirectoryPanel(
