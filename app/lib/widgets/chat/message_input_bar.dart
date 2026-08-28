@@ -42,6 +42,8 @@ class MessageInputBar extends StatefulWidget {
   /// 选了 slash 命令后,发送时触发(传命令名 + 用户输入的 args)。
   /// 仅 agent_session 用,dm/群聊为 null。
   final void Function(String name, String args)? onSendSlash;
+  /// 有待发送图片挂载:发送按钮常显,且允许空文字触发 onSend('')。
+  final bool hasPendingAttachment;
 
   const MessageInputBar({
     super.key,
@@ -58,6 +60,7 @@ class MessageInputBar extends StatefulWidget {
     this.middleSlot,
     this.topSlot,
     this.onSendSlash,
+    this.hasPendingAttachment = false,
   });
 
   @override
@@ -72,7 +75,8 @@ class _MessageInputBarState extends State<MessageInputBar> {
   String _text = '';
   SlashCommand? _pendingSlash;
 
-  bool get _showSendButton => _text.trim().isNotEmpty || _pendingSlash != null;
+  bool get _showSendButton =>
+      _text.trim().isNotEmpty || _pendingSlash != null || widget.hasPendingAttachment;
 
   @override
   void initState() {
@@ -118,7 +122,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
         _pendingSlash = null;
       });
     } else {
-      if (text.isEmpty) return;
+      if (text.isEmpty && !widget.hasPendingAttachment) return;
       widget.onSend(text);
     }
     _inputCtrl.clear();
