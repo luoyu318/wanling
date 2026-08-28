@@ -75,6 +75,22 @@ void main() {
     expect(find.text('/b'), findsOneWidget);
   });
 
+  testWidgets('抽屉高度为屏幕的 70%', (tester) async {
+    when(() => api.rpc(
+            'test-agent', 'project.list', const <String, dynamic>{}))
+        .thenAnswer((_) async => {
+              'projects': [
+                {'path': '/a', 'name': 'A'},
+              ],
+            });
+
+    await pumpSheet(tester, makeContainer());
+
+    final sheetHeight = tester.getSize(find.byType(DirectoryPickerSheet)).height;
+    final screenHeight = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(sheetHeight, closeTo(screenHeight * 0.7, 0.5));
+  });
+
   testWidgets('点项目卡片 → 选中态更新但不关闭；点确认 → 返该路径(cancelled=false)',
       (tester) async {
     when(() => api.rpc(
