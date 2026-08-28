@@ -80,6 +80,11 @@ export class SyncEngine extends EventEmitter {
     // media 分支优先于 text 守卫:image/file/mixed 走下载+提示路径,
     // 不依赖 data.text(纯媒体消息通常无 text 字段)。
     if (!isSlashCommand && (msgType === "image" || msgType === "file" || msgType === "mixed")) {
+      // mixed 消息的顶层 text(用户随图附言):trim 后空串视为无文字,维持原提示格式
+      const mixedText =
+        typeof data.text === "string" && data.text.trim().length > 0
+          ? data.text.trim()
+          : undefined
       const fileId = this.extractFileId(data)
       const filename = this.extractFilename(data)
       let map = getSessionMap(convId)
@@ -97,7 +102,7 @@ export class SyncEngine extends EventEmitter {
         upsertSessionMap(map)
       }
       this.wanling.sendTyping(convId)
-      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename, payload.id)
+      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename, payload.id, mixedText)
       upsertSessionMap({ ...map, lastSyncAt: new Date().toISOString() })
       return
     }
@@ -292,6 +297,7 @@ export class SyncEngine extends EventEmitter {
     fileId: string | undefined,
     filename?: string,
     wanlingMsgId?: string,
+    mixedText?: string,
   ): Promise<void> {
     if (!fileId) {
       console.warn("[sync] media message missing file_id, skip")
@@ -316,11 +322,15 @@ export class SyncEngine extends EventEmitter {
       await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
-    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
+    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path, mixedText))
   }
 
-  private mediaPromptText(msgType: string, path: string): string {
+  private mediaPromptText(msgType: string, path: string, mixedText?: string): string {
     const label = msgType === "image" ? "一张图片" : msgType === "file" ? "一个文件" : "混合内容"
+    // mixed 携带用户文字时拼入提示(agent 同回合看到图+文);其余类型无此字段
+    if (msgType === "mixed" && mixedText) {
+      return `[用户发送了${label}: ${mixedText},位于: ${path}]`
+    }
     return `[用户发送了${label},位于: ${path}]`
   }
 
