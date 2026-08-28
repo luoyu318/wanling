@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mocktail/mocktail.dart';
@@ -6,12 +7,38 @@ import 'package:mocktail/mocktail.dart';
 import 'package:app/pages/chat/file_browser_page.dart';
 import 'package:app/pages/chat/file_preview_page.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/models/file_entry.dart';
 import 'package:wanling_core/providers/file_browser_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 
 class _MockApi extends Mock implements ApiService {}
 
 void main() {
+  // GoRouter harness:点文件走真实 context.push 链路,断言预览页被 push。
+  Widget buildRouterFrame({String? cwd}) {
+    return MaterialApp.router(
+      routerConfig: GoRouter(
+        initialLocation: '/files/a/c',
+        routes: [
+          GoRoute(
+            path: '/files/:agentId/:convId',
+            builder: (_, _) => FileBrowserPage(agentId: 'a', convId: 'c', cwd: cwd),
+          ),
+          GoRoute(
+            path: '/file-preview/:agentId/:convId',
+            builder: (_, state) => FilePreviewPage(
+              browserKey: (
+                agentId: state.pathParameters['agentId']!,
+                convId: state.pathParameters['convId']!,
+              ),
+              entry: state.extra! as FileEntry,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   late _MockApi api;
 
   setUp(() {
@@ -30,10 +57,9 @@ void main() {
     final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
-    ));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: buildRouterFrame()),
+    );
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
@@ -54,10 +80,9 @@ void main() {
     final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
-    ));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: buildRouterFrame()),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('src'), findsOneWidget);
@@ -92,10 +117,9 @@ void main() {
     final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
-    ));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: buildRouterFrame()),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('src'));
@@ -122,10 +146,9 @@ void main() {
     final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: FileBrowserPage(agentId: 'a', convId: 'c')),
-    ));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: buildRouterFrame()),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('README.md'));
@@ -157,13 +180,7 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(
-        home: FileBrowserPage(
-          agentId: 'a',
-          convId: 'c',
-          cwd: '/home/u/proj',
-        ),
-      ),
+      child: buildRouterFrame(cwd: '/home/u/proj'),
     ));
     await tester.pumpAndSettle();
 
