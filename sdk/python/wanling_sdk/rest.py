@@ -9,6 +9,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .types import DownloadedFile
+
 
 class ApiError(Exception):
     def __init__(self, status: int, message: str) -> None:
@@ -209,7 +211,7 @@ class WanlingRestClient:
             raise ApiError(0, "upload: missing id")
         return file_id
 
-    async def download_file(self, file_id: str) -> bytes:
+    async def download_file(self, file_id: str) -> DownloadedFile:
         try:
             resp = await self._client.get(
                 f"{self._base_url}/api/files/{file_id}",
@@ -220,4 +222,4 @@ class WanlingRestClient:
             raise ApiError(0, f"request failed: {e}") from e
         if resp.status_code != 200:
             raise ApiError(resp.status_code, f"download failed: HTTP {resp.status_code}")
-        return resp.content
+        return DownloadedFile(resp.content, resp.headers.get("content-type"))
