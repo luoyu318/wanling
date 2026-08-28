@@ -840,6 +840,66 @@ void main() {
     });
   });
 
+  group('sendMixed 图文混合消息', () {
+    test('sendMixed: 有文字时载荷为顶层 text + items 图片条目', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final sent = <Map<String, dynamic>>[];
+      when(() => api.sendMessage(any(), any())).thenAnswer((inv) async {
+        sent.add(inv.positionalArguments[1] as Map<String, dynamic>);
+        return (
+          messageId: 'srv-1',
+          createdAt: DateTime.parse('2026-08-28T00:00:00Z'),
+        );
+      });
+
+      await notifier.sendMixed('看这张图', 'file-1',
+          filename: 'a.png', mimeType: 'image/png', fileSize: 10);
+
+      expect(sent, hasLength(1));
+      expect(sent.first['msg_type'], 'mixed');
+      final data = sent.first['data'] as Map<String, dynamic>;
+      expect(data['text'], '看这张图');
+      // brief 原断言漏 mime_type,与其传入的 mimeType: 'image/png' 及同构实现
+      // (sendFile 同样条件写入 mime_type)矛盾,此处按实现合同补全。
+      expect(data['items'], [
+        {
+          'type': 'image',
+          'file_id': 'file-1',
+          'filename': 'a.png',
+          'mime_type': 'image/png',
+        },
+      ]);
+    });
+
+    test('sendMixed: 无文字时省略 text 字段', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final sent = <Map<String, dynamic>>[];
+      when(() => api.sendMessage(any(), any())).thenAnswer((inv) async {
+        sent.add(inv.positionalArguments[1] as Map<String, dynamic>);
+        return (
+          messageId: 'srv-2',
+          createdAt: DateTime.parse('2026-08-28T00:00:00Z'),
+        );
+      });
+
+      await notifier.sendMixed('', 'file-2');
+
+      final data = sent.first['data'] as Map<String, dynamic>;
+      expect(data.containsKey('text'), isFalse);
+      expect(data['items'], [
+        {'type': 'image', 'file_id': 'file-2'},
+      ]);
+    });
+  });
+
   group('mergeJumpedContext', () {
     /// 构造一条 ChatMessage,id/createdAt 可控。
     ChatMessage mkMsg(String id, DateTime createdAt) {

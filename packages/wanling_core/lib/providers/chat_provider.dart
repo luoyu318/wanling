@@ -1361,6 +1361,47 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// 发送图文混合消息（APP 选图挂载预览后与文字一起发送）。
+  ///
+  /// 合同（dsh 桥 incoming.ts 判别联合）：文本放顶层 data.text（空则省略字段，
+  /// 不发空串）；items 至少 1 个 {type:'image', file_id}，图片条目 file_id 非空，
+  /// 否则 agent 桥整条拒收。文字不放进 items。渲染层把 mixed 拆为图+文双气泡。
+  Future<void> sendMixed(String text, String fileId,
+      {String filename = '',
+      String mimeType = '',
+      int fileSize = 0}) async {
+    final content = {
+      'msg_type': 'mixed',
+      'data': {
+        if (text.isNotEmpty) 'text': text,
+        'items': [
+          {
+            'type': 'image',
+            'file_id': fileId,
+            if (filename.isNotEmpty) 'filename': filename,
+            if (mimeType.isNotEmpty) 'mime_type': mimeType,
+          },
+        ],
+      },
+    };
+    _mergePendingQuote(content);
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    _appendOptimisticMessage(content: content, localId: localId);
+    try {
+      final result = await api.sendMessage(conversationId, content);
+      _replaceLocalWithServerId(
+        localId,
+        serverId: result.messageId,
+        serverCreatedAt: result.createdAt,
+      );
+    } catch (e) {
+      _markFailed(localId);
+    }
+    if (state.pendingQuote != null) {
+      state = state.copyWith(clearPendingQuote: true);
+    }
+  }
+
   /// 重试失败的发送消息。点击失败气泡的重试按钮时调。
   ///
   /// 流程:找失败消息 → 切回 sending → 调 api.sendMessage →
