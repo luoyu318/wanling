@@ -240,10 +240,25 @@ void main() {
       expect(shimmer.text, '正在执行 1次工具');
     });
 
-    testWidgets('工具组图标用 tools 字形(e882)', (tester) async {
+    testWidgets('工具组图标 tools 字号 12.9(面积归一,占满率 .968)', (tester) async {
       final cards = [tool('t1', 'zai-mcp-server_analyze_image')];
       await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
-      expect(find.text('\u{e882}'), findsOneWidget);
+      final iconText = tester.widget<Text>(find.text('\u{e882}'));
+      expect(iconText.style?.fontSize, closeTo(12.91, 0.05));
+    });
+
+    testWidgets('命令组图标 shell 字号 18.3(面积归一,占满率 .685)', (tester) async {
+      final cards = [tool('r1', 'bash')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
+      final iconText = tester.widget<Text>(find.text('\u{e666}'));
+      expect(iconText.style?.fontSize, closeTo(18.25, 0.05));
+    });
+
+    testWidgets('探索组图标 search 字号 15(面积归一,占满率 .834)', (tester) async {
+      final cards = [tool('r1', 'read')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
+      final iconText = tester.widget<Text>(find.text('\u{e62f}'));
+      expect(iconText.style?.fontSize, closeTo(15.0, 0.05));
     });
 
     testWidgets('进行中标题含 ShimmerText', (tester) async {

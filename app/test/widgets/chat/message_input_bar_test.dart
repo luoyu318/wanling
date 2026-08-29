@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wanling_core/models/slash_command.dart';
 import 'package:app/widgets/chat/message_input_bar.dart';
+import 'package:app/widgets/chat/chat_input_bar.dart' show inputHint;
 import 'package:app/widgets/feedback/app_text_selection_toolbar.dart';
 
 void main() {
@@ -21,6 +22,35 @@ void main() {
     await tester.pumpWidget(buildBar());
     expect(find.byIcon(Icons.add), findsOneWidget);
     expect(find.text('发送'), findsNothing);
+  });
+
+  testWidgets('默认占位文案 给万灵下达指令…(回归)', (tester) async {
+    await tester.pumpWidget(buildBar());
+    final tf = tester.widget<TextField>(find.byType(TextField));
+    expect(tf.decoration?.hintText, '给万灵下达指令…');
+  });
+
+  testWidgets('hintText 参数覆盖占位文案(发送给 对方昵称)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: MessageInputBar(
+          onSend: (_) {},
+          onPickFile: () {},
+          onTakePhoto: () {},
+          onPickAlbum: () {},
+          hintText: '发送给 灵仔',
+        ),
+      ),
+    ));
+    final tf = tester.widget<TextField>(find.byType(TextField));
+    expect(tf.decoration?.hintText, '发送给 灵仔');
+  });
+
+  test('inputHint 映射:昵称非空 → 发送给 XXX,空 → 发消息…', () {
+    expect(inputHint('灵仔'), '发送给 灵仔');
+    expect(inputHint('万灵第二群'), '发送给 万灵第二群');
+    expect(inputHint(null), '发消息…');
+    expect(inputHint(''), '发消息…');
   });
 
   testWidgets('输入文字后显示发送按钮,加号消失', (tester) async {

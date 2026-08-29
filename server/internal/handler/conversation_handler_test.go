@@ -968,6 +968,85 @@ func TestConversationHandler_Get_AgentSession_ReturnsAgentSummary(t *testing.T) 
 	}
 }
 
+// TestConversationHandler_Get_DMUserUser_ReturnsOtherUser 验证 dm_user_user 详情
+// 回填 other_user 摘要(对方 = user 参与者中非请求者):client displayName 优先
+// other_user,缺失时 fallback participants 首个 user(不排除自己),
+// 会把标题/输入框占位显示成自己的昵称。
+func TestConversationHandler_Get_DMUserUser_ReturnsOtherUser(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	crepo := repository.NewConversationRepo(db)
+	mrepo := repository.NewMessageRepo(db)
+	prepo := repository.NewParticipantRepo(db)
+	drepo := repository.NewDeliveryRepo(db)
+	frepo := repository.NewFriendshipRepo(db)
+
+	user, _ := urepo.Create(t.Context(), shortName(t, "dmou1"), "$2a$10$hash")
+	other, _ := urepo.Create(t.Context(), shortName(t, "dmou2"), "$2a$10$hash")
+
+	// 建好友关系:发请求 + accept
+	fr, err := frepo.CreateRequest(t.Context(), user.ID, other.ID)
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	if err := frepo.Accept(t.Context(), fr.ID, other.ID); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	h := NewConversationHandler(db, crepo, prepo, frepo, mrepo, drepo, arepo, urepo, nil, nil, repository.NewAgentTypeRepo(db))
+	r := gin.New()
+	r.POST("/api/conversations", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Create(c)
+	})
+	r.GET("/api/conversations/:id", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.Get(c)
+	})
+
+	body := fmt.Sprintf(`{"type":"dm_user_user","member_ids":["%s"],"member_types":["user"]}`, other.ID)
+	req := httptest.NewRequest("POST", "/api/conversations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("创建 dm_user_user 应 200, 实际: %d body: %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil || created.Data.ID == "" {
+		t.Fatalf("解析创建响应失败: %v body: %s", err, w.Body.String())
+	}
+
+	req2 := httptest.NewRequest("GET", "/api/conversations/"+created.Data.ID, nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("详情状态码: %d body: %s", w2.Code, w2.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			OtherUser *struct {
+				Username string `json:"username"`
+			} `json:"other_user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析详情响应: %v", err)
+	}
+	if resp.Data.OtherUser == nil {
+		t.Fatalf("dm_user_user 详情缺少 other_user: %s", w2.Body.String())
+	}
+	if resp.Data.OtherUser.Username != other.Username {
+		t.Errorf("other_user.username = %s, want %s(不能是请求者自己)", resp.Data.OtherUser.Username, other.Username)
+	}
+}
+
 // === CreateAsAgent 测试 ===
 
 // TestCreateAsAgentSuccess 验证 agent 视角 findOrCreate:能正确建 dm_user_agent,

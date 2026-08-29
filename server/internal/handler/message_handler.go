@@ -838,9 +838,10 @@ const (
 
 // aggregatePreviewText 聚合卡 silent 翻转(false)时的预览正文(通知 body /
 // agent_session 摘要单一真相源)。优先级:
-//   1. 仍待用户介入的交互元素(permission_card / question_card 且 status 非终态)
-//      → 返回交互类型文案,提示"需要处理"而非正文文本;
-//   2. 否则最后 markdown 正文(正常回复摘要,复用 lastMarkdownText)。
+//  1. 仍待用户介入的交互元素(permission_card / question_card 且 status 非终态)
+//     → 返回交互类型文案,提示"需要处理"而非正文文本;
+//  2. 否则最后 markdown 正文(正常回复摘要,复用 lastMarkdownText)。
+//
 // 与 APP MsgTypeX.preview 的聚合卡预览同口径(server 落库 merged 为权威,
 // 广播 delta 由 injectAggregatePreview 注入)。
 func aggregatePreviewText(data map[string]json.RawMessage) (string, error) {

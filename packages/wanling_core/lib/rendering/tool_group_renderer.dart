@@ -261,6 +261,8 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
         widget.rc.isDark ? const Color(0xFF777777) : const Color(0xFFBBBBBB);
     final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
     final (icon, iconColor) = _categoryVisual(widget.cards);
+    // 行内图标视觉归一(按字形墨迹面积,与思考/权限等行统一观感)
+    final iconSize = IconFont.normalizedSize(icon);
     return Padding(
       key: _key,
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -271,7 +273,7 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
             onTap: _toggle,
             child: Row(
               children: [
-                IconFont.icon(icon, size: 15, color: iconColor),
+                IconFont.icon(icon, size: iconSize, color: iconColor),
                 const SizedBox(width: 6),
                 Expanded(
                   child: streaming
