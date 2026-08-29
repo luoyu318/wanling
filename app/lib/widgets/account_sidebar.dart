@@ -301,7 +301,9 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       width: width,
       child: Stack(
         children: [
+          // stretch:主面板与竖条同撑满全高,否则面板按内容高度垂直居中成浮动卡片
           Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // —— 左竖条:账号切换(88px) ——
               _buildAccountStrip(state),
@@ -373,10 +375,33 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                 ),
               ),
             ),
-            OutlinedButton.icon(
-              onPressed: _showAddDialog,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('添加'),
+            // 底部「添加」:对齐飞书式竖排(圆角方块 + 号居中,文字下方),
+            // 88px 竖条内 OutlinedButton.icon 横向放不下会把文字挤成竖排换行
+            InkWell(
+              onTap: _showAddDialog,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.divider),
+                    ),
+                    child: const Icon(Icons.add,
+                        size: 26, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '添加',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 12),
           ],
