@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:nested_scroll_views/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,16 +26,15 @@ import '../widgets/feedback/app_dialog.dart';
 import '../widgets/nav_tab_bar.dart';
 import '../widgets/unread_badge.dart';
 
-/// 主容器：承载动态底部导航 + 多页 PageView。
+/// 主容器：承载动态底部导航 + 全槽平铺 PageView。
 ///
 /// 设计要点：
-/// - 外层 NestedPageView 页 0 为 _AGroupPage（消息+万灵共享 AppBar），
-///   页 1..N 为 pinned agent 的 sessions 页（AgentSessionsPage embedded 模式，
-///   保活由其内部 AutomaticKeepAliveClientMixin 负责）
-/// - 底部 NavTabBar：2 固定槽（消息/万灵）+ agent 头像槽 + 可选「更多」槽；
-///   pinned 列表来自 effectiveNavOrderProvider 的 agent 子序列，槽位映射见 [_HomePageState._onNavTap]
-/// - 「更多」槽激活时显示溢出 agent（_activeOverflowId），点按弹底部抽屉
-///   （_showMoreSheet）点选切换
+/// - 全槽平铺：消息/万灵/pinned agent 每槽一独立页，页序 =
+///   effectiveNavOrderProvider 序列序（固定项可在任意位），激活态统一为
+///   tabId 语义（[_HomePageState._activeTabId]）
+/// - 底部 NavTabBar：槽位由序列前缀派生（图标槽/头像槽），pinned 数达阈值
+///   出现「更多」槽，点按弹底部抽屉（_showMoreSheet）点选溢出 agent
+/// - 长按任意槽进 /nav-edit 编辑页（排序/固定收编编辑页）
 /// - 原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -50,20 +50,14 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 溢出时可见 agent 数(槽 2/3)。
   static const int _kVisibleWhenOverflow = 2;
 
-  /// A 组内部最后 tab(万灵)：跳去 agent 页前把 _aIndex 落在此，
-  /// 从 A 组反滑回时内容已就位，无抖动（与原「我的」逻辑同口径）。
-  static const int _aGroupLastIndex = 1;
-
   final PageController _pageCtrl = PageController(initialPage: 0);
-  int _pageIndex = 0; // 0=A组(消息+万灵), i>=1 = pinned agent page i-1
-  int _aIndex = 0; // A组内部:0=消息 1=万灵
-  String? _activeOverflowId; // 「更多」槽激活的溢出 agent
+  String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
   bool _sidebarOpen = false; // 左侧切换账号面板开关
 
   // build 时刷新,手势回调读取(避免回调里重复 watch)
-  List<String> _pinnedAll = const [];
+  List<String> _effectiveOrder = const [];
   bool _showMore = false;
-  List<String> _visiblePinned = const [];
+  List<String> _visibleSlots = const []; // 序列前缀(固定项+可见 agent)
   List<String> _overflowPinned = const [];
 
   void _openSidebar() => setState(() => _sidebarOpen = true);
@@ -75,70 +69,64 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.dispose();
   }
 
-  /// 底部导航点击：槽位编号 0=消息 1=万灵 2..=可见 agent，showMore 时 4=更多。
+  /// 底栏点按:更多槽(=可见槽数)弹抽屉,其余按序列切页。
   void _onNavTap(int slot) {
-    if (slot == 0 || slot == 1) {
-      // 点消息/万灵：回 A 组页 + 切内部 index（沿用 addPostFrameCallback 防抖，
-      // 与 _AGroupPage.didUpdateWidget 的像素守卫配合避免重复跳页）
-      if (_pageIndex != 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
-        });
-      }
-      setState(() => _aIndex = slot);
-      return;
-    }
-    if (_showMore && slot == 4) {
+    if (_showMore && slot == _visibleSlots.length) {
       _showMoreSheet();
       return;
     }
-    final agentIdx = slot - 2;
-    if (agentIdx < 0 || agentIdx >= _visiblePinned.length) return;
-    _jumpToAgentPage(_visiblePinned[agentIdx]);
+    if (slot < 0 || slot >= _visibleSlots.length) return;
+    _switchTab(_visibleSlots[slot]);
   }
 
-  /// 跳到指定 agent 的 sessions 页（page = 1 + pinned 下标）。
-  /// 溢出 agent（下标 ≥ _kVisibleWhenOverflow）同时点亮「更多」槽。
-  void _jumpToAgentPage(String agentId) {
-    final page = 1 + _pinnedAll.indexOf(agentId);
-    if (page < 1) return;
-    setState(() {
-      // 从 A 组反滑回时落在万灵,无抖动(与原「我的」逻辑同口径)
-      _aIndex = _aGroupLastIndex;
-      _activeOverflowId =
-          (_showMore && _pinnedAll.indexOf(agentId) >= _kVisibleWhenOverflow)
-              ? agentId
-              : null;
-    });
+  void _switchTab(String tabId) {
+    final page = _effectiveOrder.indexOf(tabId);
+    if (page < 0) return;
+    setState(() => _activeTabId = tabId);
+    _jumpToPageSafe(page);
+  }
+
+  /// 程序跳页(带动态 children 的 extent 滞后补偿)。
+  ///
+  /// PageView children 增长后 maxScrollExtent 滞后一帧才就位,期间 jumpToPage
+  /// 会被 applyBoundaryConditions clamp 落在旧界内(发出中间页 onPageChanged),
+  /// 之后 pixels 自动落位目标页但不发 onPageChanged(官方 PageView 与
+  /// NestedPageView 行为一致)。因此跳后下一帧:落点未达则补跳(事件随补跳
+  /// 补发);落点已达但激活态被中间页 onPageChanged 污染则直接纠正。
+  void _jumpToPageSafe(int page) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_pageCtrl.hasClients && _pageCtrl.page?.round() != page) {
-        _pageCtrl.jumpToPage(page);
-      }
+      if (!_pageCtrl.hasClients || _pageCtrl.page?.round() == page) return;
+      _pageCtrl.jumpToPage(page);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_pageCtrl.hasClients) return;
+        final landed = _pageCtrl.page?.round();
+        final target = (page >= 0 && page < _effectiveOrder.length)
+            ? _effectiveOrder[page]
+            : null;
+        if (landed != page) {
+          _pageCtrl.jumpToPage(page);
+        } else if (target != null && _activeTabId != target) {
+          setState(() => _activeTabId = target);
+        }
+      });
     });
   }
 
-  /// PageView settle 后同步选中态(含滑入溢出 agent 页时点亮更多槽)。
+  /// 跳指定 agent 页(抽屉点选/各处入口);溢出 agent 同样点亮更多槽。
+  void _jumpToAgentPage(String agentId) => _switchTab(agentId);
+
   void _onPageChanged(int page) {
-    setState(() {
-      _pageIndex = page;
-      if (page >= 1 && page - 1 < _pinnedAll.length) {
-        final id = _pinnedAll[page - 1];
-        _activeOverflowId =
-            (_showMore && _pinnedAll.indexOf(id) >= _kVisibleWhenOverflow)
-                ? id
-                : null;
-      } else {
-        _activeOverflowId = null;
-      }
-    });
+    if (page < 0 || page >= _effectiveOrder.length) return;
+    setState(() => _activeTabId = _effectiveOrder[page]);
   }
 
-  /// 底栏选中态:page 0 → _aIndex;agent 页 → 可见槽 2+i 或更多槽 4。
+  /// 底栏选中态:激活 tab 的槽位号;溢出 agent 归更多槽。
   int get _currentNavIndex {
-    if (_pageIndex == 0) return _aIndex;
-    final idx = _pageIndex - 1;
-    if (!_showMore) return 2 + idx;
-    return idx < _kVisibleWhenOverflow ? 2 + idx : 4;
+    final idx = _effectiveOrder.indexOf(_activeTabId);
+    if (idx < 0) return 0;
+    return _showMore && idx >= _visibleSlots.length
+        ? _visibleSlots.length
+        : idx;
   }
 
   /// 「更多」底部抽屉：列出溢出 agent（在线态/未读/选中勾），点选切换。
@@ -173,7 +161,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               Consumer(builder: (_, sheetRef, _) {
                 final a = sheetRef.watch(agentByIdProvider(id));
                 final unread = sheetRef.watch(agentTabUnreadProvider(id));
-                final active = id == _activeOverflowId;
+                final active = id == _activeTabId;
                 return ListTile(
                   leading: Avatar(
                       name: a?.name ?? id, url: a?.avatarUrl, size: 40, radius: 12),
@@ -213,56 +201,31 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// 全槽序列 → agent 子序列（Task 1 桥接:底栏/PageView 暂只消费 agent 槽,
-  /// Task 3 slots 平铺后移除过滤）。
-  static List<String> _agentsOf(List<String> order) =>
-      [for (final id in order) if (!kNavFixedIds.contains(id)) id];
-
   @override
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
-    _pinnedAll = _agentsOf(ref.watch(effectiveNavOrderProvider));
-    _showMore = _pinnedAll.length >= _kOverflowThreshold;
-    _visiblePinned = _showMore
-        ? _pinnedAll.take(_kVisibleWhenOverflow).toList()
-        : _pinnedAll;
-    _overflowPinned =
-        _showMore ? _pinnedAll.skip(_kVisibleWhenOverflow).toList() : [];
+    _effectiveOrder = ref.watch(effectiveNavOrderProvider);
+    final pinnedAgents = [
+      for (final id in _effectiveOrder) if (!kNavFixedIds.contains(id)) id
+    ];
+    _showMore = pinnedAgents.length >= _kOverflowThreshold;
+    _visibleSlots =
+        _effectiveOrder.take(2 + (_showMore ? _kVisibleWhenOverflow : 3)).toList();
+    _overflowPinned = _showMore
+        ? pinnedAgents.skip(_kVisibleWhenOverflow).toList()
+        : [];
 
-    // pin 列表收缩(取消固定/agent 删除/切账号)时按当前页 agent 身份判定落点:
-    // 仍在列表(如前面的 agent 被移除,位置左移)→ 跳到收缩后的新位置,不回 A 组;
-    // 已消失(unpin 当前页/agent 删除)→ 回 A 组页并按设计文档回落消息 tab。
-    // 收缩通知同步于 rebuild 前,prev 即旧列表,据此取当前页 agent id。
+    // 收缩守卫:序列变化时按激活 tab 身份判定落点(位置左移跳新位;消失回页 0)。
+    // 收缩通知同步于 rebuild 前,prev 即旧列表,据此取激活 tab 新位置。
     ref.listen(effectiveNavOrderProvider, (prev, next) {
-      if (_pageIndex <= 0) return;
-      final prevAgents = prev == null ? null : _agentsOf(prev);
-      final nextAgents = _agentsOf(next);
-      final oldIdx = _pageIndex - 1;
-      final currentId = (prevAgents != null && oldIdx < prevAgents.length)
-          ? prevAgents[oldIdx]
-          : null;
-      final newIdx = currentId == null ? -1 : nextAgents.indexOf(currentId);
-      if (newIdx == oldIdx) return; // 身份与位置均未变(含内容相同的重复通知)
-      if (newIdx >= 0) {
-        _pageIndex = newIdx + 1;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageCtrl.hasClients && _pageCtrl.page?.round() != newIdx + 1) {
-            _pageCtrl.jumpToPage(newIdx + 1);
-          }
-        });
+      if (prev == null || listEquals(prev, next)) return;
+      if (next.contains(_activeTabId)) {
+        _jumpToPageSafe(next.indexOf(_activeTabId));
       } else {
-        _activeOverflowId = null;
-        _pageIndex = 0;
-        _aIndex = 0; // 回退消息 tab(设计文档口径),随重建经 didUpdateWidget 驱动内层跳页
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
-        });
+        setState(() => _activeTabId = kNavTabMsg);
+        _jumpToPageSafe(0);
       }
     });
-
-    final activeOverflow = _overflowPinned.contains(_activeOverflowId)
-        ? _activeOverflowId
-        : null;
 
     return PopScope(
       canPop: !_sidebarOpen,
@@ -277,36 +240,45 @@ class _HomePageState extends ConsumerState<HomePage> {
               controller: _pageCtrl,
               onPageChanged: _onPageChanged,
               children: [
-                _AGroupPage(
-                  aIndex: _aIndex,
-                  onAIndexChanged: (i) => setState(() => _aIndex = i),
-                  onOpenSidebar: _openSidebar,
-                ),
-                // pinned agent 页(保活由 AgentSessionsPage 内部 mixin 负责)
-                for (final id in _pinnedAll)
+                for (final id in _effectiveOrder)
                   KeyedSubtree(
                     key: ValueKey('nav-tab-$id'),
-                    child: AgentSessionsPage(agentId: id, embedded: true),
+                    child: switch (id) {
+                      kNavTabMsg => _MsgNavPage(onOpenSidebar: _openSidebar),
+                      kNavTabWanling =>
+                        _WanlingNavPage(onOpenSidebar: _openSidebar),
+                      _ => AgentSessionsPage(agentId: id, embedded: true),
+                    },
                   ),
               ],
             ),
             bottomNavigationBar: NavTabBar(
               currentIndex: _currentNavIndex,
-              totalUnread: totalUnread,
-              agentTabs: [
-                for (final id in _visiblePinned) _toNavAgentTab(id),
+              slots: [
+                for (final id in _visibleSlots)
+                  if (id == kNavTabMsg)
+                    NavIconSlot(
+                        tabId: id,
+                        label: '消息',
+                        icon: Icons.chat_bubble_outline,
+                        activeIcon: Icons.chat_bubble,
+                        badge: totalUnread)
+                  else if (id == kNavTabWanling)
+                    const NavIconSlot(
+                        tabId: kNavTabWanling,
+                        label: '万灵',
+                        icon: Icons.auto_awesome_outlined,
+                        activeIcon: Icons.auto_awesome)
+                  else
+                    NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
               ],
               showMore: _showMore,
-              moreTab:
-                  activeOverflow == null ? null : _toNavAgentTab(activeOverflow),
+              moreTab: _overflowPinned.contains(_activeTabId)
+                  ? _toNavAgentTab(_activeTabId)
+                  : null,
               onSlotTap: _onNavTap,
               onMoreTap: _showMoreSheet,
-              onAgentReorder: (agentId, targetAgentIndex) =>
-                  ref.read(navOrderProvider.notifier).reorder(
-                        agentId,
-                        // 新序列固定项前置 2 位,agent 子序列下标需偏移(临时桥接,Task 3 平铺后移除)
-                        targetAgentIndex + 2,
-                      ),
+              onSlotLongPress: (_) => context.push('/nav-edit'),
             ),
           ),
           // —— 遮罩：覆盖全 Scaffold(含 tab 栏),常驻动画控制透明度 ——
@@ -360,114 +332,74 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 }
 
-/// A 组合页：消息 + 万灵共享 1 个 AppBar，内部 IndexedStack 切换内容。
-///
-/// 作为 PageView 的 page 0（当前唯一页）。左右横滑仅用于 消息↔万灵 内层切换。
-class _AGroupPage extends ConsumerStatefulWidget {
-  final int aIndex; // 0=消息, 1=万灵
-  final ValueChanged<int> onAIndexChanged;
+/// 消息导航页:平铺后的独立 tab 页(原 A 组消息子页)。
+class _MsgNavPage extends ConsumerWidget {
+  const _MsgNavPage({required this.onOpenSidebar});
+
   final VoidCallback onOpenSidebar;
 
-  const _AGroupPage({
-    required this.aIndex,
-    required this.onAIndexChanged,
-    required this.onOpenSidebar,
-  });
-
   @override
-  ConsumerState<_AGroupPage> createState() => _AGroupPageState();
-}
-
-class _AGroupPageState extends ConsumerState<_AGroupPage> {
-  // 内部 PageView 的 controller：消息↔万灵 横滑切换。
-  late final PageController _innerCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _innerCtrl = PageController(initialPage: widget.aIndex);
-  }
-
-  @override
-  void didUpdateWidget(covariant _AGroupPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // HomePage 通过 aIndex prop 驱动内部跳转（点底部导航时）。
-    // 跟手滑动时 onAIndexChanged 回调已更新 aIndex，这里跳转会重复 —— 用像素位置守卫。
-    // 用 addPostFrameCallback 延后：didUpdateWidget 在 build 阶段，
-    // 同步 jumpToPage 会触发内层 onPageChanged→外层 setState（"setState called during build"）。
-    if (oldWidget.aIndex != widget.aIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_innerCtrl.hasClients &&
-            _innerCtrl.page?.round() != widget.aIndex) {
-          _innerCtrl.jumpToPage(widget.aIndex);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _innerCtrl.dispose();
-    super.dispose();
-  }
-  /// 万灵 tab 的「新建 Agent」弹窗。
-  void _showCreateAgentDialog() {
-    final ctrl = TextEditingController();
-    showAppDialog(
-      context: context,
-      title: '创建 Agent',
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: 'Agent 名称'),
-      ),
-      confirmText: '创建',
-      onConfirm: () {
-        final name = ctrl.text.trim();
-        if (name.isEmpty) return;
-        ref.read(agentListProvider.notifier).create(name);
-      },
-    );
-  }
-
-  /// 根据 aIndex 构建 AppBar。
-  /// - 消息 tab：靠左头像 + 用户名 + 简介（简介 >10 字截断加省略号）
-  /// - 万灵 tab：头像在 leading + "万灵"标题靠左
-  /// 两 tab 共用 + 号菜单（扫一扫 / 创建 Agent）使用 [buildHomeAppBar]。
-  PreferredSizeWidget _buildAppBar() {
+  Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
-    return buildHomeAppBar(
-      isWanling: widget.aIndex == 1,
-      user: user,
-      onScan: () => context.push('/pair/scan'),
-      onCreateAgent: _showCreateAgentDialog,
-      onAvatarTap: widget.onOpenSidebar,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _buildAppBar(),
-      // 内部 PageView：消息↔万灵 横滑切换（AppBar 固定不动，仅内容跟手）。
-      // 用 AutomaticKeepAliveClientMixin（MessagesPage/AgentListPage 已加）保活两页 state。
-      // F5: banner 只在消息 tab 显示(用户主要场景),其他 tab 静默 fallback。
-      body: NestedPageView(
-        controller: _innerCtrl,
-        onPageChanged: widget.onAIndexChanged,
-        children: const [
-          Column(
-            children: [
-              ConnectionBanner(),
-              LocalStoreBanner(),
-              Expanded(child: MessagesPage()),
-            ],
-          ),
-          AgentListPage(),
+      appBar: buildHomeAppBar(
+        isWanling: false,
+        user: user,
+        onScan: () => context.push('/pair/scan'),
+        onCreateAgent: () => showCreateAgentDialog(context, ref),
+        onAvatarTap: onOpenSidebar,
+      ),
+      body: const Column(
+        children: [
+          ConnectionBanner(),
+          LocalStoreBanner(),
+          Expanded(child: MessagesPage()),
         ],
       ),
     );
   }
+}
+
+/// 万灵导航页:平铺后的独立 tab 页(原 A 组万灵子页)。
+class _WanlingNavPage extends ConsumerWidget {
+  const _WanlingNavPage({required this.onOpenSidebar});
+
+  final VoidCallback onOpenSidebar;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authProvider).user;
+    return Scaffold(
+      appBar: buildHomeAppBar(
+        isWanling: true,
+        user: user,
+        onScan: () => context.push('/pair/scan'),
+        onCreateAgent: () => showCreateAgentDialog(context, ref),
+        onAvatarTap: onOpenSidebar,
+      ),
+      body: const AgentListPage(),
+    );
+  }
+}
+
+/// 「新建 Agent」弹窗(消息/万灵页共用,原 _AGroupPage 方法顶层化)。
+void showCreateAgentDialog(BuildContext context, WidgetRef ref) {
+  final ctrl = TextEditingController();
+  showAppDialog(
+    context: context,
+    title: '创建 Agent',
+    content: TextField(
+      controller: ctrl,
+      autofocus: true,
+      decoration: const InputDecoration(labelText: 'Agent 名称'),
+    ),
+    confirmText: '创建',
+    onConfirm: () {
+      final name = ctrl.text.trim();
+      if (name.isEmpty) return;
+      ref.read(agentListProvider.notifier).create(name);
+    },
+  );
 }
 
 /// 构建"消息 / 万灵"首页共享的 AppBar。

@@ -22,40 +22,66 @@ class NavAgentTab {
   });
 }
 
-/// 自绘底部导航:消息/万灵固定槽 + agent 头像槽(长按拖拽排序) + 可选更多槽。
+/// 底栏槽位描述:由 HomePage 从有效导航序列派生,组件保持纯展示(无拖拽)。
+sealed class NavSlot {
+  const NavSlot({required this.tabId});
+
+  /// 槽位对应 tab:msg/wanling/agentId
+  final String tabId;
+}
+
+/// 图标形态槽(消息/万灵)。
+class NavIconSlot extends NavSlot {
+  const NavIconSlot({
+    required super.tabId,
+    required this.label,
+    required this.icon,
+    required this.activeIcon,
+    this.badge = 0,
+  });
+
+  final String label;
+  final IconData icon;
+  final IconData activeIcon;
+  final int badge;
+}
+
+/// agent 头像槽。
+class NavAgentSlot extends NavSlot {
+  const NavAgentSlot({required super.tabId, required this.tab});
+
+  final NavAgentTab tab;
+}
+
+/// 自绘底部导航:槽位由上层按导航序列派生(任意排序),组件纯展示。
 ///
-/// 槽位编号:0=消息 1=万灵 2..=agent;showMore=true 时最后一槽=更多(编号 4)。
-/// 视觉沿用现网规范(#F7F7F7 底、accent 绿选中、UnreadBadge 角标结构)。
-/// 替换 BottomNavigationBar 的原因:需要头像形态 item + 长按拖拽 + 更多槽激活态。
+/// - 点按 onSlotTap(槽位号);长按 onSlotLongPress(进编辑页);更多槽点按 onMoreTap
+/// - 视觉沿用现网规范(#F7F7F7 底、accent 绿选中、UnreadBadge 角标结构)
 class NavTabBar extends StatelessWidget {
   const NavTabBar({
     super.key,
+    required this.slots,
     required this.currentIndex,
-    required this.totalUnread,
-    required this.agentTabs,
-    required this.showMore,
     this.moreTab,
+    required this.showMore,
     required this.onSlotTap,
     required this.onMoreTap,
-    required this.onAgentReorder,
-  }) : assert(agentTabs.length <= (showMore ? 2 : 3),
-      'showMore=true 时最多 2 个 agent 槽, 第 5 槽固定为「更多」');
+    required this.onSlotLongPress,
+  }) : assert(
+          slots.length <= (showMore ? 4 : 5),
+          '总槽位最多 5:无「更多」槽时 5 个可见槽,有「更多」槽时 4 个可见槽 + 「更多」',
+        );
 
+  /// 可见槽位内容(序列前缀,顺序即渲染顺序)
+  final List<NavSlot> slots;
   final int currentIndex;
-  final int totalUnread;
-
-  /// 可见 agent 槽位内容(构造函数断言强制:≤3;showMore 时 ≤2)
-  final List<NavAgentTab> agentTabs;
-  final bool showMore;
 
   /// 更多槽当前激活的溢出 agent(null = 未激活,显示格子图标)
   final NavAgentTab? moreTab;
+  final bool showMore;
   final ValueChanged<int> onSlotTap;
   final VoidCallback onMoreTap;
-
-  /// agent 槽间拖拽排序:draggedId 落到 agentTabs[targetAgentIndex] 槽位
-  /// **targetAgentIndex 为 agentTabs 列表内下标(非底栏槽位编号), 槽位 = agentIndex + 2**
-  final void Function(String agentId, int targetAgentIndex) onAgentReorder;
+  final ValueChanged<int> onSlotLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -66,36 +92,27 @@ class NavTabBar extends StatelessWidget {
         height: 56,
         child: Row(
           children: [
-            _FixedSlot(
-              index: 0,
-              label: '消息',
-              selected: currentIndex == 0,
-              onTap: onSlotTap,
-              icon: Icons.chat_bubble_outline,
-              activeIcon: Icons.chat_bubble,
-              badge: totalUnread,
-            ),
-            _FixedSlot(
-              index: 1,
-              label: '万灵',
-              selected: currentIndex == 1,
-              onTap: onSlotTap,
-              icon: Icons.auto_awesome_outlined,
-              activeIcon: Icons.auto_awesome,
-            ),
-            for (var i = 0; i < agentTabs.length; i++)
-              _AgentSlot(
-                index: i,
-                slotNumber: 2 + i,
-                tab: agentTabs[i],
-                selected: currentIndex == 2 + i,
-                onTap: onSlotTap,
-                onAccepted: onAgentReorder,
-              ),
+            for (var i = 0; i < slots.length; i++)
+              switch (slots[i]) {
+                NavIconSlot s => _IconSlot(
+                    slot: i,
+                    data: s,
+                    selected: currentIndex == i,
+                    onTap: onSlotTap,
+                    onLongPress: onSlotLongPress,
+                  ),
+                NavAgentSlot s => _AgentSlot(
+                    slot: i,
+                    tab: s.tab,
+                    selected: currentIndex == i,
+                    onTap: onSlotTap,
+                    onLongPress: onSlotLongPress,
+                  ),
+              },
             if (showMore)
               _MoreSlot(
                 tab: moreTab,
-                selected: currentIndex == 4,
+                selected: currentIndex == slots.length,
                 onTap: onMoreTap,
               ),
           ],
@@ -105,24 +122,20 @@ class NavTabBar extends StatelessWidget {
   }
 }
 
-/// 图标形态固定槽(消息/万灵)。
-class _FixedSlot extends StatelessWidget {
-  final int index;
-  final String label;
+/// 图标形态槽(消息/万灵):点按切换,长按进编辑页。
+class _IconSlot extends StatelessWidget {
+  final int slot;
+  final NavIconSlot data;
   final bool selected;
   final ValueChanged<int> onTap;
-  final IconData icon;
-  final IconData activeIcon;
-  final int badge;
+  final ValueChanged<int> onLongPress;
 
-  const _FixedSlot({
-    required this.index,
-    required this.label,
+  const _IconSlot({
+    required this.slot,
+    required this.data,
     required this.selected,
     required this.onTap,
-    required this.icon,
-    required this.activeIcon,
-    this.badge = 0,
+    required this.onLongPress,
   });
 
   @override
@@ -130,15 +143,19 @@ class _FixedSlot extends StatelessWidget {
     final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
     return Expanded(
       child: InkWell(
-        onTap: () => onTap(index),
+        onTap: () => onTap(slot),
+        onLongPress: () => onLongPress(slot),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _Badge(
-                count: badge,
-                child: Icon(selected ? activeIcon : icon, size: 24, color: color)),
+                count: data.badge,
+                child: Icon(
+                    selected ? data.activeIcon : data.icon,
+                    size: 24,
+                    color: color)),
             const SizedBox(height: 2),
-            Text(label,
+            Text(data.label,
                 style: TextStyle(
                     fontSize: 10,
                     color: color,
@@ -150,80 +167,47 @@ class _FixedSlot extends StatelessWidget {
   }
 }
 
-/// agent 头像槽:长按拖出 + 接收别的 agent 落入(排序)。
+/// agent 头像槽:点按切换,长按进编辑页(排序/编辑收编编辑页,底栏不再原地拖拽)。
 class _AgentSlot extends StatelessWidget {
-  final int index; // agentTabs 内下标(排序目标)
-  final int slotNumber; // 底栏槽位编号(2+i)
+  final int slot;
   final NavAgentTab tab;
   final bool selected;
   final ValueChanged<int> onTap;
-  final void Function(String, int) onAccepted;
+  final ValueChanged<int> onLongPress;
 
   const _AgentSlot({
-    required this.index,
-    required this.slotNumber,
+    required this.slot,
     required this.tab,
     required this.selected,
     required this.onTap,
-    required this.onAccepted,
+    required this.onLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
-    final avatar = _AgentAvatar(tab: tab, size: 24);
+    final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
+    final label = tab.name.characters.length > 5
+        ? '${tab.name.characters.take(5).join()}…'
+        : tab.name;
     return Expanded(
       // 热区撑满整个槽位,避免点击头像/文字以外区域无响应
-      child: DragTarget<NavAgentTab>(
-        onWillAcceptWithDetails: (d) => d.data.id != tab.id,
-        onAcceptWithDetails: (d) => onAccepted(d.data.id, index),
-        builder: (context, candidate, _) {
-          final hovering = candidate.isNotEmpty;
-          return LongPressDraggable<NavAgentTab>(
-            data: tab,
-            delay: const Duration(milliseconds: 120),
-            feedback: _AgentAvatar(tab: tab, size: 32),
-            childWhenDragging: Opacity(opacity: 0.4, child: avatar),
-            child: SizedBox.expand(
-              child: InkWell(
-                onTap: () => onTap(slotNumber),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // 拖拽悬停目标高亮:细绿框(仅排序时出现,与选中态无关)
-                    hovering
-                        ? Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                  color: AppColors.accentGreen, width: 1.5),
-                            ),
-                            child: avatar,
-                          )
-                        : avatar,
-                    const SizedBox(height: 2),
-                    _slotLabel(),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+      child: InkWell(
+        onTap: () => onTap(slot),
+        onLongPress: () => onLongPress(slot),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _AgentAvatar(tab: tab, size: 24),
+            const SizedBox(height: 2),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: color,
+                    fontWeight: selected ? FontWeight.w600 : null)),
+          ],
+        ),
       ),
     );
-  }
-
-  Widget _slotLabel() {
-    final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
-    final name = tab.name;
-    final label = name.characters.length > 5
-        ? '${name.characters.take(5).join()}…'
-        : name;
-    return Text(label,
-        style: TextStyle(
-            fontSize: 10,
-            color: color,
-            fontWeight: selected ? FontWeight.w600 : null));
   }
 }
 

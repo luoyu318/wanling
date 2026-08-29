@@ -1,4 +1,4 @@
-// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换、pin/unpin/拖拽导航。
+// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换、pin/unpin/长按进编辑页。
 //
 // 关键 Mock 策略：
 // - apiProvider：用 mocktail 的 MockApi，stub getMe/getAgents/getConversations
@@ -95,8 +95,8 @@ void main() {
       stubBaseUrl(api);
       final ws = FakeWS();
       when(() => api.getMe()).thenAnswer((_) async => _testUser);
-      // 重定向到 / 后 _AGroupPage 的 IndexedStack 会同时构建 MessagesPage + AgentListPage，
-      // 二者 initState/build 均会触发 load，故 getConversations + getAgents 都需 stub。
+      // 重定向到 / 后首页会构建消息页(MESSAGES load)+底栏派生(agents load)，
+      // 故 getConversations + getAgents 都需 stub。
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgents()).thenAnswer((_) async => []);
 
@@ -337,7 +337,7 @@ void main() {
           [kNavTabMsg, kNavTabWanling, 'a2']);
     });
 
-    testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回 A 组消息 tab',
+    testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回平铺消息页',
         (tester) async {
       // 按设计文档:unpin 正在看的 agent 页 → 回退消息 tab。身份基守卫判定
       // 当前 agent id 已不在收缩后的列表 → jumpToPage(0) 并重置 A 组内部
@@ -380,8 +380,8 @@ void main() {
       await tester.tap(find.byTooltip('从导航栏移除'));
       await tester.pumpAndSettle(); // 守卫 jumpToPage(0),不崩溃即通过
 
-      // 落点确定:回 A 组页(sessions 页卸载),底栏无 agent 槽,
-      // 守卫重置 _aIndex → 消息槽(index 0)激活
+      // 落点确定:回平铺消息页(sessions 页卸载),底栏无 agent 槽,
+      // 守卫重置激活 tab → 消息(index 0)激活
       expect(find.text('暂无会话'), findsNothing);
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
@@ -452,7 +452,7 @@ void main() {
           findsOneWidget);
     });
 
-    testWidgets('长按拖拽 agent 槽交换顺序且 prefs 持久化', (tester) async {
+    testWidgets('长按 agent 槽进入底栏编辑页', (tester) async {
       SharedPreferences.setMockInitialValues({
         'token': 'fake-token',
         'nav_pins_u1': ['a1', 'a2'],
@@ -485,32 +485,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      // 底栏排序/编辑已收编编辑页:长按任意槽 push /nav-edit
       final navBar = find.byType(NavTabBar);
-      Finder slot(String name) =>
-          find.descendant(of: navBar, matching: find.text(name));
-      // 初始顺序:ag-1 在 ag-2 左侧
-      expect(tester.getCenter(slot('ag-1')).dx <
-          tester.getCenter(slot('ag-2')).dx,
-          isTrue);
-
-      // 长按 ag-1 槽拖到 ag-2 槽中心(写法对齐 nav_tab_bar_test)
-      final a1Center = tester.getCenter(slot('ag-1'));
-      final a2Center = tester.getCenter(slot('ag-2'));
-      final gesture = await tester.startGesture(a1Center);
-      await tester.pump(const Duration(seconds: 1)); // 越过 LongPressDraggable delay
-      await gesture.moveBy(a2Center - a1Center);
-      await tester.pump();
-      await gesture.up();
+      await tester.longPress(
+          find.descendant(of: navBar, matching: find.text('ag-1')));
       await tester.pumpAndSettle();
-
-      // 底栏顺序交换 + prefs 持久化(重读 container 断言)
-      expect(tester.getCenter(slot('ag-2')).dx <
-          tester.getCenter(slot('ag-1')).dx,
-          isTrue);
-      expect(container.read(navOrderProvider),
-          [kNavTabMsg, kNavTabWanling, 'a2', 'a1']);
-      expect(container.read(sharedPrefsProvider).getStringList('nav_order_u1'),
-          [kNavTabMsg, kNavTabWanling, 'a2', 'a1']);
+      expect(find.text('编辑底栏'), findsOneWidget);
     });
   });
 }
