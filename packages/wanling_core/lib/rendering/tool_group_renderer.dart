@@ -340,7 +340,7 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
   final icon = switch (categoryOfTool(cards.first)) {
     ToolCategory.command => IconFont.shell,
     ToolCategory.edit => IconFont.edit,
-    ToolCategory.tool => IconFont.explore,
+    ToolCategory.tool => IconFont.tools,
     _ => IconFont.search,
   };
   return (icon, iconColor);
