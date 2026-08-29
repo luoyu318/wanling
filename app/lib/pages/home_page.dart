@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/messages_page.dart';
-import '../pages/profile_page.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart' show totalUnreadProvider;
@@ -19,14 +18,13 @@ import '../widgets/local_store_banner.dart';
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/unread_badge.dart';
 
-/// 主容器：承载底部导航 + PageView 的 2 个 page。
+/// 主容器：承载底部导航 + PageView。
 ///
 /// 设计要点：
-/// - PageView 只有 2 页：page 0 = _AGroupPage（消息+万灵共享 AppBar），
-///   page 1 = ProfilePage（独立 SliverAppBar，跟手进出）
+/// - PageView 当前仅 1 页：_AGroupPage（消息+万灵共享 AppBar）；
+///   原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
 /// - _pageIndex 跟踪 PageView 当前页，_aIndex 跟踪 A 组内部 index
-/// - 底部 BottomNavigationBar 全局共享，3 item 固定不动
-/// - 万灵↔我的 滑动时整页（含 AppBar/资料卡）跟手移动
+/// - 底部 BottomNavigationBar 全局共享，暂保留 消息/万灵 两 item
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
@@ -36,7 +34,6 @@ class HomePage extends ConsumerStatefulWidget {
 
 class _HomePageState extends ConsumerState<HomePage> {
   final PageController _pageCtrl = PageController(initialPage: 0);
-  int _pageIndex = 0; // PageView 当前页：0=A 组, 1=我的
   int _aIndex = 0; // A 组内部 index：0=消息, 1=万灵
   bool _sidebarOpen = false; // 左侧切换账号面板开关
 
@@ -49,49 +46,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.dispose();
   }
 
-  /// 底部导航点击：3 item → 2 page + A 组内部 index。
-  /// - 点消息/万灵：跳 page 0 + 切 _aIndex
-  /// - 点我的：跳 page 1
-  /// A 组最后一个子页面的 index（紧邻"我的"，当前是万灵）。
-  /// 未来 A 组扩展子页时，这里自动取最后一个。
-  static const int _aGroupLastIndex = 1;
-
+  /// 底部导航点击：2 item → A 组内部 index。
+  /// 点消息/万灵：切 _aIndex（PageView 仅 1 页，无需跳页）。
   void _onNavTap(int navIndex) {
     if (navIndex == 0 || navIndex == 1) {
-      // 点消息/万灵：先确保在 A 组页（瞬切无动画），再切内部 index。
-      // 用 addPostFrameCallback 延后 jumpToPage：避免在 build 阶段同步触发
-      // onPageChanged→setState（"setState called during build"）。
-      if (_pageIndex != 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
-        });
-      }
       setState(() => _aIndex = navIndex);
-    } else {
-      // 点我的：瞬切到 page 1（无左滑动画）。
-      // 提前把 _aIndex 设为 A 组最后一个子页面（万灵），
-      // 让 _AGroupPage 的内层 controller 提前跳到万灵 ——
-      // 这样反滑回 A 组时内层已经在万灵，无抖动（避免滑动时才 jumpToPage）。
-      setState(() => _aIndex = _aGroupLastIndex);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(1);
-      });
     }
   }
 
-  /// PageView 页面变化（跟手滑动 settle 后触发）。
-  void _onPageChanged(int pageIndex) {
-    setState(() {
-      _pageIndex = pageIndex;
-      // 跟手从我的(page 1)反滑回 A 组(page 0)时，
-      // _aIndex 已经在 _onNavTap 提前设为万灵（_aGroupLastIndex），
-      // 这里不需要再改 _aIndex。
-    });
-  }
+  /// PageView 页面变化（跟手滑动 settle 后触发）。当前仅 1 页，无变化。
+  void _onPageChanged(int pageIndex) {}
 
-  /// 底部导航选中态：page 1 → 2（我的）；page 0 → _aIndex（消息/万灵）。
-  int get _currentNavIndex =>
-      _pageIndex == 1 ? 2 : _aIndex;
+  /// 底部导航选中态：当前只有 A 组，直接取 _aIndex（消息/万灵）。
+  int get _currentNavIndex => _aIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +85,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                         onAIndexChanged: (i) => setState(() => _aIndex = i),
                         onOpenSidebar: _openSidebar,
                       ),
-                      const ProfilePage(),
                     ],
                   ),
                 ),
@@ -144,11 +110,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                   icon: Icon(Icons.auto_awesome_outlined),
                   activeIcon: Icon(Icons.auto_awesome),
                   label: '万灵',
-                ),
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.person_outline),
-                  activeIcon: Icon(Icons.person),
-                  label: '我的',
                 ),
               ],
             ),
@@ -194,8 +155,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
 /// A 组合页：消息 + 万灵共享 1 个 AppBar，内部 IndexedStack 切换内容。
 ///
-/// 作为 PageView 的 page 0。万灵↔我的 滑动时，这个 page（含 AppBar）
-/// 整体跟手左移，AppBar 不卡在 HomePage 原地。
+/// 作为 PageView 的 page 0（当前唯一页）。左右横滑仅用于 消息↔万灵 内层切换。
 class _AGroupPage extends ConsumerStatefulWidget {
   final int aIndex; // 0=消息, 1=万灵
   final ValueChanged<int> onAIndexChanged;
@@ -213,7 +173,6 @@ class _AGroupPage extends ConsumerStatefulWidget {
 
 class _AGroupPageState extends ConsumerState<_AGroupPage> {
   // 内部 PageView 的 controller：消息↔万灵 横滑切换。
-  // 嵌套 PageView 默认手势行为：内层先消费横滑，内层到边界后外层（万灵↔我的）接管。
   late final PageController _innerCtrl;
 
   @override
@@ -284,7 +243,6 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
     return Scaffold(
       appBar: _buildAppBar(),
       // 内部 PageView：消息↔万灵 横滑切换（AppBar 固定不动，仅内容跟手）。
-      // 嵌套在外层 PageView（万灵↔我的）中：内层到边界后外层接管手势。
       // 用 AutomaticKeepAliveClientMixin（MessagesPage/AgentListPage 已加）保活两页 state。
       // F5: banner 只在消息 tab 显示(用户主要场景),其他 tab 静默 fallback。
       body: NestedPageView(

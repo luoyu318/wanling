@@ -7,7 +7,6 @@
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
 import 'package:wanling_core/models/user.dart';
-import 'package:app/pages/profile_page.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/saved_logins_provider.dart';
@@ -107,7 +106,6 @@ void main() {
       expect(find.byType(BottomNavigationBar), findsOneWidget);
       expect(find.text('消息'), findsWidgets);
       expect(find.text('万灵'), findsWidgets);
-      expect(find.text('我的'), findsWidgets);
     });
   });
 
@@ -149,17 +147,10 @@ void main() {
       // 应该看到 Agent 列表页面（空状态显示"暂无 Agent"）
       expect(find.text('暂无 Agent'), findsOneWidget);
 
-      // 点击 我的 tab
-      await tester.tap(find.text('我的'));
+      // 点击 消息 回第一个 tab
+      await tester.tap(find.text('消息'));
       await tester.pumpAndSettle();
-      // 应该看到 ProfilePage 顶部用户名(侧边栏常驻也会显示用户名,限定在 ProfilePage 内查找)
-      expect(
-        find.descendant(
-          of: find.byType(ProfilePage),
-          matching: find.text('kira'),
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('暂无 Agent'), findsNothing);
     });
   });
 }
