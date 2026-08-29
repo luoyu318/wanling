@@ -243,16 +243,23 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
 
   /// 克隆账号卡片:生成同 server 的完整副本(自动处理 username 冲突),提示用户去编辑。
   void _duplicate(int index) {
-    ref.read(savedLoginsProvider.notifier).duplicate(index).then((_) {
-      if (mounted) {
-        showAppSnackBar(context, '已复制,可长按头像编辑新账号',
-            type: SnackBarType.success);
-      }
-    }).catchError((e) {
-      if (mounted) {
-        showAppSnackBar(context, e.toString(), type: SnackBarType.error);
-      }
-    });
+    ref
+        .read(savedLoginsProvider.notifier)
+        .duplicate(index)
+        .then((_) {
+          if (mounted) {
+            showAppSnackBar(
+              context,
+              '已复制,可长按头像编辑新账号',
+              type: SnackBarType.success,
+            );
+          }
+        })
+        .catchError((e) {
+          if (mounted) {
+            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
+          }
+        });
   }
 
   /// 长按账号头像弹动作菜单(原 ⋯ 菜单三项:编辑/复制/删除)。
@@ -265,11 +272,7 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       context,
       pos,
       items: const [
-        ActionMenuItem(
-          value: 'edit',
-          label: '编辑',
-          icon: Icons.edit_outlined,
-        ),
+        ActionMenuItem(value: 'edit', label: '编辑', icon: Icons.edit_outlined),
         ActionMenuItem(
           value: 'duplicate',
           label: '复制',
@@ -311,9 +314,7 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
               Expanded(
                 child: Container(
                   color: Colors.white,
-                  child: const SafeArea(
-                    child: SidebarProfilePanel(),
-                  ),
+                  child: const SafeArea(child: SidebarProfilePanel()),
                 ),
               ),
             ],
@@ -367,7 +368,10 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                               ? null
                               : () => _switchTo(i),
                           onLongPressStart: (d) => _showAccountActions(
-                              i, state.logins[i], d.globalPosition),
+                            i,
+                            state.logins[i],
+                            d.globalPosition,
+                          ),
                           child: _stripAvatar(state, i),
                         ),
                       ),
@@ -390,15 +394,21 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.divider),
                     ),
-                    child: const Icon(Icons.add,
-                        size: 26, color: AppColors.textSecondary),
+                    child: const Icon(
+                      Icons.add,
+                      size: 26,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   const Text(
                     '添加',
                     maxLines: 1,
                     softWrap: false,
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ),
@@ -439,8 +449,9 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11,
-              color:
-                  isCurrent ? AppColors.textPrimary : AppColors.textSecondary,
+              color: isCurrent
+                  ? AppColors.textPrimary
+                  : AppColors.textSecondary,
               fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
