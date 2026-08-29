@@ -88,13 +88,16 @@ class _DirectoryPickerSheetState extends ConsumerState<DirectoryPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    // 固定 70% 屏高:isScrollControlled 下 Column(min) 会被目录列表撑出屏幕。
+    // 高度自适应内容,上限 70% 屏高:isScrollControlled 下 Column(min) 收拢
+    // 无底部留白,目录超长时 Flexible+ListView 内部滚动封顶。
     return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.7,
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
