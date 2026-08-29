@@ -261,8 +261,7 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
         widget.rc.isDark ? const Color(0xFF777777) : const Color(0xFFBBBBBB);
     final title = groupTitle(ToolGroupSlot(widget.cards), streaming);
     final (icon, iconColor) = _categoryVisual(widget.cards);
-    // tools 字形在字体画布中占满程度高于其他字形,同字号视觉偏大,缩一档对齐
-    final iconSize = icon == IconFont.tools ? 13.0 : 15.0;
+    final iconSize = _foldIconSize(icon);
     return Padding(
       key: _key,
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -329,6 +328,21 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
       ),
     );
   }
+}
+
+/// 折叠行图标视觉归一:iconfont 各字形在 em 框内的占满程度差异大
+/// (fontTools 实测字形高占比:shell .625 / edit .699 / search .834 / tools .967),
+/// 同字号下满框字形(tools)视觉明显偏大。统一目标视觉高约 12.5px,
+/// 按占比反推各字形字号(20 / 17.9 / 15 / 12.9),未知字形取探索组比例兜底。
+double _foldIconSize(String glyph) {
+  const heightRatio = <String, double>{
+    IconFont.shell: 0.625,
+    IconFont.edit: 0.699,
+    IconFont.search: 0.834,
+    IconFont.tools: 0.967,
+    IconFont.explore: 0.867,
+  };
+  return 12.5 / (heightRatio[glyph] ?? 0.867);
 }
 
 /// 折叠组标题图标 + 颜色(按类别,对齐 mockup 配色)。
