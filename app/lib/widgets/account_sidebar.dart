@@ -375,7 +375,7 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
                 ),
               ),
             ),
-            // 底部「添加」:对齐飞书式竖排(圆角方块 + 号居中,文字下方),
+            // 底部「添加」:对齐主流 IM 竖排样式(圆角方块 + 号居中,文字下方),
             // 88px 竖条内 OutlinedButton.icon 横向放不下会把文字挤成竖排换行
             InkWell(
               onTap: _showAddDialog,

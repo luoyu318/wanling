@@ -14,6 +14,7 @@ class SettingsTile extends StatefulWidget {
   final Color? labelColor;
   final Color? iconColor;
   final bool showDivider;
+  final bool showChevron;
 
   const SettingsTile({
     super.key,
@@ -24,6 +25,7 @@ class SettingsTile extends StatefulWidget {
     this.labelColor,
     this.iconColor,
     this.showDivider = true,
+    this.showChevron = true,
   });
 
   @override
@@ -42,8 +44,15 @@ class _SettingsTileState extends State<SettingsTile> {
   @override
   Widget build(BuildContext context) {
     final tileBg = _isPressed ? const Color(0xFFEDEDED) : Colors.white;
-    final trailing = widget.trailing ??
-        const Icon(Icons.chevron_right, size: 20, color: Color(0xFFC0C0C0));
+    final trailing =
+        widget.trailing ??
+        (widget.showChevron
+            ? const Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: Color(0xFFC0C0C0),
+              )
+            : const SizedBox.shrink());
 
     return Listener(
       onPointerDown: (e) {
@@ -72,7 +81,11 @@ class _SettingsTileState extends State<SettingsTile> {
             Container(
               color: tileBg,
               padding: const EdgeInsets.only(
-                  left: 16, right: 10, top: 14, bottom: 14),
+                left: 16,
+                right: 10,
+                top: 14,
+                bottom: 14,
+              ),
               child: Row(
                 children: [
                   Icon(
