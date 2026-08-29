@@ -11,7 +11,7 @@ import 'package:wanling_core/providers/agent_provider.dart' show agentByIdProvid
 import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/agent_status_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show authProvider;
-import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../router_helpers.dart';
 import '../utils/directory_utils.dart';
@@ -157,12 +157,12 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     if (agent != null && !agent.isMultiSession) {
       return const SizedBox.shrink();
     }
-    final pinned = ref.watch(pinnedNavTabsProvider).contains(widget.agentId);
+    final pinned = ref.watch(navOrderProvider).contains(widget.agentId);
     return IconButton(
       icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
       tooltip: pinned ? '从导航栏移除' : '固定到导航栏',
       onPressed: () {
-        final notifier = ref.read(pinnedNavTabsProvider.notifier);
+        final notifier = ref.read(navOrderProvider.notifier);
         if (pinned) {
           notifier.unpin(widget.agentId);
         } else {

@@ -14,7 +14,7 @@ import 'package:wanling_core/providers/agent_sessions_provider.dart'
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
     show totalUnreadProvider;
-import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/app_action_menu.dart';
@@ -32,7 +32,7 @@ import '../widgets/unread_badge.dart';
 ///   页 1..N 为 pinned agent 的 sessions 页（AgentSessionsPage embedded 模式，
 ///   保活由其内部 AutomaticKeepAliveClientMixin 负责）
 /// - 底部 NavTabBar：2 固定槽（消息/万灵）+ agent 头像槽 + 可选「更多」槽；
-///   pinned 列表来自 effectivePinnedNavTabsProvider，槽位映射见 [_HomePageState._onNavTap]
+///   pinned 列表来自 effectiveNavOrderProvider 的 agent 子序列，槽位映射见 [_HomePageState._onNavTap]
 /// - 「更多」槽激活时显示溢出 agent（_activeOverflowId），点按弹底部抽屉
 ///   （_showMoreSheet）点选切换
 /// - 原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
@@ -213,10 +213,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 全槽序列 → agent 子序列（Task 1 桥接:底栏/PageView 暂只消费 agent 槽,
+  /// Task 3 slots 平铺后移除过滤）。
+  static List<String> _agentsOf(List<String> order) =>
+      [for (final id in order) if (!kNavFixedIds.contains(id)) id];
+
   @override
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
-    _pinnedAll = ref.watch(effectivePinnedNavTabsProvider);
+    _pinnedAll = _agentsOf(ref.watch(effectiveNavOrderProvider));
     _showMore = _pinnedAll.length >= _kOverflowThreshold;
     _visiblePinned = _showMore
         ? _pinnedAll.take(_kVisibleWhenOverflow).toList()
@@ -228,12 +233,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 仍在列表(如前面的 agent 被移除,位置左移)→ 跳到收缩后的新位置,不回 A 组;
     // 已消失(unpin 当前页/agent 删除)→ 回 A 组页并按设计文档回落消息 tab。
     // 收缩通知同步于 rebuild 前,prev 即旧列表,据此取当前页 agent id。
-    ref.listen(effectivePinnedNavTabsProvider, (prev, next) {
+    ref.listen(effectiveNavOrderProvider, (prev, next) {
       if (_pageIndex <= 0) return;
+      final prevAgents = prev == null ? null : _agentsOf(prev);
+      final nextAgents = _agentsOf(next);
       final oldIdx = _pageIndex - 1;
-      final currentId =
-          (prev != null && oldIdx < prev.length) ? prev[oldIdx] : null;
-      final newIdx = currentId == null ? -1 : next.indexOf(currentId);
+      final currentId = (prevAgents != null && oldIdx < prevAgents.length)
+          ? prevAgents[oldIdx]
+          : null;
+      final newIdx = currentId == null ? -1 : nextAgents.indexOf(currentId);
       if (newIdx == oldIdx) return; // 身份与位置均未变(含内容相同的重复通知)
       if (newIdx >= 0) {
         _pageIndex = newIdx + 1;
@@ -294,9 +302,10 @@ class _HomePageState extends ConsumerState<HomePage> {
               onSlotTap: _onNavTap,
               onMoreTap: _showMoreSheet,
               onAgentReorder: (agentId, targetAgentIndex) =>
-                  ref.read(pinnedNavTabsProvider.notifier).reorderTo(
+                  ref.read(navOrderProvider.notifier).reorder(
                         agentId,
-                        targetAgentIndex,
+                        // 新序列固定项前置 2 位,agent 子序列下标需偏移(临时桥接,Task 3 平铺后移除)
+                        targetAgentIndex + 2,
                       ),
             ),
           ),

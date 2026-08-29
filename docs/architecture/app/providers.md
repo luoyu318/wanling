@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 17 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / pinnedNavTabs / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore(connState 定义在 chat_provider 内,非独立文件)。
+状态管理 17 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore(connState 定义在 chat_provider 内,非独立文件)。
 
 ## authProvider
 
@@ -46,9 +46,9 @@ agent_session 二级列表状态管理（对齐 conversationProvider 模式，fa
 
 Agent 状态聚合（`StateNotifier<Map<String, AgentStatus>>`，key=agentId）。聚合 typing + pending approval 数 → 三态（idle/busy/retry）供二级列表 SessionTile 三体指示器 + 目录面板 busyCount + chat_page 状态文案。监听 `wsProvider.messages`（agent MESSAGE_CREATE 清 busy）+ `typingProvider`（typing → busy）+ `chatProvider` 的 pending approval 数
 
-## pinnedNavTabsProvider
+## navOrderProvider
 
-底部导航 pinned agent 有序列表（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_pins_{ownerId}` 按 ownerId 隔离，ownerId 变化（切账号）时随 authProvider 重建重读。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorderTo`（拖拽排序，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectivePinnedNavTabsProvider` = pinned ∩ 当前 agent 列表（agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源
+底部导航槽位有序序列，含固定项 msg/wanling + pinned agent（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_order_{ownerId}` 按 ownerId 隔离，首读缺失时从旧 `nav_pins_{ownerId}` 一次性迁移（固定项前置 + 立即落盘，旧 key 保留可回滚），ownerId 变化（切账号）时随 authProvider 重建重读；空 ownerId（登出中间态）维持幽灵 key 空列表语义，不 sanitize 不落盘。唯一不变式：固定项各恰好一次且不可移除（构造 sanitize 去空/去重保序，固定项位置不强制、仅缺失才补；unpin 拒固定项）。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorder`（move 语义任意槽排序，含固定项，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectiveNavOrderProvider` = 序列 ∩ 当前 agent 列表（固定项恒保留，agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源
 
 ## agentTabUnreadProvider
 

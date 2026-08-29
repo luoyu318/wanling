@@ -11,7 +11,7 @@ import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
-import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:app/router.dart';
 import 'package:app/widgets/nav_tab_bar.dart';
@@ -330,10 +330,11 @@ void main() {
       expect(find.descendant(of: navBar, matching: find.text('ag-2')),
           findsOneWidget);
       expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
-      // prefs 持久化:SP 列表与 provider state 均已移除 a1
-      expect(container.read(sharedPrefsProvider).getStringList('nav_pins_u1'),
-          ['a2']);
-      expect(container.read(pinnedNavTabsProvider), ['a2']);
+      // prefs 持久化:SP 列表与 provider state 均已移除 a1(旧 nav_pins key 迁移后保留不动)
+      expect(container.read(sharedPrefsProvider).getStringList('nav_order_u1'),
+          [kNavTabMsg, kNavTabWanling, 'a2']);
+      expect(container.read(navOrderProvider),
+          [kNavTabMsg, kNavTabWanling, 'a2']);
     });
 
     testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回 A 组消息 tab',
@@ -385,7 +386,8 @@ void main() {
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
       expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
-      expect(container.read(pinnedNavTabsProvider), isEmpty);
+      expect(container.read(navOrderProvider),
+          [kNavTabMsg, kNavTabWanling]);
     });
 
     testWidgets('unpin 前面的 agent:当前 agent 页保持,跳到收缩后的新位置',
@@ -432,12 +434,13 @@ void main() {
       expect(find.text('暂无会话'), findsOneWidget);
 
       // 移除前面的 agent(模拟远端收缩):unpin a1
-      container.read(pinnedNavTabsProvider.notifier).unpin('a1');
+      container.read(navOrderProvider.notifier).unpin('a1');
       await tester.pumpAndSettle();
 
       // ag-2 仍在列表:停留其页(收缩后 page 1 → 槽位 2),不回 A 组;
       // 可见页 AppBar 标题为 ag-2(scoped 断言,规避保活页树中的同名文本)
-      expect(container.read(pinnedNavTabsProvider), ['a2', 'a3']);
+      expect(container.read(navOrderProvider),
+          [kNavTabMsg, kNavTabWanling, 'a2', 'a3']);
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
       expect(find.descendant(of: navBar, matching: find.text('ag-2')),
@@ -504,9 +507,10 @@ void main() {
       expect(tester.getCenter(slot('ag-2')).dx <
           tester.getCenter(slot('ag-1')).dx,
           isTrue);
-      expect(container.read(pinnedNavTabsProvider), ['a2', 'a1']);
-      expect(container.read(sharedPrefsProvider).getStringList('nav_pins_u1'),
-          ['a2', 'a1']);
+      expect(container.read(navOrderProvider),
+          [kNavTabMsg, kNavTabWanling, 'a2', 'a1']);
+      expect(container.read(sharedPrefsProvider).getStringList('nav_order_u1'),
+          [kNavTabMsg, kNavTabWanling, 'a2', 'a1']);
     });
   });
 }
