@@ -1,4 +1,4 @@
-// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换三场景。
+// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换、pin/unpin/拖拽导航。
 //
 // 关键 Mock 策略：
 // - apiProvider：用 mocktail 的 MockApi，stub getMe/getAgents/getConversations
@@ -6,10 +6,12 @@
 //   wsProvider 在 auth.isAuthenticated 时会调用 connect()，连真实 WS 会失败/超时；
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
+//   （pinned tab 用 `nav_pins_{ownerId}` 预种）
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:app/router.dart';
 import 'package:app/widgets/nav_tab_bar.dart';
@@ -263,6 +265,187 @@ void main() {
       await tester.tap(find.text('ag-4').last);
       await tester.pumpAndSettle();
       expect(find.text('暂无会话'), findsOneWidget);
+      // 更多槽激活态:槽位文案从「更多」换成 ag-4 名。
+      // ag-4 同时出现在 sessions AppBar 标题,故底栏断言必须 scoped 到 NavTabBar。
+      expect(
+          find.descendant(
+              of: find.byType(NavTabBar), matching: find.text('ag-4')),
+          findsOneWidget);
+      expect(
+          find.descendant(
+              of: find.byType(NavTabBar), matching: find.text('更多')),
+          findsNothing);
+    });
+
+    testWidgets('unpin 后底栏槽位即时消失且 prefs 持久化', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1', 'a2'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      final navBar = find.byType(NavTabBar);
+      expect(
+          find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsOneWidget);
+
+      // 进 a1 sessions 页(embedded AppBar 带实心 pin 按钮)
+      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+
+      // 点 pin(已固定态 tooltip「从导航栏移除」)→ unpin
+      await tester.tap(find.byTooltip('从导航栏移除'));
+      await tester.pumpAndSettle();
+
+      // 底栏即时收缩:ag-1 槽消失,ag-2 保留;当前页未越界,原地显示下一 pinned(a2)页
+      expect(find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+          findsOneWidget);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 2);
+      // prefs 持久化:SP 列表与 provider state 均已移除 a1
+      expect(container.read(sharedPrefsProvider).getStringList('nav_pins_u1'),
+          ['a2']);
+      expect(container.read(pinnedNavTabsProvider), ['a2']);
+    });
+
+    testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回 A 组页',
+        (tester) async {
+      // 现状行为(brief 设计,留待真机评审):HomePage 的长度基守卫只在
+      // _pageIndex-1 >= 新 pinned 长度 时 jumpToPage(0)。唯一 pinned 被取消后
+      // 页码越界 → 回 A 组页;但 A 组内部 _aIndex 此前已置 1(万灵),
+      // 守卫不重置 _aIndex,视觉落点为万灵 tab 而非消息 tab。
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents())
+          .thenAnswer((_) async => [_multiSessionAgent('a1', 'ag-1')]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      final navBar = find.byType(NavTabBar);
+      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无会话'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('从导航栏移除'));
+      await tester.pumpAndSettle(); // 守卫 jumpToPage(0),不崩溃即通过
+
+      // 落点确定:回 A 组页(sessions 页卸载),底栏无 agent 槽,
+      // _aIndex 未重置 → 万灵槽(index 1)激活
+      expect(find.text('暂无会话'), findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsNothing);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 1);
+      expect(container.read(pinnedNavTabsProvider), isEmpty);
+    });
+
+    testWidgets('长按拖拽 agent 槽交换顺序且 prefs 持久化', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1', 'a2'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      final navBar = find.byType(NavTabBar);
+      Finder slot(String name) =>
+          find.descendant(of: navBar, matching: find.text(name));
+      // 初始顺序:ag-1 在 ag-2 左侧
+      expect(tester.getCenter(slot('ag-1')).dx <
+          tester.getCenter(slot('ag-2')).dx,
+          isTrue);
+
+      // 长按 ag-1 槽拖到 ag-2 槽中心(写法对齐 nav_tab_bar_test)
+      final a1Center = tester.getCenter(slot('ag-1'));
+      final a2Center = tester.getCenter(slot('ag-2'));
+      final gesture = await tester.startGesture(a1Center);
+      await tester.pump(const Duration(seconds: 1)); // 越过 LongPressDraggable delay
+      await gesture.moveBy(a2Center - a1Center);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // 底栏顺序交换 + prefs 持久化(重读 container 断言)
+      expect(tester.getCenter(slot('ag-2')).dx <
+          tester.getCenter(slot('ag-1')).dx,
+          isTrue);
+      expect(container.read(pinnedNavTabsProvider), ['a2', 'a1']);
+      expect(container.read(sharedPrefsProvider).getStringList('nav_pins_u1'),
+          ['a2', 'a1']);
     });
   });
 }

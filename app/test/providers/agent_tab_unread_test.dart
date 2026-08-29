@@ -52,4 +52,25 @@ void main() {
     addTearDown(container.dispose);
     expect(container.read(agentTabUnreadProvider('a1')), 0);
   });
+
+  test('sessions 为空列表返回 0(与未加载 null 同口径)', () {
+    final container = ProviderContainer(overrides: [
+      agentSessionsProvider.overrideWith(
+          (ref, agentId) => _FakeSessionsNotifier(const <Conversation>[])),
+    ]);
+    addTearDown(container.dispose);
+    expect(container.read(agentTabUnreadProvider('a1')), 0);
+  });
+
+  test('sessions state 变化后角标重算(markReadLocally 清零不残留旧徽章)', () {
+    final container = ProviderContainer(overrides: [
+      agentSessionsProvider.overrideWith((ref, agentId) =>
+          _FakeSessionsNotifier([_conv('c1', 3), _conv('c2', 2)])),
+    ]);
+    addTearDown(container.dispose);
+    expect(container.read(agentTabUnreadProvider('a1')), 5);
+    // 经 notifier 改 sessions state → watch agentSessionsProvider 的角标必须重算
+    container.read(agentSessionsProvider('a1').notifier).markReadLocally('c1');
+    expect(container.read(agentTabUnreadProvider('a1')), 2);
+  });
 }
