@@ -240,10 +240,18 @@ void main() {
       expect(shimmer.text, '正在执行 1次工具');
     });
 
-    testWidgets('工具组图标用 tools 字形(e882)', (tester) async {
+    testWidgets('工具组图标用 tools 字形(e882),视觉补偿字号 13', (tester) async {
       final cards = [tool('t1', 'zai-mcp-server_analyze_image')];
       await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
-      expect(find.text('\u{e882}'), findsOneWidget);
+      final iconText = tester.widget<Text>(find.text('\u{e882}'));
+      expect(iconText.style?.fontSize, 13);
+    });
+
+    testWidgets('命令组图标字号保持 15(视觉基线)', (tester) async {
+      final cards = [tool('r1', 'bash')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
+      final iconText = tester.widget<Text>(find.text('\u{e666}'));
+      expect(iconText.style?.fontSize, 15);
     });
 
     testWidgets('进行中标题含 ShimmerText', (tester) async {
