@@ -23,22 +23,24 @@ class ToolGroupSlot extends ElementSlot {
   const ToolGroupSlot(this.cards);
 }
 
-/// 折叠类别:探索(read/grep/glob)/命令(bash)/编辑(edit/write)。
+/// 折叠类别:探索(read/grep/glob)/命令(bash)/编辑(edit/write)/工具(未知兜底)。
 /// 对齐 opencode `CONTEXT_GROUP_TOOLS` 扩展:官方折叠 read/glob/grep/list,
 /// 我们扩展 bash(命令)与 edit/write(编辑)也按同类折叠。
 /// 同时兼容 hermes-plugin 工具名(terminal/read_file/search_files/browser_* 等):
 /// hermes 的 read_file→探索、search_files/glob/grep→搜索、terminal→命令、
 /// write/edit→编辑、browser_*→探索。
-enum ToolCategory { explore, command, edit }
+enum ToolCategory { explore, command, edit, tool }
 
-/// 工具名归一化:把 hermes/opencode 不同命名映射到统一类别名(read/search/command/edit)。
+/// 工具名归一化:把 hermes/opencode 不同命名映射到统一类别名(read/search/command/edit/tool)。
 /// 返回类别 + 归一化名(供 groupTitle 计数用)。不折叠的返回 null。
 ///
-/// 策略分两层:
+/// 策略分三层:
 /// 1. 精确白名单(opencode 官方 + hermes 已知工具)
 /// 2. 前缀通用规则(hermes 工具族以 *_ 前缀扩展,如 browser_click/read_file 等,
 ///    新增工具名无需逐个维护即可按同类折叠)
-/// 折叠是「同类 + 连续」分组,未知/交互性工具(webfetch/task/todowrite)保持平铺。
+/// 3. 未知兜底:白名单/前缀都不命中的名字(典型为 MCP <server>_<tool> 开放集合)
+///    默认折叠进「工具」组,避免新工具卡撑爆聚合卡
+/// 折叠是「同类 + 连续」分组;webfetch/task/todowrite 有专属平铺渲染,保持平铺。
 (String, String)? normalizeToolName(Map<String, dynamic> card) {
   final name = ((card['data'] as Map?)?['name'] as String?) ?? '';
   // ── 1. 精确白名单(opencode 官方 / hermes 已知) ──
@@ -108,7 +110,13 @@ enum ToolCategory { explore, command, edit }
       name.startsWith('apply_')) {
     return (ToolCategory.edit.name, 'edit');
   }
-  return null; // webfetch/task/todowrite/完全未知保持平铺
+  // ── 3. 未知兜底(开放集合):MCP <server>_<tool> 等新命名默认折叠 ──
+  // 特名平铺:webfetch(网络探索纯文字行)/task(子 agent 卡)/todowrite(任务折叠行)
+  // 有专属平铺渲染;空名属协议异常,防御性平铺。
+  if (name == 'webfetch' || name == 'task' || name == 'todowrite' || name.isEmpty) {
+    return null;
+  }
+  return (ToolCategory.tool.name, 'tool');
 }
 
 ToolCategory? categoryOfTool(Map<String, dynamic> card) {
@@ -166,7 +174,7 @@ List<ElementSlot> groupAggregateElements(List<Map<String, dynamic>> elements) {
 /// 对齐 opencode ToolStatusTitle + AnimatedCountList:探索组「正在探索/已探索」,
 /// 命令组「正在执行/已执行」,编辑组「正在编辑/已编辑」。
 String groupTitle(ToolGroupSlot slot, bool streaming) {
-  var read = 0, search = 0, command = 0, edit = 0;
+  var read = 0, search = 0, command = 0, edit = 0, tool = 0;
   for (final c in slot.cards) {
     final norm = normalizeToolName(c);
     if (norm == null) continue;
@@ -180,10 +188,12 @@ String groupTitle(ToolGroupSlot slot, bool streaming) {
         command++;
       case 'edit':
         edit++;
+      case 'tool':
+        tool++;
     }
   }
   final prefix = switch (categoryOfTool(slot.cards.first)) {
-    ToolCategory.command => streaming ? '正在执行' : '已执行',
+    ToolCategory.command || ToolCategory.tool => streaming ? '正在执行' : '已执行',
     ToolCategory.edit => streaming ? '正在编辑' : '已编辑',
     _ => streaming ? '正在探索' : '已探索',
   };
@@ -192,6 +202,7 @@ String groupTitle(ToolGroupSlot slot, bool streaming) {
     if (search > 0) '$search次搜索',
     if (command > 0) '$command次命令',
     if (edit > 0) '$edit次编辑',
+    if (tool > 0) '$tool次工具',
   ];
   final counts = parts.join(', ');
   return counts.isEmpty ? prefix : '$prefix $counts';
@@ -323,11 +334,13 @@ class _ToolGroupCardState extends State<ToolGroupCard> {
   final iconColor = switch (categoryOfTool(cards.first)) {
     ToolCategory.command => const Color(0xFF5B8BF7), // 命令组:蓝 shell
     ToolCategory.edit => const Color(0xFF07C160), // 编辑组:绿 编辑
+    ToolCategory.tool => const Color(0xFFF4A742), // 工具组:橙 通用工具(MCP 等)
     _ => const Color(0xFFB388FF), // 探索组:紫 搜索
   };
   final icon = switch (categoryOfTool(cards.first)) {
     ToolCategory.command => IconFont.shell,
     ToolCategory.edit => IconFont.edit,
+    ToolCategory.tool => IconFont.tools,
     _ => IconFont.search,
   };
   return (icon, iconColor);
