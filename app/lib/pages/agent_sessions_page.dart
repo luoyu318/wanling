@@ -30,7 +30,8 @@ class AgentSessionsPage extends ConsumerStatefulWidget {
 
   /// true = 底部导航 tab 内嵌模式:无返回键 + 页面保活。
   /// false = 路由页模式(/agent/:id/sessions),自动带返回键。
-  /// 两种模式 AppBar 均渲染 pin 按钮(路由模式支持新账号完成首次 pin)。
+  /// 两种模式 AppBar 均渲染 pin 按钮(路由模式支持新账号完成首次 pin;
+  /// 仅 multiSession agent 显示,单会话 agent 不进底栏导航)。
   final bool embedded;
   const AgentSessionsPage({
     super.key,
@@ -150,7 +151,12 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
   }
 
   /// AppBar pin 按钮:实心 = 已固定,点击取消固定并从底栏即时消失。
-  Widget _buildPinAction() {
+  /// 设计边界:仅 multiSession agent 显示 pin 按钮(单会话 agent 不进底栏导航);
+  /// agent 数据未加载(null)时保持渲染现状不过滤,避免按钮闪现/消失抖动。
+  Widget _buildPinAction(Agent? agent) {
+    if (agent != null && !agent.isMultiSession) {
+      return const SizedBox.shrink();
+    }
     final pinned = ref.watch(pinnedNavTabsProvider).contains(widget.agentId);
     return IconButton(
       icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
@@ -273,7 +279,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
                 ],
               ),
         actions: [
-          _buildPinAction(),
+          _buildPinAction(agent),
           IconButton(
             icon: _creating
                 ? const SizedBox(
@@ -339,6 +345,8 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
 
     return Scaffold(
       appBar: AppBar(
+        // 内嵌模式下位于页面栈底,禁自动返回键(与手机分支同口径)
+        automaticallyImplyLeading: !widget.embedded,
         title: agent == null
             ? const Text('会话')
             : Column(
@@ -371,7 +379,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
                 ],
               ),
         actions: [
-          _buildPinAction(),
+          _buildPinAction(agent),
           TextButton.icon(
             onPressed: _creating ? null : _createSession,
             icon: _creating

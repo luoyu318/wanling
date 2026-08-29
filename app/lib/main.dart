@@ -249,7 +249,7 @@ class _MyAppState extends ConsumerState<MyApp> {
         colorSchemeSeed: AppColors.accentGreen, // 品牌主色绿
         useMaterial3: true,
         // 统一页面背景灰：避免每个 Scaffold 自定义。M3 默认 surface 会带绿色 seed
-        // 派生的浅色，与 ProfilePage 等显式 #EDEDED 不一致。
+        // 派生的浅色，与显式 #EDEDED 页面背景不一致。
         scaffoldBackgroundColor: AppColors.pageBgStandard,
         // 统一 AppBar 白底黑字：避免每个子页面 AppBar 走 M3 默认（浅绿底）。
         // surfaceTintColor=transparent 去掉 M3 的彩色 tint 阴影，保纯白。

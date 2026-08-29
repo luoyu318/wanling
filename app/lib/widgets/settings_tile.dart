@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 /// 通用列表项组件：左 icon + label + 右 trailing（默认 chevron）。
 ///
-/// 从 ProfilePage 的 _ProfileTile 升格为公共组件。保留按下反馈
-/// （Listener 立即变色 + InkWell 透明 splash，移动 8px 取消）+
+/// 按下反馈：Listener 立即变色 + InkWell 透明 splash，移动 8px 取消；
 /// 左对齐 54px 分割线（与文字对齐）。
 ///
 /// 视觉规格：icon 22 / 文字 15/w300/#333 / chevron 20/#C0C0C0。

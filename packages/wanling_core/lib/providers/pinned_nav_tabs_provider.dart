@@ -57,6 +57,9 @@ class PinnedNavTabsNotifier extends StateNotifier<List<String>> {
 final pinnedNavTabsProvider =
     StateNotifierProvider<PinnedNavTabsNotifier, List<String>>((ref) {
   final prefs = ref.watch(sharedPrefsProvider);
+  // 登出/切账号的中间态 ownerId 为空串,会读写幽灵 key 'nav_pins_'(空列表)。
+  // 这是固定依赖的隐式约定:HomePage 收缩守卫靠该空列表判定「当前 agent 已消失」,
+  // 从而回退消息 tab;ownerId 恢复后 provider 随 authProvider 重建读回真实 key。
   final ownerId = ref.watch(authProvider.select((s) => s.user?.id ?? ''));
   return PinnedNavTabsNotifier(prefs: prefs, ownerId: ownerId);
 });

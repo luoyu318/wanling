@@ -28,7 +28,7 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AgentSessionsPage
 
-**多 session agent(opencode/dsh 等)session 群二级列表页**,双模式:路由页(`embedded=false`,从一级列表/AgentListPage 点多 session type agent 进入,行为与历史版本一致)与底栏 embedded 模式(`embedded=true`,HomePage PageView 页挂载:无返回键 + AppBar 带实心 pin 按钮固定/取消固定底栏 + AutomaticKeepAliveClientMixin 保活)。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
+**多 session agent(opencode/dsh 等)session 群二级列表页**,双模式:路由页(`embedded=false`,从一级列表/AgentListPage 点多 session type agent 进入,AppBar 带 pin 按钮（支持新账号首次 pin）)与底栏 embedded 模式(`embedded=true`,HomePage PageView 页挂载:无返回键 + AppBar 带实心 pin 按钮固定/取消固定底栏(仅 multiSession agent 渲染,防御门控) + AutomaticKeepAliveClientMixin 保活)。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
 
 ## ChatPage
 

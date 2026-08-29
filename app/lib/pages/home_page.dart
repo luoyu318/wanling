@@ -224,11 +224,28 @@ class _HomePageState extends ConsumerState<HomePage> {
     _overflowPinned =
         _showMore ? _pinnedAll.skip(_kVisibleWhenOverflow).toList() : [];
 
-    // pin 列表收缩(取消固定/agent 删除)时,当前页可能越界 → 回消息页
+    // pin 列表收缩(取消固定/agent 删除/切账号)时按当前页 agent 身份判定落点:
+    // 仍在列表(如前面的 agent 被移除,位置左移)→ 跳到收缩后的新位置,不回 A 组;
+    // 已消失(unpin 当前页/agent 删除)→ 回 A 组页并按设计文档回落消息 tab。
+    // 收缩通知同步于 rebuild 前,prev 即旧列表,据此取当前页 agent id。
     ref.listen(effectivePinnedNavTabsProvider, (prev, next) {
-      if (_pageIndex - 1 >= next.length && _pageIndex > 0) {
+      if (_pageIndex <= 0) return;
+      final oldIdx = _pageIndex - 1;
+      final currentId =
+          (prev != null && oldIdx < prev.length) ? prev[oldIdx] : null;
+      final newIdx = currentId == null ? -1 : next.indexOf(currentId);
+      if (newIdx == oldIdx) return; // 身份与位置均未变(含内容相同的重复通知)
+      if (newIdx >= 0) {
+        _pageIndex = newIdx + 1;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_pageCtrl.hasClients && _pageCtrl.page?.round() != newIdx + 1) {
+            _pageCtrl.jumpToPage(newIdx + 1);
+          }
+        });
+      } else {
         _activeOverflowId = null;
         _pageIndex = 0;
+        _aIndex = 0; // 回退消息 tab(设计文档口径),随重建经 didUpdateWidget 驱动内层跳页
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
         });

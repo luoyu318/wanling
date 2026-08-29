@@ -323,24 +323,24 @@ void main() {
       await tester.tap(find.byTooltip('从导航栏移除'));
       await tester.pumpAndSettle();
 
-      // 底栏即时收缩:ag-1 槽消失,ag-2 保留;当前页未越界,原地显示下一 pinned(a2)页
+      // 底栏即时收缩:ag-1 槽消失,ag-2 保留;unpin 的是当前正在看的 agent,
+      // 身份基守卫判定当前 agent id 已不在列表 → 按设计文档回退消息 tab
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
       expect(find.descendant(of: navBar, matching: find.text('ag-2')),
           findsOneWidget);
-      expect(tester.widget<NavTabBar>(navBar).currentIndex, 2);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
       // prefs 持久化:SP 列表与 provider state 均已移除 a1
       expect(container.read(sharedPrefsProvider).getStringList('nav_pins_u1'),
           ['a2']);
       expect(container.read(pinnedNavTabsProvider), ['a2']);
     });
 
-    testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回 A 组页',
+    testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回 A 组消息 tab',
         (tester) async {
-      // 现状行为(brief 设计,留待真机评审):HomePage 的长度基守卫只在
-      // _pageIndex-1 >= 新 pinned 长度 时 jumpToPage(0)。唯一 pinned 被取消后
-      // 页码越界 → 回 A 组页;但 A 组内部 _aIndex 此前已置 1(万灵),
-      // 守卫不重置 _aIndex,视觉落点为万灵 tab 而非消息 tab。
+      // 按设计文档:unpin 正在看的 agent 页 → 回退消息 tab。身份基守卫判定
+      // 当前 agent id 已不在收缩后的列表 → jumpToPage(0) 并重置 A 组内部
+      // 索引为消息 tab(不再落万灵槽)。
       SharedPreferences.setMockInitialValues({
         'token': 'fake-token',
         'nav_pins_u1': ['a1'],
@@ -380,12 +380,73 @@ void main() {
       await tester.pumpAndSettle(); // 守卫 jumpToPage(0),不崩溃即通过
 
       // 落点确定:回 A 组页(sessions 页卸载),底栏无 agent 槽,
-      // _aIndex 未重置 → 万灵槽(index 1)激活
+      // 守卫重置 _aIndex → 消息槽(index 0)激活
       expect(find.text('暂无会话'), findsNothing);
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
-      expect(tester.widget<NavTabBar>(navBar).currentIndex, 1);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
       expect(container.read(pinnedNavTabsProvider), isEmpty);
+    });
+
+    testWidgets('unpin 前面的 agent:当前 agent 页保持,跳到收缩后的新位置',
+        (tester) async {
+      // 身份基守卫核心场景:正在看 a2 时移除前面的 a1,a2 仍在列表,
+      // 应回落其新位置(page 1)而非被弹回消息 tab。
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1', 'a2', 'a3'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+            _multiSessionAgent('a3', 'ag-3'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      final navBar = find.byType(NavTabBar);
+      // 进第 2 个 pinned agent(ag-2,page 2)的 sessions 页
+      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-2')));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无会话'), findsOneWidget);
+
+      // 移除前面的 agent(模拟远端收缩):unpin a1
+      container.read(pinnedNavTabsProvider.notifier).unpin('a1');
+      await tester.pumpAndSettle();
+
+      // ag-2 仍在列表:停留其页(收缩后 page 1 → 槽位 2),不回 A 组;
+      // 可见页 AppBar 标题为 ag-2(scoped 断言,规避保活页树中的同名文本)
+      expect(container.read(pinnedNavTabsProvider), ['a2', 'a3']);
+      expect(find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+          findsOneWidget);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 2);
+      expect(
+          find.descendant(
+              of: find.byType(AppBar), matching: find.text('ag-2')),
+          findsOneWidget);
     });
 
     testWidgets('长按拖拽 agent 槽交换顺序且 prefs 持久化', (tester) async {

@@ -37,12 +37,12 @@ Agent _agent(String id) => Agent(
     );
 
 Future<ProviderContainer> _harness(WidgetTester tester,
-    {required Widget child}) async {
+    {required Widget child, Agent? agent}) async {
   SharedPreferences.setMockInitialValues({'token': 'fake-token'});
   final api = MockApi();
   when(() => api.baseUrl).thenReturn('http://test.local');
   when(() => api.getMe()).thenAnswer((_) async => _testUser);
-  when(() => api.getAgents()).thenAnswer((_) async => [_agent('a1')]);
+  when(() => api.getAgents()).thenAnswer((_) async => [agent ?? _agent('a1')]);
   when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
   final ws = FakeWS();
 
@@ -144,5 +144,30 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.push_pin), findsOneWidget);
+  });
+
+  testWidgets('非 multiSession agent:AppBar 不渲染 pin 按钮(防御门控)',
+      (tester) async {
+    final agent = Agent(
+      id: 'a1',
+      name: 'agent-a1',
+      status: AgentStatus.online,
+      type: 'hermes',
+      multiSession: false,
+    );
+    await _harness(
+      tester,
+      agent: agent,
+      child: AgentSessionsPage(agentId: agent.id, embedded: true),
+    );
+
+    // 设计边界:单会话 agent 不进底栏导航,pin 按钮不渲染
+    expect(find.byIcon(Icons.push_pin), findsNothing);
+    expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    // AppBar 其余动作(新建会话)不受影响(scope 到 AppBar,规避侧栏头部同名图标)
+    expect(
+        find.descendant(
+            of: find.byType(AppBar), matching: find.byIcon(Icons.add)),
+        findsOneWidget);
   });
 }
