@@ -533,7 +533,9 @@ class _WebFetchRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(children: [
-          IconFont.icon(IconFont.explore, size: 15, color: const Color(0xFFB388FF)),
+          IconFont.icon(IconFont.explore,
+              size: IconFont.normalizedSize(IconFont.explore),
+              color: const Color(0xFFB388FF)),
           const SizedBox(width: 6),
           Text('WebFetch',
               style: TextStyle(
@@ -1357,7 +1359,9 @@ class _PendingApprovalChip extends StatelessWidget {
         ),
         child: Row(
           children: [
-            IconFont.icon(IconFont.permission, size: 14, color: color),
+            IconFont.icon(IconFont.permission,
+                size: IconFont.normalizedSize(IconFont.permission),
+                color: color),
             const SizedBox(width: 6),
             const Text('待审批', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
             if (action.isNotEmpty) ...[

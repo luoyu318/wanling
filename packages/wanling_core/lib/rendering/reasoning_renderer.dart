@@ -79,7 +79,9 @@ class _StaticReasoningCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            IconFont.icon(IconFont.deepThink, size: 15, color: const Color(0xFFD4A017)),
+            IconFont.icon(IconFont.deepThink,
+                size: IconFont.normalizedSize(IconFont.deepThink),
+                color: const Color(0xFFD4A017)),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
@@ -165,7 +167,9 @@ class _StreamingReasoningCardState extends State<_StreamingReasoningCard>
                     final opacity = 0.25 + 0.75 * (math.sin(math.pi * 2 * t) * 0.5 + 0.5);
                     return Opacity(
                       opacity: opacity,
-                      child: IconFont.icon(IconFont.deepThink, size: 15, color: const Color(0xFF5B8BF7)),
+                      child: IconFont.icon(IconFont.deepThink,
+                          size: IconFont.normalizedSize(IconFont.deepThink),
+                          color: const Color(0xFF5B8BF7)),
                     );
                   },
                 ),
