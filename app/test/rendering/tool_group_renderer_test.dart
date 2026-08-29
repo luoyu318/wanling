@@ -154,6 +154,38 @@ void main() {
       expect(groups.length, 1);
       expect(groups.first, isA<SingleElementSlot>());
     });
+
+    test('未知工具名(MCP 开放集合)默认折叠进工具组', () {
+      final groups = groupAggregateElements([
+        tool('t1', 'zai-mcp-server_analyze_image'),
+        tool('t2', 'lark-im_send_message'),
+      ]);
+      expect(groups.length, 1);
+      expect(groups.first, isA<ToolGroupSlot>());
+      expect((groups.first as ToolGroupSlot).cards.length, 2);
+      expect(
+          categoryOfTool((groups.first as ToolGroupSlot).cards.first),
+          ToolCategory.tool);
+    });
+
+    test('未知工具与已知类别相邻拆组:zai-*, bash → 工具组+命令组', () {
+      final groups = groupAggregateElements([
+        tool('t1', 'zai-mcp-server_analyze_image'), tool('t2', 'bash'),
+      ]);
+      expect(groups.length, 2);
+      expect(
+          categoryOfTool((groups[0] as ToolGroupSlot).cards.first),
+          ToolCategory.tool);
+      expect(
+          categoryOfTool((groups[1] as ToolGroupSlot).cards.first),
+          ToolCategory.command);
+    });
+
+    test('空名工具卡防御性平铺', () {
+      final groups = groupAggregateElements([tool('t1', '')]);
+      expect(groups.length, 1);
+      expect(groups.first, isA<SingleElementSlot>());
+    });
   });
 
   group('ToolGroupCard 标题', () {
@@ -190,6 +222,22 @@ void main() {
       final cards = [tool('e1', 'edit'), tool('w1', 'write')];
       await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
       expect(find.text('已编辑 2次编辑'), findsOneWidget);
+    });
+
+    testWidgets('工具组:已执行 2次工具(未知 MCP 工具)', (tester) async {
+      final cards = [
+        tool('t1', 'zai-mcp-server_analyze_image'),
+        tool('t2', 'lark-im_send_message'),
+      ];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc())));
+      expect(find.text('已执行 2次工具'), findsOneWidget);
+    });
+
+    testWidgets('工具组进行中:正在执行 1次工具', (tester) async {
+      final cards = [tool('t1', 'zai-mcp-server_analyze_image')];
+      await tester.pumpWidget(host(ToolGroupCard(cards: cards, rc: rc(streaming: true))));
+      final shimmer = tester.widget<ShimmerText>(find.byType(ShimmerText));
+      expect(shimmer.text, '正在执行 1次工具');
     });
 
     testWidgets('进行中标题含 ShimmerText', (tester) async {
