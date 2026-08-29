@@ -5,6 +5,8 @@ import 'package:wanling_core/theme/app_colors.dart';
 class NavAgentTab {
   final String id;
   final String name;
+
+  /// 预留字段:当前仅渲染首字母头像,不加载网络图片(Task 6 接线时决定是否补图片分支)
   final String? avatarUrl;
   final bool online;
   final int unread;
@@ -34,12 +36,13 @@ class NavTabBar extends StatelessWidget {
     required this.onSlotTap,
     required this.onMoreTap,
     required this.onAgentReorder,
-  });
+  }) : assert(agentTabs.length <= (showMore ? 2 : 3),
+      'showMore=true 时最多 2 个 agent 槽, 第 5 槽固定为「更多」');
 
   final int currentIndex;
   final int totalUnread;
 
-  /// 可见 agent 槽位内容(调用方保证 ≤3;showMore 时 ≤2)
+  /// 可见 agent 槽位内容(构造函数断言强制:≤3;showMore 时 ≤2)
   final List<NavAgentTab> agentTabs;
   final bool showMore;
 
@@ -48,8 +51,9 @@ class NavTabBar extends StatelessWidget {
   final ValueChanged<int> onSlotTap;
   final VoidCallback onMoreTap;
 
-  /// agent 槽间拖拽排序:draggedId 落到 agentTabs[targetIndex] 槽位
-  final void Function(String agentId, int targetIndex) onAgentReorder;
+  /// agent 槽间拖拽排序:draggedId 落到 agentTabs[targetAgentIndex] 槽位
+  /// **targetAgentIndex 为 agentTabs 列表内下标(非底栏槽位编号), 槽位 = agentIndex + 2**
+  final void Function(String agentId, int targetAgentIndex) onAgentReorder;
 
   @override
   Widget build(BuildContext context) {

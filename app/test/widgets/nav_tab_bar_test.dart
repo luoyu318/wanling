@@ -87,6 +87,22 @@ void main() {
     expect(moreTapped, isTrue);
   });
 
+  testWidgets('点 agent 槽回调 onSlotTap 传槽位编号(首个 agent 槽=2)',
+      (tester) async {
+    var tappedSlot = -1;
+    await tester.pumpWidget(_wrap(NavTabBar(
+      currentIndex: 0,
+      totalUnread: 0,
+      agentTabs: [_tab('a1'), _tab('a2')],
+      showMore: false,
+      onSlotTap: (slot) => tappedSlot = slot,
+      onMoreTap: () {},
+      onAgentReorder: (_, _) {},
+    )));
+    await tester.tap(find.text('n-a1'));
+    expect(tappedSlot, 2);
+  });
+
   testWidgets('长按拖拽 agent 槽到另一 agent 槽触发 onAgentReorder',
       (tester) async {
     final reorderCalls = <String>[];
@@ -97,7 +113,8 @@ void main() {
       showMore: false,
       onSlotTap: (_) {},
       onMoreTap: () {},
-      onAgentReorder: (id, slot) => reorderCalls.add('$id->$slot'),
+      onAgentReorder: (id, targetAgentIndex) =>
+          reorderCalls.add('$id->$targetAgentIndex'),
     )));
     // 长按 a1 槽并拖到 a2 槽中心
     final a1Center = tester.getCenter(find.text('n-a1'));
@@ -108,6 +125,6 @@ void main() {
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(reorderCalls, ['a1->1']);
+    expect(reorderCalls, ['a1->1']); // 1 = a2 在 agentTabs 内的下标(非槽位编号)
   });
 }
