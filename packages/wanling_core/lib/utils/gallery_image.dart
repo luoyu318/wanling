@@ -108,6 +108,22 @@ List<GalleryImage> collectConversationImages(
       if (fileId.isNotEmpty && seen.add(fileId)) {
         result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
       }
+    } else if (type == MsgType.mixed) {
+      // mixed(图文)的 items 图片也进画廊,否则点击 mixed 图片无法放大定位
+      // (openGallery indexWhere 落空)。函数末尾按消息级 newest-first 反转,
+      // 但消息内 items 是发送顺序(首图=第一张),需反向遍历抵消反转,
+      // 画廊内保持「先发的先看」。非 image 条目跳过。
+      final items = ((m.content['data']?['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .toList()
+          .reversed;
+      for (final item in items) {
+        if (item['type'] != 'image') continue;
+        final fileId = item['file_id'];
+        if (fileId is String && fileId.isNotEmpty && seen.add(fileId)) {
+          result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
+        }
+      }
     } else if (type == MsgType.markdown) {
       final text = m.content['data']?['text'] as String?;
       for (final fileId in extractInternalImageIds(text)) {

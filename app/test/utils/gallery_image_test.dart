@@ -102,6 +102,61 @@ void main() {
       expect(
           collectConversationImages([], 'https://h', 'tok'), <GalleryImage>[]);
     });
+
+    test('mixed 消息的 items 图片收集(单图)', () {
+      final messages = [
+        msg('m1', 'mixed', {
+          'text': '看这张',
+          'items': [
+            {'type': 'image', 'file_id': 'mix1'},
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['mix1']);
+    });
+
+    test('mixed 多图保持 items 顺序,非 image 条目跳过', () {
+      final messages = [
+        msg('m1', 'mixed', {
+          'items': [
+            {'type': 'image', 'file_id': 'a'},
+            {'type': 'text', 'text': 'note'}, // 非 image 跳过
+            {'type': 'image', 'file_id': 'b'},
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['a', 'b']);
+    });
+
+    test('mixed 与 image 混排:时间正序 + 去重', () {
+      // newest first：m1 最新。img1 跨消息重复,去重保留最新位置(m1)。
+      // 反转后时序:m2 的 img2(较旧)在前,m1 的 img1(最新)在后。
+      final messages = [
+        msg('m1', 'mixed',
+            {'items': [{'type': 'image', 'file_id': 'img1'}]}),
+        msg('m2', 'image', {'file_id': 'img2'}),
+        msg('m3', 'mixed',
+            {'items': [{'type': 'image', 'file_id': 'img1'}]}), // 重复,去重
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['img2', 'img1']);
+    });
+
+    test('mixed 无 items / file_id 缺失空串防御', () {
+      final messages = [
+        msg('m1', 'mixed', {'text': '只文字'}), // 无 items
+        msg('m2', 'mixed', {
+          'items': [
+            {'type': 'image'}, // 无 file_id
+            {'type': 'image', 'file_id': ''}, // 空串
+          ],
+        }),
+      ];
+      expect(collectConversationImages(messages, 'https://h', 'tok'),
+          <GalleryImage>[]);
+    });
   });
 
   group('saveToGallery', () {
