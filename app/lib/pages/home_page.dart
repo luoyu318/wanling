@@ -23,7 +23,6 @@ import '../widgets/unread_badge.dart';
 /// 设计要点：
 /// - PageView 当前仅 1 页：_AGroupPage（消息+万灵共享 AppBar）；
 ///   原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
-/// - _pageIndex 跟踪 PageView 当前页，_aIndex 跟踪 A 组内部 index
 /// - 底部 BottomNavigationBar 全局共享，暂保留 消息/万灵 两 item
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -139,11 +138,23 @@ class _HomePageState extends ConsumerState<HomePage> {
               child: AnimatedSlide(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOut,
-                offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+              offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+              // 滑动容器层整体投影(右移 4px + 16 模糊),与旧单层面板层次一致
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 16,
+                      offset: Offset(4, 0),
+                    ),
+                  ],
+                ),
                 child: Material(
                   type: MaterialType.transparency,
                   child: AccountSidebar(onClose: _closeSidebar),
                 ),
+              ),
               ),
             ),
           ),

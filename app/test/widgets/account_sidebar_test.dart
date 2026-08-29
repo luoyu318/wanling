@@ -313,7 +313,9 @@ void main() {
     testWidgets('关于菜单显示版本号', (tester) async {
       // PackageInfo.fromPlatform 默认走 Linux 平台实现(真实文件 IO),
       // 在 fake-async 测试环境永不完成;改用 MethodChannel 实现 + mock 通道。
+      final defaultInstance = PackageInfoPlatform.instance;
       PackageInfoPlatform.instance = MethodChannelPackageInfo();
+      addTearDown(() => PackageInfoPlatform.instance = defaultInstance);
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         _packageInfoChannel,
         (call) async => {

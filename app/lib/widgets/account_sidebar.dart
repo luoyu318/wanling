@@ -350,21 +350,29 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
         child: Column(
           children: [
             const SizedBox(height: 12),
-            for (var i = 0; i < state.logins.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: GestureDetector(
-                  // 当前项禁用点按(对齐原账号卡片):switchTo 对同索引是 no-op,
-                  // 但 _switchTo 仍会回调 onClose/弹成功 snackbar,必须在此挡掉
-                  onTap: i == state.selectedIndex
-                      ? null
-                      : () => _switchTo(i),
-                  onLongPressStart: (d) =>
-                      _showAccountActions(i, state.logins[i], d.globalPosition),
-                  child: _stripAvatar(state, i),
+            // 账号多时竖条内部滚动,「添加」按钮保持钉底
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    for (var i = 0; i < state.logins.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: GestureDetector(
+                          // 当前项禁用点按(对齐原账号卡片):switchTo 对同索引是 no-op,
+                          // 但 _switchTo 仍会回调 onClose/弹成功 snackbar,必须在此挡掉
+                          onTap: i == state.selectedIndex
+                              ? null
+                              : () => _switchTo(i),
+                          onLongPressStart: (d) => _showAccountActions(
+                              i, state.logins[i], d.globalPosition),
+                          child: _stripAvatar(state, i),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            const Spacer(),
+            ),
             OutlinedButton.icon(
               onPressed: _showAddDialog,
               icon: const Icon(Icons.add, size: 18),

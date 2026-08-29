@@ -51,99 +51,113 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(authProvider).user;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // —— 头部:大头像 + 名字 + server 副标题 + 签名 pill ——
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => context.push('/profile/edit'),
-                    child: Avatar(
-                      name: user?.displayName ?? '?',
-                      url: user?.avatarUrl,
-                      size: 64,
-                      radius: 14,
-                    ),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => context.push('/profile/edit'),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7F7F7),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        (user?.bio != null && user!.bio!.isNotEmpty)
-                            ? user.bio!
-                            : '输入你的个性签名...',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.textSecondary),
+    // 极小屏防溢出:头部 + 5 tile 超出可视高度时可滚动
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // —— 头部:大头像 + 名字 + server 副标题 + 签名 pill ——
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => context.push('/profile/edit'),
+                      child: Avatar(
+                        name: user?.displayName ?? '?',
+                        url: user?.avatarUrl,
+                        size: 64,
+                        radius: 14,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                user?.displayName ?? '未登录',
-                style: const TextStyle(
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => context.push('/profile/edit'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F7F7),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          (user?.bio != null && user!.bio!.isNotEmpty)
+                              ? user.bio!
+                              : '输入你的个性签名...',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  user?.displayName ?? '未登录',
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                user != null ? '注册于 ${user.createdAt.year}' : '',
-                style: const TextStyle(
-                    fontSize: 12, color: AppColors.textSecondary),
-              ),
-            ],
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  user != null ? '注册于 ${user.createdAt.year}' : '',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        const Divider(height: 1, color: AppColors.divider),
-        // —— 菜单区（原 ProfilePage 设置项）——
-        SettingsTile(
-          icon: Icons.person_outline,
-          label: '编辑资料',
-          onTap: () => context.push('/profile/edit'),
-        ),
-        SettingsTile(
-          icon: Icons.notifications_outlined,
-          label: '通知与后台',
-          onTap: () => PermissionHelper.openAppNotificationSettings(),
-        ),
-        SettingsTile(
-          icon: Icons.lock_outline,
-          label: '修改密码',
-          onTap: () => context.push('/change-password'),
-        ),
-        SettingsTile(
-          icon: Icons.info_outline,
-          label: '关于',
-          trailing: Text(_version,
+          const SizedBox(height: 8),
+          const Divider(height: 1, color: AppColors.divider),
+          // —— 菜单区（原 ProfilePage 设置项）——
+          SettingsTile(
+            icon: Icons.person_outline,
+            label: '编辑资料',
+            onTap: () => context.push('/profile/edit'),
+          ),
+          SettingsTile(
+            icon: Icons.notifications_outlined,
+            label: '通知与后台',
+            onTap: () => PermissionHelper.openAppNotificationSettings(),
+          ),
+          SettingsTile(
+            icon: Icons.lock_outline,
+            label: '修改密码',
+            onTap: () => context.push('/change-password'),
+          ),
+          SettingsTile(
+            icon: Icons.info_outline,
+            label: '关于',
+            trailing: Text(
+              _version,
               style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12)),
-          onTap: () => context.push('/about'),
-        ),
-        SettingsTile(
-          icon: Icons.logout,
-          label: '退出登录',
-          labelColor: AppColors.danger,
-          iconColor: AppColors.danger,
-          showDivider: false,
-          onTap: _confirmLogout,
-        ),
-      ],
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            onTap: () => context.push('/about'),
+          ),
+          SettingsTile(
+            icon: Icons.logout,
+            label: '退出登录',
+            labelColor: AppColors.danger,
+            iconColor: AppColors.danger,
+            showDivider: false,
+            onTap: _confirmLogout,
+          ),
+        ],
+      ),
     );
   }
 }
