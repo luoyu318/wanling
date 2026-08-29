@@ -3,12 +3,18 @@ import 'package:nested_scroll_views/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
+import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart'
+    show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
-import 'package:wanling_core/providers/conversation_provider.dart' show totalUnreadProvider;
+import 'package:wanling_core/providers/conversation_provider.dart'
+    show totalUnreadProvider;
+import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/app_action_menu.dart';
@@ -16,14 +22,20 @@ import '../widgets/avatar.dart';
 import '../widgets/connection_banner.dart';
 import '../widgets/local_store_banner.dart';
 import '../widgets/feedback/app_dialog.dart';
+import '../widgets/nav_tab_bar.dart';
 import '../widgets/unread_badge.dart';
 
-/// 主容器：承载底部导航 + PageView。
+/// 主容器：承载动态底部导航 + 多页 PageView。
 ///
 /// 设计要点：
-/// - PageView 当前仅 1 页：_AGroupPage（消息+万灵共享 AppBar）；
-///   原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
-/// - 底部 BottomNavigationBar 全局共享，暂保留 消息/万灵 两 item
+/// - 外层 NestedPageView 页 0 为 _AGroupPage（消息+万灵共享 AppBar），
+///   页 1..N 为 pinned agent 的 sessions 页（AgentSessionsPage embedded 模式，
+///   保活由其内部 AutomaticKeepAliveClientMixin 负责）
+/// - 底部 NavTabBar：2 固定槽（消息/万灵）+ agent 头像槽 + 可选「更多」槽；
+///   pinned 列表来自 effectivePinnedNavTabsProvider，槽位映射见 [_HomePageState._onNavTap]
+/// - 「更多」槽激活时显示溢出 agent（_activeOverflowId），点按弹底部抽屉
+///   （_showMoreSheet）点选切换
+/// - 原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
@@ -32,9 +44,27 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
+  /// pinned 数达到该值即出现「更多」槽(总槽 = 2 固定 + 2 agent + 更多 = 5)。
+  static const int _kOverflowThreshold = 4;
+
+  /// 溢出时可见 agent 数(槽 2/3)。
+  static const int _kVisibleWhenOverflow = 2;
+
+  /// A 组内部最后 tab(万灵)：跳去 agent 页前把 _aIndex 落在此，
+  /// 从 A 组反滑回时内容已就位，无抖动（与原「我的」逻辑同口径）。
+  static const int _aGroupLastIndex = 1;
+
   final PageController _pageCtrl = PageController(initialPage: 0);
-  int _aIndex = 0; // A 组内部 index：0=消息, 1=万灵
+  int _pageIndex = 0; // 0=A组(消息+万灵), i>=1 = pinned agent page i-1
+  int _aIndex = 0; // A组内部:0=消息 1=万灵
+  String? _activeOverflowId; // 「更多」槽激活的溢出 agent
   bool _sidebarOpen = false; // 左侧切换账号面板开关
+
+  // build 时刷新,手势回调读取(避免回调里重复 watch)
+  List<String> _pinnedAll = const [];
+  bool _showMore = false;
+  List<String> _visiblePinned = const [];
+  List<String> _overflowPinned = const [];
 
   void _openSidebar() => setState(() => _sidebarOpen = true);
   void _closeSidebar() => setState(() => _sidebarOpen = false);
@@ -45,23 +75,169 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.dispose();
   }
 
-  /// 底部导航点击：2 item → A 组内部 index。
-  /// 点消息/万灵：切 _aIndex（PageView 仅 1 页，无需跳页）。
-  void _onNavTap(int navIndex) {
-    if (navIndex == 0 || navIndex == 1) {
-      setState(() => _aIndex = navIndex);
+  /// 底部导航点击：槽位编号 0=消息 1=万灵 2..=可见 agent，showMore 时 4=更多。
+  void _onNavTap(int slot) {
+    if (slot == 0 || slot == 1) {
+      // 点消息/万灵：回 A 组页 + 切内部 index（沿用 addPostFrameCallback 防抖，
+      // 与 _AGroupPage.didUpdateWidget 的像素守卫配合避免重复跳页）
+      if (_pageIndex != 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
+        });
+      }
+      setState(() => _aIndex = slot);
+      return;
     }
+    if (_showMore && slot == 4) {
+      _showMoreSheet();
+      return;
+    }
+    final agentIdx = slot - 2;
+    if (agentIdx < 0 || agentIdx >= _visiblePinned.length) return;
+    _jumpToAgentPage(_visiblePinned[agentIdx]);
   }
 
-  /// PageView 页面变化（跟手滑动 settle 后触发）。当前仅 1 页，无变化。
-  void _onPageChanged(int pageIndex) {}
+  /// 跳到指定 agent 的 sessions 页（page = 1 + pinned 下标）。
+  /// 溢出 agent（下标 ≥ _kVisibleWhenOverflow）同时点亮「更多」槽。
+  void _jumpToAgentPage(String agentId) {
+    final page = 1 + _pinnedAll.indexOf(agentId);
+    if (page < 1) return;
+    setState(() {
+      // 从 A 组反滑回时落在万灵,无抖动(与原「我的」逻辑同口径)
+      _aIndex = _aGroupLastIndex;
+      _activeOverflowId =
+          (_showMore && _pinnedAll.indexOf(agentId) >= _kVisibleWhenOverflow)
+              ? agentId
+              : null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_pageCtrl.hasClients && _pageCtrl.page?.round() != page) {
+        _pageCtrl.jumpToPage(page);
+      }
+    });
+  }
 
-  /// 底部导航选中态：当前只有 A 组，直接取 _aIndex（消息/万灵）。
-  int get _currentNavIndex => _aIndex;
+  /// PageView settle 后同步选中态(含滑入溢出 agent 页时点亮更多槽)。
+  void _onPageChanged(int page) {
+    setState(() {
+      _pageIndex = page;
+      if (page >= 1 && page - 1 < _pinnedAll.length) {
+        final id = _pinnedAll[page - 1];
+        _activeOverflowId =
+            (_showMore && _pinnedAll.indexOf(id) >= _kVisibleWhenOverflow)
+                ? id
+                : null;
+      } else {
+        _activeOverflowId = null;
+      }
+    });
+  }
+
+  /// 底栏选中态:page 0 → _aIndex;agent 页 → 可见槽 2+i 或更多槽 4。
+  int get _currentNavIndex {
+    if (_pageIndex == 0) return _aIndex;
+    final idx = _pageIndex - 1;
+    if (!_showMore) return 2 + idx;
+    return idx < _kVisibleWhenOverflow ? 2 + idx : 4;
+  }
+
+  /// 「更多」底部抽屉：列出溢出 agent（在线态/未读/选中勾），点选切换。
+  void _showMoreSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('更多导航',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ),
+            for (final id in _overflowPinned)
+              Consumer(builder: (_, sheetRef, _) {
+                final a = sheetRef.watch(agentByIdProvider(id));
+                final unread = sheetRef.watch(agentTabUnreadProvider(id));
+                final active = id == _activeOverflowId;
+                return ListTile(
+                  leading: Avatar(
+                      name: a?.name ?? id, url: a?.avatarUrl, size: 40, radius: 12),
+                  title: Text(a?.name ?? id),
+                  subtitle: Text(
+                    a?.status == AgentStatus.online ? '在线' : '离线',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: unread > 0
+                      ? UnreadBadge(count: unread, radius: 8)
+                      : (active
+                          ? const Icon(Icons.check, color: AppColors.accentGreen)
+                          : null),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _jumpToAgentPage(id);
+                  },
+                );
+              }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// pinned agent id → 底栏槽位数据（名字/在线态/未读）。
+  NavAgentTab _toNavAgentTab(String id) {
+    final a = ref.watch(agentByIdProvider(id));
+    final unread = ref.watch(agentTabUnreadProvider(id));
+    return NavAgentTab(
+      id: id,
+      name: a?.name ?? id,
+      avatarUrl: a?.avatarUrl,
+      online: a?.status == AgentStatus.online,
+      unread: unread,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
+    _pinnedAll = ref.watch(effectivePinnedNavTabsProvider);
+    _showMore = _pinnedAll.length >= _kOverflowThreshold;
+    _visiblePinned = _showMore
+        ? _pinnedAll.take(_kVisibleWhenOverflow).toList()
+        : _pinnedAll;
+    _overflowPinned =
+        _showMore ? _pinnedAll.skip(_kVisibleWhenOverflow).toList() : [];
+
+    // pin 列表收缩(取消固定/agent 删除)时,当前页可能越界 → 回消息页
+    ref.listen(effectivePinnedNavTabsProvider, (prev, next) {
+      if (_pageIndex - 1 >= next.length && _pageIndex > 0) {
+        _activeOverflowId = null;
+        _pageIndex = 0;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
+        });
+      }
+    });
+
+    final activeOverflow = _overflowPinned.contains(_activeOverflowId)
+        ? _activeOverflowId
+        : null;
 
     return PopScope(
       canPop: !_sidebarOpen,
@@ -72,45 +248,39 @@ class _HomePageState extends ConsumerState<HomePage> {
       child: Stack(
         children: [
           Scaffold(
-            body: Column(
+            body: NestedPageView(
+              controller: _pageCtrl,
+              onPageChanged: _onPageChanged,
               children: [
-                Expanded(
-                  child: NestedPageView(
-                    controller: _pageCtrl,
-                    onPageChanged: _onPageChanged,
-                    children: [
-                      _AGroupPage(
-                        aIndex: _aIndex,
-                        onAIndexChanged: (i) => setState(() => _aIndex = i),
-                        onOpenSidebar: _openSidebar,
-                      ),
-                    ],
-                  ),
+                _AGroupPage(
+                  aIndex: _aIndex,
+                  onAIndexChanged: (i) => setState(() => _aIndex = i),
+                  onOpenSidebar: _openSidebar,
                 ),
+                // pinned agent 页(保活由 AgentSessionsPage 内部 mixin 负责)
+                for (final id in _pinnedAll)
+                  KeyedSubtree(
+                    key: ValueKey('nav-tab-$id'),
+                    child: AgentSessionsPage(agentId: id, embedded: true),
+                  ),
               ],
             ),
-            bottomNavigationBar: BottomNavigationBar(
+            bottomNavigationBar: NavTabBar(
               currentIndex: _currentNavIndex,
-              backgroundColor: const Color(0xFFF7F7F7),
-              onTap: _onNavTap,
-              items: [
-                BottomNavigationBarItem(
-                  icon: _TabIcon(
-                    icon: Icons.chat_bubble_outline,
-                    badge: totalUnread,
-                  ),
-                  activeIcon: _TabIcon(
-                    icon: Icons.chat_bubble,
-                    badge: totalUnread,
-                  ),
-                  label: '消息',
-                ),
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  activeIcon: Icon(Icons.auto_awesome),
-                  label: '万灵',
-                ),
+              totalUnread: totalUnread,
+              agentTabs: [
+                for (final id in _visiblePinned) _toNavAgentTab(id),
               ],
+              showMore: _showMore,
+              moreTab:
+                  activeOverflow == null ? null : _toNavAgentTab(activeOverflow),
+              onSlotTap: _onNavTap,
+              onMoreTap: _showMoreSheet,
+              onAgentReorder: (agentId, targetAgentIndex) =>
+                  ref.read(pinnedNavTabsProvider.notifier).reorderTo(
+                        agentId,
+                        targetAgentIndex,
+                      ),
             ),
           ),
           // —— 遮罩：覆盖全 Scaffold(含 tab 栏),常驻动画控制透明度 ——
@@ -270,29 +440,6 @@ class _AGroupPageState extends ConsumerState<_AGroupPage> {
           AgentListPage(),
         ],
       ),
-    );
-  }
-}
-
-/// tab icon + badge 包装。badge > 0 时右上角小红圆。
-class _TabIcon extends StatelessWidget {
-  final IconData icon;
-  final int badge;
-  const _TabIcon({required this.icon, required this.badge});
-
-  @override
-  Widget build(BuildContext context) {
-    if (badge <= 0) return Icon(icon);
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Icon(icon),
-        Positioned(
-          top: -6,
-          right: -10,
-          child: UnreadBadge(count: badge, radius: 8),
-        ),
-      ],
     );
   }
 }

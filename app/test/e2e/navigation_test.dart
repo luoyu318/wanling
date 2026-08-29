@@ -6,11 +6,13 @@
 //   wsProvider 在 auth.isAuthenticated 时会调用 connect()，连真实 WS 会失败/超时；
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
+import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:app/router.dart';
+import 'package:app/widgets/nav_tab_bar.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,6 +32,17 @@ final _testUser = User(
   avatarUrl: null,
   createdAt: DateTime.utc(2026, 6, 13),
 );
+
+/// 多 session agent fixture（pinned 导航场景用）。
+/// name 限制 ≤5 字符：NavTabBar 槽位 label 超 5 字符截断加省略号,
+/// find.text 按 name 断言/点击时必须用未截断形态。
+Agent _multiSessionAgent(String id, String name) => Agent(
+      id: id,
+      name: name,
+      status: AgentStatus.online,
+      type: 'opencode',
+      multiSession: true,
+    );
 
 void main() {
   setUp(() {
@@ -102,8 +115,8 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 应该看到 HomePage 的底部导航
-      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      // 应该看到 HomePage 的动态底部导航
+      expect(find.byType(NavTabBar), findsOneWidget);
       expect(find.text('消息'), findsWidgets);
       expect(find.text('万灵'), findsWidgets);
     });
@@ -151,6 +164,105 @@ void main() {
       await tester.tap(find.text('消息'));
       await tester.pumpAndSettle();
       expect(find.text('暂无 Agent'), findsNothing);
+    });
+
+    testWidgets('pinned 2 agent 平铺:槽位渲染 + 点击切换到 sessions 页',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1', 'a2'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'dev-1'),
+            _multiSessionAgent('a2', 'dsh-1'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any()))
+          .thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      // 底栏:消息/万灵/两个 agent 槽,无更多
+      expect(find.byType(NavTabBar), findsOneWidget);
+      expect(find.text('dev-1'), findsOneWidget);
+      expect(find.text('dsh-1'), findsOneWidget);
+      expect(find.text('更多'), findsNothing);
+
+      // 点 agent 槽 → sessions 页空状态
+      await tester.tap(find.text('dev-1'));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无会话'), findsOneWidget);
+    });
+
+    testWidgets('pinned 4 agent:出现更多槽,抽屉点选溢出 agent', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_pins_u1': ['a1', 'a2', 'a3', 'a4'],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+            _multiSessionAgent('a3', 'ag-3'),
+            _multiSessionAgent('a4', 'ag-4'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      // 可见:ag-1/ag-2 + 更多
+      expect(find.text('ag-1'), findsOneWidget);
+      expect(find.text('ag-2'), findsOneWidget);
+      expect(find.text('更多'), findsOneWidget);
+
+      // 点更多 → 抽屉列出溢出 agent
+      await tester.tap(find.text('更多'));
+      await tester.pumpAndSettle();
+      expect(find.text('ag-3'), findsOneWidget);
+      expect(find.text('ag-4'), findsOneWidget);
+
+      // 点选 ag-4 → 更多槽激活显示其名
+      await tester.tap(find.text('ag-4').last);
+      await tester.pumpAndSettle();
+      expect(find.text('暂无会话'), findsOneWidget);
     });
   });
 }
