@@ -17,6 +17,7 @@ import 'pages/edit_profile_page.dart';
 import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/nav_edit_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
 import 'pages/select_account_page.dart';
@@ -140,6 +141,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/select-account',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const SelectAccountPage(),
+          key: state.pageKey,
+        ),
+      ),
+      // 底栏编辑页:长按底栏槽或「更多」抽屉「编辑」进入。
+      GoRoute(
+        path: '/nav-edit',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const NavEditPage(),
           key: state.pageKey,
         ),
       ),
