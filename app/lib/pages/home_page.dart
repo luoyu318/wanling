@@ -123,10 +123,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     return _showMore ? _visibleSlots.length : 0;
   }
 
-  /// 「更多」底部抽屉：列出溢出 agent（在线态/未读/选中勾），点选切换。
+  /// 「更多」底部抽屉:溢出 agent 4 列网格 + 右上「编辑」进底栏编辑页。
   void _showMoreSheet() {
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: const Color(0xFFF7F7F7),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -143,39 +144,46 @@ class _HomePageState extends ConsumerState<HomePage> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('更多导航',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Row(
+                children: [
+                  const Text('更多',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(sheetCtx);
+                      context.push('/nav-edit');
+                    },
+                    child: const Text('编辑',
+                        style: TextStyle(color: Color(0xFF3370FF))),
+                  ),
+                ],
               ),
             ),
-            for (final id in _overflowPinned)
-              Consumer(builder: (_, sheetRef, _) {
-                final a = sheetRef.watch(agentByIdProvider(id));
-                final unread = sheetRef.watch(agentTabUnreadProvider(id));
-                final active = id == _activeTabId;
-                return ListTile(
-                  leading: Avatar(
-                      name: a?.name ?? id, url: a?.avatarUrl, size: 40, radius: 12),
-                  title: Text(a?.name ?? id),
-                  subtitle: Text(
-                    a?.status == AgentStatus.online ? '在线' : '离线',
-                    style: const TextStyle(fontSize: 11),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              crossAxisCount: 4,
+              mainAxisSpacing: 16,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.72,
+              children: [
+                for (final id in _overflowPinned)
+                  _MoreSheetItem(
+                    key: ValueKey('more-$id'),
+                    agentId: id,
+                    active: id == _activeTabId,
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      _jumpToAgentPage(id);
+                    },
                   ),
-                  trailing: unread > 0
-                      ? UnreadBadge(count: unread, radius: 8)
-                      : (active
-                          ? const Icon(Icons.check, color: AppColors.accentGreen)
-                          : null),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _jumpToAgentPage(id);
-                  },
-                );
-              }),
-            const SizedBox(height: 8),
+              ],
+            ),
           ],
         ),
       ),
@@ -329,6 +337,97 @@ class _HomePageState extends ConsumerState<HomePage> {
         ],
       ),
     );
+  }
+}
+
+/// 抽屉网格项:白圆角方块(头像+在线绿点+未读角标)+灰名字;激活绿描边。
+class _MoreSheetItem extends ConsumerWidget {
+  const _MoreSheetItem({
+    super.key,
+    required this.agentId,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String agentId;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final agent = ref.watch(agentByIdProvider(agentId));
+    final unread = ref.watch(agentTabUnreadProvider(agentId));
+    final name = agent?.name ?? agentId;
+    final box = GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: active
+                      ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                      : null,
+                ),
+                // UnreadBadge 无 child 参数,用 Stack + Positioned 叠右上角红标。
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Center(
+                      child: Avatar(
+                        name: name,
+                        url: agent?.avatarUrl,
+                        size: 40,
+                        radius: 20,
+                      ),
+                    ),
+                    if (unread > 0)
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: UnreadBadge(count: unread),
+                      ),
+                  ],
+                ),
+              ),
+              if (agent?.status == AgentStatus.online)
+                Positioned(
+                  right: 2,
+                  bottom: 2,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentGreen,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            name.characters.length > 6
+                ? '${name.characters.take(6).join()}…'
+                : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+    return box;
   }
 }
 
