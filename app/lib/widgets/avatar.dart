@@ -43,6 +43,10 @@ class Avatar extends ConsumerWidget {
   final double radius;
   final int unreadCount;
 
+  /// true = 浅色同色字母块(mockup 对齐样式):色板色 15% alpha 底 + 同色字 w600。
+  /// 仅一级消息列表启用;默认 false 保持既有实底白字样式。
+  final bool tinted;
+
   const Avatar({
     super.key,
     required this.name,
@@ -50,6 +54,7 @@ class Avatar extends ConsumerWidget {
     this.size = 40,
     this.radius = 6, // 默认方圆角，IM 风
     this.unreadCount = 0,
+    this.tinted = false,
   });
 
   // 颜色板（主流 IM 紧凑风配色）
@@ -73,7 +78,8 @@ class Avatar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final letter = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
-    final bg = colorFor(name);
+    final paletteColor = colorFor(name);
+    final bg = tinted ? paletteColor.withValues(alpha: 0.15) : paletteColor;
 
     // 头像 URL 拼接策略：
     //   - 内部图（/api/files/xxx 相对路径）→ 走 thumbUrl（?thumb=1 缩略图）。
@@ -163,9 +169,9 @@ class Avatar extends ConsumerWidget {
       child: Text(
         letter,
         style: TextStyle(
-          color: Colors.white,
+          color: tinted ? colorFor(name) : Colors.white,
           fontSize: size * 0.45,
-          fontWeight: FontWeight.w500,
+          fontWeight: tinted ? FontWeight.w600 : FontWeight.w500,
         ),
       ),
     );
