@@ -1,4 +1,3 @@
-import 'package:wanling_core/models/pairing.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -1,10 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
@@ -781,7 +778,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 菜单(单条)和多选模式(批量)共用此方法,作协调者,保留在 chat_page。
   Future<void> _confirmDelete(List<String> ids, {bool recall = false}) async {
     if (ids.isEmpty) return;
-    showAppDialog(
+    unawaited(showAppDialog(
       context: context,
       title: recall ? '撤回消息' : '删除消息',
       content: Text(
@@ -815,7 +812,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           }
         }
       },
-    );
+    ));
   }
 
   Future<void> _showModelPicker(
@@ -918,9 +915,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
 
     // 监听打字态 + hasMore 变化，合并更新偏移量（避免两路 provider 索引抖动）
-    ref.listen(typingProvider, (_, __) => _refreshExtraItems());
+    ref.listen(typingProvider, (_, _) => _refreshExtraItems());
     // agent 状态(busy/retry/idle)变化同样需要重算 TypingBubble 插槽显隐
-    ref.listen(agentStatusProvider, (_, __) => _refreshExtraItems());
+    ref.listen(agentStatusProvider, (_, _) => _refreshExtraItems());
 
     final agentName = _agentName;
     // 当前 user id,用于判断消息方向（user-user 会话双方 senderType 都是 'user'，

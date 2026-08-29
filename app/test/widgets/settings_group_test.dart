@@ -54,8 +54,8 @@ void main() {
   });
 
   testWidgets('空 children 不崩且渲染白底容器', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: SettingsGroup(children: const [])),
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SettingsGroup(children: [])),
     ));
 
     expect(find.byType(SettingsGroup), findsOneWidget);

@@ -86,7 +86,7 @@ class _CompactDividerState extends State<CompactDivider>
 }
 
 /// 3 个圆点呼吸动画(running 态用)。
-/// _controller 在 parent 里 repeat,这里只读 Animation<double>。
+/// _controller 在 parent 里 repeat,这里只读 `Animation<double>`。
 class _BreathingDots extends StatelessWidget {
   final AnimationController controller;
 

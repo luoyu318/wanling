@@ -127,6 +127,40 @@ async def test_create_approval_auto_approved():
 
 
 @pytest.mark.asyncio
+async def test_download_file_returns_content_type():
+    def handler(request):
+        assert request.headers["Authorization"] == "Bearer jwt-token"
+        return httpx.Response(200, content=b"\x89PNG\r\n\x1a\n", headers={"Content-Type": "image/png"})
+
+    client = build_client(handler)
+    result = await client.download_file("file-1")
+    assert result.buffer == b"\x89PNG\r\n\x1a\n"
+    assert result.content_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_download_file_without_content_type():
+    def handler(request):
+        return httpx.Response(200, content=b"raw-bytes")
+
+    client = build_client(handler)
+    result = await client.download_file("file-1")
+    assert result.buffer == b"raw-bytes"
+    assert result.content_type is None
+
+
+@pytest.mark.asyncio
+async def test_download_file_http_error_raises():
+    def handler(request):
+        return httpx.Response(404, json={"ok": False, "error": {"code": "not_found", "message": "no file"}})
+
+    client = build_client(handler)
+    with pytest.raises(ApiError) as exc:
+        await client.download_file("file-404")
+    assert exc.value.status == 404
+
+
+@pytest.mark.asyncio
 async def test_upload_exceeds_max_bytes():
     import os
     import tempfile

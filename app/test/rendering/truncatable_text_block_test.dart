@@ -5,12 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('TruncatableTextBlock', () {
     testWidgets('空文本返 SizedBox.shrink', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: TruncatableTextBlock(
             text: '',
-            sheetTitle: const Text('标题'),
-            textStyle: const TextStyle(fontSize: 12),
+            sheetTitle: Text('标题'),
+            textStyle: TextStyle(fontSize: 12),
           ),
         ),
       ));
@@ -60,7 +60,7 @@ void main() {
       // 抽屉出现,内含 SelectableText 且文本是全文
       final selectable = find.byType(SelectableText);
       expect(selectable, findsOneWidget);
-      expect((tester.widget<SelectableText>(selectable) as SelectableText).data, longText);
+      expect((tester.widget<SelectableText>(selectable)).data, longText);
       // 标题渲染
       expect(find.text('我的标题'), findsOneWidget);
     });

@@ -702,6 +702,83 @@ describe("SyncEngine handleIncomingMessage image/file/mixed 分支", () => {
     )
   })
 
+  it("mixed 带 text 时提示文本携带用户文字", async () => {
+    const SyncEngine = await freshLoad()
+    const { upsertSessionMap } = await import("./mapper.js")
+    upsertSessionMap({
+      wanlingConvId: "conv-mix3",
+      opencodeSessionId: "sess-mix3",
+      lastSyncAt: new Date().toISOString(),
+      messageCount: 0,
+    })
+    const downloader = {
+      download: vi.fn().mockResolvedValue({
+        path: "/cache/t.png",
+        mime: "image/png",
+        filename: "t.png",
+      }),
+    }
+    const { engine, opencode } = makeEngine(SyncEngine, "", downloader)
+
+    await (engine as any).handleIncomingMessage({
+      conversation_id: "conv-mix3",
+      sender_type: "user",
+      sender_id: "u1",
+      content: {
+        msg_type: "mixed",
+        data: {
+          text: "帮我看下这个报错",
+          items: [{ type: "image", file_id: "mix-3" }],
+        },
+      },
+    })
+
+    expect(opencode.promptAsync).toHaveBeenCalledWith(
+      "sess-mix3",
+      "[用户发送了混合内容: 帮我看下这个报错,位于: /cache/t.png]",
+      undefined,
+      undefined,
+    )
+  })
+
+  it("mixed 无 text 时提示文本维持原样(不含空冒号)", async () => {
+    const SyncEngine = await freshLoad()
+    const { upsertSessionMap } = await import("./mapper.js")
+    upsertSessionMap({
+      wanlingConvId: "conv-mix4",
+      opencodeSessionId: "sess-mix4",
+      lastSyncAt: new Date().toISOString(),
+      messageCount: 0,
+    })
+    const downloader = {
+      download: vi.fn().mockResolvedValue({
+        path: "/cache/u.png",
+        mime: "image/png",
+        filename: "u.png",
+      }),
+    }
+    const { engine, opencode } = makeEngine(SyncEngine, "", downloader)
+
+    await (engine as any).handleIncomingMessage({
+      conversation_id: "conv-mix4",
+      sender_type: "user",
+      sender_id: "u1",
+      content: {
+        msg_type: "mixed",
+        data: {
+          items: [{ type: "image", file_id: "mix-4" }],
+        },
+      },
+    })
+
+    expect(opencode.promptAsync).toHaveBeenCalledWith(
+      "sess-mix4",
+      "[用户发送了混合内容,位于: /cache/u.png]",
+      undefined,
+      undefined,
+    )
+  })
+
   it("mixed 顶层 file_id 兜底(items 缺失时)", async () => {
     const SyncEngine = await freshLoad()
     const { upsertSessionMap } = await import("./mapper.js")

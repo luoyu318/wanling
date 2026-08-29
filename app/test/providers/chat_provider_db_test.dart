@@ -1,6 +1,5 @@
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/message.dart';
-import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/models/unread_info.dart';
 import 'package:wanling_core/models/ws_message.dart';
 import 'package:wanling_core/providers/chat_provider.dart';

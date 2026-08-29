@@ -39,7 +39,7 @@ void main() {
     addTearDown(container.dispose);
     // chatProvider 是 autoDispose.family:无 listener 时容器会在帧间隙回收实例。
     // 同 chat_provider_test.dart,建立长期 listener 锁定实例。
-    container.listen(chatProvider((convId: 'c1', agentId: 'a1')), (_, __) {});
+    container.listen(chatProvider((convId: 'c1', agentId: 'a1')), (_, _) {});
     return container;
   }
 
@@ -76,7 +76,7 @@ void main() {
           'msg_type': msgType,
           'data': {
             'text': text,
-            if (streamId != null) '_stream_id': streamId,
+            '_stream_id': ?streamId,
           },
         },
         'created_at': '2026-07-24T00:00:00Z',
@@ -101,7 +101,7 @@ void main() {
         'content': {
           'msg_type': 'aggregate_card',
           'data': {
-            if (schemaVer != null) 'schema_ver': schemaVer,
+            'schema_ver': ?schemaVer,
             'state': state,
             'elements': elements ?? [],
           },
@@ -130,7 +130,7 @@ void main() {
     test('思考中(isStreaming 占位)到达的卡片插到占位之前,不排在占位下方',
         () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -167,7 +167,7 @@ void main() {
 
     test('无占位时新消息仍 append 末尾(保持原语义)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -184,7 +184,7 @@ void main() {
   group('STREAM 流式占位', () {
     test('首块 delta → 插占位(id=stream:s1, isStreaming=true, agent)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -204,7 +204,7 @@ void main() {
 
     test('后续块 delta → 替换占位 text(累积全量),id 不变,不新增', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -223,7 +223,7 @@ void main() {
 
     test('STREAM 仅处理本会话事件(其他会话忽略)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -239,7 +239,7 @@ void main() {
       // step_finish 走独立 case 不经流式通道。此处验证防御性过滤兜底:
       // 即便未来 plugin 误发 step_finish STREAM,也不应插入无法被终态替换的占位。
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -254,7 +254,7 @@ void main() {
     test('带 _stream_id → 同位置替换占位,isStreaming 清除,_stream_id 字段清理',
         () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -285,7 +285,7 @@ void main() {
     test('带 _stream_id 但占位不存在 → 正常头部插入(刚进会话未收到 STREAM)',
         () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -303,7 +303,7 @@ void main() {
 
     test('不带 _stream_id → 正常头部插入(向后兼容)', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -341,7 +341,7 @@ void main() {
             ]);
 
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     container.read(chatProvider(key).notifier);
     await pump(20); // 让 _initialize 跑到 await getUnreadInfo 挂起
 
@@ -364,7 +364,7 @@ void main() {
 
   test('_initialize 完成后 isServerInitialized=true(底部栏稳定信号)', () async {
     final container = makeContainer();
-    final key = (convId: 'c1', agentId: 'a1');
+    const key = (convId: 'c1', agentId: 'a1');
     container.read(chatProvider(key).notifier);
     await pump();
     // server 三分支任一完成即置 true,pendingInitialScroll 据此判断
@@ -475,7 +475,7 @@ void main() {
   group('聚合卡 op=14 元素级流式(带 aggregate 字段)', () {
     test('带 aggregate 的 delta 更新聚合卡元素 data.text,不建独立占位', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -508,7 +508,7 @@ void main() {
 
     test('多元素卡片仅更新 element_id 匹配的元素,其余保持不变', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -544,7 +544,7 @@ void main() {
     test('aggregate 帧找不到聚合卡 → 不建占位(静默丢弃,等待 MESSAGE_UPDATE 兜底)',
         () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -557,7 +557,7 @@ void main() {
 
     test('aggregate 帧 element_id 不匹配 → 卡片不动,不建占位', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -584,7 +584,7 @@ void main() {
 
     test('非聚合模式(无 aggregate 字段)仍走旧占位逻辑', () async {
       final container = makeContainer();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
       container.read(chatProvider(key).notifier);
       await pump();
 
@@ -637,7 +637,7 @@ void main() {
 
     test('append:追加 element 到末尾,不改 state/既有元素', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'append',
@@ -664,7 +664,7 @@ void main() {
 
     test('update:按 element_id 整体替换元素 data,其他元素不变', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'update',
@@ -687,7 +687,7 @@ void main() {
 
     test('update:element_id 不存在 → 幂等跳过,卡片内容不变', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'update',
@@ -705,7 +705,7 @@ void main() {
 
     test('remove:按 element_id 删除元素', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'remove',
@@ -721,7 +721,7 @@ void main() {
 
     test('remove:element_id 不存在 → 幂等跳过', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'remove',
@@ -735,7 +735,7 @@ void main() {
 
     test('reorder:按 order 重排,未列出的元素保序追加尾部', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       // 追加第三个元素再重排(验证 reorder 不丢未列出元素)
       ws.emitUpdate(deltaUpdate({
@@ -763,7 +763,7 @@ void main() {
 
     test('set_state:改 data.state,元素不变', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'set_state',
@@ -779,7 +779,7 @@ void main() {
 
     test('set_silent:改顶层 content.silent,data/state/elements 不变', () async {
       final container = await seedCard();
-      final key = (convId: 'c1', agentId: 'a1');
+      const key = (convId: 'c1', agentId: 'a1');
 
       ws.emitUpdate(deltaUpdate({
         'op': 'set_silent',
@@ -935,7 +935,7 @@ void main() {
               .firstWhere((m) => m.id == 'agg-1')
               .content;
       expect(
-        ((content['data'] as Map)['elements'] as List).first['data']['text'],
+        ((((content['data'] as Map)['elements'] as List).first as Map)['data'] as Map)['text'] as String,
         '思考更新',
         reason: '聚合流式帧应更新元素 text',
       );

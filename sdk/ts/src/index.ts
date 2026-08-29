@@ -1,7 +1,7 @@
 export { WanlingClient } from "./client.js"
 export type { WanlingClientOptions } from "./client.js"
 export { WanlingRestClient, ApiError } from "./rest.js"
-export type { SessionMeta, ApprovalDetail, AggregatePatchOp } from "./rest.js"
+export type { SessionMeta, ApprovalDetail, AggregatePatchOp, DownloadedFile } from "./rest.js"
 export { Approvals } from "./approvals.js"
 export { AggregateCard } from "./aggregate_card.js"
 export type { AggregateCardOptions, AggregateElement, AggregateFooter } from "./aggregate_card.js"

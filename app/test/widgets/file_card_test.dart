@@ -4,7 +4,7 @@ import 'package:wanling_core/widgets/file_card.dart';
 
 void main() {
   testWidgets('notDownloaded shows filename, size, hint, download button', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: FileCard(
         fileId: 'abc',
         filename: 'test.pdf',
@@ -21,7 +21,7 @@ void main() {
   });
 
   testWidgets('downloading state shows progress text and progress bar', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: FileCard(
         fileId: 'abc',
         filename: 'test.pdf',
@@ -39,7 +39,7 @@ void main() {
   });
 
   testWidgets('downloaded state shows green status and folder_open button', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: FileCard(
         fileId: 'abc',
         filename: 'test.pdf',
@@ -54,7 +54,7 @@ void main() {
   });
 
   testWidgets('uploading state shows orange progress', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: FileCard(
         fileId: 'abc',
         filename: 'test.pdf',
@@ -69,7 +69,7 @@ void main() {
   });
 
   testWidgets('size formatting handles MB and GB', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: Column(children: [
         FileCard(fileId: 'a', filename: 'mb.pdf', mimeType: 'application/pdf', fileSize: 2 * 1024 * 1024, isMe: false, downloadState: DownloadState.notDownloaded),
         FileCard(fileId: 'b', filename: 'gb.pdf', mimeType: 'application/pdf', fileSize: 3 * 1024 * 1024 * 1024, isMe: false, downloadState: DownloadState.notDownloaded),
@@ -80,7 +80,7 @@ void main() {
   });
 
   testWidgets('sender has purple border, receiver has gray border', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(
       body: Column(children: [
         FileCard(fileId: 'a', filename: 'me.pdf', mimeType: 'application/pdf', fileSize: 100, isMe: true, downloadState: DownloadState.notDownloaded),
         FileCard(fileId: 'b', filename: 'them.pdf', mimeType: 'application/pdf', fileSize: 100, isMe: false, downloadState: DownloadState.notDownloaded),

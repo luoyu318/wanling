@@ -101,7 +101,7 @@ void main() {
     await db.putMessage(_mkMsg('id1', 'conv1', createdAt: DateTime(2026, 7, 1)));
     await db.updateContent('id1', {'msg_type': 'text', 'data': {'text': 'edited'}});
     final result = await db.getMessages(conversationId: 'conv1');
-    expect(result.first.content['data']['text'], 'edited');
+    expect(((result.first.content['data'] as Map)['text']) as String, 'edited');
   });
 
   test('markRecalled 切 isRecalled + recalledByName', () async {
@@ -381,31 +381,31 @@ void main() {
     test('parent_msg_id IS NULL 的 permission_card/question_card 被删', () async {
       // 脏数据:parent_msg_id IS NULL 的终态审批卡(v4 残留,parent 丢失)
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('dirty1','c1','agent','a1','{\"msg_type\":\"permission_card\",\"data\":{\"status\":\"approved\"}}',"
           "0,'sent',0,'',NULL,0)");
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('dirty2','c1','agent','a1','{\"msg_type\":\"question_card\",\"data\":{\"status\":\"pending\"}}',"
           "1,'sent',0,'',NULL,0)");
       // 正常消息:普通文本(parent NULL,但不是审批卡)→ 保留
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('normal1','c1','user','u1','{\"msg_type\":\"text\",\"data\":{\"text\":\"hi\"}}',"
           "2,'sent',0,'',NULL,0)");
       // 正常审批卡:parent_msg_id 非空 → 保留
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('clean1','c1','agent','a1','{\"msg_type\":\"permission_card\",\"data\":{\"status\":\"pending\"}}',"
           "3,'sent',0,'','parent-id',0)");
 
       // 执行 v5 清理 SQL(与 migration from<5 完全一致)
       await db.customStatement(
-          "DELETE FROM messages WHERE parent_msg_id IS NULL AND "
+          'DELETE FROM messages WHERE parent_msg_id IS NULL AND '
           "(content LIKE '%\"msg_type\":\"permission_card\"%' OR "
           "content LIKE '%\"msg_type\":\"question_card\"%')");
 
@@ -426,26 +426,26 @@ void main() {
     test('json_extract 清掉 v5 LIKE 漏掉的格式(含空格的 JSON)', () async {
       // 模拟 v5 LIKE 漏掉的脏数据:JSON 键值间含空格(v5 的 LIKE 模式无空格匹配失败)
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('dirty-space','c1','agent','a1','{\"msg_type\": \"permission_card\", \"data\": {\"status\": \"approved\"}}',"
           "0,'sent',0,'',NULL,0)");
       // 正常消息:普通文本(parent NULL,但不是审批卡)→ 保留
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('normal1','c1','user','u1','{\"msg_type\":\"text\",\"data\":{\"text\":\"hi\"}}',"
           "2,'sent',0,'',NULL,0)");
       // 正常审批卡:parent_msg_id 非空 → 保留
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('clean1','c1','agent','a1','{\"msg_type\": \"permission_card\", \"data\": {\"status\": \"pending\"}}',"
           "3,'sent',0,'','parent-id',0)");
 
       // 执行 v6 清理 SQL(与 migration from<6 完全一致)
       await db.customStatement(
-          "DELETE FROM messages WHERE parent_msg_id IS NULL AND "
+          'DELETE FROM messages WHERE parent_msg_id IS NULL AND '
           "json_extract(content, '\$.msg_type') IN "
           "('permission_card', 'question_card')");
 
@@ -465,32 +465,32 @@ void main() {
     test('清掉 parent=NULL 的审批卡(子 agent 事件残留),保留主 session 顶层卡', () async {
       // 脏数据 1:parent=NULL 的终态 permission_card(应被清)
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('dirty-pc','c1','agent','a1','{\"msg_type\":\"permission_card\",\"data\":{\"status\":\"approved\"}}',"
           "0,'sent',0,'',NULL,0)");
       // 脏数据 2:parent=NULL 的 question_card(应被清)
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('dirty-qc','c1','agent','a1','{\"msg_type\":\"question_card\",\"data\":{\"status\":\"answered\"}}',"
           "1,'sent',0,'',NULL,0)");
       // 正常消息:普通文本 → 保留
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('text1','c1','user','u1','{\"msg_type\":\"text\",\"data\":{\"text\":\"hi\"}}',"
           "2,'sent',0,'',NULL,0)");
       // 正常子审批卡:parent 非空 → 保留(loadMoreHistory 写入的合法 server 数据)
       await db.customStatement(
-          "INSERT INTO messages (id, conversation_id, sender_type, sender_id, "
-          "content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) "
+          'INSERT INTO messages (id, conversation_id, sender_type, sender_id, '
+          'content, created_at, status, is_recalled, recalled_by_name, parent_msg_id, updated_at) '
           "VALUES ('clean-child-pc','c1','agent','a1','{\"msg_type\":\"permission_card\",\"data\":{\"status\":\"approved\"}}',"
           "3,'sent',0,'','parent-1',0)");
 
       // 执行 v7 清理 SQL(与 migration from<7 完全一致)
       await db.customStatement(
-          "DELETE FROM messages WHERE parent_msg_id IS NULL AND "
+          'DELETE FROM messages WHERE parent_msg_id IS NULL AND '
           "json_extract(content, '\$.msg_type') IN "
           "('permission_card', 'question_card')");
 

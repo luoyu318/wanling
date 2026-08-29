@@ -102,8 +102,8 @@ class _ConnectionBannerState extends ConsumerState<ConnectionBanner> {
   @override
   Widget build(BuildContext context) {
     if (!_show) return const SizedBox.shrink();
-    return MaterialBanner(
-      content: const Row(
+    return const MaterialBanner(
+      content: Row(
         children: [
           Icon(Icons.cloud_off, size: 16, color: Colors.white),
           SizedBox(width: 12),
@@ -113,8 +113,8 @@ class _ConnectionBannerState extends ConsumerState<ConnectionBanner> {
           ),
         ],
       ),
-      backgroundColor: const Color(0xFFE8842C),
-      actions: const [SizedBox.shrink()],
+      backgroundColor: Color(0xFFE8842C),
+      actions: [SizedBox.shrink()],
     );
   }
 }

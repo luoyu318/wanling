@@ -15,6 +15,8 @@ import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
+import 'widgets/chat/builtin_renderers.dart'
+    show registerMixedContentRenderer;
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';
 import 'package:wanling_core/services/notification_service.dart';
@@ -69,6 +71,9 @@ Future<void> main() async {
   // 注册内置消息内容渲染器（text/markdown/image/file）。
   // 新增 HTML/卡片时在 registerBuiltinRenderers 内追加。
   registerBuiltinRenderers();
+
+  // mixed(图文)渲染器依赖 app 侧 BubbleWithTail,在 core 内置渲染器之后追加注册。
+  registerMixedContentRenderer();
 
   // 1. 初始化本地通知
   await NotificationService.instance.init();

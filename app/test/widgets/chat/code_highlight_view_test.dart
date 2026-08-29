@@ -7,7 +7,7 @@ import 'package:app/widgets/chat/code_highlight_view.dart';
 void main() {
   testWidgets('渲染代码 + 行号', (tester) async {
     const code = 'package main\n\nfunc main() {}';
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 400,
@@ -29,7 +29,7 @@ void main() {
   });
 
   testWidgets('空代码 → 渲染空(不崩)', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 400,
@@ -44,7 +44,7 @@ void main() {
   });
 
   testWidgets('truncated=true → 底部显示截断条', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 400,
@@ -60,7 +60,7 @@ void main() {
   });
 
   testWidgets('truncated=false → 无截断条', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 400,
@@ -75,7 +75,7 @@ void main() {
   });
 
   testWidgets('短代码 → 内容区背景撑满父级', (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 400,
@@ -115,7 +115,7 @@ void main() {
   testWidgets('长行不换行 → RichText softWrap=false', (tester) async {
     const longLine = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
         'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
         body: SizedBox(
           width: 200,

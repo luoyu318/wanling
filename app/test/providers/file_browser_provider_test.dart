@@ -16,7 +16,7 @@ void main() {
     api = _MockApi();
   });
 
-  ProviderContainer _makeContainer() {
+  ProviderContainer makeContainer() {
     final c = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
     addTearDown(c.dispose);
     return c;
@@ -37,7 +37,7 @@ void main() {
     });
 
     test('loadDirectory 设置 currentPath', () async {
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -47,7 +47,7 @@ void main() {
     });
 
     test('enterDirectory 累积 pathStack + goUp 回溯', () async {
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -66,7 +66,7 @@ void main() {
     });
 
     test('popTo 子目录 → 预填 pathStack', () async {
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -78,7 +78,7 @@ void main() {
     });
 
     test('popTo(".") → 清空 pathStack + currentPath 回到 "."', () async {
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -113,7 +113,7 @@ void main() {
                 'size': 5, 'content': 'hello', 'truncated': false,
               });
 
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -125,7 +125,7 @@ void main() {
     });
 
     test('clearFileContent → previewContent 置 null', () async {
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );
@@ -139,7 +139,7 @@ void main() {
               timeoutMs: any(named: 'timeoutMs')))
           .thenThrow(Exception('network down'));
 
-      final container = _makeContainer();
+      final container = makeContainer();
       final notifier = container.read(
         fileBrowserProvider(const (agentId: 'a', convId: 'c')).notifier,
       );

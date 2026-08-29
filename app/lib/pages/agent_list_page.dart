@@ -255,9 +255,9 @@ class _AgentTileState extends State<_AgentTile> {
                             ),
                             // 简介非空：状态右侧竖线 + bio（单行省略）
                             if (agent.bio != null && agent.bio!.isNotEmpty) ...[
-                              Text(
+                              const Text(
                                 '  |  ',
-                                style: const TextStyle(
+                                style: TextStyle(
                                     fontSize: 12,
                                     color: Color(0xFFCCCCCC),
                                     fontWeight: FontWeight.w300),

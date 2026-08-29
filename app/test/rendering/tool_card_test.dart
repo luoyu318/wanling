@@ -33,7 +33,7 @@ void main() {
         'status': status,
         'input': {'description': '调研一下', 'subagent_type': 'general'},
         if (subSessionId.isNotEmpty) 'sub_session_id': subSessionId,
-        if (duration != null) 'duration': duration,
+        'duration': ?duration,
       },
     };
   }
@@ -51,10 +51,10 @@ void main() {
         'data': {
           'status': status,
           'name': name,
-          if (input != null) 'input': input,
-          if (output != null) 'output': output,
-          if (error != null) 'error': error,
-          if (fileDiff != null) 'file_diff': fileDiff,
+          'input': ?input,
+          'output': ?output,
+          'error': ?error,
+          'file_diff': ?fileDiff,
         },
       };
     }
@@ -1069,8 +1069,8 @@ void main() {
         'data': {
           'status': status,
           'name': name,
-          if (input != null) 'input': input,
-          if (output != null) 'output': output,
+          'input': ?input,
+          'output': ?output,
         },
       };
     }

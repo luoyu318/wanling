@@ -8,12 +8,12 @@ void main() {
     // 验证 Column 的 mainAxisSize.min 让 PanelItem 收缩到内容真实高度，
     // 而不是被父级 loose 约束撑满（曾导致画廊 BottomSheet 显示成半屏）。
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: Scaffold(
           body: SizedBox(
             height: 500,
             child: Row(
-              children: const [
+              children: [
                 PanelItem(
                   icon: Icons.download_for_offline_outlined,
                   label: '保存图片',

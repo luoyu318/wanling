@@ -18,7 +18,7 @@ void main() {
             MsgType.permissionCard,
             {'msg_type': MsgType.permissionCard.value, 'data': data},
             ctx,
-            MessageRenderContext(
+            const MessageRenderContext(
               isMe: false,
               baseUrl: 'http://localhost',
               token: 'test',
@@ -44,7 +44,7 @@ void main() {
     await tester.pumpWidget(host({
       'status': 'pending',
       'action': 'terminal',
-      'metadata': {'command': 'https://example.com/' + 'x' * 800},
+      'metadata': {'command': 'https://example.com/${'x' * 800}'},
     }));
     expect(tester.takeException(), isNull, reason: '无空格长串不应横向溢出');
   });
@@ -52,7 +52,7 @@ void main() {
   testWidgets('pending 权限卡超长 action label 不横向溢出', (tester) async {
     await tester.pumpWidget(host({
       'status': 'pending',
-      'action': 'browser_' + 'x' * 200,
+      'action': 'browser_${'x' * 200}',
       'resources': ['rm -rf /'],
     }));
     expect(tester.takeException(), isNull, reason: '超长 action label 不应横向溢出');
@@ -62,7 +62,7 @@ void main() {
     await tester.pumpWidget(host({
       'status': 'pending',
       'action': 'bash',
-      'resources': ['/a/b/c/' + 'y' * 500],
+      'resources': ['/a/b/c/${'y' * 500}'],
     }));
     expect(tester.takeException(), isNull, reason: '超长 resources 不应横向溢出');
   });
@@ -70,7 +70,7 @@ void main() {
   testWidgets('终态折叠卡超长 action label 不横向溢出', (tester) async {
     await tester.pumpWidget(host({
       'status': 'approved',
-      'action': 'browser_' + 'x' * 200,
+      'action': 'browser_${'x' * 200}',
       'result': 'once',
       'metadata': <String, dynamic>{},
     }));

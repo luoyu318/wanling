@@ -92,8 +92,8 @@ void main() {
       'data': {
         'state': state,
         'elements': elements,
-        if (segment != null) 'segment': segment,
-        if (quote != null) 'quote': quote,
+        'segment': ?segment,
+        'quote': ?quote,
       },
     };
   }
@@ -559,7 +559,6 @@ void main() {
       GlobalKey? cbKey;
       bool? cbExpanded;
       double? cbTopDelta;
-      bool? cbIsHistory;
       await tester.pumpWidget(host(
         content(
           state: 'done',
@@ -576,11 +575,10 @@ void main() {
             }),
           ],
         ),
-        onToolGroupToggle: (k, e, delta, isHistory) {
+        onToolGroupToggle: (k, e, delta, _) {
           cbKey = k;
           cbExpanded = e;
           cbTopDelta = delta;
-          cbIsHistory = isHistory;
         },
       ));
       // 折叠标题行可见

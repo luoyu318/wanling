@@ -110,7 +110,7 @@ class _SessionMetaStripState extends State<SessionMetaStrip> {
         alignment: PlaceholderAlignment.middle,
         child: GestureDetector(
           onTap: widget.onModelTap,
-          child: Icon(Icons.unfold_more, size: 14, color: const Color(0xFF000000)),
+          child: const Icon(Icons.unfold_more, size: 14, color: Color(0xFF000000)),
         ),
       ));
       children.add(TextSpan(

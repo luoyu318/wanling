@@ -112,7 +112,7 @@ void main() {
             onPickFile: () {},
             onTakePhoto: () {},
             onPickAlbum: () {},
-            onSendSlash: (_, __) {},
+            onSendSlash: (_, _) {},
           ),
         ),
       ));
@@ -215,7 +215,7 @@ void main() {
             onPickFile: () {},
             onTakePhoto: () {},
             onPickAlbum: () {},
-            onSendSlash: (_, __) {},
+            onSendSlash: (_, _) {},
           ),
         ),
       ));

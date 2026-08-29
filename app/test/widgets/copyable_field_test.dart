@@ -9,7 +9,7 @@ import 'package:app/widgets/copyable_field.dart';
 void main() {
   group('CopyableField', () {
     testWidgets('secret=true 默认掩码显示', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: CopyableField(label: '密钥', value: 'sk123456', secret: true)),
       ));
       expect(find.text('••••••••'), findsOneWidget);
@@ -17,7 +17,7 @@ void main() {
     });
 
     testWidgets('secret=false 直接显示原值', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: CopyableField(label: 'AppID', value: 'abc123')),
       ));
       expect(find.text('abc123'), findsOneWidget);
@@ -25,7 +25,7 @@ void main() {
     });
 
     testWidgets('点眼睛图标切换显示', (tester) async {
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: CopyableField(label: '密钥', value: 'sk123456', secret: true)),
       ));
       // 默认掩码
@@ -49,7 +49,7 @@ void main() {
         return null;
       });
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: CopyableField(label: 'AppID', value: 'abc123')),
       ));
       await tester.tap(find.byIcon(Icons.copy_outlined));
