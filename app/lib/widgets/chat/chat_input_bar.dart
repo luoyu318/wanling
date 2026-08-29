@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/models/agent_mode.dart';
 import 'package:wanling_core/providers/agent_modes_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
-import 'package:app/providers/pending_image_provider.dart';
+import 'package:app/providers/pending_attachment_provider.dart';
 import 'message_input_bar.dart';
-import 'pending_image_bar.dart';
+import 'pending_attachment_bar.dart';
 import 'quote_preview_bar.dart' show QuotePreviewBar;
 import 'input_controller.dart' show InputController;
 
@@ -49,28 +49,28 @@ class ChatInputBar extends ConsumerWidget {
           )
         : null;
 
-    final pendingImage = ref.watch(
-      pendingImageProvider(chatKey),
+    final pendingAttachment = ref.watch(
+      pendingAttachmentProvider(chatKey),
     );
-    final imageBar = pendingImage != null
-        ? PendingImageBar(
-            asset: pendingImage,
+    final attachmentBar = pendingAttachment != null
+        ? PendingAttachmentBar(
+            attachment: pendingAttachment,
             onRemove: () => ref
-                .read(pendingImageProvider(chatKey).notifier)
+                .read(pendingAttachmentProvider(chatKey).notifier)
                 .state = null,
           )
         : null;
     // topOverlay 单槽组合:缩略图条在上、引用预览在下(可并存)
     Widget? overlay;
-    if (imageBar != null || topOverlay != null) {
+    if (attachmentBar != null || topOverlay != null) {
       overlay = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (imageBar != null)
+          if (attachmentBar != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              child: imageBar,
+              child: attachmentBar,
             ),
           if (topOverlay != null)
             Padding(
@@ -100,7 +100,7 @@ class ChatInputBar extends ConsumerWidget {
         accentColor: modeColor,
         showModeBar: false,
         onSendSlash: onSendSlash,
-        hasPendingAttachment: pendingImage != null,
+        hasPendingAttachment: pendingAttachment != null,
       );
     }
 
@@ -111,7 +111,7 @@ class ChatInputBar extends ConsumerWidget {
       onTakePhoto: inputController.takePhoto,
       onPickAlbum: inputController.pickAlbum,
       topOverlay: overlay,
-      hasPendingAttachment: pendingImage != null,
+      hasPendingAttachment: pendingAttachment != null,
     );
   }
 

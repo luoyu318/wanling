@@ -1,6 +1,7 @@
 import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'package:wanling_core/rendering/message_content_renderer.dart';
 import 'package:wanling_core/models/msg_type.dart';
+import 'package:wanling_core/widgets/file_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/widgets/chat/builtin_renderers.dart';
@@ -72,5 +73,44 @@ void main() {
     expect(find.byType(Hero), findsOneWidget);
     expect(find.byType(BubbleWithTail), findsNothing);
     expect(find.text('看这张'), findsNothing);
+  });
+
+  testWidgets('mixed: file 条目渲染文件卡,元信息从 item 取', (tester) async {
+    final content = {
+      'msg_type': 'mixed',
+      'data': {
+        'text': '见附件',
+        'items': [
+          {
+            'type': 'file',
+            'file_id': 'doc1',
+            'filename': '报告.pdf',
+            'mime_type': 'application/pdf',
+            'file_size': 2048,
+          },
+        ],
+      },
+    };
+    await tester.pumpWidget(host(content));
+    // 断言:文件卡渲染(无气泡壳),文件名可见,文字气泡可见
+    expect(find.byType(FileCard), findsOneWidget);
+    expect(find.text('报告.pdf'), findsOneWidget);
+    expect(find.byType(BubbleWithTail), findsOneWidget);
+    expect(find.text('见附件'), findsOneWidget);
+  });
+
+  testWidgets('mixed: 未知类型条目静默跳过,不崩渲染', (tester) async {
+    final content = {
+      'msg_type': 'mixed',
+      'data': {
+        'items': [
+          {'type': 'video', 'file_id': 'v1'}, // 协议违约条目
+          {'type': 'image', 'file_id': 'f1'},
+        ],
+      },
+    };
+    await tester.pumpWidget(host(content));
+    expect(find.byType(Hero), findsOneWidget);
+    expect(find.byType(FileCard), findsNothing);
   });
 }

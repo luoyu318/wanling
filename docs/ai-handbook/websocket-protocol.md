@@ -131,7 +131,7 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `markdown` | `{text}` | Markdown 富文本 |
 | `image` | `{file_id, width?, height?}` | 图片消息（width/height 由 server 补全） |
 | `file` | `{file_id, filename?, file_size?, mime_type?}` | 文件消息（file_size/mime_type 由 server 补全） |
-| `mixed` | `{text?, items: [{type:'image', file_id, filename?}]}` | 图文混排（text 为顶层字段；items 至少 1 个 image 条目，file_id 必填；dsh/hermes/opencode 消费） |
+| `mixed` | `{text?, items: [{type:'image'\|'file', file_id, filename?, mime_type?, file_size?}]}` | 图文/文件混排（text 为顶层字段；items 至少 1 个条目，file_id 必填；server 不富化 items，filename/mime_type/file_size 由发送端写入；dsh/hermes/opencode 消费） |
 | `card` | `{card_type, ...}` | 审批卡片（见 approval-card.md） |
 | `recalled` | — | 撤回占位（server 端写，client 识别后置 isRecalled） |
 
