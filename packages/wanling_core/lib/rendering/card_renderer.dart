@@ -7,6 +7,7 @@ import 'package:wanling_core/widgets/card_button.dart';
 import 'package:wanling_core/widgets/card_state_badge.dart';
 import 'package:wanling_core/widgets/countdown_timer.dart';
 import 'message_content_renderer.dart';
+import 'truncatable_text_block.dart';
 
 /// 卡片渲染器。渲染审批卡片（命令/工具/文件）+ 按钮 + 状态。
 ///
@@ -175,19 +176,19 @@ class _CardViewState extends State<_CardView> {
       case CardType.command:
       case CardType.slashConfirm:
         // slash_confirm 复用 command 的代码块预览（preview 是提示文案）。
+        // 限高 56/3 行 + 点击弹抽屉看全文(与工具卡/tool_result 一致)。
         return [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(6),
-            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
-            decoration: BoxDecoration(
-              color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
-              borderRadius: BorderRadius.circular(4),
+          TruncatableTextBlock(
+            text: widget.card.preview,
+            sheetTitle: Text(widget.card.title),
+            textStyle: TextStyle(
+              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
+              fontSize: 12,
+              // 深色灰阶反转:正文 #555 → #C8C8C8
+              color: widget.isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555),
             ),
-            child: Text(
-              widget.card.preview,
-              style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12),
-            ),
+            backgroundColor: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
+            isDark: widget.isDark,
           ),
           const SizedBox(height: 6),
         ];
@@ -201,18 +202,16 @@ class _CardViewState extends State<_CardView> {
             ),
           ),
           const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(6),
-            // 深色:#F2F2F2 嵌块 → 26272D(回扣卡底区分层次)
-            decoration: BoxDecoration(
-              color: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
-              borderRadius: BorderRadius.circular(4),
+          TruncatableTextBlock(
+            text: widget.card.preview,
+            sheetTitle: Text(widget.card.title),
+            textStyle: TextStyle(
+              fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback,
+              fontSize: 12,
+              color: widget.isDark ? const Color(0xFFC8C8C8) : const Color(0xFF555555),
             ),
-            child: Text(
-              widget.card.preview,
-              style: const TextStyle(fontFamily: 'monospace', fontFamilyFallback: kMonoFontFallback, fontSize: 12),
-            ),
+            backgroundColor: widget.isDark ? const Color(0xFF26272D) : const Color(0xFFF2F2F2),
+            isDark: widget.isDark,
           ),
           const SizedBox(height: 6),
         ];
