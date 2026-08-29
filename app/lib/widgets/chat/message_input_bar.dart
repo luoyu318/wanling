@@ -44,7 +44,7 @@ class MessageInputBar extends StatefulWidget {
   final void Function(String name, String args)? onSendSlash;
   /// 有待发送图片挂载:发送按钮常显,且允许空文字触发 onSend('')。
   final bool hasPendingAttachment;
-  /// 输入框占位文案。默认「给万灵下达指令…」,ChatPage 按 convTitle 传「发消息给 XXX」。
+  /// 输入框占位文案。默认「给万灵下达指令…」,ChatPage 按 convTitle 传「发送给 XXX」。
   final String hintText;
 
   const MessageInputBar({

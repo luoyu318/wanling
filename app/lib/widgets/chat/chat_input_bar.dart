@@ -11,9 +11,9 @@ import 'quote_preview_bar.dart' show QuotePreviewBar;
 import 'input_controller.dart' show InputController;
 
 /// 输入框占位文案:对方昵称/群名(agent_session 为 agent 名)非空 →
-/// 「发消息给 XXX」,未就绪时中性兜底「发消息…」。
+/// 「发送给 XXX」,未就绪时中性兜底「发消息…」。
 String inputHint(String? convTitle) =>
-    (convTitle != null && convTitle.isNotEmpty) ? '发消息给 $convTitle' : '发消息…';
+    (convTitle != null && convTitle.isNotEmpty) ? '发送给 $convTitle' : '发消息…';
 
 /// ChatPage 的输入栏。自己 watch chatProvider 获取 pendingQuote/convType/sessionMeta。
 ///

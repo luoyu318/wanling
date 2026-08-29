@@ -30,7 +30,7 @@ void main() {
     expect(tf.decoration?.hintText, '给万灵下达指令…');
   });
 
-  testWidgets('hintText 参数覆盖占位文案(发消息给 对方昵称)', (tester) async {
+  testWidgets('hintText 参数覆盖占位文案(发送给 对方昵称)', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: MessageInputBar(
@@ -38,17 +38,17 @@ void main() {
           onPickFile: () {},
           onTakePhoto: () {},
           onPickAlbum: () {},
-          hintText: '发消息给 灵仔',
+          hintText: '发送给 灵仔',
         ),
       ),
     ));
     final tf = tester.widget<TextField>(find.byType(TextField));
-    expect(tf.decoration?.hintText, '发消息给 灵仔');
+    expect(tf.decoration?.hintText, '发送给 灵仔');
   });
 
-  test('inputHint 映射:昵称非空 → 发消息给 XXX,空 → 发消息…', () {
-    expect(inputHint('灵仔'), '发消息给 灵仔');
-    expect(inputHint('万灵第二群'), '发消息给 万灵第二群');
+  test('inputHint 映射:昵称非空 → 发送给 XXX,空 → 发消息…', () {
+    expect(inputHint('灵仔'), '发送给 灵仔');
+    expect(inputHint('万灵第二群'), '发送给 万灵第二群');
     expect(inputHint(null), '发消息…');
     expect(inputHint(''), '发消息…');
   });
