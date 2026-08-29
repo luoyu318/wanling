@@ -44,6 +44,8 @@ class MessageInputBar extends StatefulWidget {
   final void Function(String name, String args)? onSendSlash;
   /// 有待发送图片挂载:发送按钮常显,且允许空文字触发 onSend('')。
   final bool hasPendingAttachment;
+  /// 输入框占位文案。默认「给万灵下达指令…」,ChatPage 按 convTitle 传「发消息给 XXX」。
+  final String hintText;
 
   const MessageInputBar({
     super.key,
@@ -61,6 +63,7 @@ class MessageInputBar extends StatefulWidget {
     this.topSlot,
     this.onSendSlash,
     this.hasPendingAttachment = false,
+    this.hintText = '给万灵下达指令…',
   });
 
   @override
@@ -285,12 +288,12 @@ class _MessageInputBarState extends State<MessageInputBar> {
         // isDense: 去掉 Material 默认额外间距,让单行高度贴近文字+padding。
         style: const TextStyle(
             fontSize: 17, fontWeight: FontWeight.w300, height: 1.2),
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           isDense: true,
           border: InputBorder.none,
           contentPadding:
               EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          hintText: '给万灵下达指令…',
+          hintText: widget.hintText,
           hintStyle: TextStyle(color: Color(0xFFBBBBBB), fontSize: 17),
         ),
         // 长按选区弹深色胶囊文字级菜单（统一 AppTextSelectionToolbar 风格）
