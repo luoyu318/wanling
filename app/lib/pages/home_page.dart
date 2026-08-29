@@ -53,6 +53,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   final PageController _pageCtrl = PageController(initialPage: 0);
   String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
   bool _sidebarOpen = false; // 左侧切换账号面板开关
+  int _jumpEpoch = 0; // 跳页纪元:新指令使旧补跳链失效,防并发链互相拉扯
 
   // build 时刷新,手势回调读取(避免回调里重复 watch)
   List<String> _effectiveOrder = const [];
@@ -80,36 +81,31 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _switchTab(String tabId) {
-    final page = _effectiveOrder.indexOf(tabId);
-    if (page < 0) return;
+    if (!_effectiveOrder.contains(tabId)) return;
     setState(() => _activeTabId = tabId);
-    _jumpToPageSafe(page);
+    _jumpToPageSafe(tabId);
   }
 
   /// 程序跳页(带动态 children 的 extent 滞后补偿)。
   ///
   /// PageView children 增长后 maxScrollExtent 滞后一帧才就位,期间 jumpToPage
-  /// 会被 applyBoundaryConditions clamp 落在旧界内(发出中间页 onPageChanged),
-  /// 之后 pixels 自动落位目标页但不发 onPageChanged(官方 PageView 与
-  /// NestedPageView 行为一致)。因此跳后下一帧:落点未达则补跳(事件随补跳
-  /// 补发);落点已达但激活态被中间页 onPageChanged 污染则直接纠正。
-  void _jumpToPageSafe(int page) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_pageCtrl.hasClients || _pageCtrl.page?.round() == page) return;
-      _pageCtrl.jumpToPage(page);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_pageCtrl.hasClients) return;
-        final landed = _pageCtrl.page?.round();
-        final target = (page >= 0 && page < _effectiveOrder.length)
-            ? _effectiveOrder[page]
-            : null;
-        if (landed != page) {
-          _pageCtrl.jumpToPage(page);
-        } else if (target != null && _activeTabId != target) {
-          setState(() => _activeTabId = target);
-        }
-      });
-    });
+  /// 会被 clamp 落在旧界内:发出中间页 onPageChanged(污染激活态),pixels 随后
+  /// 静默落位目标页且不再发 onPageChanged。故逐帧复核:落点未达则续跳;已达但
+  /// 激活态被污染则纠正。捕获 tabId 而非下标,序列再变时按身份重算落点。
+  void _jumpToPageSafe(String tabId) {
+    final epoch = ++_jumpEpoch;
+    void jump() {
+      if (!mounted || !_pageCtrl.hasClients || epoch != _jumpEpoch) return;
+      final page = _effectiveOrder.indexOf(tabId);
+      if (page < 0) return;
+      if (_pageCtrl.page?.round() != page) {
+        _pageCtrl.jumpToPage(page);
+        WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+      } else if (_activeTabId != tabId) {
+        setState(() => _activeTabId = tabId);
+      }
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => jump());
   }
 
   /// 跳指定 agent 页(抽屉点选/各处入口);溢出 agent 同样点亮更多槽。
@@ -120,13 +116,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     setState(() => _activeTabId = _effectiveOrder[page]);
   }
 
-  /// 底栏选中态:激活 tab 的槽位号;溢出 agent 归更多槽。
+  /// 底栏选中态:激活 tab 在可见槽中的位置;溢出 agent 归更多槽。
   int get _currentNavIndex {
-    final idx = _effectiveOrder.indexOf(_activeTabId);
-    if (idx < 0) return 0;
-    return _showMore && idx >= _visibleSlots.length
-        ? _visibleSlots.length
-        : idx;
+    final idx = _visibleSlots.indexOf(_activeTabId);
+    if (idx >= 0) return idx;
+    return _showMore ? _visibleSlots.length : 0;
   }
 
   /// 「更多」底部抽屉：列出溢出 agent（在线态/未读/选中勾），点选切换。
@@ -209,8 +203,14 @@ class _HomePageState extends ConsumerState<HomePage> {
       for (final id in _effectiveOrder) if (!kNavFixedIds.contains(id)) id
     ];
     _showMore = pinnedAgents.length >= _kOverflowThreshold;
-    _visibleSlots =
-        _effectiveOrder.take(2 + (_showMore ? _kVisibleWhenOverflow : 3)).toList();
+    // 可见 agent 按 agents 子序列截取(与 _overflowPinned 互补);固定项恒入栏,
+    // 位置保持序列相对序——任意排序下固定 tab 不可从底栏消失(5 槽约束)。
+    final visibleAgentIds =
+        pinnedAgents.take(_showMore ? _kVisibleWhenOverflow : 3).toSet();
+    _visibleSlots = [
+      for (final id in _effectiveOrder)
+        if (kNavFixedIds.contains(id) || visibleAgentIds.contains(id)) id
+    ];
     _overflowPinned = _showMore
         ? pinnedAgents.skip(_kVisibleWhenOverflow).toList()
         : [];
@@ -220,10 +220,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.listen(effectiveNavOrderProvider, (prev, next) {
       if (prev == null || listEquals(prev, next)) return;
       if (next.contains(_activeTabId)) {
-        _jumpToPageSafe(next.indexOf(_activeTabId));
+        _jumpToPageSafe(_activeTabId);
       } else {
         setState(() => _activeTabId = kNavTabMsg);
-        _jumpToPageSafe(0);
+        _jumpToPageSafe(kNavTabMsg);
       }
     });
 

@@ -492,5 +492,61 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('编辑底栏'), findsOneWidget);
     });
+
+    testWidgets('agent 全前置排序:固定项恒在底栏,可见 agent 截取 2 个', (tester) async {
+      // 回归:_visibleSlots 曾用序列前缀截取,agent 全前置时固定 tab 从底栏
+      // 双双消失。现约定:固定项恒入栏,可见 agent 按 agents 子序列截取。
+      SharedPreferences.setMockInitialValues({
+        'token': 'fake-token',
+        'nav_order_u1': ['a1', 'a2', 'a3', 'a4', kNavTabMsg, kNavTabWanling],
+      });
+      final api = MockApi();
+      stubBaseUrl(api);
+      final ws = FakeWS();
+      when(() => api.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+            _multiSessionAgent('a3', 'ag-3'),
+            _multiSessionAgent('a4', 'ag-4'),
+          ]);
+      when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+        wsProvider.overrideWithValue(ws),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+
+      // 固定项恒在底栏,溢出出更多槽(4 agent ≥ 阈值)
+      final navBar = find.byType(NavTabBar);
+      expect(
+          find.descendant(of: navBar, matching: find.text('消息')),
+          findsOneWidget);
+      expect(
+          find.descendant(of: navBar, matching: find.text('万灵')),
+          findsOneWidget);
+      expect(find.descendant(of: navBar, matching: find.text('更多')),
+          findsOneWidget);
+      // 仅前 2 个 agent 可见,溢出的 a3/a4 只在抽屉(不点开不渲染)
+      expect(find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsOneWidget);
+      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+          findsOneWidget);
+      expect(find.text('ag-3'), findsNothing);
+      expect(find.text('ag-4'), findsNothing);
+    });
   });
 }

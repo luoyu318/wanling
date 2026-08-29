@@ -67,10 +67,7 @@ class NavTabBar extends StatelessWidget {
     required this.onSlotTap,
     required this.onMoreTap,
     required this.onSlotLongPress,
-  }) : assert(
-          slots.length <= (showMore ? 4 : 5),
-          '总槽位最多 5:无「更多」槽时 5 个可见槽,有「更多」槽时 4 个可见槽 + 「更多」',
-        );
+  })  : assert(slots.length <= (showMore ? 4 : 5), '可见槽(消息/万灵/agent)最多 4/5 个');
 
   /// 可见槽位内容(序列前缀,顺序即渲染顺序)
   final List<NavSlot> slots;
@@ -85,6 +82,10 @@ class NavTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // agent 槽上限契约:whereType 方法调用不能进 const 构造器的初始化 assert,
+    // 断言下沉到 build(仅 debug 生效,契约语义不变)。
+    assert(slots.whereType<NavAgentSlot>().length <= (showMore ? 2 : 3),
+        'showMore 时可见 agent 最多 2 个, 否则最多 3 个(溢出归「更多」)');
     return SafeArea(
       top: false,
       child: Container(
