@@ -291,10 +291,9 @@ class _MessageInputBarState extends State<MessageInputBar> {
         decoration: InputDecoration(
           isDense: true,
           border: InputBorder.none,
-          contentPadding:
-              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           hintText: widget.hintText,
-          hintStyle: TextStyle(color: Color(0xFFBBBBBB), fontSize: 17),
+          hintStyle: const TextStyle(color: Color(0xFFBBBBBB), fontSize: 17),
         ),
         // 长按选区弹深色胶囊文字级菜单（统一 AppTextSelectionToolbar 风格）
         contextMenuBuilder: (context, editableTextState) {
