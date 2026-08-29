@@ -526,11 +526,6 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
         ? (c.isPinned ? const Color(0xFFD6D6D6) : const Color(0xFFEDEDED))
         : (c.isPinned ? const Color(0xFFEDEDED) : Colors.white);
 
-    final dividerColor = c.isPinned
-        ? const Color(0xFFD6D6D6)
-        : const Color(0xFFE4E4E4);
-    final dividerBg = c.isPinned ? const Color(0xFFEDEDED) : Colors.white;
-
     return Listener(
       onPointerDown: (_) => _setPressed(true),
       onPointerUp: (_) => _setPressed(false),
@@ -550,7 +545,7 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                 color: tileBg,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 12,
+                  vertical: 8,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -573,9 +568,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                             c.displayName,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 17,
+                              fontSize: 15,
                               color: Color(0xFF111111),
-                              fontWeight: FontWeight.w300,
+                              fontWeight: FontWeight.w400,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -585,9 +580,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12,
                                 color: Color(0xFFE53935),
-                                fontWeight: FontWeight.w300,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else if (agentStatus != null &&
@@ -596,8 +591,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               text: '灵光涌动...',
                               baseColor: Color(0xFF07C160),
                               style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w300,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else if (agentStatus != null &&
@@ -606,8 +601,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               text: '重试中(第 ${agentStatus.attempt} 次)...',
                               baseColor: const Color(0xFFE53935),
                               style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w300,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else
@@ -618,9 +613,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12,
                                 color: Color(0xFF999999),
-                                fontWeight: FontWeight.w300,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                         ],
@@ -634,8 +629,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                           _formatTime(c.lastMessageAt),
                           style: const TextStyle(
                             fontSize: 11,
-                            color: Color(0xFFB0B0B0),
-                            fontWeight: FontWeight.w300,
+                            color: Color(0xFF999999),
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                         if (agentStatus != null)
@@ -650,14 +645,6 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                       ],
                     ),
                   ],
-                ),
-              ),
-              Container(
-                height: 0.5,
-                color: dividerBg,
-                child: Container(
-                  margin: const EdgeInsets.only(left: 70),
-                  color: dividerColor,
                 ),
               ),
             ],

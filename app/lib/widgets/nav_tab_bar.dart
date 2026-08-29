@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 
+import 'avatar.dart';
+
 /// agent 槽位数据(与 Agent 模型解耦,widget 测试无需构造完整模型)。
 class NavAgentTab {
   final String id;
   final String name;
 
-  /// 预留字段:当前仅渲染首字母头像,不加载网络图片(Task 6 接线时决定是否补图片分支)
+  /// agent 头像地址;为空时回退哈希色首字母头像(与 Avatar 组件同源)。
   final String? avatarUrl;
   final bool online;
   final int unread;
@@ -168,8 +170,9 @@ class _AgentSlot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatar = _AgentAvatar(tab: tab, size: 24, ring: selected);
+    final avatar = _AgentAvatar(tab: tab, size: 24);
     return Expanded(
+      // 热区撑满整个槽位,避免点击头像/文字以外区域无响应
       child: DragTarget<NavAgentTab>(
         onWillAcceptWithDetails: (d) => d.data.id != tab.id,
         onAcceptWithDetails: (d) => onAccepted(d.data.id, index),
@@ -178,28 +181,30 @@ class _AgentSlot extends StatelessWidget {
           return LongPressDraggable<NavAgentTab>(
             data: tab,
             delay: const Duration(milliseconds: 120),
-            feedback: _AgentAvatar(tab: tab, size: 32, ring: false),
+            feedback: _AgentAvatar(tab: tab, size: 32),
             childWhenDragging: Opacity(opacity: 0.4, child: avatar),
-            child: InkWell(
-              onTap: () => onTap(slotNumber),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // 悬停目标高亮:细绿框由 _AgentAvatar ring 呈现,此处叠加边框语义即可
-                  hovering
-                      ? Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                                color: AppColors.accentGreen, width: 1.5),
-                          ),
-                          child: avatar,
-                        )
-                      : avatar,
-                  const SizedBox(height: 2),
-                  _slotLabel(),
-                ],
+            child: SizedBox.expand(
+              child: InkWell(
+                onTap: () => onTap(slotNumber),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // 拖拽悬停目标高亮:细绿框(仅排序时出现,与选中态无关)
+                    hovering
+                        ? Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: AppColors.accentGreen, width: 1.5),
+                            ),
+                            child: avatar,
+                          )
+                        : avatar,
+                    const SizedBox(height: 2),
+                    _slotLabel(),
+                  ],
+                ),
               ),
             ),
           );
@@ -241,7 +246,7 @@ class _MoreSlot extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             active != null
-                ? _AgentAvatar(tab: active, size: 24, ring: true)
+                ? _AgentAvatar(tab: active, size: 24)
                 : Icon(Icons.apps, size: 24, color: color),
             const SizedBox(height: 2),
             Text(
@@ -262,35 +267,45 @@ class _MoreSlot extends StatelessWidget {
       : name;
 }
 
-/// agent 头像:圆形 + 在线小绿点 + 未读角标 + 选中环。
+/// agent 头像:圆形(有头像用图片,否则哈希色首字母) + 在线小绿点 + 未读角标。
+/// 选中态不用外圈,由槽位文字颜色/字重表达(对齐消息/万灵槽的选中语言)。
 class _AgentAvatar extends StatelessWidget {
   final NavAgentTab tab;
   final double size;
-  final bool ring;
 
-  const _AgentAvatar({required this.tab, required this.size, required this.ring});
+  const _AgentAvatar({required this.tab, required this.size});
 
   @override
   Widget build(BuildContext context) {
     final inner = Stack(
       clipBehavior: Clip.none,
       children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: AppColors.textSecondary.withValues(alpha: 0.15),
-            shape: BoxShape.circle,
+        // 有头像走 Avatar(网络图,真实 app 在 ProviderScope 内);
+        // 无头像走哈希色首字母(纯本地渲染,widget 测试无需 riverpod)
+        if (tab.avatarUrl != null)
+          Avatar(
+            name: tab.name,
+            url: tab.avatarUrl,
+            size: size,
+            radius: size / 2,
+          )
+        else
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: Avatar.colorFor(tab.name),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              tab.name.isEmpty ? '?' : tab.name.characters.first.toUpperCase(),
+              style: TextStyle(
+                  fontSize: size * 0.5,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600),
+            ),
           ),
-          alignment: Alignment.center,
-          child: Text(
-            tab.name.isEmpty ? '?' : tab.name.characters.first.toUpperCase(),
-            style: TextStyle(
-                fontSize: size * 0.5,
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w600),
-          ),
-        ),
         if (tab.online)
           Positioned(
             right: -1,
@@ -307,20 +322,7 @@ class _AgentAvatar extends StatelessWidget {
           ),
       ],
     );
-    return _Badge(
-      count: tab.unread,
-      child: ring
-          ? Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular((size + 4) / 2),
-                border:
-                    Border.all(color: AppColors.accentGreen, width: 1.5),
-              ),
-              child: inner,
-            )
-          : inner,
-    );
+    return _Badge(count: tab.unread, child: inner);
   }
 }
 

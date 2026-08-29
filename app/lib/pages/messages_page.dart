@@ -222,7 +222,7 @@ class _ConvTileState extends State<_ConvTile> {
             color: tileBg,
             padding: const EdgeInsets.symmetric(
               horizontal: 12,
-              vertical: 12,
+              vertical: 8,
             ),
             // crossAxisAlignment.start 让时间 Text 顶部和昵称 Text 顶部对齐
             // （Row 默认 center 会让时间垂直居中到头像中线）。
