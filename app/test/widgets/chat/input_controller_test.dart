@@ -4,7 +4,7 @@ import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/chat_provider.dart' show ChatNotifier;
 import 'package:wanling_core/services/api_service.dart';
-import 'package:app/providers/pending_image_provider.dart';
+import 'package:app/providers/pending_attachment_provider.dart';
 import 'package:app/widgets/chat/input_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,7 +36,7 @@ class _DummyRef implements WidgetRef {
 }
 
 /// 转发 [ProviderContainer] 的 [WidgetRef]：send 分支测试用真实 provider
-/// 状态（pendingImageProvider 读写），apiProvider 由 container override 提供。
+/// 状态（pendingAttachmentProvider 读写），apiProvider 由 container override 提供。
 class _ContainerRef implements WidgetRef {
   _ContainerRef(this._container);
   final ProviderContainer _container;
@@ -52,11 +52,13 @@ class _ContainerRef implements WidgetRef {
 class _RecordingNotifier implements ChatNotifier {
   final textCalls = <String>[];
 
-  /// (fileId, msgType)。
-  final fileCalls = <(String, MsgType)>[];
+  /// (fileId, msgType, filename, mimeType, fileSize)。
+  final fileCalls =
+      <(String, MsgType, {String filename, String mimeType, int fileSize})>[];
 
-  /// (text, fileId)。
-  final mixedCalls = <(String, String)>[];
+  /// (text, fileId, itemType, filename, mimeType, fileSize)。
+  final mixedCalls =
+      <(String, String, {String itemType, String filename, String mimeType, int fileSize})>[];
 
   @override
   Future<void> sendText(String text) async {
@@ -71,17 +73,32 @@ class _RecordingNotifier implements ChatNotifier {
     String? mimeType,
     int? fileSize,
   }) async {
-    fileCalls.add((fileId, msgType));
+    fileCalls.add((
+      fileId,
+      msgType,
+      filename: filename ?? '',
+      mimeType: mimeType ?? '',
+      fileSize: fileSize ?? 0,
+    ));
   }
 
   @override
   Future<void> sendMixed(
     String text,
     String fileId, {
+    String itemType = 'image',
     String filename = '',
     String mimeType = '',
+    int fileSize = 0,
   }) async {
-    mixedCalls.add((text, fileId));
+    mixedCalls.add((
+      text,
+      fileId,
+      itemType: itemType,
+      filename: filename,
+      mimeType: mimeType,
+      fileSize: fileSize,
+    ));
   }
 
   @override
@@ -134,25 +151,25 @@ class _FakeAssetEntity implements AssetEntity {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// 挂图测试环境：container（apiProvider override + pendingImage listener）
-/// 并预置挂载 [asset]，返回 (container, chatKey)。
-/// listener 模拟 chat_page 对缩略图的 watch：保持 autoDispose provider 存活，
-/// 否则两次 read 之间 provider 被 dispose、挂图 state 丢失。
-(ProviderContainer, ({String convId, String? agentId})) _mountAsset(
+/// 挂载测试环境：container（apiProvider override + pendingAttachment listener）
+/// 并预置挂载 [attachment]，返回 (container, chatKey)。
+/// listener 模拟 chat_page 对预览条的 watch：保持 autoDispose provider 存活，
+/// 否则两次 read 之间 provider 被 dispose、挂载 state 丢失。
+(ProviderContainer, ({String convId, String? agentId})) _mount(
   _FakeApi api,
-  _FakeAssetEntity asset,
+  PendingAttachment attachment,
 ) {
   final container = ProviderContainer(overrides: [
     apiProvider.overrideWithValue(api),
   ]);
   addTearDown(container.dispose);
   const key = (convId: 'c1', agentId: null);
-  container.listen(pendingImageProvider(key), (_, _) {});
-  container.read(pendingImageProvider(key).notifier).state = asset;
+  container.listen(pendingAttachmentProvider(key), (_, _) {});
+  container.read(pendingAttachmentProvider(key).notifier).state = attachment;
   return (container, key);
 }
 
-/// 无挂图测试环境：仅 apiProvider override 的空 container。
+/// 无挂载测试环境：仅 apiProvider override 的空 container。
 ProviderContainer _emptyContainer(_FakeApi api) {
   final container = ProviderContainer(overrides: [
     apiProvider.overrideWithValue(api),
@@ -163,7 +180,7 @@ ProviderContainer _emptyContainer(_FakeApi api) {
 
 void main() {
   group('send', () {
-    test('空文本且无挂图 → no-op（不调 notifier/api）', () async {
+    test('空文本且无挂载 → no-op（不调 notifier/api）', () async {
       final api = _FakeApi();
       final container = _emptyContainer(api);
       final notifier = _RecordingNotifier();
@@ -178,7 +195,7 @@ void main() {
       expect(api.uploadCalls, 0, reason: '空串不应触发上传');
     });
 
-    test('无挂图 → 维持 sendText 现状，不触发上传', () async {
+    test('无挂载 → 维持 sendText 现状，不触发上传', () async {
       final api = _FakeApi();
       final container = _emptyContainer(api);
       final notifier = _RecordingNotifier();
@@ -190,15 +207,16 @@ void main() {
       await ctrl.send('hello');
 
       expect(notifier.textCalls, ['hello']);
-      expect(api.uploadCalls, 0, reason: '无挂图不应触发上传');
+      expect(api.uploadCalls, 0, reason: '无挂载不应触发上传');
     });
 
     test('挂图+有文字 → 上传后 sendMixed(文字, fileId)，发送后挂图清空',
         () async {
       final api = _FakeApi(uploadResult: 'file-9');
-      final (container, key) = _mountAsset(
+      final (container, key) = _mount(
         api,
-        _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png'))),
+        PendingImageAsset(
+            _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png')))),
       );
       final notifier = _RecordingNotifier();
       final ctrl = InputController(_buildContext(
@@ -216,16 +234,18 @@ void main() {
       expect(notifier.mixedCalls, hasLength(1));
       expect(notifier.mixedCalls.first.$1, '看这张');
       expect(notifier.mixedCalls.first.$2, 'file-9');
+      expect(notifier.mixedCalls.first.itemType, 'image');
       // 发送后挂图清空
-      expect(container.read(pendingImageProvider(key)), isNull);
+      expect(container.read(pendingAttachmentProvider(key)), isNull);
     });
 
     test('挂图+无文字 → 上传后 sendFile(image)，不发 mixed，发送后挂图清空',
         () async {
       final api = _FakeApi(uploadResult: 'file-9');
-      final (container, key) = _mountAsset(
+      final (container, key) = _mount(
         api,
-        _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png'))),
+        PendingImageAsset(
+            _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png')))),
       );
       final notifier = _RecordingNotifier();
       final ctrl = InputController(_buildContext(
@@ -237,17 +257,20 @@ void main() {
       await ctrl.send('');
 
       expect(api.uploadCalls, 1);
-      expect(notifier.fileCalls, [('file-9', MsgType.image)]);
+      expect(notifier.fileCalls, [
+        ('file-9', MsgType.image, filename: '', mimeType: '', fileSize: 0),
+      ]);
       expect(notifier.mixedCalls, isEmpty, reason: '无文字不应发 mixed');
-      expect(container.read(pendingImageProvider(key)), isNull,
+      expect(container.read(pendingAttachmentProvider(key)), isNull,
           reason: '发送后挂图应清空');
     });
 
     test('上传失败 → 保留挂图可重试，不触发 sendMixed/sendFile', () async {
       final api = _FakeApi(uploadError: Exception('network down'));
-      final (container, key) = _mountAsset(
+      final (container, key) = _mount(
         api,
-        _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png'))),
+        PendingImageAsset(
+            _FakeAssetEntity(fileFuture: Future.value(File('/tmp/any.png')))),
       );
       final notifier = _RecordingNotifier();
       final ctrl = InputController(_buildContext(
@@ -263,13 +286,14 @@ void main() {
       expect(api.uploadCalls, 1);
       expect(notifier.mixedCalls, isEmpty, reason: '上传失败不应发 mixed');
       expect(notifier.fileCalls, isEmpty, reason: '上传失败不应发 file');
-      expect(container.read(pendingImageProvider(key)), isNotNull,
+      expect(container.read(pendingAttachmentProvider(key)), isNotNull,
           reason: '失败保留挂图可重试');
     });
 
     test('挂图 file 读取为 null → 不上传不发送，挂图保留', () async {
       final api = _FakeApi(uploadResult: 'file-9');
-      final (container, key) = _mountAsset(api, _FakeAssetEntity());
+      final (container, key) =
+          _mount(api, PendingImageAsset(_FakeAssetEntity()));
       final notifier = _RecordingNotifier();
       final ctrl = InputController(_buildContext(
         ref: _ContainerRef(container),
@@ -283,21 +307,139 @@ void main() {
       expect(api.uploadCalls, 0, reason: '读不到文件不应触发上传');
       expect(notifier.mixedCalls, isEmpty);
       expect(notifier.fileCalls, isEmpty);
-      expect(container.read(pendingImageProvider(key)), isNotNull,
+      expect(container.read(pendingAttachmentProvider(key)), isNotNull,
           reason: '挂图保留，用户可重试或删除');
     });
   });
 
-  group('pickAlbum 挂载语义', () {
-    test('选图仅挂载（写 provider），不触发上传/发送', () {
-      // AssetPicker.pickAssets 是静态原生通道,单测无法 stub(与既有测试对
+  group('send 挂载文件', () {
+    test('挂载文件+有文字 → sendMixed(file 条目,元信息全带)，挂载清空', () async {
+      final api = _FakeApi(uploadResult: 'file-8');
+      final (container, key) = _mount(
+        api,
+        const PendingFileAttachment(
+          path: '/tmp/季度报告.pdf',
+          name: '季度报告.pdf',
+          size: 2048,
+        ),
+      );
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+      ));
+
+      await ctrl.send('见附件');
+
+      expect(api.uploadCalls, 1);
+      expect(api.uploadedPaths, ['/tmp/季度报告.pdf']);
+      expect(notifier.mixedCalls, hasLength(1));
+      final call = notifier.mixedCalls.single;
+      expect(call.$1, '见附件');
+      expect(call.$2, 'file-8');
+      expect(call.itemType, 'file');
+      expect(call.filename, '季度报告.pdf');
+      expect(call.mimeType, 'application/pdf');
+      expect(call.fileSize, 2048);
+      expect(container.read(pendingAttachmentProvider(key)), isNull);
+    });
+
+    test('挂载文件+无文字 → sendFile(file) 带元信息，不发 mixed', () async {
+      final api = _FakeApi(uploadResult: 'file-7');
+      final (container, key) = _mount(
+        api,
+        const PendingFileAttachment(
+          path: '/tmp/a.zip',
+          name: 'a.zip',
+          size: 1024,
+        ),
+      );
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+      ));
+
+      await ctrl.send('');
+
+      expect(api.uploadCalls, 1);
+      expect(notifier.mixedCalls, isEmpty);
+      expect(notifier.fileCalls, hasLength(1));
+      final call = notifier.fileCalls.single;
+      expect(call.$1, 'file-7');
+      expect(call.$2, MsgType.file);
+      expect(call.filename, 'a.zip');
+      expect(call.mimeType, 'application/zip');
+      expect(call.fileSize, 1024);
+      expect(container.read(pendingAttachmentProvider(key)), isNull);
+    });
+
+    test('挂载图片文件(pdf 以外的图片扩展名)+无文字 → sendFile(image)', () async {
+      final api = _FakeApi(uploadResult: 'file-6');
+      final (container, key) = _mount(
+        api,
+        const PendingFileAttachment(
+          path: '/tmp/photo.png',
+          name: 'photo.png',
+          size: 4096,
+        ),
+      );
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+      ));
+
+      await ctrl.send('');
+
+      expect(notifier.fileCalls.single.$2, MsgType.image,
+          reason: '图片扩展名文件归 image,与既有 pickFile 行为一致');
+    });
+
+    test('挂载文件上传失败 → 保留文件挂载可重试，不触发发送', () async {
+      final api = _FakeApi(uploadError: Exception('network down'));
+      final (container, key) = _mount(
+        api,
+        const PendingFileAttachment(
+          path: '/tmp/a.pdf',
+          name: 'a.pdf',
+          size: 1,
+        ),
+      );
+      final notifier = _RecordingNotifier();
+      final ctrl = InputController(_buildContext(
+        ref: _ContainerRef(container),
+        getNotifier: () => notifier,
+        chatKey: key,
+        isMounted: () => false,
+      ));
+
+      await ctrl.send('见附件');
+
+      expect(api.uploadCalls, 1);
+      expect(notifier.mixedCalls, isEmpty);
+      expect(notifier.fileCalls, isEmpty);
+      expect(container.read(pendingAttachmentProvider(key)), isNotNull,
+          reason: '失败保留挂载,与图片模式同款重试语义');
+    });
+  });
+
+  group('pickFile/pickAlbum 挂载语义', () {
+    test('选图/选文件仅挂载（写 provider），不触发上传/发送', () {
+      // AssetPicker/FilePicker 是静态原生通道,单测无法 stub(与既有测试对
       // picker 的处理方式一致),改为直接验证挂载语义:write provider。
       final api = _FakeApi(uploadResult: 'file-9');
       final notifier = _RecordingNotifier();
-      final (container, key) = _mountAsset(api, _FakeAssetEntity());
+      final (container, key) = _mount(
+        api,
+        const PendingFileAttachment(path: '/tmp/a.pdf', name: 'a.pdf', size: 1),
+      );
 
-      expect(container.read(pendingImageProvider(key)), isNotNull,
-          reason: '选图结果应挂载到 provider');
+      expect(container.read(pendingAttachmentProvider(key)), isNotNull,
+          reason: '选择结果应挂载到 provider');
       expect(api.uploadCalls, 0, reason: '仅挂载不应触发上传');
       expect(notifier.mixedCalls, isEmpty, reason: '仅挂载不应触发发送');
       expect(notifier.fileCalls, isEmpty, reason: '仅挂载不应触发发送');

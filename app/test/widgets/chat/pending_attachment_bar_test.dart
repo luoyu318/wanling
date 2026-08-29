@@ -1,4 +1,5 @@
-import 'package:app/widgets/chat/pending_image_bar.dart';
+import 'package:app/providers/pending_attachment_provider.dart';
+import 'package:app/widgets/chat/pending_attachment_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,7 +38,7 @@ class _FakeAsset implements AssetEntity {
 }
 
 void main() {
-  testWidgets('渲染缩略图容器与删除按钮,点删除回调', (tester) async {
+  testWidgets('图片挂载:渲染缩略图容器与删除按钮,点删除回调', (tester) async {
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel(_pmChannel),
       (call) async => call.method == 'getThumb'
@@ -48,8 +49,8 @@ void main() {
     var removed = false;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: PendingImageBar(
-          asset: _FakeAsset(),
+        body: PendingAttachmentBar(
+          attachment: PendingImageAsset(_FakeAsset()),
           onRemove: () => removed = true,
         ),
       ),
@@ -62,6 +63,31 @@ void main() {
 
     expect(find.byIcon(Icons.close), findsOneWidget);
     expect(find.byType(Image), findsOneWidget); // AssetEntityImageProvider 加载中/失败也渲染 Image
+
+    await tester.tap(find.byIcon(Icons.close));
+    expect(removed, isTrue);
+  });
+
+  testWidgets('文件挂载:渲染文件类型图标 + 文件名 + 大小,点删除回调', (tester) async {
+    var removed = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: PendingAttachmentBar(
+          attachment: const PendingFileAttachment(
+            path: '/tmp/季度报告.pdf',
+            name: '季度报告.pdf',
+            size: 2048,
+          ),
+          onRemove: () => removed = true,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    // 文件名与大小可见(pdf → FileTypeIcon 红底 PDF 缩写)
+    expect(find.text('季度报告.pdf'), findsOneWidget);
+    expect(find.text('2.0 KB'), findsOneWidget);
+    expect(find.text('PDF'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.close));
     expect(removed, isTrue);

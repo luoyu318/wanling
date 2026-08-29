@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:app/providers/pending_image_provider.dart';
+import 'package:app/providers/pending_attachment_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,9 +16,9 @@ import 'package:wanling_core/utils/file_format.dart' show mimeFromExt;
 import 'package:wanling_core/utils/snackbar.dart' show showAppSnackBar, SnackBarType;
 import '../avatar_picker.dart' show defaultAssetPickerConfig;
 
-/// 图片扩展名集合：pickFile 据此判定上传结果是 image 还是 file 消息。
-/// 与服务端 enhanceContentFromFile 的判定无关（服务端幂等处理 image/file），
-/// 仅决定客户端 sendFile 的 msgType，影响本地乐观消息的渲染分支。
+/// 图片扩展名集合：据此判定挂载附件上传后发 image 还是 file 消息
+/// (file 选择器选中的图片文件同样归 image,与服务端 enhanceContentFromFile
+/// 的判定无关,仅决定客户端 sendFile/sendMixed 的条目类型)。
 const _imageExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp'};
 
 /// [InputController] 的依赖注入容器。
@@ -40,7 +40,7 @@ class InputContext {
   /// 触发的 snackbar 在已卸载的页面上抛异常。
   final bool Function() isMounted;
 
-  /// 拿 ChatNotifier 调 sendText / sendFile。chat_page 用
+  /// 拿 ChatNotifier 调 sendText / sendFile / sendMixed。chat_page 用
   /// `ref.read(chatProvider(key).notifier)`。
   final ChatNotifier Function() getNotifier;
 
@@ -64,7 +64,7 @@ class InputContext {
 class InputController {
   final InputContext _ctx;
 
-  /// send 上传期间防抖(挂图发送是异步上传流程,防双发)。
+  /// send 上传期间防抖(挂载发送是异步上传流程,防双发)。
   bool _sending = false;
 
   InputController(this._ctx);
@@ -80,42 +80,27 @@ class InputController {
   }
 
   /// 发送入口(输入栏发送按钮回调)。
-  /// 挂图时:上传 → 有文字 sendMixed / 无文字 sendFile(image);失败保留挂图可重试。
-  /// 无挂图:维持 sendText 现状(空串 no-op)。
+  /// 挂载附件时:上传 → 有文字 sendMixed(图/文、文件/文) / 无文字 sendFile;
+  /// 失败保留挂载可重试。无挂载:维持 sendText 现状(空串 no-op)。
   /// _sending 防抖:上传期间重复点发送直接忽略,防双发。
   Future<void> send(String text) async {
     if (_sending) return;
-    final image = _ctx.ref.read(pendingImageProvider(_ctx.chatKey));
-    if (image == null) {
+    final attachment = _ctx.ref.read(pendingAttachmentProvider(_ctx.chatKey));
+    if (attachment == null) {
       if (text.isEmpty) return;
       unawaited(_ctx.getNotifier().sendText(text));
       return;
     }
     _sending = true;
     try {
-      final file = await image.file;
-      if (file == null) {
-        if (_ctx.isMounted()) {
-          showAppSnackBar(_ctx.getContext(), '无法读取文件',
-              type: SnackBarType.error);
-        }
-        return;
-      }
-      final api = _ctx.ref.read(apiProvider);
-      final fileId =
-          await api.uploadFile(file.path, convId: _ctx.chatKey.convId);
-      // 上传是长耗时异步,期间用户可能点 × 移除挂图或重选新图。
-      // 清除前校验 provider 里还是当初捕获的那个 asset:已被替换则不清,
-      // 防止重选的新图被静默吞掉;本次已上传完成的消息按「点发送即承诺」正常发出。
-      final current = _ctx.ref.read(pendingImageProvider(_ctx.chatKey));
-      if (identical(current, image)) _clearPendingImage();
-      if (text.isNotEmpty) {
-        unawaited(_ctx.getNotifier().sendMixed(text, fileId));
-      } else {
-        unawaited(_ctx.getNotifier().sendFile(fileId, MsgType.image));
+      switch (attachment) {
+        case PendingImageAsset(:final asset):
+          await _sendMountedImage(text, attachment, asset);
+        case PendingFileAttachment(:final path, :final name, :final size):
+          await _sendMountedFile(text, attachment, path, name, size);
       }
     } catch (e) {
-      // 失败不清挂图:用户可重试或删除
+      // 失败不清挂载:用户可重试或删除
       if (_ctx.isMounted()) {
         showAppSnackBar(_ctx.getContext(), extractDioErrorMessage(e),
             type: SnackBarType.error);
@@ -125,52 +110,101 @@ class InputController {
     }
   }
 
-  void _clearPendingImage() {
-    _ctx.ref.read(pendingImageProvider(_ctx.chatKey).notifier).state = null;
+  /// 挂载图片发送:上传 → 有文字 sendMixed(image 条目) / 无文字 sendFile(image)。
+  Future<void> _sendMountedImage(
+    String text,
+    PendingAttachment attachment,
+    AssetEntity asset,
+  ) async {
+    final file = await asset.file;
+    if (file == null) {
+      if (_ctx.isMounted()) {
+        showAppSnackBar(_ctx.getContext(), '无法读取文件',
+            type: SnackBarType.error);
+      }
+      return;
+    }
+    final api = _ctx.ref.read(apiProvider);
+    final fileId =
+        await api.uploadFile(file.path, convId: _ctx.chatKey.convId);
+    _clearMounted(attachment);
+    if (text.isNotEmpty) {
+      unawaited(_ctx.getNotifier().sendMixed(text, fileId));
+    } else {
+      unawaited(_ctx.getNotifier().sendFile(fileId, MsgType.image));
+    }
   }
 
-  /// 选文件（任意类型）：FilePicker → uploadFile → sendFile。
-  /// 上传失败 SnackBar 提示（fail fast，不吞异常）。
+  /// 挂载文件发送:上传 → 有文字 sendMixed(file/image 条目,带元信息) /
+  /// 无文字 sendFile。文件元信息客户端携带(server 不富化 mixed items)。
+  Future<void> _sendMountedFile(
+    String text,
+    PendingAttachment attachment,
+    String path,
+    String name,
+    int size,
+  ) async {
+    final api = _ctx.ref.read(apiProvider);
+    final fileId = await api.uploadFile(path, convId: _ctx.chatKey.convId);
+    _clearMounted(attachment);
+    // lastIndexOf('.') 在无扩展名时返回 -1,substring(-1) 会抛 RangeError;
+    // 显式取 dotIdx,无点 → 空串,由 mimeFromExt 兜底 octet-stream。
+    final lower = (name.isNotEmpty ? name : path).toLowerCase();
+    final dotIdx = lower.lastIndexOf('.');
+    final ext = dotIdx >= 0 ? lower.substring(dotIdx) : '';
+    final isImage = _imageExts.contains(ext);
+    final mimeType = mimeFromExt(ext);
+    if (text.isNotEmpty) {
+      unawaited(_ctx.getNotifier().sendMixed(
+            text,
+            fileId,
+            itemType: isImage ? 'image' : 'file',
+            filename: name,
+            mimeType: mimeType,
+            fileSize: size,
+          ));
+    } else {
+      unawaited(_ctx.getNotifier().sendFile(
+            fileId,
+            isImage ? MsgType.image : MsgType.file,
+            filename: name,
+            mimeType: mimeType,
+            fileSize: size,
+          ));
+    }
+  }
+
+  /// 上传完成清除挂载前校验未被移除/替换(identical 守卫):
+  /// 防止重选的新附件被静默吞掉;已上传完成的消息按「点发送即承诺」正常发出。
+  void _clearMounted(PendingAttachment original) {
+    final current = _ctx.ref.read(pendingAttachmentProvider(_ctx.chatKey));
+    if (identical(current, original)) {
+      _ctx.ref.read(pendingAttachmentProvider(_ctx.chatKey).notifier).state =
+          null;
+    }
+  }
+
+  /// 选文件（任意类型）：挂载到输入条上方预览,不立即发送
+  /// (与图片模式同款交互:点发送才上传,失败可重试)。
   Future<void> pickFile() async {
     final result = await FilePicker.pickFiles();
     if (result == null || result.files.isEmpty) return;
-
-    try {
-      final api = _ctx.ref.read(apiProvider);
-      final file = result.files.first;
-      final fileId =
-          await api.uploadFile(file.path!, convId: _ctx.chatKey.convId);
-
-      // lastIndexOf('.') 在无扩展名时返回 -1，substring(-1) 会抛 RangeError。
-      // 显式取 dotIdx，无点 → 空字符串，由 mimeFromExt 兜底返 octet-stream。
-      final lower = file.path!.toLowerCase();
-      final dotIdx = lower.lastIndexOf('.');
-      final ext = dotIdx >= 0 ? lower.substring(dotIdx) : '';
-      final msgType = _imageExts.contains(ext) ? MsgType.image : MsgType.file;
-      final mimeType = mimeFromExt(ext);
-      unawaited(_ctx.getNotifier().sendFile(
-            fileId,
-            msgType,
-            filename: file.name,
-            // image 类型也带 mime_type：服务端 enhanceContentFromFile 对
-            // image/file 均幂等处理（已有值跳过），传完整元信息让客户端无网络
-            // 往返即可正确展示。
-            mimeType: mimeType,
-            fileSize: file.size,
-          ));
-    } catch (e) {
-      if (_ctx.isMounted()) {
-        showAppSnackBar(_ctx.getContext(), extractDioErrorMessage(e),
-            type: SnackBarType.error);
-      }
-    }
+    final file = result.files.first;
+    _ctx.ref
+        .read(pendingAttachmentProvider(_ctx.chatKey).notifier)
+        .state = PendingFileAttachment(
+      path: file.path ?? '',
+      name: file.name,
+      size: file.size,
+    );
   }
 
   /// 拍照:产物挂到输入条上方缩略图,不立即发送。
   Future<void> takePhoto() async {
     final asset = await CameraPicker.pickFromCamera(_ctx.getContext());
     if (asset == null) return;
-    _ctx.ref.read(pendingImageProvider(_ctx.chatKey).notifier).state = asset;
+    _ctx.ref.read(pendingAttachmentProvider(_ctx.chatKey).notifier).state =
+        PendingImageAsset(asset);
   }
 
   /// 相册:选图挂载(再选=替换),不立即发送。
@@ -180,7 +214,7 @@ class InputController {
       pickerConfig: defaultAssetPickerConfig,
     );
     if (result == null || result.isEmpty) return;
-    _ctx.ref.read(pendingImageProvider(_ctx.chatKey).notifier).state =
-        result.first;
+    _ctx.ref.read(pendingAttachmentProvider(_ctx.chatKey).notifier).state =
+        PendingImageAsset(result.first);
   }
 }

@@ -898,6 +898,70 @@ void main() {
         {'type': 'image', 'file_id': 'file-2'},
       ]);
     });
+
+    test('sendMixed: file 条目携带完整元信息(filename/mime_type/file_size)', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final sent = <Map<String, dynamic>>[];
+      when(() => api.sendMessage(any(), any())).thenAnswer((inv) async {
+        sent.add(inv.positionalArguments[1] as Map<String, dynamic>);
+        return (
+          messageId: 'srv-3',
+          createdAt: DateTime.parse('2026-08-28T00:00:00Z'),
+        );
+      });
+
+      // server enhanceContentFromFile 不富化 mixed items,元信息必须客户端写入
+      await notifier.sendMixed('见附件', 'file-3',
+          itemType: 'file',
+          filename: '报告.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 2048);
+
+      final data = sent.first['data'] as Map<String, dynamic>;
+      expect(data['text'], '见附件');
+      expect(data['items'], [
+        {
+          'type': 'file',
+          'file_id': 'file-3',
+          'filename': '报告.pdf',
+          'mime_type': 'application/pdf',
+          'file_size': 2048,
+        },
+      ]);
+    });
+
+    test('sendMixed: file 条目 file_size 为 0 时省略字段', () async {
+      final container = makeContainer();
+      const key = (convId: 'c1', agentId: 'a1');
+      final notifier = container.read(chatProvider(key).notifier);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final sent = <Map<String, dynamic>>[];
+      when(() => api.sendMessage(any(), any())).thenAnswer((inv) async {
+        sent.add(inv.positionalArguments[1] as Map<String, dynamic>);
+        return (
+          messageId: 'srv-4',
+          createdAt: DateTime.parse('2026-08-28T00:00:00Z'),
+        );
+      });
+
+      await notifier.sendMixed('见附件', 'file-4',
+          itemType: 'file', filename: 'x.bin', mimeType: 'application/octet-stream');
+
+      final data = sent.first['data'] as Map<String, dynamic>;
+      expect(data['items'], [
+        {
+          'type': 'file',
+          'file_id': 'file-4',
+          'filename': 'x.bin',
+          'mime_type': 'application/octet-stream',
+        },
+      ]);
+    });
   });
 
   group('mergeJumpedContext', () {
