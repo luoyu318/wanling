@@ -5,7 +5,7 @@
 ## 项目身份
 
 - wanling（万灵）AI Agent 聊天系统,类似主流 IM Bot 架构。用户通过 Flutter APP 与 Agent 实时对话,Agent 平台通过标准 WebSocket 接口接入。服务端仅做消息转发和用户/Agent 管理,不包含 Agent 适配层
-- APP 端为底部 3-tab 结构（消息 / 万灵 / 我的）,紧凑风格
+- APP 端为动态底部 tab 结构（消息 / 万灵固定 + 可 pin 多会话 agent）,紧凑风格
 - Go module: `github.com/wanling/server`
 - Android applicationId: `com.wanling.app`
 - 生产部署: `/usr/local/wanling/`,systemd 服务 `wanling-server`,PG 库 `wanling`
@@ -36,7 +36,7 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 外部开发者通过 SDK 接入:SDK（sdk/,TS+Python 双语言,npm/PyPI `wanling-sdk`）    PostgreSQL（PG）
 ```
 
-- APP 三 tab（消息/万灵/我的）,server 仅做转发+管理,不含 Agent 适配层
+- APP 动态底栏 tab（消息/万灵固定 + pinned agent）,server 仅做转发+管理,不含 Agent 适配层
 - agent 类型(hermes/opencode/dsh…)由 server 注册表统一下发(`agent_type_registry`,011):拓扑 multi_session 驱动路由,新类型 INSERT 一行即接入、APP 零发版
 - 详细架构按目录分:
   - **改 Go 代码 → 读 [server/CLAUDE.md](./server/CLAUDE.md)**（路由 / Handler / Repo / migration 列表 / WS 协议 / 认证 / 测试规约）

@@ -1,6 +1,6 @@
 # 万灵 APP
 
-万灵 聊天系统的 Flutter 客户端。底部 3-tab 结构（消息 / 万灵 / 我的），主流 IM 紧凑风格，通过 HTTP REST + WebSocket 与服务端通信。
+万灵 聊天系统的 Flutter 客户端。动态底部 tab 结构（消息 / 万灵固定 + 可固定多会话 agent，溢出收进「更多」抽屉），主流 IM 紧凑风格，通过 HTTP REST + WebSocket 与服务端通信。
 
 ## 环境要求
 
@@ -35,7 +35,7 @@ flutter build apk --release --flavor prod  # 输出 build/app/outputs/flutter-ap
 ```
 lib/
 ├── main.dart                # async main + restoreSession + MaterialApp.router（固定 zh locale）
-├── router.dart              # GoRouter 平铺路由（22 条）+ _cupertinoPage 横向平移转场(200ms)；3-tab 由 HomePage 内嵌 NestedPageView 保活。pageBuilder 必传 `key: state.pageKey`（否则 pushReplacement 复用旧 State，initState 不触发）
+├── router.dart              # GoRouter 平铺路由（22 条）+ _cupertinoPage 横向平移转场(200ms)；动态底栏由 HomePage 内嵌 NestedPageView 保活。pageBuilder 必传 `key: state.pageKey`（否则 pushReplacement 复用旧 State，initState 不触发）
 ├── router_helpers.dart      # chatRoute() + startChatAndPush() 统一跳转
 ├── models/                  # User / Agent / Conversation / Message / WSMessage
 ├── services/
@@ -51,7 +51,7 @@ lib/
 │   ├── settings_provider.dart
 │   ├── saved_logins_provider.dart    # 多账号加密存储 + 切换
 │   └── typing_provider.dart          # "对方正在输入" 指示器
-├── pages/                   # 27 个页面（见下方"页面清单"）
+├── pages/                   # 25 个页面（见下方"页面清单"）
 ├── rendering/              # 消息内容渲染器（注册表模式：MsgType → Renderer）
 │   ├── message_content_renderer.dart  # Renderer 接口 + 注册表 + MessageRenderContext
 │   └── builtin_renderers.dart         # text/markdown/image/file renderer + registerBuiltinRenderers()
@@ -75,22 +75,21 @@ test/
 ├── models/ providers/ services/ utils/ widgets/  # 单元/widget 测试
 ```
 
-### 页面清单（27 个）
+### 页面清单（25 个）
 
 | 页面 | 说明 |
 |------|------|
 | `SplashPage` | 启动闪屏，决定走登录还是主页 |
 | `LoginPage` | 登录/注册 |
 | `SelectAccountPage` | 已保存账号选择（多账号切换） |
-| `HomePage` | Scaffold + 底部 3-tab 容器（NestedPageView 保活） |
+| `HomePage` | 动态底栏容器（NavTabBar + NestedPageView：消息/万灵 A 组页 + pinned agent sessions 页保活） |
 | `MessagesPage` | 消息 tab，IM 风格列表（未读红点 + 置顶分组） |
 | `AgentListPage` | 万灵 tab，紧凑列表（行点击 → 聊天；头像点击 → 详情） |
 | `AgentDetailPage` | 详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA |
-| `AgentSessionsPage` | Agent 会话列表（CLI/TUI 会话续聊） |
+| `AgentSessionsPage` | 多 session agent 会话二级列表（路由页 + 底栏 embedded 双模式，embedded 带 pin 按钮 + 保活） |
 | `ChatPage` | 聊天，入参 `(convId, agentId)` record |
 | `SubagentDetailPage` | 子 Agent（subagent）详情 |
 | `ConversationDetailPage` | 会话详情（成员 / 目录 / 模型） |
-| `ProfilePage` | 我的 tab 入口，用户信息 + 头像 |
 | `EditProfilePage` | 编辑昵称/简介/头像 |
 | `CropAvatarPage` | `wechat_assets_picker` 选图 + `crop_your_image` 裁剪 |
 | `ChangePasswordPage` | 改密码（校验旧密码） |
@@ -153,7 +152,7 @@ flutter test test/providers/...       # 指定目录
 - **万灵 tab**：紧凑列表，行点击 → 聊天，头像点击 → 详情；右上角 "+" 新建
 - **Agent 详情**：密钥默认 `•••` 掩码（眼睛切换）+ AppID/密钥点击复制；编辑昵称 / 删除 / 发消息 CTA
 - **聊天页**：文本/Markdown 消息渲染、输入指示器、消息已读回执、长按消息可复制、点击图片全屏查看
-- **我的 tab**：用户信息（含头像）+ 编辑资料（昵称/简介/头像裁剪）+ 改密码 + 关于 + 退出登录 + 切换账号
+- **双层侧滑栏**：AppBar 头像拉起——左竖条切换账号（点按切换 / 长按编辑·复制·删除 / 底部「添加」），右侧主面板编辑资料（昵称/简介/头像裁剪）+ 通知与后台 + 改密码 + 关于 + 退出登录
 - **多账号**：登录过的账号加密保存，下次进入可在 `SelectAccountPage` 直接选择
 - **后台运行**（Android）：APP 退到后台/被杀后，`flutter_background_service` 前台服务保活 WS 连接，新消息通过 `flutter_local_notifications` 推送通知，点击跳转对应会话
 

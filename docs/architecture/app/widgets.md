@@ -148,9 +148,17 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 密码输入框组件（StatefulWidget），内置 obscure 显隐状态 + 右侧 `IconButton`（visibility / visibility_off）。替代 login_page / select_account_page / switch_account_sheet / change_password_page 四处原本各写一份的密码框，统一显隐交互
 
-## SwitchAccountSheet
+## NavTabBar
 
-切换账号底部弹层（从 ProfilePage「切换账号」入口拉起）。列出 `savedLoginsProvider` 已保存账号（含账号标记 + 服务器名），点击触发 `switchTo(index)`。仅在 ≥2 个账号时显示入口
+自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + 可选「更多」槽，槽位编号 0=消息 1=万灵 2..=agent(showMore 时 4=更多)。agent 槽为 `LongPressDraggable + DragTarget`(长按拖拽排序,`onAgentReorder` 传 agentTabs 列表内下标,由 HomePage 换算成 pinned 列表下标),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；agent 头像含在线绿点 + 未读角标 + 选中环。`showMore=true` 时构造断言 agentSlots ≤ 2(第 5 槽固定为更多)
+
+## AccountSidebar
+
+左侧双层侧滑栏(HomePage 常驻挂载,进出动画/遮罩由 HomePage 控制)：左竖条(88px,账号头像竖排,当前项绿框高亮,点按切换/长按弹编辑·复制·删除菜单/底部「添加」钉底) + 右主面板(`SidebarProfilePanel` 承接原「我的」页菜单)。切换中防抖 + 失败 SnackBar,成功回调 `onClose` 收面板。迁移自旧「切换账号」底部弹层(`SwitchAccountSheet` 已删除)
+
+## SidebarProfilePanel
+
+双层侧滑栏右侧主面板：头部大头像 + 名字 + server 副标题 + 签名 pill(点击进编辑资料)，下方 SettingsGroup 菜单——编辑资料 / 通知与后台 / 修改密码 / 关于(版本号) / 退出登录(确认弹窗)。原 ProfilePage「我的」页菜单整段迁移至此;极小屏防溢出整体可滚动
 
 ## AccountMarkEditor
 
@@ -158,7 +166,7 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## settings_group / settings_tile
 
-**通用列表项组件**。`SettingsGroup` 白底卡片容器（顶部默认 8px margin，与 ProfilePage/AgentDetailPage 卡片间距一致）包裹一组 `SettingsTile`；`SettingsTile` 通用行（左 icon + label + 右 trailing 默认 chevron，带按下反馈），从 ProfilePage 的 `_ProfileTile` 升格为公共组件，ProfilePage/AgentDetailPage 复用，避免两处列表样式漂移
+**通用列表项组件**。`SettingsGroup` 白底卡片容器（顶部默认 8px margin，与侧滑栏主面板/AgentDetailPage 卡片间距一致）包裹一组 `SettingsTile`；`SettingsTile` 通用行（左 icon + label + 右 trailing 默认 chevron，带按下反馈），从原 ProfilePage 的 `_ProfileTile` 升格为公共组件，SidebarProfilePanel/AgentDetailPage 复用，避免两处列表样式漂移
 
 ## feedback/
 
