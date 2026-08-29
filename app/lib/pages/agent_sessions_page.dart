@@ -11,6 +11,7 @@ import 'package:wanling_core/providers/agent_provider.dart' show agentByIdProvid
 import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/agent_status_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show authProvider;
+import 'package:wanling_core/providers/pinned_nav_tabs_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../router_helpers.dart';
 import '../utils/directory_utils.dart';
@@ -26,13 +27,25 @@ import '../widgets/directory_picker_sheet.dart';
 
 class AgentSessionsPage extends ConsumerStatefulWidget {
   final String agentId;
-  const AgentSessionsPage({super.key, required this.agentId});
+
+  /// true = 底部导航 tab 内嵌模式:无返回键 + AppBar 带 pin 按钮 + 页面保活。
+  /// false = 路由页模式(/agent/:id/sessions),行为与历史版本完全一致。
+  final bool embedded;
+  const AgentSessionsPage({
+    super.key,
+    required this.agentId,
+    this.embedded = false,
+  });
 
   @override
   ConsumerState<AgentSessionsPage> createState() => _AgentSessionsPageState();
 }
 
-class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
+class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   static const _noSelection = '\u0000__no_selection__';
   static const _prefsUncategorized = '__uncategorized__';
 
@@ -135,6 +148,23 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     }
   }
 
+  /// AppBar pin 按钮:实心 = 已固定,点击取消固定并从底栏即时消失。
+  Widget _buildPinAction() {
+    final pinned = ref.watch(pinnedNavTabsProvider).contains(widget.agentId);
+    return IconButton(
+      icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
+      tooltip: pinned ? '从导航栏移除' : '固定到导航栏',
+      onPressed: () {
+        final notifier = ref.read(pinnedNavTabsProvider.notifier);
+        if (pinned) {
+          notifier.unpin(widget.agentId);
+        } else {
+          notifier.pin(widget.agentId);
+        }
+      },
+    );
+  }
+
   List<DirectoryInfo> _deriveDirectories(
       List<Conversation> sessions, Map<String, AgentStatus> statusMap) {
     _lastSessions = sessions;
@@ -149,6 +179,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin 必须调
     final agent = ref.watch(agentByIdProvider(widget.agentId));
     final currentUserId = ref.watch(authProvider).user?.id ?? '';
     final notifier = ref.read(agentSessionsProvider(widget.agentId).notifier);
@@ -186,6 +217,8 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     return Scaffold(
       drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
       appBar: AppBar(
+        // 内嵌模式下位于页面栈底,禁自动返回键(否则空列表时冒出返回箭头)
+        automaticallyImplyLeading: !widget.embedded,
         leading: list != null && list.isNotEmpty
             ? Builder(
                 builder: (context) => Stack(
@@ -239,6 +272,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
                 ],
               ),
         actions: [
+          if (widget.embedded) _buildPinAction(),
           IconButton(
             icon: _creating
                 ? const SizedBox(
@@ -336,6 +370,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
                 ],
               ),
         actions: [
+          if (widget.embedded) _buildPinAction(),
           TextButton.icon(
             onPressed: _creating ? null : _createSession,
             icon: _creating
