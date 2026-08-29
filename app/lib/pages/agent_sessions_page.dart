@@ -28,8 +28,9 @@ import '../widgets/directory_picker_sheet.dart';
 class AgentSessionsPage extends ConsumerStatefulWidget {
   final String agentId;
 
-  /// true = 底部导航 tab 内嵌模式:无返回键 + AppBar 带 pin 按钮 + 页面保活。
-  /// false = 路由页模式(/agent/:id/sessions),行为与历史版本完全一致。
+  /// true = 底部导航 tab 内嵌模式:无返回键 + 页面保活。
+  /// false = 路由页模式(/agent/:id/sessions),自动带返回键。
+  /// 两种模式 AppBar 均渲染 pin 按钮(路由模式支持新账号完成首次 pin)。
   final bool embedded;
   const AgentSessionsPage({
     super.key,
@@ -272,7 +273,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
                 ],
               ),
         actions: [
-          if (widget.embedded) _buildPinAction(),
+          _buildPinAction(),
           IconButton(
             icon: _creating
                 ? const SizedBox(
@@ -370,7 +371,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
                 ],
               ),
         actions: [
-          if (widget.embedded) _buildPinAction(),
+          _buildPinAction(),
           TextButton.icon(
             onPressed: _creating ? null : _createSession,
             icon: _creating

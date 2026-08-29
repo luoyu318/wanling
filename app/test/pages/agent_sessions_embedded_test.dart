@@ -1,6 +1,6 @@
-// AgentSessionsPage embedded 模式测试:
+// AgentSessionsPage pin 按钮测试:
 // - embedded: AppBar 带 pin 按钮,点击写 pinnedNavTabsProvider
-// - 非 embedded(路由模式): 不出现 pin 按钮(存量行为不变)
+// - 非 embedded(路由模式): 同样出现 pin 按钮(支持新账号完成首次 pin),点击写 pinnedNavTabsProvider
 // Harness 与 e2e 同款:MockApi + FakeWS + restoreSession。
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
@@ -91,13 +91,27 @@ void main() {
     expect(container.read(pinnedNavTabsProvider), isNot(contains('a1')));
   });
 
-  testWidgets('路由模式:不出现 pin 按钮', (tester) async {
-    await _harness(
+  testWidgets('路由模式:AppBar 出现 pin 按钮,点击后进入 pinned 列表',
+      (tester) async {
+    final container = await _harness(
       tester,
       child: const AgentSessionsPage(agentId: 'a1'),
     );
-    expect(find.byIcon(Icons.push_pin), findsNothing);
+
+    // 未 pin:outlined 图标
+    expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.push_pin_outlined));
+    await tester.pumpAndSettle();
+    expect(container.read(pinnedNavTabsProvider), contains('a1'));
+    // 已 pin:实心图标
+    expect(find.byIcon(Icons.push_pin), findsOneWidget);
     expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+    // 再点取消 pin
+    await tester.tap(find.byIcon(Icons.push_pin));
+    await tester.pumpAndSettle();
+    expect(container.read(pinnedNavTabsProvider), isNot(contains('a1')));
   });
 
   testWidgets('embedded: pin 状态持久化还原后图标为实心', (tester) async {
