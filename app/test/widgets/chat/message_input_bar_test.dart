@@ -267,4 +267,71 @@ void main() {
       expect(textField.controller!.text, '');
     });
   });
+
+  group('草稿回填(initialText/onTextChanged)', () {
+    Widget buildBarWith({
+      String? initialText,
+      ValueChanged<String>? onTextChanged,
+      void Function(String)? onSend,
+    }) =>
+        MaterialApp(
+          home: Scaffold(
+            body: MessageInputBar(
+              onSend: onSend ?? (_) {},
+              onPickFile: () {},
+              onTakePhoto: () {},
+              onPickAlbum: () {},
+              initialText: initialText,
+              onTextChanged: onTextChanged,
+            ),
+          ),
+        );
+
+    testWidgets('挂载时 initialText 非空 → 回填 + 发送按钮出现', (tester) async {
+      await tester.pumpWidget(buildBarWith(initialText: '挂载即有草稿'));
+      expect(find.text('挂载即有草稿'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.send), findsOneWidget);
+    });
+
+    testWidgets('initialText 异步到达(null→文本) → didUpdateWidget 回填', (tester) async {
+      String? draft;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, setState) => buildBarWith(initialText: draft),
+      ));
+      expect(find.text('异步草稿'), findsNothing);
+      // 模拟 provider 加载完成后重建
+      await tester.pumpWidget(buildBarWith(initialText: '异步草稿'));
+      expect(find.text('异步草稿'), findsOneWidget);
+    });
+
+    testWidgets('输入框已有内容时不覆盖(保护正在输入)', (tester) async {
+      await tester.pumpWidget(buildBarWith(initialText: '旧草稿'));
+      await tester.enterText(find.byType(TextField), '我打的新字');
+      await tester.pumpWidget(buildBarWith(initialText: '别的会话草稿'));
+      expect(find.text('我打的新字'), findsOneWidget);
+      expect(find.text('别的会话草稿'), findsNothing);
+    });
+
+    testWidgets('输入触发 onTextChanged 上抛', (tester) async {
+      final events = <String>[];
+      await tester.pumpWidget(buildBarWith(onTextChanged: events.add));
+      await tester.enterText(find.byType(TextField), '你好');
+      expect(events, contains('你好'));
+    });
+
+    testWidgets('点发送后 onTextChanged 抛空串(clear 联动)', (tester) async {
+      final events = <String>[];
+      await tester.pumpWidget(buildBarWith(
+        onTextChanged: events.add,
+        onSend: (_) {},
+      ));
+      await tester.enterText(find.byType(TextField), '要发送的');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+      expect(events.last, '');
+      expect(find.text('要发送的'), findsNothing);
+    });
+  });
 }

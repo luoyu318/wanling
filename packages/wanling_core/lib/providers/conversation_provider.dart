@@ -435,9 +435,12 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
     _persistConv(state[idx], tag: 'unpin');
   }
 
-  /// 软删除会话。调 API + 本地移除。
+  /// 软删除会话。调 API + 本地移除 + 清草稿。
   Future<void> hide(String convId) async {
     await api.hideConversation(convId);
+    _store
+        .deleteDraft(currentUserId, convId)
+        .catchError((e) => debugPrint('[conv] deleteDraft($convId) fail: $e'));
     state = state.where((c) => c.id != convId).toList();
     _persistList(tag: 'hide');
   }

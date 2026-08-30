@@ -6,13 +6,14 @@ import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
+import '../helpers/fake_local_message_store.dart';
 import '../helpers/fake_ws.dart';
 
 class MockApi extends Mock implements ApiService {}
 
 /// 构造一个 agent_session 会话(c1, unreadCount=0)。
-Conversation _session({int unread = 0}) => Conversation(
-      id: 'c1',
+Conversation _session({int unread = 0, String id = 'c1'}) => Conversation(
+      id: id,
       type: 'agent_session',
       agent: AgentSummary(
           id: 'agent-1', name: 'Wanling', status: AgentStatus.online),
@@ -64,7 +65,8 @@ void main() {
   // 构造 notifier + 等 load() 完成(state 非 null)。
   // 构造函数已 fire-and-forget 调一次 load,这里显式 await 确保 state 就绪。
   Future<AgentSessionsNotifier> boot() async {
-    final notifier = AgentSessionsNotifier(api, ws, 'user-1', 'agent-1');
+    final notifier =
+        AgentSessionsNotifier(api, ws, 'user-1', 'agent-1', FakeLocalMessageStore());
     await notifier.load();
     return notifier;
   }
@@ -605,6 +607,26 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(notifier.state!.first.lastAgentReplyContent, '我的答复');
+    });
+  });
+
+  // ========== hide: 删除会话同步清本地草稿(防孤儿草稿残留)==========
+  group('hide 清草稿', () {
+    test('hide 会话后本地草稿删除', () async {
+      when(() => api.hideConversation(any())).thenAnswer((_) async {});
+      final store = FakeLocalMessageStore();
+      await store.putDraft('u1', 'conv-x', '残留草稿');
+      // load 返回含 conv-x 的会话列表,构造函数 fire-and-forget 的 load
+      // 与显式 load 共用此 stub
+      when(() => api.getAgentSessions('agent-1'))
+          .thenAnswer((_) async => [_session(id: 'conv-x')]);
+      final notifier = AgentSessionsNotifier(api, ws, 'u1', 'agent-1', store);
+      await notifier.load();
+      expect(notifier.state!.any((c) => c.id == 'conv-x'), isTrue);
+
+      await notifier.hide('conv-x');
+      expect(await store.getDraft('u1', 'conv-x'), isNull);
+      expect(notifier.state!.any((c) => c.id == 'conv-x'), isFalse);
     });
   });
 }

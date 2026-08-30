@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/agent_mode.dart';
 import 'package:wanling_core/providers/agent_modes_provider.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show authProvider;
 import 'package:wanling_core/providers/chat_provider.dart' show chatProvider;
+import 'package:wanling_core/providers/draft_provider.dart' show draftProvider;
 import 'package:app/providers/pending_attachment_provider.dart';
 import 'message_input_bar.dart';
 import 'pending_attachment_bar.dart';
@@ -41,6 +43,21 @@ class ChatInputBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 草稿链路:回填 initialText,输入防抖落库,点发送清除。
+    // uid 为空(未登录瞬间)不接草稿,输入框照常工作。
+    final uid = ref.watch(authProvider.select((s) => s.user?.id));
+    final draftKey = uid == null ? null : (ownerId: uid, convId: chatKey.convId);
+    final initialText = draftKey == null ? null : ref.watch(draftProvider(draftKey));
+    void onDraftChanged(String text) {
+      if (draftKey == null) return;
+      ref.read(draftProvider(draftKey).notifier).setText(text);
+    }
+
+    void onSendWithDraft(String text) {
+      ref.read(draftProvider(draftKey!).notifier).clear();
+      inputController.send(text);
+    }
+
     final pendingQuote = ref.watch(
       chatProvider(chatKey).select((s) => s.pendingQuote),
     );
@@ -95,7 +112,7 @@ class ChatInputBar extends ConsumerWidget {
 
       return MessageInputBar(
         key: inputBarKey,
-        onSend: inputController.send,
+        onSend: uid == null ? inputController.send : onSendWithDraft,
         onPickFile: inputController.pickFile,
         onTakePhoto: inputController.takePhoto,
         onPickAlbum: inputController.pickAlbum,
@@ -106,18 +123,22 @@ class ChatInputBar extends ConsumerWidget {
         showModeBar: false,
         onSendSlash: onSendSlash,
         hasPendingAttachment: pendingAttachment != null,
+        initialText: (initialText == null || initialText.isEmpty) ? null : initialText,
+        onTextChanged: onDraftChanged,
         hintText: inputHint(chatState.convTitle),
       );
     }
 
     // dm/群聊:完全不变
     return MessageInputBar(
-      onSend: inputController.send,
+      onSend: uid == null ? inputController.send : onSendWithDraft,
       onPickFile: inputController.pickFile,
       onTakePhoto: inputController.takePhoto,
       onPickAlbum: inputController.pickAlbum,
       topOverlay: overlay,
       hasPendingAttachment: pendingAttachment != null,
+      initialText: (initialText == null || initialText.isEmpty) ? null : initialText,
+      onTextChanged: onDraftChanged,
       hintText: inputHint(chatState.convTitle),
     );
   }

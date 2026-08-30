@@ -151,6 +151,7 @@ class FakeLocalMessageStore implements LocalMessageStore {
   Future<void> clearAll() async {
     _buckets.clear();
     _globalLastSeq = null;
+    _drafts.clear();
   }
 
   // === 列表缓存 + conv_meta ===
@@ -261,5 +262,26 @@ class FakeLocalMessageStore implements LocalMessageStore {
     final entry = _convMeta['$ownerId:$convId'];
     if (entry == null) return null;
     return (type: entry.type, title: entry.title);
+  }
+
+  /// draft 命名空间 key="{ownerId}:{convId}"
+  final Map<String, String> _drafts = {};
+
+  @override
+  Future<void> putDraft(String ownerId, String convId, String text) async {
+    _maybeThrow('putDraft');
+    _drafts['$ownerId:$convId'] = text;
+  }
+
+  @override
+  Future<String?> getDraft(String ownerId, String convId) async {
+    _maybeThrow('getDraft');
+    return _drafts['$ownerId:$convId'];
+  }
+
+  @override
+  Future<void> deleteDraft(String ownerId, String convId) async {
+    _maybeThrow('deleteDraft');
+    _drafts.remove('$ownerId:$convId');
   }
 }

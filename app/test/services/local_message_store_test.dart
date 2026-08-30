@@ -530,6 +530,39 @@ test('done 聚合卡即使 elements 空也写库', () async {
   final result = await db.getMessages(conversationId: 'conv1');
   expect(result.map((m) => m.id), contains('done-empty'));
 });
+
+  group('draft(Kvs draft:{owner}:{conv} 命名空间)', () {
+    test('put + get 往返', () async {
+      await db.putDraft('u1', 'conv1', '你好，帮我查');
+      expect(await db.getDraft('u1', 'conv1'), '你好，帮我查');
+    });
+
+    test('同 key 覆盖写(upsert)', () async {
+      await db.putDraft('u1', 'conv1', '第一版');
+      await db.putDraft('u1', 'conv1', '第二版');
+      expect(await db.getDraft('u1', 'conv1'), '第二版');
+    });
+
+    test('按 owner+conv 隔离', () async {
+      await db.putDraft('u1', 'conv1', 'A 的草稿');
+      await db.putDraft('u2', 'conv1', 'B 的草稿');
+      expect(await db.getDraft('u1', 'conv1'), 'A 的草稿');
+      expect(await db.getDraft('u2', 'conv1'), 'B 的草稿');
+    });
+
+    test('delete 后返 null,再 delete 幂等', () async {
+      await db.putDraft('u1', 'conv1', '草稿');
+      await db.deleteDraft('u1', 'conv1');
+      expect(await db.getDraft('u1', 'conv1'), isNull);
+      await db.deleteDraft('u1', 'conv1'); // 不抛即幂等
+    });
+
+    test('clearAll 清除草稿(注销场景)', () async {
+      await db.putDraft('u1', 'conv1', '草稿');
+      await db.clearAll();
+      expect(await db.getDraft('u1', 'conv1'), isNull);
+    });
+  });
 }
 
 ChatMessage _mkMsg(String id, String convId, {required DateTime createdAt}) {
