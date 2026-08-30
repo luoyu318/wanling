@@ -13,7 +13,7 @@ Future<void> _pumpWithButton(WidgetTester tester,
           builder: (btnCtx) => IconButton(
             icon: const Icon(Icons.add),
             onPressed: () async {
-              final box = btnCtx.findRenderObject() as RenderBox;
+              final box = btnCtx.findRenderObject()! as RenderBox;
               final pos =
                   box.localToGlobal(Offset(box.size.width, box.size.height));
               await showAppActionMenu(
@@ -86,7 +86,7 @@ void main() {
             builder: (ctx) => ElevatedButton(
               onPressed: () async {
                 // 按钮中心触发，验证定位
-                final box = ctx.findRenderObject() as RenderBox;
+                final box = ctx.findRenderObject()! as RenderBox;
                 final pos = box.localToGlobal(Offset.zero);
                 result = await showAppActionMenu(ctx, pos, items: items);
               },
@@ -129,7 +129,7 @@ void main() {
         home: Builder(
           builder: (ctx) => ElevatedButton(
             onPressed: () async {
-              final box = ctx.findRenderObject() as RenderBox;
+              final box = ctx.findRenderObject()! as RenderBox;
               final pos = box.localToGlobal(Offset.zero);
               result = await showAppActionMenu(ctx, pos, items: const [
                 ActionMenuItem(
@@ -155,7 +155,7 @@ void main() {
         home: Builder(
           builder: (ctx) => ElevatedButton(
             onPressed: () async {
-              final box = ctx.findRenderObject() as RenderBox;
+              final box = ctx.findRenderObject()! as RenderBox;
               final pos = box.localToGlobal(Offset.zero);
               result = await showAppActionMenu(ctx, pos, items: const [
                 ActionMenuItem(

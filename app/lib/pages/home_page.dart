@@ -15,7 +15,7 @@ import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
-    show conversationProvider, convByIdProvider, totalUnreadProvider;
+    show convByIdProvider, totalUnreadProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
@@ -90,12 +90,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 其余 → 聊天页),不改变 tab 激活态。
     final convId = navConvIdOf(tabId);
     if (convId != null) {
-      final matches = ref
-          .read(conversationProvider)
-          .where((c) => c.id == convId)
-          .toList();
-      if (matches.isEmpty) return;
-      final conv = matches.first;
+      final conv = ref.read(convByIdProvider(convId));
+      if (conv == null) return;
       if (conv.agent?.isMultiSession ?? false) {
         context.push(sessionsRoute(conv.agent!.id));
       } else {
