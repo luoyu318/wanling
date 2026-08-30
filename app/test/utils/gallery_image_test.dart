@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 
 import 'package:app/utils/gallery_saver.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,8 +14,7 @@ class _FakeAdapter implements HttpClientAdapter {
   _FakeAdapter({
     required this.statusCode,
     required this.body,
-    this.contentLength,
-  }) : chunks = [body];
+  }) : contentLength = null, chunks = [body];
 
   _FakeAdapter.chunked({
     required this.statusCode,
@@ -104,6 +102,125 @@ void main() {
       expect(
           collectConversationImages([], 'https://h', 'tok'), <GalleryImage>[]);
     });
+
+    test('mixed 消息的 items 图片收集(单图)', () {
+      final messages = [
+        msg('m1', 'mixed', {
+          'text': '看这张',
+          'items': [
+            {'type': 'image', 'file_id': 'mix1'},
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['mix1']);
+    });
+
+    test('mixed 多图保持 items 顺序,非 image 条目跳过', () {
+      final messages = [
+        msg('m1', 'mixed', {
+          'items': [
+            {'type': 'image', 'file_id': 'a'},
+            {'type': 'text', 'text': 'note'}, // 非 image 跳过
+            {'type': 'image', 'file_id': 'b'},
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['a', 'b']);
+    });
+
+    test('mixed 与 image 混排:时间正序 + 去重', () {
+      // newest first：m1 最新。img1 跨消息重复,去重保留最新位置(m1)。
+      // 反转后时序:m2 的 img2(较旧)在前,m1 的 img1(最新)在后。
+      final messages = [
+        msg('m1', 'mixed',
+            {'items': [{'type': 'image', 'file_id': 'img1'}]}),
+        msg('m2', 'image', {'file_id': 'img2'}),
+        msg('m3', 'mixed',
+            {'items': [{'type': 'image', 'file_id': 'img1'}]}), // 重复,去重
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['img2', 'img1']);
+    });
+
+    test('mixed 无 items / file_id 缺失空串防御', () {
+      final messages = [
+        msg('m1', 'mixed', {'text': '只文字'}), // 无 items
+        msg('m2', 'mixed', {
+          'items': [
+            {'type': 'image'}, // 无 file_id
+            {'type': 'image', 'file_id': ''}, // 空串
+          ],
+        }),
+      ];
+      expect(collectConversationImages(messages, 'https://h', 'tok'),
+          <GalleryImage>[]);
+    });
+
+    test('aggregate_card 内 markdown 元素的图片收集', () {
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'state': 'generating',
+          'elements': [
+            {
+              'type': 'reasoning',
+              'element_id': 'reasoning_1',
+              'data': {'text': '思考中'},
+            },
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_2',
+              'data': {'text': '![截图](/api/files/agg1)'},
+            },
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['agg1']);
+      expect(result[0].heroTag, 'gallery_agg1');
+    });
+
+    test('aggregate_card 跨元素多图保持时序 + 与独立 image 混排去重', () {
+      // newest first:m1(聚合卡,最新)在前。agg 卡内 markdown_2/img1 与
+      // m2 独立 image img1 重复 → 去重保留 m1 的位置。
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'elements': [
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_1',
+              'data': {'text': '![a](/api/files/agg1) ![b](/api/files/img1)'},
+            },
+          ],
+        }),
+        msg('m2', 'image', {'file_id': 'img1'}), // 重复,去重
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      // 反转后:较旧的独立 img2 不存在,agg 卡(m1,最新)在后;卡内 agg1 在 img1 前
+      expect(result.map((g) => g.fileId), ['agg1', 'img1']);
+    });
+
+    test('aggregate_card 非 markdown 元素 / 外部 URL 跳过', () {
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'elements': [
+            {
+              'type': 'reasoning',
+              'element_id': 'reasoning_1',
+              'data': {'text': '![伪图](/api/files/should-skip)'},
+            },
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_2',
+              'data': {'text': '![外](https://evil.com/x.png)'},
+            },
+          ],
+        }),
+      ];
+      expect(collectConversationImages(messages, 'https://h', 'tok'),
+          <GalleryImage>[]);
+    });
   });
 
   group('saveToGallery', () {
@@ -140,10 +257,10 @@ void main() {
         body: [0x89, 0x50, 0x4E, 0x47], // 假 PNG 字节
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {'Authorization': 'Bearer test-token'},
+        headers: {'Authorization': 'Bearer test-token'},
       );
 
       final result = await saveToGallery(image, dio: dio);
@@ -155,10 +272,10 @@ void main() {
       final dio = Dio();
       dio.httpClientAdapter = _FakeAdapter(statusCode: 404, body: []);
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final result = await saveToGallery(image, dio: dio);
@@ -190,10 +307,10 @@ void main() {
         contentLength: 300,
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final received = <int>[];
@@ -230,10 +347,10 @@ void main() {
         body: List.filled(50, 0x89),
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final totals = <int>[];
@@ -258,10 +375,10 @@ void main() {
         body: [0x89, 0x50, 0x4E, 0x47],
       );
 
-      final image = GalleryImage(
+      const image = GalleryImage(
         url: 'https://example.com/api/files/abc',
         fileId: 'abc',
-        headers: const {},
+        headers: {},
       );
 
       final result = await saveToGallery(image, dio: dio);

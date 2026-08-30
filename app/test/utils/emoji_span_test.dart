@@ -24,13 +24,13 @@ void main() {
     test('不含目标字符返回普通 Text(无 span 拆分)', () {
       final w = buildEmojiColoredText('Hello 世界 123');
       expect(w, isA<Text>());
-      expect((w as Text).data, 'Hello 世界 123');
+      expect((w).data, 'Hello 世界 123');
       // 普通 Text 的 textSpan 为 null(data 模式),不是 TextSpan 列表
       expect(w.textSpan, isNull);
     });
 
     test('含 ♻️ 时拆分为普通段 + emoji段,emoji段设 Noto Color Emoji 字体', () {
-      final w = buildEmojiColoredText('♻️ online') as Text;
+      final w = buildEmojiColoredText('♻️ online');
       final span = w.textSpan! as TextSpan;
       expect(span.children, isNotNull);
       // 应有 emoji 段 + 普通段(开头的 emoji 段 + 「 online」普通段)
@@ -44,7 +44,7 @@ void main() {
     });
 
     test('数字字符不会被分到 emoji 段(防数字变宽)', () {
-      final w = buildEmojiColoredText('♻️ 123 ⚠️') as Text;
+      final w = buildEmojiColoredText('♻️ 123 ⚠️');
       final span = w.textSpan! as TextSpan;
       final spans = span.children!.cast<TextSpan>();
       // 找含「123」的 span,它应是普通段(非 emoji 字体)
@@ -53,7 +53,7 @@ void main() {
     });
 
     test('FE0F 变体符跟随 emoji 归入 emoji 段', () {
-      final w = buildEmojiColoredText('♻️') as Text;
+      final w = buildEmojiColoredText('♻️');
       final span = w.textSpan! as TextSpan;
       final spans = span.children!.cast<TextSpan>();
       final emojiSpan = spans.first;
@@ -64,7 +64,7 @@ void main() {
 
     test('透传 style 给普通段和 emoji 段(emoji 段在 style 基础上覆盖 fontFamily)', () {
       const base = TextStyle(fontSize: 16, fontWeight: FontWeight.w300);
-      final w = buildEmojiColoredText('x♻️y', style: base) as Text;
+      final w = buildEmojiColoredText('x♻️y', style: base);
       final span = w.textSpan! as TextSpan;
       final spans = span.children!.cast<TextSpan>();
       final emojiSpan = spans.firstWhere((s) => s.text!.contains('♻'));
@@ -75,7 +75,7 @@ void main() {
     });
 
     test('多个 emoji 交替出现,各自独立成段', () {
-      final w = buildEmojiColoredText('a♻️b⚠️c') as Text;
+      final w = buildEmojiColoredText('a♻️b⚠️c');
       final span = w.textSpan! as TextSpan;
       final spans = span.children!.cast<TextSpan>();
       // 应交替:a | ♻️ | b | ⚠️ | c

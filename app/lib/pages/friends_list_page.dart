@@ -15,10 +15,9 @@ import 'package:wanling_core/widgets/feedback/app_snackbar.dart';
 /// 好友中心页:好友列表 + 收到请求 + 已发出请求。
 ///
 /// 三 Tab 布局对齐主流 IM 「通讯录 → 我的好友 / 新的朋友」结构。
-/// 「收到请求」Tab 文案带红点 Badge(收到请求数 > 0 时),与 ProfilePage
-/// 入口的红点 Badge 互为冗余提醒(确保用户不会漏看)。
+/// 「收到请求」Tab 文案带红点 Badge(收到请求数 > 0 时),确保用户不会漏看。
 ///
-/// 设计风格对齐 conversation_detail_page + profile_page:
+/// 设计风格对齐 conversation_detail_page:
 ///   - 背景 #EDEDED,卡片白底
 ///   - 行高 / icon / 字号 / 分割线口径与 SettingsTile 一致
 ///   - 操作(接受 / 拒绝 / 取消 / 删除)用 FilledButton + 二次确认 AppDialog

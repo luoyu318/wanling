@@ -29,8 +29,8 @@ void main() {
   });
 
   testWidgets('无 MessageInputBar 时也能渲染（降级贴底）', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: const SizedBox()),
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SizedBox()),
     ));
 
     showAppSnackBar(tester.element(find.byType(Scaffold)), '提示');
@@ -40,8 +40,8 @@ void main() {
   });
 
   testWidgets('2 秒后自动消失', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: const SizedBox()),
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SizedBox()),
     ));
 
     showAppSnackBar(tester.element(find.byType(Scaffold)), '消失测试');

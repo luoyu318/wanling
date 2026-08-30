@@ -65,7 +65,7 @@ void main() {
     });
     await ws.testHandleDispatch(dispatch);
     final msgs = await store.getMessages(conversationId: 'conv1');
-    expect(msgs.first.content['data']['text'], 'edited');
+    expect(((msgs.first.content['data'] as Map)['text']) as String, 'edited');
   });
 
   test('seq 字段调 setGlobalLastSeq', () async {
@@ -91,7 +91,7 @@ void main() {
     await ws.testHandleDispatch(dispatch);
     // content 没改
     final msgs = await store.getMessages(conversationId: 'conv1');
-    expect(msgs.first.content['data']['text'], 'hi');
+    expect(((msgs.first.content['data'] as Map)['text']) as String, 'hi');
   });
 
   test('MESSAGE_UPDATE content 为 null 时 silently skip', () async {
@@ -103,14 +103,14 @@ void main() {
     });
     await ws.testHandleDispatch(dispatch);
     final msgs = await store.getMessages(conversationId: 'conv1');
-    expect(msgs.first.content['data']['text'], 'hi');
+    expect(((msgs.first.content['data'] as Map)['text']) as String, 'hi');
   });
 }
 
 Map<String, dynamic> _dispatchMessage(
     String t, Map<String, dynamic> d,
     {int? seq}) {
-  return {'op': 0, 't': t, 'd': d, if (seq != null) 's': seq};
+  return {'op': 0, 't': t, 'd': d, 's': ?seq};
 }
 
 ChatMessage _mkMsg(String id) => ChatMessage(

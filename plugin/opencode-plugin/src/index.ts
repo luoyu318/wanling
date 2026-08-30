@@ -1,6 +1,7 @@
 import { Agent, setGlobalDispatcher } from "undici"
 import { logger } from "./utils/logger.js"
 import { loadConfig, configDir } from "./config.js"
+import { chmodSync, mkdirSync, writeFileSync } from "fs"
 import { WanlingClient } from "./wanling/client.js"
 import { OpencodeBridge } from "./opencode/bridge.js"
 import { SyncEngine } from "./sync/engine.js"
@@ -88,7 +89,10 @@ async function main(): Promise<void> {
       streamer = new Streamer(subscriber, wanling, mainSessionId, {
         opencode,
         ownerUserId: config.ownerUserId,
-      }, dispatcher, config.childTimeoutMs, config.aggregateCardEnabled)
+      }, dispatcher, config.childTimeoutMs, config.aggregateCardEnabled, {
+        hardTimeoutMs: config.childHardTimeoutMs,
+        abortChild: (id) => opencode.abortSession(id),
+      })
       subscriber.on("error", (err: unknown) => console.error("[subscriber] error:", err))
       streamer.on("error", (err: Error) => console.error("[streamer] error:", err.message))
       subscriber.start().catch((err) => console.error("[subscriber] failed:", err))
@@ -121,7 +125,21 @@ async function main(): Promise<void> {
     wanling,
     opencode,
     sync,
+    // streamer 在 connected 回调内惰性创建且重连重建,经 getter 闭包取当前实例
+    getStreamer: () => streamer,
   })
+  // control 发现信息落盘(port + 随机 token,0600):同套 opencode 进程内的 custom
+  // tool(如 wanling_send_image)读它调 /aggregate/append-image 进聚合卡。token 每次
+  // 启动重新生成,旧文件自然失效;写失败不阻断主流程(tool 侧读不到即退回独立消息)。
+  try {
+    mkdirSync(configDir(), { recursive: true })
+    const controlFile = join(configDir(), "control.json")
+    writeFileSync(controlFile, JSON.stringify({ port: control.port, token: control.token }, null, 2), "utf-8")
+    try { chmodSync(controlFile, 0o600) } catch { /* 非 POSIX */ }
+    logger.info(`[control] 发现信息已落盘 control.json (port ${control.port})`)
+  } catch (err) {
+    logger.warn(`[control] control.json 落盘失败(tool 进卡通道不可用): ${err instanceof Error ? err.message : String(err)}`)
+  }
 
   const proxy = await startProxy({
     listenPort: config.proxyPort,

@@ -108,11 +108,47 @@ List<GalleryImage> collectConversationImages(
       if (fileId.isNotEmpty && seen.add(fileId)) {
         result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
       }
+    } else if (type == MsgType.mixed) {
+      // mixed(图文)的 items 图片也进画廊,否则点击 mixed 图片无法放大定位
+      // (openGallery indexWhere 落空)。函数末尾按消息级 newest-first 反转,
+      // 但消息内 items 是发送顺序(首图=第一张),需反向遍历抵消反转,
+      // 画廊内保持「先发的先看」。非 image 条目跳过。
+      final items = ((m.content['data']?['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .toList()
+          .reversed;
+      for (final item in items) {
+        if (item['type'] != 'image') continue;
+        final fileId = item['file_id'];
+        if (fileId is String && fileId.isNotEmpty && seen.add(fileId)) {
+          result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
+        }
+      }
     } else if (type == MsgType.markdown) {
       final text = m.content['data']?['text'] as String?;
       for (final fileId in extractInternalImageIds(text)) {
         if (seen.add(fileId)) {
           result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
+        }
+      }
+    } else if (type == MsgType.aggregateCard) {
+      // 聚合卡内 markdown 元素的内嵌图片也进画廊:图片以 markdown 元素进卡后,
+      // 点击放大需定位(否则 openGallery indexWhere 落空/收集为空直接 return,
+      // 表现为点击无反应)。与独立 markdown 消息同一提取逻辑。函数末尾按消息级
+      // newest-first 反转,但卡内 elements 是元素时序,反向遍历抵消反转(mixed
+      // items 同款处理),画廊内保持「先 append 的先看」。
+      final elements = (((m.content['data']?['elements'] as List?) ?? const [])
+              .whereType<Map>()
+              .toList())
+          .reversed;
+      for (final element in elements) {
+        if (element['type'] != 'markdown') continue;
+        final text = (element['data'] as Map?)?['text'] as String?;
+        // 元素内多张图也反向:与 elements 反向遍历共同完整抵消消息级反转。
+        for (final fileId in extractInternalImageIds(text).reversed) {
+          if (seen.add(fileId)) {
+            result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
+          }
         }
       }
     }

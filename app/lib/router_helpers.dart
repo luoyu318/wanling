@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -31,7 +33,7 @@ Future<void> startChatAndPush(
   try {
     final conv = await ref.read(apiProvider).findOrCreateConversation(agent.id);
     if (!context.mounted) return;
-    context.push(chatRoute(conv.id, agent.id));
+    unawaited(context.push(chatRoute(conv.id, agent.id)));
   } catch (e) {
     if (!context.mounted) return;
     showAppSnackBar(context, '创建会话失败: $e', type: SnackBarType.error);

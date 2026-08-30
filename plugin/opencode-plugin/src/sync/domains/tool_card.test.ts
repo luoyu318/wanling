@@ -79,6 +79,8 @@ function makeRealFixture(childTimeoutMs: number) {
     wanling,
     router,
     childTimeoutMs,
+    hardTimeoutMs: 24 * 60 * 60 * 1000,
+    abortChild: async () => {},
   })
   const manager = new ToolCardManager({
     store,
@@ -116,6 +118,8 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
       wanling,
       router,
       childTimeoutMs: 60_000,
+      hardTimeoutMs: 24 * 60 * 60 * 1000,
+      abortChild: async () => {},
     })
     const manager = new ToolCardManager({
       store,
@@ -180,6 +184,8 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
       wanling,
       router,
       childTimeoutMs: 60_000,
+      hardTimeoutMs: 24 * 60 * 60 * 1000,
+      abortChild: async () => {},
     })
     const manager = new ToolCardManager({
       store,
@@ -267,7 +273,12 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
       expect(wanling.patchAggregateMessage).toHaveBeenCalled()
     })
 
-    // 不 cleanupChild,30ms 兜底 timer 触发超时 PATCH
+    // 体检式判死:注册后无事件,回拨 lastEventAt 烧掉 5min S3 事件窗口,
+    // 30ms 体检周期到期即判死(idle)
+    const entry = store.getChild("sess-child")
+    entry!.lastEventAt = Date.now() - 6 * 60 * 1000
+
+    // 不 cleanupChild,30ms 体检 timer 触发判死 PATCH
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     await vi.waitFor(() => {
       expect(wanling.patchAggregateMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
@@ -282,7 +293,7 @@ describe("ToolCardManager 聚合模式 task 提前注册(childSessionTree 竞态
         data: {
           name: "task",
           input: { description: "子任务", prompt: "..." },
-          output: "子 Agent 超时未完成(>30min)",
+          output: "子 Agent 长时间无活动,已自动取消",
           status: "error",
           sub_session_id: "sess-child",
         },
@@ -705,6 +716,80 @@ describe("ToolCardManager 非聚合回退(AGGREGATE_CARD_ENABLED=false)", () => 
     )
     expect(store.cleanupChild).toHaveBeenCalledWith("sess-child")
     expect(wanling.patchAggregateMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe("ToolCardManager 存活信号采集(runningToolParts 随状态机增删)", () => {
+  it("tool part 终态后 runningToolParts 清除该 partId(存活信号 S1)", async () => {
+    const { manager, state } = makeFixture()
+    state.runningToolParts = new Set<string>()
+    // 普通工具 running → completed 全链路:running 时 partId 即入集合(同步段,不等发卡),
+    // 终态分支入口无条件清除(part 状态以 opencode 事件为准)
+    await manager.onPartUpdated(
+      toolPart("p1", "bash", "running", { input: { command: "sleep 100" } }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p1")).toBe(true)
+    await manager.onPartUpdated(
+      toolPart("p1", "bash", "completed", { input: { command: "sleep 100" }, output: "done" }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p1")).toBe(false)
+  })
+
+  it("task part 终态后 runningToolParts 清除该 partId(存活信号 S1)", async () => {
+    const { manager, state } = makeFixture()
+    state.runningToolParts = new Set<string>()
+    await manager.onPartUpdated(
+      toolPart("p2", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "s1", sessionId: "sess-child" },
+      }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p2")).toBe(true)
+    await manager.onPartUpdated(
+      toolPart("p2", "task", "completed", {
+        input: { description: "子任务", prompt: "..." },
+        output: "任务完成",
+        metadata: { parentSessionId: "s1", sessionId: "sess-child" },
+      }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p2")).toBe(false)
+  })
+
+  it("子 session(非聚合)inflight 窗口内 completed 到达:终态后不复活 S1 存活信号", async () => {
+    const { manager, state, router } = makeFixture()
+    state.isChildSession = true
+    state.runningToolParts = new Set<string>()
+    // 手动控制 sendCard promise 的 resolve 时机,模拟 WS 往返期间(inflight 窗口)
+    let resolveCard: (msgId: string) => void = () => {}
+    const cardPromise = new Promise<string>((r) => { resolveCard = r })
+    router.sendCard = vi.fn().mockReturnValue(cardPromise)
+
+    // running:同步段 S1 即登记,setImmediate 排空后 flushPending 发卡入 inflight
+    await manager.onPartUpdated(
+      toolPart("p3", "bash", "running", { input: { command: "ls" } }),
+      state, "sess-child",
+    )
+    expect(state.runningToolParts.has("p3")).toBe(true)
+    await new Promise((r) => setImmediate(r))
+    expect(state.toolCardInflight.has("p3")).toBe(true)
+
+    // completed 在 WS 往返期间到达:终态分支入口先删 S1(不依赖 PATCH 成功),
+    // 随后 resolveMsgId 挂起在 await inflight 上
+    const completedCall = manager.onPartUpdated(
+      toolPart("p3", "bash", "completed", { input: { command: "ls" }, output: "done" }),
+      state, "sess-child",
+    )
+    expect(state.runningToolParts.has("p3")).toBe(false)
+
+    // promise resolve → .then 回调执行:守卫应阻止已终态的 partId 复活 S1
+    resolveCard("tool-msg-1")
+    await completedCall
+    await new Promise((r) => setImmediate(r))
+    expect(state.runningToolParts.has("p3")).toBe(false)
   })
 })
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart' hide AgentStatus;
 import 'package:wanling_core/theme/app_colors.dart';
@@ -11,6 +12,7 @@ import 'package:wanling_core/providers/agent_provider.dart' show agentByIdProvid
 import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/providers/agent_status_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show authProvider;
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import '../router_helpers.dart';
 import '../utils/directory_utils.dart';
@@ -18,6 +20,7 @@ import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/conv_action_menu.dart';
+import '../widgets/conv_slidable.dart';
 import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import '../widgets/chat/three_body_indicator.dart';
 import '../widgets/directory_menu_badge.dart';
@@ -26,13 +29,27 @@ import '../widgets/directory_picker_sheet.dart';
 
 class AgentSessionsPage extends ConsumerStatefulWidget {
   final String agentId;
-  const AgentSessionsPage({super.key, required this.agentId});
+
+  /// true = 底部导航 tab 内嵌模式:无返回键 + 页面保活。
+  /// false = 路由页模式(/agent/:id/sessions),自动带返回键。
+  /// 两种模式 AppBar 均渲染 pin 按钮(路由模式支持新账号完成首次 pin;
+  /// 仅 multiSession agent 显示,单会话 agent 不进底栏导航)。
+  final bool embedded;
+  const AgentSessionsPage({
+    super.key,
+    required this.agentId,
+    this.embedded = false,
+  });
 
   @override
   ConsumerState<AgentSessionsPage> createState() => _AgentSessionsPageState();
 }
 
-class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
+class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   static const _noSelection = '\u0000__no_selection__';
   static const _prefsUncategorized = '__uncategorized__';
 
@@ -135,6 +152,32 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     }
   }
 
+  /// AppBar pin 按钮:实心 dock = 未固定,空心 dock_outlined = 已固定,点击取消固定并从底栏即时消失。
+  /// 设计边界:仅 multiSession agent 显示 pin 按钮(单会话 agent 不进底栏导航);
+  /// agent 数据未加载(null)时保持渲染现状不过滤,避免按钮闪现/消失抖动。
+  Widget _buildPinAction(Agent? agent) {
+    if (agent != null && !agent.isMultiSession) {
+      return const SizedBox.shrink();
+    }
+    final pinned = ref.watch(navOrderProvider).contains(widget.agentId);
+    return IconButton(
+      // 已固定图标标主题绿(与底栏选中态同语义),未固定默认色,状态可辨
+      icon: Icon(
+        pinned ? Icons.dock_outlined : Icons.dock,
+        color: pinned ? AppColors.accentGreen : null,
+      ),
+      tooltip: pinned ? '从导航栏移除' : '固定到导航栏',
+      onPressed: () {
+        final notifier = ref.read(navOrderProvider.notifier);
+        if (pinned) {
+          notifier.unpin(widget.agentId);
+        } else {
+          notifier.pin(widget.agentId);
+        }
+      },
+    );
+  }
+
   List<DirectoryInfo> _deriveDirectories(
       List<Conversation> sessions, Map<String, AgentStatus> statusMap) {
     _lastSessions = sessions;
@@ -149,6 +192,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin 必须调
     final agent = ref.watch(agentByIdProvider(widget.agentId));
     final currentUserId = ref.watch(authProvider).user?.id ?? '';
     final notifier = ref.read(agentSessionsProvider(widget.agentId).notifier);
@@ -184,8 +228,14 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     final otherPending = dirs.fold(0, (sum, d) => sum + d.pendingCount);
 
     return Scaffold(
-      drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
+      // 目录抽屉仅左缘 80dp 可右滑拉出:全屏手势层会抢走列表左滑(slidable)
+      drawerEdgeDragWidth: 80,
+      // 白底:非整数 dpr 下 AppBar 底缘半覆盖行会透出 Scaffold 底色(灰缝线),
+      // 列表 tile 本就白底,底色改白让缝隐形
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        // 内嵌模式下位于页面栈底,禁自动返回键(否则空列表时冒出返回箭头)
+        automaticallyImplyLeading: !widget.embedded,
         leading: list != null && list.isNotEmpty
             ? Builder(
                 builder: (context) => Stack(
@@ -239,6 +289,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
                 ],
               ),
         actions: [
+          _buildPinAction(agent),
           IconButton(
             icon: _creating
                 ? const SizedBox(
@@ -304,6 +355,8 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
 
     return Scaffold(
       appBar: AppBar(
+        // 内嵌模式下位于页面栈底,禁自动返回键(与手机分支同口径)
+        automaticallyImplyLeading: !widget.embedded,
         title: agent == null
             ? const Text('会话')
             : Column(
@@ -336,6 +389,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
                 ],
               ),
         actions: [
+          _buildPinAction(agent),
           TextButton.icon(
             onPressed: _creating ? null : _createSession,
             icon: _creating
@@ -423,25 +477,62 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage> {
     return RefreshIndicator(
       color: AppColors.accentGreen,
       onRefresh: notifier.load,
-      child: ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: filtered.length,
-        itemBuilder: (_, i) {
-          final c = filtered[i];
-          return _SessionTile(
-            conv: c,
-            currentUserId: currentUserId,
-            onTap: () => context.push(chatRoute(c.id, widget.agentId)),
-            onLongPressStart: (details) => showConvActionMenu(
-              context,
-              details.globalPosition,
-              isPinned: c.isPinned,
-              onPinToggle: () =>
-                  c.isPinned ? notifier.unpin(c.id) : notifier.pin(c.id),
-              onHide: () => notifier.hide(c.id),
-            ),
-          );
-        },
+      child: SlidableAutoCloseBehavior(
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: filtered.length,
+          itemBuilder: (_, i) {
+            final c = filtered[i];
+            return ConvSlidable(
+              slideKey: ValueKey('slide_session_${c.id}'),
+              actions: [
+                SlideActionSpec(
+                  icon: Icons.vertical_align_top,
+                  label: c.isPinned ? '取消置顶' : '置顶',
+                  color: const Color(0xFFFFA426),
+                  onTap: () async {
+                    try {
+                      final n = notifier;
+                      if (c.isPinned) {
+                        await n.unpin(c.id);
+                      } else {
+                        await n.pin(c.id);
+                      }
+                    } catch (_) {
+                      if (context.mounted) {
+                        showAppSnackBar(context, '操作失败,请重试',
+                            type: SnackBarType.error);
+                      }
+                    }
+                  },
+                ),
+                SlideActionSpec(
+                  icon: Icons.delete_outline,
+                  label: '删除会话',
+                  color: const Color(0xFFFA5151),
+                  onTap: () =>
+                      confirmHideConversation(context, () => notifier.hide(c.id)),
+                ),
+              ],
+              child: _SessionTile(
+                conv: c,
+                currentUserId: currentUserId,
+                onTap: () => context.push(chatRoute(c.id, widget.agentId)),
+                onLongPressStart: (details) => showConvActionMenu(
+                  context,
+                  details.globalPosition,
+                  // agent_session 会话结构性不在一级消息列表,固定槽无法渲染,
+                  // 隐藏「固定到底栏」入口(置顶/删除仍可用)。
+                  showNavAction: false,
+                  isPinned: c.isPinned,
+                  onPinToggle: () =>
+                      c.isPinned ? notifier.unpin(c.id) : notifier.pin(c.id),
+                  onHide: () => notifier.hide(c.id),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -482,11 +573,6 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
         ? (c.isPinned ? const Color(0xFFD6D6D6) : const Color(0xFFEDEDED))
         : (c.isPinned ? const Color(0xFFEDEDED) : Colors.white);
 
-    final dividerColor = c.isPinned
-        ? const Color(0xFFD6D6D6)
-        : const Color(0xFFE4E4E4);
-    final dividerBg = c.isPinned ? const Color(0xFFEDEDED) : Colors.white;
-
     return Listener(
       onPointerDown: (_) => _setPressed(true),
       onPointerUp: (_) => _setPressed(false),
@@ -497,7 +583,16 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
           widget.onLongPressStart(details);
         },
         child: InkWell(
-          onTap: widget.onTap,
+          onTap: () {
+            // 左滑展开态点击内容区:仅收起,不进会话(slidable 无此默认行为,显式守卫)。
+            final slidable = Slidable.of(context);
+            if (slidable != null &&
+                slidable.actionPaneType.value != ActionPaneType.none) {
+              unawaited(slidable.close());
+              return;
+            }
+            widget.onTap();
+          },
           splashColor: Colors.transparent,
           highlightColor: Colors.transparent,
           child: Column(
@@ -506,7 +601,7 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                 color: tileBg,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 12,
+                  vertical: 8,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -529,9 +624,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                             c.displayName,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 17,
+                              fontSize: 15,
                               color: Color(0xFF111111),
-                              fontWeight: FontWeight.w300,
+                              fontWeight: FontWeight.w400,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -541,9 +636,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12,
                                 color: Color(0xFFE53935),
-                                fontWeight: FontWeight.w300,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else if (agentStatus != null &&
@@ -552,8 +647,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               text: '灵光涌动...',
                               baseColor: Color(0xFF07C160),
                               style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w300,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else if (agentStatus != null &&
@@ -562,8 +657,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               text: '重试中(第 ${agentStatus.attempt} 次)...',
                               baseColor: const Color(0xFFE53935),
                               style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w300,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
                               ),
                             )
                           else
@@ -574,9 +669,9 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12,
                                 color: Color(0xFF999999),
-                                fontWeight: FontWeight.w300,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                         ],
@@ -590,8 +685,8 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                           _formatTime(c.lastMessageAt),
                           style: const TextStyle(
                             fontSize: 11,
-                            color: Color(0xFFB0B0B0),
-                            fontWeight: FontWeight.w300,
+                            color: Color(0xFF999999),
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                         if (agentStatus != null)
@@ -606,14 +701,6 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                       ],
                     ),
                   ],
-                ),
-              ),
-              Container(
-                height: 0.5,
-                color: dividerBg,
-                child: Container(
-                  margin: const EdgeInsets.only(left: 70),
-                  color: dividerColor,
                 ),
               ),
             ],

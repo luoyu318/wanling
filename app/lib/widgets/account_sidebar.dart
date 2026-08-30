@@ -3,16 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:wanling_core/models/saved_login.dart';
-import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
-import 'package:wanling_core/theme/account_palette.dart';
-import '../utils/dio_error.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/utils/snackbar.dart';
+import '../utils/dio_error.dart';
 import 'account_mark_editor.dart';
 import 'app_action_menu.dart';
 import 'avatar.dart';
 import 'feedback/app_dialog.dart';
 import 'password_text_field.dart';
+import 'sidebar_profile_panel.dart';
 
 /// 账号卡片主标题：备注 > 昵称 > 账号名。
 String accountCardTitle(SavedLogin login) {
@@ -22,6 +22,7 @@ String accountCardTitle(SavedLogin login) {
 }
 
 /// 左侧侧滑面板：AppBar 头像触发，迁移自旧「切换账号」底部弹层。
+/// 双层结构：左竖条(88px 账号切换) + 右主面板(SidebarProfilePanel 承接原我的页菜单)。
 /// 由 HomePage 常驻挂载，进出动画由 HomePage 控制，本组件只负责内容与操作。
 class AccountSidebar extends ConsumerStatefulWidget {
   const AccountSidebar({super.key, required this.onClose});
@@ -242,147 +243,88 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
 
   /// 克隆账号卡片:生成同 server 的完整副本(自动处理 username 冲突),提示用户去编辑。
   void _duplicate(int index) {
-    ref.read(savedLoginsProvider.notifier).duplicate(index).then((_) {
-      if (mounted) {
-        showAppSnackBar(context, '已复制,可点击 ⋯ 编辑新账号',
-            type: SnackBarType.success);
-      }
-    }).catchError((e) {
-      if (mounted) {
-        showAppSnackBar(context, e.toString(), type: SnackBarType.error);
-      }
-    });
+    ref
+        .read(savedLoginsProvider.notifier)
+        .duplicate(index)
+        .then((_) {
+          if (mounted) {
+            showAppSnackBar(
+              context,
+              '已复制,可长按头像编辑新账号',
+              type: SnackBarType.success,
+            );
+          }
+        })
+        .catchError((e) {
+          if (mounted) {
+            showAppSnackBar(context, e.toString(), type: SnackBarType.error);
+          }
+        });
+  }
+
+  /// 长按账号头像弹动作菜单(原 ⋯ 菜单三项:编辑/复制/删除)。
+  Future<void> _showAccountActions(
+    int index,
+    SavedLogin login,
+    Offset pos,
+  ) async {
+    final selected = await showAppActionMenu(
+      context,
+      pos,
+      items: const [
+        ActionMenuItem(value: 'edit', label: '编辑', icon: Icons.edit_outlined),
+        ActionMenuItem(
+          value: 'duplicate',
+          label: '复制',
+          icon: Icons.copy_outlined,
+        ),
+        ActionMenuItem(
+          value: 'delete',
+          label: '删除',
+          icon: Icons.delete_outline,
+          color: Color(0xFFFA5151),
+        ),
+      ],
+    );
+    if (selected == 'edit') {
+      _showEditDialog(login, index);
+    } else if (selected == 'duplicate') {
+      _duplicate(index);
+    } else if (selected == 'delete') {
+      _showDeleteConfirm(index, login);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(savedLoginsProvider);
-    final user = ref.watch(authProvider).user;
-    final current = state.selected;
-    final width = MediaQuery.of(context).size.width * 0.78;
+    final width = MediaQuery.of(context).size.width * 0.85;
 
-    return Container(
+    return SizedBox(
       width: width,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 16,
-            offset: Offset(4, 0),
-          ),
-        ],
-      ),
       child: Stack(
         children: [
-          SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // —— 用户信息头部：白底，昵称下方简介，无关闭按钮 ——
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-                  child: Row(
-                    children: [
-                      Avatar(
-                        name: user?.displayName ?? '?',
-                        url: user?.avatarUrl,
-                        size: 52,
-                        radius: 10,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              user?.displayName ?? '未登录',
-                              style: const TextStyle(
-                                color: Color(0xFF111111),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            if (user != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                (user.bio != null && user.bio!.isNotEmpty)
-                                    ? user.bio!
-                                    : (current?.server ?? ''),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF999999),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // —— 标题行 ——
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
-                  child: Row(
-                    children: [
-                      Text(
-                        '切换账号',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      Spacer(),
-                      Text(
-                        '点击账号直接切换',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF999999),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // —— 账号列表 ——
-                Expanded(
-                  child: state.isEmpty
-                      ? const Center(
-                          child: Text(
-                            '暂无记录',
-                            style: TextStyle(color: Color(0xFF999999)),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: state.logins.length,
-                          itemBuilder: (_, i) => _AccountCard(
-                            login: state.logins[i],
-                            isCurrent: i == state.selectedIndex,
-                            onTap: () => _switchTo(i),
-                            onEdit: () => _showEditDialog(state.logins[i], i),
-                            onDuplicate: () => _duplicate(i),
-                            onDelete: () =>
-                                _showDeleteConfirm(i, state.logins[i]),
-                          ),
-                        ),
-                ),
-                // —— 添加服务器 ——
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: OutlinedButton.icon(
-                    onPressed: _showAddDialog,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('添加服务器'),
-                  ),
-                ),
-              ],
-            ),
+          // 垫底白色:竖条 88dp 在非整数 dpr 下宽度非整数物理像素,接缝列
+          // 亚像素混合会透出下层灰底形成断续"边框线",垫白后混合结果恒为白
+          const Positioned.fill(
+            child: ColoredBox(color: Colors.white),
           ),
-          // 切换中遮罩(防抖 + 用户感知,覆盖整个侧边栏含状态栏区域)
+          // stretch:主面板与竖条同撑满全高,否则面板按内容高度垂直居中成浮动卡片
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // —— 左竖条:账号切换(88px) ——
+              _buildAccountStrip(state),
+              // —— 主面板 ——
+              Expanded(
+                child: Container(
+                  color: Colors.white,
+                  child: const SafeArea(child: SidebarProfilePanel()),
+                ),
+              ),
+            ],
+          ),
+          // 切换中遮罩(防抖 + 用户感知,覆盖整个双层面板含状态栏区域)
           if (_switching)
             Positioned.fill(
               child: Container(
@@ -405,180 +347,126 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       ),
     );
   }
-}
 
-/// 侧边栏内的账号卡片。
-class _AccountCard extends StatelessWidget {
-  final SavedLogin login;
-  final bool isCurrent;
-  final VoidCallback onTap;
-  final VoidCallback onEdit;
-  final VoidCallback onDuplicate;
-  final VoidCallback onDelete;
-
-  const _AccountCard({
-    required this.login,
-    required this.isCurrent,
-    required this.onTap,
-    required this.onEdit,
-    required this.onDuplicate,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mark = login.mark != null
-        ? AccountPalette.colorAt(login.mark!.colorIndex)
-        : theme.colorScheme.primary;
-    final title = accountCardTitle(login);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          gradient: isCurrent
-              ? LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [
-                    mark.withValues(alpha: 0.22),
-                    mark.withValues(alpha: 0.06),
+  /// 左竖条:全部账号头像(当前绿框高亮),点按切换,长按弹编辑/复制/删除菜单,
+  /// 底部「+」添加服务器。切换中遮罩沿用原实现(覆盖整个双层面板)。
+  Widget _buildAccountStrip(SavedLoginsState state) {
+    // 宽度对齐整数物理像素:88dp 在非整数 dpr(如 2.55)下宽度非整数物理像素,
+    // 与主面板的接缝列亚像素混合会透出下层形成断续暗线。对齐后分界为干净
+    // 直切,保留 F7F7F7|白 的色差区分且无接缝线。
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final stripWidth = (88 * dpr).roundToDouble() / dpr;
+    return Container(
+      width: stripWidth,
+      color: const Color(0xFFF7F7F7),
+      child: SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            // 账号多时竖条内部滚动,「添加」按钮保持钉底
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    for (var i = 0; i < state.logins.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: GestureDetector(
+                          // 当前项禁用点按(对齐原账号卡片):switchTo 对同索引是 no-op,
+                          // 但 _switchTo 仍会回调 onClose/弹成功 snackbar,必须在此挡掉
+                          onTap: i == state.selectedIndex
+                              ? null
+                              : () => _switchTo(i),
+                          onLongPressStart: (d) => _showAccountActions(
+                            i,
+                            state.logins[i],
+                            d.globalPosition,
+                          ),
+                          child: _stripAvatar(state, i),
+                        ),
+                      ),
                   ],
-                )
-              : null,
-          color: isCurrent ? null : mark.withValues(alpha: 0.06),
-          border: Border(
-            left: BorderSide(
-              width: isCurrent ? 4 : 2,
-              color: isCurrent ? mark : mark.withValues(alpha: 0.5),
+                ),
+              ),
             ),
-          ),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: isCurrent ? null : onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
+            // 底部「添加」:对齐主流 IM 竖排样式(圆角方块 + 号居中,文字下方),
+            // 88px 竖条内 OutlinedButton.icon 横向放不下会把文字挤成竖排换行
+            InkWell(
+              onTap: _showAddDialog,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // leading 方块：mark 色字/字母
                   Container(
-                    width: 30,
-                    height: 30,
+                    width: 52,
+                    height: 52,
                     decoration: BoxDecoration(
-                      color: isCurrent
-                          ? mark.withValues(alpha: 0.18)
-                          : mark.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(6),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.divider),
                     ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      login.mark?.emoji ??
-                          (login.username.isNotEmpty
-                              ? login.username.characters.first.toUpperCase()
-                              : '?'),
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: isCurrent ? mark : null,
-                        fontWeight: isCurrent ? FontWeight.w600 : null,
-                      ),
+                    child: const Icon(
+                      Icons.add,
+                      size: 26,
+                      color: AppColors.textSecondary,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight:
-                                isCurrent ? FontWeight.w700 : FontWeight.w500,
-                            color: const Color(0xFF111111),
-                          ),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          '${login.username} @ ${login.server}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF999999),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (isCurrent)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: mark,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        '当前',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  // ⋯ 菜单:编辑 / 复制 / 删除(统一竖排菜单样式)
-                  Builder(
-                    builder: (menuCtx) => IconButton(
-                      icon: const Icon(Icons.more_horiz, size: 20),
-                      tooltip: '更多操作',
-                      onPressed: () async {
-                        final box =
-                            menuCtx.findRenderObject() as RenderBox?;
-                        final pos =
-                            box?.localToGlobal(Offset.zero) ?? Offset.zero;
-                        final selected = await showAppActionMenu(
-                          menuCtx,
-                          pos,
-                          items: const [
-                            ActionMenuItem(
-                              value: 'edit',
-                              label: '编辑',
-                              icon: Icons.edit_outlined,
-                            ),
-                            ActionMenuItem(
-                              value: 'duplicate',
-                              label: '复制',
-                              icon: Icons.copy_outlined,
-                            ),
-                            ActionMenuItem(
-                              value: 'delete',
-                              label: '删除',
-                              icon: Icons.delete_outline,
-                              color: Color(0xFFFA5151),
-                            ),
-                          ],
-                        );
-                        if (selected == 'edit') {
-                          onEdit();
-                        } else if (selected == 'duplicate') {
-                          onDuplicate();
-                        } else if (selected == 'delete') {
-                          onDelete();
-                        }
-                      },
+                  const SizedBox(height: 6),
+                  const Text(
+                    '添加',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
                     ),
                   ),
                 ],
               ),
             ),
-          ),
+            const SizedBox(height: 12),
+          ],
         ),
       ),
+    );
+  }
+
+  /// 竖条账号项:头像 + 名字,当前项绿框高亮。
+  Widget _stripAvatar(SavedLoginsState state, int i) {
+    final login = state.logins[i];
+    final isCurrent = i == state.selectedIndex;
+    final title = accountCardTitle(login);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              width: 2,
+              color: isCurrent ? AppColors.accentGreen : Colors.transparent,
+            ),
+          ),
+          child: Avatar(name: title, size: 44, radius: 8),
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          width: 76,
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              color: isCurrent
+                  ? AppColors.textPrimary
+                  : AppColors.textSecondary,
+              fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

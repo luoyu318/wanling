@@ -16,12 +16,22 @@ class ActionMenuItem {
   });
 }
 
+/// 菜单锚点对齐方式。
+enum AppMenuAlign {
+  /// 菜单左上角对齐锚点(长按按压点)。
+  topLeft,
+
+  /// 菜单右上角对齐锚点 x(按钮右缘),顶部在锚点下方 8px(右对齐下拉,不遮按钮)。
+  belowRight,
+}
+
 /// 通用竖排动作菜单（白底圆角 + 菜单项 icon）。
 ///
 /// 长按 / 按钮触发的统一动作列表样式：
 /// - 白底、圆角 8、轻阴影，无分隔线
 /// - 每项 icon 左 + 文字右，高 48，危险项用 [ActionMenuItem.color] 标红
-/// - 菜单左上角对齐到 [globalPos]，带屏幕边缘保护（8px 边距不溢出）
+/// - 按 [align] 决定对齐：topLeft 左上角对齐 [globalPos]；belowRight 右上角贴
+///   [globalPos].dx 且顶部在其下方 8px；均带屏幕边缘保护（8px 边距不溢出）
 ///
 /// 返回选中的 [ActionMenuItem.value]；点击空白处返回 null。
 /// 弹出用 PageRouteBuilder(Duration.zero) 无动画，全屏 GestureDetector 点空白关闭。
@@ -29,6 +39,7 @@ Future<String?> showAppActionMenu(
   BuildContext context,
   Offset globalPos, {
   required List<ActionMenuItem> items,
+  AppMenuAlign align = AppMenuAlign.topLeft,
 }) async {
   final overlay = Navigator.of(context).overlay!;
   final overlayBox = overlay.context.findRenderObject() as RenderBox;
@@ -39,12 +50,22 @@ Future<String?> showAppActionMenu(
   const menuWidth = 160.0;
   final menuHeight = menuItemHeight * items.length;
 
-  final left = (local.dx + menuWidth > overlaySize.width - 8)
-      ? overlaySize.width - menuWidth - 8
-      : local.dx;
-  final top = (local.dy + menuHeight > overlaySize.height - 8)
-      ? overlaySize.height - menuHeight - 8
-      : local.dy;
+  final double left;
+  double top;
+  if (align == AppMenuAlign.belowRight) {
+    left = (local.dx - menuWidth < 8) ? 8 : local.dx - menuWidth;
+    top = local.dy + 8;
+    if (top + menuHeight > overlaySize.height - 8) {
+      top = overlaySize.height - menuHeight - 8;
+    }
+  } else {
+    left = (local.dx + menuWidth > overlaySize.width - 8)
+        ? overlaySize.width - menuWidth - 8
+        : local.dx;
+    top = (local.dy + menuHeight > overlaySize.height - 8)
+        ? overlaySize.height - menuHeight - 8
+        : local.dy;
+  }
 
   return Navigator.of(context).push<String>(
     PageRouteBuilder<String>(
@@ -63,6 +84,7 @@ Future<String?> showAppActionMenu(
                 child: Material(
                   color: Colors.transparent,
                   child: Container(
+                    key: const ValueKey('app-action-menu'),
                     width: menuWidth,
                     decoration: BoxDecoration(
                       color: Colors.white,

@@ -156,13 +156,13 @@ class FileDownloadController {
                 _downloadProgress.remove(fileId);
                 _downloaded.add(fileId);
               });
-              _downloadSubs.remove(fileId);
+              _downloadSubs.remove(fileId)?.cancel();
               openLocalFile(fileId);
             } else if (progress.error != null) {
               _ctx.onSetState(() {
                 _downloadProgress.remove(fileId);
               });
-              _downloadSubs.remove(fileId);
+              _downloadSubs.remove(fileId)?.cancel();
               showAppSnackBar(
                 _ctx.getContext(),
                 '下载失败: ${progress.error}',
@@ -175,7 +175,7 @@ class FileDownloadController {
             }
           },
           onDone: () {
-            _downloadSubs.remove(fileId);
+            _downloadSubs.remove(fileId)?.cancel();
             // 流结束但未标记 done/未清进度(罕见,比如取消路径),兜底清理。
             if (_downloadProgress.containsKey(fileId) &&
                 !_downloaded.contains(fileId) &&

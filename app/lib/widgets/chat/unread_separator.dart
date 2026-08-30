@@ -8,10 +8,10 @@ class UnreadSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Row(
-        children: const [
+        children: [
           Expanded(
               child: Divider(color: Color(0xFFB0B0B0), thickness: 0.5)),
           Padding(

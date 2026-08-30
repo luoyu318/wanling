@@ -336,3 +336,11 @@ final agentSessionsProvider =
         agentId,
       ),
     );
+
+/// pinned agent tab 角标:该 agent 全部 session 的 unreadCount 求和。
+/// sessions 未加载(null)时返 0;pinned tab 常驻挂载,provider 天然激活。
+final agentTabUnreadProvider = Provider.family<int, String>((ref, agentId) {
+  final sessions = ref.watch(agentSessionsProvider(agentId));
+  if (sessions == null) return 0;
+  return sessions.fold(0, (sum, c) => sum + c.unreadCount);
+});

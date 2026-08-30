@@ -65,6 +65,9 @@ export interface SessionState {
     cost: number
     tokens: Record<string, unknown>
   }
+  // 存活信号 S1:处于 running/starting 状态的 tool partId 集合(tool_card 状态机维护)。
+  // 子 agent 兜底超时体检时,非空 = 子 agent 有工具在跑(bash 长命令等),不判死。
+  runningToolParts?: Set<string>
 }
 
 // 聚合卡元素类型再导出:tool_card/interaction 等调用方从 types.js 引用
@@ -84,9 +87,15 @@ export interface ChildSessionEntry {
   // 不能只发 status 否则 input/sub_session_id 丢失,APP 渲染空白)。
   taskInput?: Record<string, unknown>
   childSessionId?: string
-  // 兜底超时清理句柄:task 崩溃或漏发 completed/error SSE 时,10min 后强制清理避免泄漏。
-  // 正常路径(task/completed|error)在 _handleTaskTool 清理前 clearTimeout。
+  // 兜底体检 timer:每 childTimeoutMs 体检一次存活信号,无信号才判死清理;
+  // 正常路径 cleanupChild 时 clearTimeout。
   cleanupTimer?: ReturnType<typeof setTimeout>
+  // 注册时刻(ms),硬上限起算点
+  createdAt: number
+  // 最近一次子 session 事件时刻(存活信号 S3)
+  lastEventAt?: number
+  // 硬上限兜底 timer(与 cleanupTimer 独立)
+  hardTimer?: ReturnType<typeof setTimeout>
   // 聚合模式下 task 卡是聚合卡内 tool_card 元素(非独立消息):
   // aggregateElementId 定位聚合卡内 task 元素,aggregateParentState 承载聚合卡桥
   // (state.aggregateCard)。命中时 working PATCH / 超时兜底 PATCH 走

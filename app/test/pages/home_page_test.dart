@@ -80,7 +80,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AccountSidebar).hitTestable(), findsOneWidget);
 
-    // 点遮罩关闭:面板宽 78%(默认测试面 800px→624px),点右侧空白处落在遮罩上
+    // 点遮罩关闭:面板宽 85%(默认测试面 800px→680px),点右侧空白处落在遮罩上
     await tester.tapAt(const Offset(700, 400));
     await tester.pumpAndSettle();
     expect(find.byType(AccountSidebar).hitTestable(), findsNothing);

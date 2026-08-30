@@ -2,7 +2,7 @@ import type { WanlingClient } from "../wanling/client.js"
 import { logger } from "../utils/logger.js"
 import type { MessageCreatePayload, GenerationAbortPayload, ConvUpdatePayload } from "../wanling/types.js"
 import type { OpencodeBridge } from "../opencode/bridge.js"
-import type { WanlingDownloader, DownloadResult } from "../storage/downloader.js"
+import type { WanlingDownloader } from "../storage/downloader.js"
 import type {
   SessionMap} from "./mapper.js";
 import {
@@ -80,8 +80,12 @@ export class SyncEngine extends EventEmitter {
     // media 分支优先于 text 守卫:image/file/mixed 走下载+提示路径,
     // 不依赖 data.text(纯媒体消息通常无 text 字段)。
     if (!isSlashCommand && (msgType === "image" || msgType === "file" || msgType === "mixed")) {
-      const fileId = this.extractFileId(data)
-      const filename = this.extractFilename(data)
+      // mixed 消息的顶层 text(用户随图附言):trim 后空串视为无文字,维持原提示格式
+      const mixedText =
+        typeof data.text === "string" && data.text.trim().length > 0
+          ? data.text.trim()
+          : undefined
+      const mediaItems = this.extractMediaItems(data)
       let map = getSessionMap(convId)
       if (!map) {
         // 与 text 分支同一份 session 创建逻辑(directory 透传给 OC)。
@@ -97,7 +101,7 @@ export class SyncEngine extends EventEmitter {
         upsertSessionMap(map)
       }
       this.wanling.sendTyping(convId)
-      await this.handleMediaMessage(map.opencodeSessionId, msgType, fileId, filename, payload.id)
+      await this.handleMediaMessage(map.opencodeSessionId, msgType, mediaItems, payload.id, mixedText)
       upsertSessionMap({ ...map, lastSyncAt: new Date().toISOString() })
       return
     }
@@ -265,35 +269,51 @@ export class SyncEngine extends EventEmitter {
     await this.promptWithRetry(sessionId, text, agent, model)
   }
 
-  // 从 media 消息 data 提取 file_id:mixed 优先 items[0].file_id,否则顶层 file_id。
-  // mixed 类型携带 items 数组(图片+文件混合),当前只处理首项(单文件路径)。
-  private extractFileId(data: Record<string, unknown>): string | undefined {
-    const items = data.items as Array<{ file_id?: string }> | undefined
-    if (items && items.length > 0 && items[0]?.file_id) {
-      return items[0].file_id
+  // media 消息可下载条目提取:mixed 按 items 全量(不再只取首项),image/file
+  // 取顶层 file_id。file_id 非空字符串即收(image/file 类型均可,桥不区分)。
+  private extractMediaItems(
+    data: Record<string, unknown>,
+  ): Array<{ fileId: string; filename?: string }> {
+    const items = data.items as Array<{ file_id?: unknown; filename?: unknown }> | undefined
+    if (!items) {
+      const fileId = data.file_id
+      if (typeof fileId === "string" && fileId.length > 0) {
+        const filename = data.filename
+        return [
+          {
+            fileId,
+            ...(typeof filename === "string" && filename ? { filename } : {}),
+          },
+        ]
+      }
+      return []
     }
-    return data.file_id as string | undefined
+    return items
+      .filter(
+        (it): it is { file_id: string; filename?: unknown } =>
+          typeof it?.file_id === "string" && it.file_id.length > 0,
+      )
+      .map((it) => {
+        const filename = it.filename
+        return {
+          fileId: it.file_id,
+          ...(typeof filename === "string" && filename ? { filename } : {}),
+        }
+      })
   }
 
-  private extractFilename(data: Record<string, unknown>): string | undefined {
-    const items = data.items as Array<{ filename?: string }> | undefined
-    if (items && items.length > 0 && items[0]?.filename) {
-      return items[0].filename
-    }
-    return data.filename as string | undefined
-  }
-
-  // media 消息处理:fail fast(fileId 缺失即 warn 跳过,不阻塞会话)→
-  // 下载(try/catch 包裹)→ 成功发路径提示文本 / 失败发退化文本。
+  // media 消息处理:fail fast(条目为空即 warn 跳过,不阻塞会话)→
+  // 逐条下载(mixed 多附件全量处理;单条失败 warn 跳过,部分成功时 agent
+  // 仍可看到可用附件,全部失败才退化占位文本)→ 成功发路径提示文本。
   // downloader 缺失配置时也退化为提示文本(保证会话不中断)。
   private async handleMediaMessage(
     sessionId: string,
     msgType: string,
-    fileId: string | undefined,
-    filename?: string,
+    mediaItems: Array<{ fileId: string; filename?: string }>,
     wanlingMsgId?: string,
+    mixedText?: string,
   ): Promise<void> {
-    if (!fileId) {
+    if (mediaItems.length === 0) {
       console.warn("[sync] media message missing file_id, skip")
       return
     }
@@ -303,25 +323,35 @@ export class SyncEngine extends EventEmitter {
       return
     }
 
-    const expectedExt = filename ? extFromFilename(filename) : undefined
-    // 下载与提示拆成两个独立 try:下载失败 → 退化文本;
-    // 下载成功后若提示失败(重试耗尽),向上抛到 start() 的 catch(emit "error"),
-    // 与 text 分支行为一致,不再误报"下载失败"。
-    let result: DownloadResult
-    try {
-      result = await this.downloader.download({ fileId, expectedExt })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.warn(`[sync] media download failed: ${msg}`)
+    // 下载与提示拆开:单条下载失败不中断其余附件(部分成功优先);
+    // 全部失败 → 退化文本。下载成功后若提示失败(重试耗尽),向上抛到
+    // start() 的 catch(emit "error"),与 text 分支行为一致。
+    const paths: string[] = []
+    for (const item of mediaItems) {
+      const expectedExt = item.filename ? extFromFilename(item.filename) : undefined
+      try {
+        const result = await this.downloader.download({ fileId: item.fileId, expectedExt })
+        paths.push(result.path)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.warn(`[sync] media download failed (${item.fileId}): ${msg}`)
+      }
+    }
+    if (paths.length === 0) {
       await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.fallbackText(msgType))
       return
     }
-    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, result.path))
+    await this.sendPromptWithInterrupt(sessionId, wanlingMsgId ?? "", this.mediaPromptText(msgType, paths, mixedText))
   }
 
-  private mediaPromptText(msgType: string, path: string): string {
+  private mediaPromptText(msgType: string, paths: string[], mixedText?: string): string {
     const label = msgType === "image" ? "一张图片" : msgType === "file" ? "一个文件" : "混合内容"
-    return `[用户发送了${label},位于: ${path}]`
+    const loc = paths.join("、")
+    // mixed 携带用户文字时拼入提示(agent 同回合看到附件+文字);其余类型无此字段
+    if (msgType === "mixed" && mixedText) {
+      return `[用户发送了${label}: ${mixedText},位于: ${loc}]`
+    }
+    return `[用户发送了${label},位于: ${loc}]`
   }
 
   private fallbackText(msgType: string): string {

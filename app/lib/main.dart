@@ -15,6 +15,8 @@ import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/providers/settings_provider.dart';
 import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
+import 'widgets/chat/builtin_renderers.dart'
+    show registerMixedContentRenderer;
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';
 import 'package:wanling_core/services/notification_service.dart';
@@ -69,6 +71,9 @@ Future<void> main() async {
   // 注册内置消息内容渲染器（text/markdown/image/file）。
   // 新增 HTML/卡片时在 registerBuiltinRenderers 内追加。
   registerBuiltinRenderers();
+
+  // mixed(图文)渲染器依赖 app 侧 BubbleWithTail,在 core 内置渲染器之后追加注册。
+  registerMixedContentRenderer();
 
   // 1. 初始化本地通知
   await NotificationService.instance.init();
@@ -244,7 +249,7 @@ class _MyAppState extends ConsumerState<MyApp> {
         colorSchemeSeed: AppColors.accentGreen, // 品牌主色绿
         useMaterial3: true,
         // 统一页面背景灰：避免每个 Scaffold 自定义。M3 默认 surface 会带绿色 seed
-        // 派生的浅色，与 ProfilePage 等显式 #EDEDED 不一致。
+        // 派生的浅色，与显式 #EDEDED 页面背景不一致。
         scaffoldBackgroundColor: AppColors.pageBgStandard,
         // 统一 AppBar 白底黑字：避免每个子页面 AppBar 走 M3 默认（浅绿底）。
         // surfaceTintColor=transparent 去掉 M3 的彩色 tint 阴影，保纯白。

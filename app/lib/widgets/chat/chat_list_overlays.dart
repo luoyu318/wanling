@@ -57,7 +57,7 @@ class ChatListOverlays extends ConsumerWidget {
         // 显示时机：isLoadingMore=true 期间 + 完成后延迟 300ms（loadingHideTimer 控制），
         // 让 loadMore 极快（<100ms）时用户也能看到反馈。
         if (chatState.isLoadingMore || loadingHideTimerActive)
-          Positioned(
+          const Positioned(
             top: 0,
             left: 0,
             right: 0,
@@ -66,7 +66,7 @@ class ChatListOverlays extends ConsumerWidget {
               child: LinearProgressIndicator(
                 backgroundColor: Colors.transparent,
                 valueColor: AlwaysStoppedAnimation(
-                  const Color(0xFF07C160),
+                  Color(0xFF07C160),
                 ),
               ),
             ),

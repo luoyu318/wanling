@@ -41,10 +41,10 @@ void main() {
     final router = GoRouter(
       initialLocation: '/',
       routes: [
-        GoRoute(path: '/', builder: (_, __) => const LoginPage()),
+        GoRoute(path: '/', builder: (_, _) => const LoginPage()),
         GoRoute(
             path: '/select-account',
-            builder: (_, __) => const SelectAccountPage()),
+            builder: (_, _) => const SelectAccountPage()),
       ],
     );
     await tester.pumpWidget(

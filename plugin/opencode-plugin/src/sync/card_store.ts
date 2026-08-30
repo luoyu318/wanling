@@ -62,3 +62,8 @@ export function deleteCard(ocRequestId: string): void {
 export function getAllCards(): Record<string, CardEntry> {
   return loadStore()
 }
+
+// 存活信号 S2:某 opencode session 是否有未决(permission/question)交互卡。
+export function hasPendingCardForSession(sessionId: string): boolean {
+  return Object.values(loadStore()).some((e) => e.sessionId === sessionId)
+}

@@ -75,6 +75,42 @@ void main() {
     expect(find.text('/b'), findsOneWidget);
   });
 
+  testWidgets('内容少时高度自适应(明显小于 70% 屏高,无底部留白)', (tester) async {
+    when(() => api.rpc(
+            'test-agent', 'project.list', const <String, dynamic>{}))
+        .thenAnswer((_) async => {
+              'projects': [
+                {'path': '/a', 'name': 'A'},
+              ],
+            });
+
+    await pumpSheet(tester, makeContainer());
+
+    final sheetHeight = tester.getSize(find.byType(DirectoryPickerSheet)).height;
+    final screenHeight = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(sheetHeight, lessThan(screenHeight * 0.5));
+  });
+
+  testWidgets('目录超长时封顶 70% 屏高(列表内部滚动)', (tester) async {
+    when(() => api.rpc(
+            'test-agent', 'project.list', const <String, dynamic>{}))
+        .thenAnswer((_) async => {
+              'projects': [
+                for (var i = 0; i < 20; i++)
+                  {'path': '/p$i', 'name': 'P$i'},
+              ],
+            });
+
+    await pumpSheet(tester, makeContainer());
+
+    final sheetHeight = tester.getSize(find.byType(DirectoryPickerSheet)).height;
+    final screenHeight = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(sheetHeight, closeTo(screenHeight * 0.7, 0.5));
+    // 封顶时列表可滚动:首项可见,末项不在视口
+    expect(find.text('P0'), findsOneWidget);
+    expect(find.text('P19'), findsNothing);
+  });
+
   testWidgets('点项目卡片 → 选中态更新但不关闭；点确认 → 返该路径(cancelled=false)',
       (tester) async {
     when(() => api.rpc(

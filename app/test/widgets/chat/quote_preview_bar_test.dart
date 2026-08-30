@@ -5,7 +5,7 @@ import 'package:app/widgets/chat/quote_preview_bar.dart';
 
 void main() {
   group('QuotePreviewBar', () {
-    final quote = Quote(
+    const quote = Quote(
       messageId: 'm1',
       senderType: 'user',
       senderId: 'u1',
@@ -38,7 +38,7 @@ void main() {
     });
 
     testWidgets('preview 长文本单行省略(不报错)', (tester) async {
-      final longQuote = Quote(
+      const longQuote = Quote(
         messageId: 'm1',
         senderType: 'user',
         senderId: 'u1',

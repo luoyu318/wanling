@@ -22,8 +22,8 @@ class LocalStoreBanner extends ConsumerWidget {
     final health = ref.watch(localStoreHealthProvider);
     final degraded = health.valueOrNull == true;
     if (!degraded) return const SizedBox.shrink();
-    return MaterialBanner(
-      content: const Row(
+    return const MaterialBanner(
+      content: Row(
         children: [
           Icon(Icons.storage, size: 16, color: Colors.white),
           SizedBox(width: 12),
@@ -35,8 +35,8 @@ class LocalStoreBanner extends ConsumerWidget {
           ),
         ],
       ),
-      backgroundColor: const Color(0xFFFFA000),
-      actions: const [SizedBox.shrink()],
+      backgroundColor: Color(0xFFFFA000),
+      actions: [SizedBox.shrink()],
     );
   }
 }

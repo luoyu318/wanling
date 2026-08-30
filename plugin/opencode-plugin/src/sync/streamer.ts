@@ -19,7 +19,7 @@ import { ToolCardManager } from "./domains/tool_card.js"
 import { PartDispatcher } from "./domains/part_dispatcher.js"
 import { InteractionCards } from "./domains/interaction.js"
 import { SessionLifecycle } from "./domains/session_lifecycle.js"
-import { getAggregateCard } from "./domains/aggregate_bridge.js"
+import { getAggregateCard, markdownElement } from "./domains/aggregate_bridge.js"
 
 export class Streamer extends EventEmitter {
   // 子 session 兜底超时默认值:task 崩溃或漏发 completed/error SSE 时强制清理。
@@ -75,6 +75,9 @@ export class Streamer extends EventEmitter {
     dispatcher: RPCDispatcher,
     childTimeoutMs?: number,
     aggregateCardEnabled?: boolean,
+    // 子 agent 运行时注入(体检式判死):hardTimeoutMs 硬上限 + abortChild 真取消。
+    // 可选:缺省 24h 硬上限 + no-op abort,保证既有测试零破坏。
+    childRuntime?: { hardTimeoutMs: number; abortChild: (id: string) => Promise<void> },
   ) {
     super()
     this.subscriber = subscriber
@@ -91,6 +94,8 @@ export class Streamer extends EventEmitter {
       wanling,
       router: this.router,
       childTimeoutMs: childTimeoutMs ?? Streamer.DEFAULT_CHILD_TIMEOUT_MS,
+      hardTimeoutMs: childRuntime?.hardTimeoutMs ?? 24 * 60 * 60 * 1000,
+      abortChild: childRuntime?.abortChild ?? (async () => {}),
     })
     this.metaSync = new MetaSync({
       store: this.store,
@@ -254,6 +259,34 @@ export class Streamer extends EventEmitter {
       .catch((err) => {
         console.error(`[streamer] finishCard(${reason}) 失败: ${err instanceof Error ? err.message : String(err)}`)
       })
+  }
+
+  // control API(本机 send_image tool)触发的图片进卡:把已上传图片以 markdown 元素
+  // 追加进主 session 当前活跃聚合卡(用户正看的实时内容流,footer 之前),替代独立
+  // 图片消息割裂时间线(APP 端聚合卡 markdown 元素已支持 /api/files/ 图片渲染 +
+  // 点击放大,与独立 image 消息同一画廊)。
+  // 卡定位固定用 mainSessionId:tool 可能在子 session 执行,而聚合卡恒挂主 session
+  // state(childEntry.aggregateParentState 模式),按 tool sessionID 查会误判无卡。
+  // 用 peekState 纯读不建群:发图不允许有建群副作用;state 不存在 = 本回合从未
+  // 建过卡,必然无活跃卡。
+  // 无活跃卡(sealed / 未建卡 / 开关关闭)返回 no_active_card,调用方退回独立消息。
+  async appendImageToCard(fileId: string, alt?: string): Promise<"appended" | "no_active_card"> {
+    if (!this.aggregateCardEnabled) return "no_active_card"
+    const state = this.store.peekState(this.mainSessionId)
+    const bridge = state?.aggregateCard
+    // 活跃卡判定:回合中(sealed=false)且已建卡(cardMessageId 就绪)。未建卡时
+    // SDK append 会触发建新卡——那是回合流语义,不该由外部图片凭空开卡,明确退回。
+    if (!state || !bridge || bridge.sealed || !bridge.cardMessageId) return "no_active_card"
+    // seq 分配同步完成(与 part_dispatcher.nextSeq 同口径:reasoning/markdown/footer
+    // 共用计数器),append 走 SDK 串行队列,与回合内其他元素 append 不交错。
+    const seq = (state.aggregateSeq ?? 0) + 1
+    state.aggregateSeq = seq
+    // alt 进 markdown 语法位,清洗可能破坏语法的字符(] ) 反斜杠),连续空白合并。
+    const safeAlt = (alt ?? "").replace(/[[\]()\\]/g, " ").replace(/\s+/g, " ").trim() || "图片"
+    const element = markdownElement(`![${safeAlt}](/api/files/${fileId})`, seq)
+    await getAggregateCard(state, this.wanling).appendElement(element)
+    logger.info(`[streamer] 图片进聚合卡: file=${fileId.slice(0, 8)}… element=markdown_${seq}`)
+    return "appended"
   }
 
   // assistant 回合完成的聚合卡收尾(assistant_message_completed 事件驱动,对齐 TUI final()):

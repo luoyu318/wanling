@@ -1,15 +1,22 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:nested_scroll_views/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
+import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
-import '../pages/profile_page.dart';
+import '../router_helpers.dart' show chatRoute, sessionsRoute;
 import 'package:wanling_core/providers/agent_provider.dart';
+import 'package:wanling_core/providers/agent_sessions_provider.dart'
+    show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
-import 'package:wanling_core/providers/conversation_provider.dart' show totalUnreadProvider;
+import 'package:wanling_core/providers/conversation_provider.dart'
+    show convByIdProvider, totalUnreadProvider;
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/app_action_menu.dart';
@@ -17,16 +24,19 @@ import '../widgets/avatar.dart';
 import '../widgets/connection_banner.dart';
 import '../widgets/local_store_banner.dart';
 import '../widgets/feedback/app_dialog.dart';
+import '../widgets/nav_tab_bar.dart';
 import '../widgets/unread_badge.dart';
 
-/// 主容器：承载底部导航 + PageView 的 2 个 page。
+/// 主容器：承载动态底部导航 + 全槽平铺 PageView。
 ///
 /// 设计要点：
-/// - PageView 只有 2 页：page 0 = _AGroupPage（消息+万灵共享 AppBar），
-///   page 1 = ProfilePage（独立 SliverAppBar，跟手进出）
-/// - _pageIndex 跟踪 PageView 当前页，_aIndex 跟踪 A 组内部 index
-/// - 底部 BottomNavigationBar 全局共享，3 item 固定不动
-/// - 万灵↔我的 滑动时整页（含 AppBar/资料卡）跟手移动
+/// - 全槽平铺：消息/万灵/pinned agent 每槽一独立页，页序 =
+///   effectiveNavOrderProvider 序列序（固定项可在任意位），激活态统一为
+///   tabId 语义（[_HomePageState._activeTabId]）
+/// - 底部 NavTabBar：槽位由序列前缀派生（图标槽/头像槽），pinned 数达阈值
+///   出现「更多」槽，点按弹底部抽屉（_showMoreSheet）点选溢出 agent
+/// - 长按任意槽进 /nav-edit 编辑页（排序/固定收编编辑页）
+/// - 原页 1「我的」的菜单已整段迁入侧滑栏主面板(SidebarProfilePanel)
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
@@ -35,10 +45,24 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
+  // 底栏切换只靠点按导航槽;PageView 禁用拖动手势(避免与二级页横滑手势冲突)。
+  static const _kPageViewPhysics = NeverScrollableScrollPhysics();
+
+  /// PageView 页序列:导航序列去掉会话槽(会话槽是跳转入口,不占平铺页)。
+  List<String> get _pages =>
+      [for (final id in _effectiveOrder) if (!isConvNavId(id)) id];
+
   final PageController _pageCtrl = PageController(initialPage: 0);
-  int _pageIndex = 0; // PageView 当前页：0=A 组, 1=我的
-  int _aIndex = 0; // A 组内部 index：0=消息, 1=万灵
+  String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
   bool _sidebarOpen = false; // 左侧切换账号面板开关
+  int _jumpEpoch = 0; // 跳页纪元:新指令使旧补跳链失效,防并发链互相拉扯
+
+  // build 时刷新,手势回调读取(避免回调里重复 watch)
+  List<String> _effectiveOrder = const [];
+  bool _showMore = false;
+  bool _moreSheetOpen = false; // 「更多」抽屉开关(Stack 层,不遮底栏)
+  List<String> _visibleSlots = const []; // 可见槽位(序列前缀,固定项/agent 混合)
+  List<String> _overflowItems = const []; // 溢出项(含固定项,进更多抽屉可达)
 
   void _openSidebar() => setState(() => _sidebarOpen = true);
   void _closeSidebar() => setState(() => _sidebarOpen = false);
@@ -49,110 +73,237 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.dispose();
   }
 
-  /// 底部导航点击：3 item → 2 page + A 组内部 index。
-  /// - 点消息/万灵：跳 page 0 + 切 _aIndex
-  /// - 点我的：跳 page 1
-  /// A 组最后一个子页面的 index（紧邻"我的"，当前是万灵）。
-  /// 未来 A 组扩展子页时，这里自动取最后一个。
-  static const int _aGroupLastIndex = 1;
-
-  void _onNavTap(int navIndex) {
-    if (navIndex == 0 || navIndex == 1) {
-      // 点消息/万灵：先确保在 A 组页（瞬切无动画），再切内部 index。
-      // 用 addPostFrameCallback 延后 jumpToPage：避免在 build 阶段同步触发
-      // onPageChanged→setState（"setState called during build"）。
-      if (_pageIndex != 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
-        });
-      }
-      setState(() => _aIndex = navIndex);
-    } else {
-      // 点我的：瞬切到 page 1（无左滑动画）。
-      // 提前把 _aIndex 设为 A 组最后一个子页面（万灵），
-      // 让 _AGroupPage 的内层 controller 提前跳到万灵 ——
-      // 这样反滑回 A 组时内层已经在万灵，无抖动（避免滑动时才 jumpToPage）。
-      setState(() => _aIndex = _aGroupLastIndex);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(1);
-      });
+  /// 底栏点按:更多槽(=可见槽数)弹抽屉,其余按序列切页;点按同时收起抽屉。
+  void _onNavTap(int slot) {
+    if (_moreSheetOpen) _closeMoreSheet();
+    if (_showMore && slot == _visibleSlots.length) {
+      _openMoreSheet();
+      return;
     }
+    if (slot < 0 || slot >= _visibleSlots.length) return;
+    _switchTab(_visibleSlots[slot]);
   }
 
-  /// PageView 页面变化（跟手滑动 settle 后触发）。
-  void _onPageChanged(int pageIndex) {
-    setState(() {
-      _pageIndex = pageIndex;
-      // 跟手从我的(page 1)反滑回 A 组(page 0)时，
-      // _aIndex 已经在 _onNavTap 提前设为万灵（_aGroupLastIndex），
-      // 这里不需要再改 _aIndex。
-    });
+  void _switchTab(String tabId) {
+    if (!_effectiveOrder.contains(tabId)) return;
+    // 会话槽:按消息列表项同款逻辑跳转(multi_session 聚合 → sessions 页,
+    // 其余 → 聊天页),不改变 tab 激活态。
+    final convId = navConvIdOf(tabId);
+    if (convId != null) {
+      final conv = ref.read(convByIdProvider(convId));
+      if (conv == null) return;
+      if (conv.agent?.isMultiSession ?? false) {
+        context.push(sessionsRoute(conv.agent!.id));
+      } else {
+        context.push(chatRoute(conv.id, conv.agent?.id));
+      }
+      return;
+    }
+    setState(() => _activeTabId = tabId);
+    _jumpToPageSafe(tabId);
   }
 
-  /// 底部导航选中态：page 1 → 2（我的）；page 0 → _aIndex（消息/万灵）。
-  int get _currentNavIndex =>
-      _pageIndex == 1 ? 2 : _aIndex;
+  /// 程序跳页(带动态 children 的 extent 滞后补偿)。
+  ///
+  /// PageView children 增长后 maxScrollExtent 滞后一帧才就位,期间 jumpToPage
+  /// 会被 clamp 落在旧界内:发出中间页 onPageChanged(污染激活态),pixels 随后
+  /// 静默落位目标页且不再发 onPageChanged。故逐帧复核:落点未达则续跳;已达但
+  /// 激活态被污染则纠正。捕获 tabId 而非下标,序列再变时按身份重算落点。
+  void _jumpToPageSafe(String tabId) {
+    final epoch = ++_jumpEpoch;
+    void jump() {
+      if (!mounted || !_pageCtrl.hasClients || epoch != _jumpEpoch) return;
+      final page = _pages.indexOf(tabId);
+      if (page < 0) return;
+      if (_pageCtrl.page?.round() != page) {
+        _pageCtrl.jumpToPage(page);
+        WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+      } else if (_activeTabId != tabId) {
+        setState(() => _activeTabId = tabId);
+      }
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+  }
+
+  void _onPageChanged(int page) {
+    if (page < 0 || page >= _pages.length) return;
+    setState(() => _activeTabId = _pages[page]);
+  }
+
+  /// 底栏选中态:激活 tab 在可见槽中的位置;溢出 agent 归更多槽。
+  int get _currentNavIndex {
+    final idx = _visibleSlots.indexOf(_activeTabId);
+    if (idx >= 0) return idx;
+    return _showMore ? _visibleSlots.length : 0;
+  }
+
+  /// 「更多」抽屉:state 驱动的 Stack 层,遮罩只盖导航条上方(导航条保持
+  /// 可见可点,对齐主流 IM)。抽屉弹出时长按底栏项 → 进底栏编辑页。
+  void _openMoreSheet() => setState(() => _moreSheetOpen = true);
+
+  void _closeMoreSheet() => setState(() => _moreSheetOpen = false);
+
+  /// 底栏总高(NavTabBar = SafeArea 底部 + 56)。
+  double get _navBarHeight =>
+      56 + MediaQuery.of(context).padding.bottom;
+
+  /// pinned agent id → 底栏槽位数据（名字/在线态/未读）。
+  NavAgentTab _toNavAgentTab(String id) {
+    final a = ref.watch(agentByIdProvider(id));
+    final unread = ref.watch(agentTabUnreadProvider(id));
+    return NavAgentTab(
+      id: id,
+      name: a?.name ?? id,
+      avatarUrl: a?.avatarUrl,
+      online: a?.status == AgentStatus.online,
+      unread: unread,
+    );
+  }
+
+  /// 会话槽 id → 底栏槽位数据(名字/头像/未读,与消息列表同源)。
+  NavConvTab _toNavConvTab(String id) {
+    final convId = navConvIdOf(id)!;
+    final conv = ref.watch(convByIdProvider(convId));
+    return NavConvTab(
+      id: convId,
+      name: conv?.displayName ?? convId,
+      avatarUrl: conv?.displayAvatarUrl,
+      unread: conv?.unreadCount ?? 0,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
+    _effectiveOrder = ref.watch(effectiveNavOrderProvider);
+    final storedVisible = ref.watch(navVisibleCountProvider);
+    // 可见槽数由用户在编辑页拖项进/出「更多」决定(存 SP);未设置时自动:
+    // 总项 ≤4 全可见,否则可见 4。最少保留 1 个导航元素在底栏。
+    final visibleCount =
+        resolveVisibleCount(storedVisible, _effectiveOrder.length);
+    _showMore = _effectiveOrder.length > visibleCount;
+    _visibleSlots = _effectiveOrder.take(visibleCount).toList();
+    _overflowItems = _showMore
+        ? _effectiveOrder.skip(visibleCount).toList()
+        : [];
+
+    // 收缩守卫:序列变化时按激活 tab 身份判定落点(位置左移跳新位;消失回页 0)。
+    // 收缩通知同步于 rebuild 前,prev 即旧列表,据此取激活 tab 新位置。
+    ref.listen(effectiveNavOrderProvider, (prev, next) {
+      if (prev == null || listEquals(prev, next)) return;
+      if (next.contains(_activeTabId)) {
+        _jumpToPageSafe(_activeTabId);
+      } else {
+        setState(() => _activeTabId = kNavTabMsg);
+        _jumpToPageSafe(kNavTabMsg);
+      }
+    });
 
     return PopScope(
-      canPop: !_sidebarOpen,
+      canPop: !_sidebarOpen && !_moreSheetOpen,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _sidebarOpen) _closeSidebar();
+        if (didPop) return;
+        if (_sidebarOpen) {
+          _closeSidebar();
+        } else if (_moreSheetOpen) {
+          _closeMoreSheet();
+        }
       },
       // Stack 在 Scaffold 外层：遮罩 + 侧滑面板覆盖整个 Scaffold(含底部 tab 栏)
       child: Stack(
         children: [
           Scaffold(
-            body: Column(
+            body: NestedPageView(
+              controller: _pageCtrl,
+              physics: _kPageViewPhysics,
+              onPageChanged: _onPageChanged,
               children: [
-                Expanded(
-                  child: NestedPageView(
-                    controller: _pageCtrl,
-                    onPageChanged: _onPageChanged,
-                    children: [
-                      _AGroupPage(
-                        aIndex: _aIndex,
-                        onAIndexChanged: (i) => setState(() => _aIndex = i),
-                        onOpenSidebar: _openSidebar,
-                      ),
-                      const ProfilePage(),
-                    ],
+                for (final id in _pages)
+                  KeyedSubtree(
+                    key: ValueKey('nav-tab-$id'),
+                    child: switch (id) {
+                      kNavTabMsg => _MsgNavPage(onOpenSidebar: _openSidebar),
+                      kNavTabWanling =>
+                        _WanlingNavPage(onOpenSidebar: _openSidebar),
+                      _ => AgentSessionsPage(agentId: id, embedded: true),
+                    },
                   ),
-                ),
               ],
             ),
-            bottomNavigationBar: BottomNavigationBar(
+            bottomNavigationBar: NavTabBar(
               currentIndex: _currentNavIndex,
-              backgroundColor: const Color(0xFFF7F7F7),
-              onTap: _onNavTap,
-              items: [
-                BottomNavigationBarItem(
-                  icon: _TabIcon(
-                    icon: Icons.chat_bubble_outline,
-                    badge: totalUnread,
-                  ),
-                  activeIcon: _TabIcon(
-                    icon: Icons.chat_bubble,
-                    badge: totalUnread,
-                  ),
-                  label: '消息',
-                ),
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  activeIcon: Icon(Icons.auto_awesome),
-                  label: '万灵',
-                ),
-                const BottomNavigationBarItem(
-                  icon: Icon(Icons.person_outline),
-                  activeIcon: Icon(Icons.person),
-                  label: '我的',
-                ),
+              slots: [
+                for (final id in _visibleSlots)
+                  if (id == kNavTabMsg)
+                    NavIconSlot(
+                        tabId: id,
+                        label: kNavTabMsgLabel,
+                        // 选中态用镂空 outline、未选中用 filled(用户偏好,与常规相反)
+                        icon: Icons.chat_bubble,
+                        activeIcon: Icons.chat_bubble_outline,
+                        badge: totalUnread)
+                  else if (id == kNavTabWanling)
+                    const NavIconSlot(
+                        tabId: kNavTabWanling,
+                        label: kNavTabWanlingLabel,
+                        icon: Icons.auto_awesome,
+                        activeIcon: Icons.auto_awesome_outlined)
+                  else if (isConvNavId(id))
+                    NavConvSlot(tabId: id, tab: _toNavConvTab(id))
+                  else
+                    NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
               ],
+              showMore: _showMore,
+              moreTab: _overflowItems.contains(_activeTabId) &&
+                      !kNavFixedIds.contains(_activeTabId)
+                  ? _toNavAgentTab(_activeTabId)
+                  : null,
+              onSlotTap: _onNavTap,
+              onMoreTap: _openMoreSheet,
+              // 编辑入口:有更多槽时须先弹抽屉再长按(避免误触);无更多槽
+              // (项≤4,抽屉不可达)保留长按直进兜底。
+              onSlotLongPress: (_) {
+                if (_showMore && !_moreSheetOpen) return;
+                if (_moreSheetOpen) _closeMoreSheet();
+                context.push('/nav-edit');
+              },
             ),
           ),
+          // —— 「更多」抽屉层:遮罩+面板都在导航条上方,导航条不被遮挡可点 ——
+          if (_moreSheetOpen) ...[
+            Positioned.fill(
+              bottom: _navBarHeight,
+              child: GestureDetector(
+                onTap: _closeMoreSheet,
+                child: const ColoredBox(color: Colors.black38),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: _navBarHeight,
+              child: Material(
+                color: Colors.transparent,
+                child: _MoreSheetPanel(
+                  overflowItems: _overflowItems,
+                  activeTabId: _activeTabId,
+                  onClose: _closeMoreSheet,
+                  onEdit: () {
+                    _closeMoreSheet();
+                    context.push('/nav-edit');
+                  },
+                  onPickItem: (id) {
+                    _closeMoreSheet();
+                    _switchTab(id);
+                  },
+                  onLongPressItem: (id) {
+                    _closeMoreSheet();
+                    context.push('/nav-edit');
+                  },
+                ),
+              ),
+            ),
+          ],
           // —— 遮罩：覆盖全 Scaffold(含 tab 栏),常驻动画控制透明度 ——
           Positioned.fill(
             child: IgnorePointer(
@@ -178,11 +329,23 @@ class _HomePageState extends ConsumerState<HomePage> {
               child: AnimatedSlide(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOut,
-                offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+              offset: _sidebarOpen ? Offset.zero : const Offset(-1, 0),
+              // 滑动容器层整体投影(右移 4px + 16 模糊),与旧单层面板层次一致
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 16,
+                      offset: Offset(4, 0),
+                    ),
+                  ],
+                ),
                 child: Material(
                   type: MaterialType.transparency,
                   child: AccountSidebar(onClose: _closeSidebar),
                 ),
+              ),
               ),
             ),
           ),
@@ -192,140 +355,387 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 }
 
-/// A 组合页：消息 + 万灵共享 1 个 AppBar，内部 IndexedStack 切换内容。
-///
-/// 作为 PageView 的 page 0。万灵↔我的 滑动时，这个 page（含 AppBar）
-/// 整体跟手左移，AppBar 不卡在 HomePage 原地。
-class _AGroupPage extends ConsumerStatefulWidget {
-  final int aIndex; // 0=消息, 1=万灵
-  final ValueChanged<int> onAIndexChanged;
-  final VoidCallback onOpenSidebar;
-
-  const _AGroupPage({
-    required this.aIndex,
-    required this.onAIndexChanged,
-    required this.onOpenSidebar,
+/// 「更多」抽屉面板:溢出项(含消息/万灵)4 列网格 + 右上「编辑」。
+/// 由 HomePage 以 Stack 层承载(导航条上方),不再用 modal route。
+class _MoreSheetPanel extends ConsumerWidget {
+  const _MoreSheetPanel({
+    required this.overflowItems,
+    required this.activeTabId,
+    required this.onClose,
+    required this.onEdit,
+    required this.onPickItem,
+    required this.onLongPressItem,
   });
 
+  final List<String> overflowItems;
+  final String activeTabId;
+  final VoidCallback onClose;
+  final VoidCallback onEdit;
+  final ValueChanged<String> onPickItem;
+  final ValueChanged<String> onLongPressItem;
+
   @override
-  ConsumerState<_AGroupPage> createState() => _AGroupPageState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Row(
+                children: [
+                  const Text('更多',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: onEdit,
+                    child: const Text('编辑',
+                        style: TextStyle(color: Color(0xFF3370FF))),
+                  ),
+                ],
+              ),
+            ),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              crossAxisCount: 4,
+              mainAxisSpacing: 16,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.72,
+              children: [
+                for (final id in overflowItems)
+                  if (kNavFixedIds.contains(id))
+                    _MoreSheetIconItem(
+                      key: ValueKey('more-$id'),
+                      tabId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
+                    )
+                  else if (isConvNavId(id))
+                    _MoreSheetConvItem(
+                      key: ValueKey('more-$id'),
+                      convId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
+                    )
+                  else
+                    _MoreSheetItem(
+                      key: ValueKey('more-$id'),
+                      agentId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
+                    ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _AGroupPageState extends ConsumerState<_AGroupPage> {
-  // 内部 PageView 的 controller：消息↔万灵 横滑切换。
-  // 嵌套 PageView 默认手势行为：内层先消费横滑，内层到边界后外层（万灵↔我的）接管。
-  late final PageController _innerCtrl;
+/// 抽屉网格项(固定项):白圆角图标方块+灰名字;激活绿描边。
+class _MoreSheetIconItem extends ConsumerWidget {
+  const _MoreSheetIconItem({
+    super.key,
+    required this.tabId,
+    required this.active,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String tabId;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
-  void initState() {
-    super.initState();
-    _innerCtrl = PageController(initialPage: widget.aIndex);
-  }
-
-  @override
-  void didUpdateWidget(covariant _AGroupPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // HomePage 通过 aIndex prop 驱动内部跳转（点底部导航时）。
-    // 跟手滑动时 onAIndexChanged 回调已更新 aIndex，这里跳转会重复 —— 用像素位置守卫。
-    // 用 addPostFrameCallback 延后：didUpdateWidget 在 build 阶段，
-    // 同步 jumpToPage 会触发内层 onPageChanged→外层 setState（"setState called during build"）。
-    if (oldWidget.aIndex != widget.aIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_innerCtrl.hasClients &&
-            _innerCtrl.page?.round() != widget.aIndex) {
-          _innerCtrl.jumpToPage(widget.aIndex);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _innerCtrl.dispose();
-    super.dispose();
-  }
-  /// 万灵 tab 的「新建 Agent」弹窗。
-  void _showCreateAgentDialog() {
-    final ctrl = TextEditingController();
-    showAppDialog(
-      context: context,
-      title: '创建 Agent',
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: 'Agent 名称'),
-      ),
-      confirmText: '创建',
-      onConfirm: () {
-        final name = ctrl.text.trim();
-        if (name.isEmpty) return;
-        ref.read(agentListProvider.notifier).create(name);
-      },
-    );
-  }
-
-  /// 根据 aIndex 构建 AppBar。
-  /// - 消息 tab：靠左头像 + 用户名 + 简介（简介 >10 字截断加省略号）
-  /// - 万灵 tab：头像在 leading + "万灵"标题靠左
-  /// 两 tab 共用 + 号菜单（扫一扫 / 创建 Agent）使用 [buildHomeAppBar]。
-  PreferredSizeWidget _buildAppBar() {
-    final user = ref.watch(authProvider).user;
-    return buildHomeAppBar(
-      isWanling: widget.aIndex == 1,
-      user: user,
-      onScan: () => context.push('/pair/scan'),
-      onCreateAgent: _showCreateAgentDialog,
-      onAvatarTap: widget.onOpenSidebar,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      // 内部 PageView：消息↔万灵 横滑切换（AppBar 固定不动，仅内容跟手）。
-      // 嵌套在外层 PageView（万灵↔我的）中：内层到边界后外层接管手势。
-      // 用 AutomaticKeepAliveClientMixin（MessagesPage/AgentListPage 已加）保活两页 state。
-      // F5: banner 只在消息 tab 显示(用户主要场景),其他 tab 静默 fallback。
-      body: NestedPageView(
-        controller: _innerCtrl,
-        onPageChanged: widget.onAIndexChanged,
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isMsg = tabId == kNavTabMsg;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Column(
-            children: const [
-              ConnectionBanner(),
-              LocalStoreBanner(),
-              Expanded(child: MessagesPage()),
-            ],
+          Container(
+            width: 64,
+            height: 64,
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: active
+                  ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                  : null,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              isMsg ? Icons.chat_bubble_outline : Icons.auto_awesome_outlined,
+              size: 32,
+              color: AppColors.textSecondary,
+            ),
           ),
-          const AgentListPage(),
+          const SizedBox(height: 6),
+          Text(
+            isMsg ? '消息' : '万灵',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
         ],
       ),
     );
   }
 }
 
-/// tab icon + badge 包装。badge > 0 时右上角小红圆。
-class _TabIcon extends StatelessWidget {
-  final IconData icon;
-  final int badge;
-  const _TabIcon({required this.icon, required this.badge});
+/// 抽屉网格项(agent):大圆角方形头像本体(在线绿点+未读角标)+灰名字;激活绿描边。
+class _MoreSheetItem extends ConsumerWidget {
+  const _MoreSheetItem({
+    super.key,
+    required this.agentId,
+    required this.active,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String agentId;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
-  Widget build(BuildContext context) {
-    if (badge <= 0) return Icon(icon);
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Icon(icon),
-        Positioned(
-          top: -6,
-          right: -10,
-          child: UnreadBadge(count: badge, radius: 8),
-        ),
-      ],
+  Widget build(BuildContext context, WidgetRef ref) {
+    final agent = ref.watch(agentByIdProvider(agentId));
+    final unread = ref.watch(agentTabUnreadProvider(agentId));
+    final name = agent?.name ?? agentId;
+    final box = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // 大圆角方形头像本体(无白底包裹);激活描边用 foregroundDecoration
+              // 叠边框,不影响头像裁剪。
+              Container(
+                width: 64,
+                height: 64,
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: active
+                      ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                      : null,
+                ),
+                child: Avatar(name: name, url: agent?.avatarUrl, size: 64, radius: 16),
+              ),
+              if (unread > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: UnreadBadge(count: unread),
+                ),
+              if (agent?.status == AgentStatus.online)
+                Positioned(
+                  right: 2,
+                  bottom: 2,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentGreen,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            name.characters.length > 6
+                ? '${name.characters.take(6).join()}…'
+                : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+    return box;
+  }
+}
+
+/// 抽屉网格项(会话):大圆角方形头像(未读角标,无在线点)+灰名字;激活绿描边。
+/// 点击由 HomePage onPickItem → _switchTab 路由跳聊天页。
+class _MoreSheetConvItem extends ConsumerWidget {
+  const _MoreSheetConvItem({
+    super.key,
+    required this.convId,
+    required this.active,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String convId;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 溢出项序列元素是 'conv:<convId>'，先去前缀再查会话(与底栏可见槽/编辑页同语义)。
+    final cid = navConvIdOf(convId) ?? convId;
+    final conv = ref.watch(convByIdProvider(cid));
+    final name = conv?.displayName ?? cid;
+    final unread = conv?.unreadCount ?? 0;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: active
+                      ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                      : null,
+                ),
+                child: Avatar(
+                    name: name, url: conv?.displayAvatarUrl, size: 64, radius: 16),
+              ),
+              if (unread > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: UnreadBadge(count: unread),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            name.characters.length > 6
+                ? '${name.characters.take(6).join()}…'
+                : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
     );
   }
+}
+
+/// 消息导航页:平铺后的独立 tab 页(原 A 组消息子页)。
+class _MsgNavPage extends ConsumerWidget {
+  const _MsgNavPage({required this.onOpenSidebar});
+
+  final VoidCallback onOpenSidebar;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authProvider).user;
+    return Scaffold(
+      // 白底:dpr 非整数倍时 AppBar 底缘半覆盖行会透出 Scaffold 底色,
+      // 全局灰底(#EDEDED)在此显成一条淡灰缝线,页面本身是白底列表,底色改白让缝隐形
+      backgroundColor: Colors.white,
+      appBar: buildHomeAppBar(
+        isWanling: false,
+        user: user,
+        onScan: () => context.push('/pair/scan'),
+        onCreateAgent: () => showCreateAgentDialog(context, ref),
+        onAvatarTap: onOpenSidebar,
+      ),
+      body: const Column(
+        children: [
+          ConnectionBanner(),
+          LocalStoreBanner(),
+          Expanded(child: MessagesPage()),
+        ],
+      ),
+    );
+  }
+}
+
+/// 万灵导航页:平铺后的独立 tab 页(原 A 组万灵子页)。
+class _WanlingNavPage extends ConsumerWidget {
+  const _WanlingNavPage({required this.onOpenSidebar});
+
+  final VoidCallback onOpenSidebar;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authProvider).user;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: buildHomeAppBar(
+        isWanling: true,
+        user: user,
+        onScan: () => context.push('/pair/scan'),
+        onCreateAgent: () => showCreateAgentDialog(context, ref),
+        onAvatarTap: onOpenSidebar,
+      ),
+      body: const AgentListPage(),
+    );
+  }
+}
+
+/// 「新建 Agent」弹窗(消息/万灵页共用,原 _AGroupPage 方法顶层化)。
+void showCreateAgentDialog(BuildContext context, WidgetRef ref) {
+  final ctrl = TextEditingController();
+  showAppDialog(
+    context: context,
+    title: '创建 Agent',
+    content: TextField(
+      controller: ctrl,
+      autofocus: true,
+      decoration: const InputDecoration(labelText: 'Agent 名称'),
+    ),
+    confirmText: '创建',
+    onConfirm: () {
+      final name = ctrl.text.trim();
+      if (name.isEmpty) return;
+      ref.read(agentListProvider.notifier).create(name);
+    },
+  );
 }
 
 /// 构建"消息 / 万灵"首页共享的 AppBar。
@@ -356,10 +766,16 @@ PreferredSizeWidget buildHomeAppBar({
         tooltip: '更多',
         onPressed: () async {
           final box = btnCtx.findRenderObject() as RenderBox?;
-          final pos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+          // 按钮未挂树(渲染对象尚未就位)时直接不弹:比兜底 Offset.zero
+          // 把菜单弹到屏幕左上角诚实。
+          if (box == null) return;
+          // 锚点 = 按钮右下角:菜单右上角贴按钮右缘,顶部在按钮下方 8px
+          final pos =
+              box.localToGlobal(Offset(box.size.width, box.size.height));
           final selected = await showAppActionMenu(
             btnCtx,
             pos,
+            align: AppMenuAlign.belowRight,
             items: const [
               ActionMenuItem(
                 value: 'scan',

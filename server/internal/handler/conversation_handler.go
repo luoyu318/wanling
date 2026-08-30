@@ -63,7 +63,7 @@ func NewConversationHandler(
 		userRepo:        userRepo,
 		hub:             hub,
 		registry:        registry,
-		agentTypeRepo:  agentTypeRepo,
+		agentTypeRepo:   agentTypeRepo,
 	}
 }
 
@@ -252,13 +252,30 @@ func (h *ConversationHandler) buildDetail(ctx context.Context, convID, userID st
 						multiSession = &ms
 					}
 					item.Agent = &model.AgentSummary{
-						ID:            agent.ID,
-						Name:          agent.Name,
-						AvatarURL:     agent.AvatarURL,
-						Type:          agent.Type,
-						MultiSession:  multiSession,
-						Status:        st,
+						ID:           agent.ID,
+						Name:         agent.Name,
+						AvatarURL:    agent.AvatarURL,
+						Type:         agent.Type,
+						MultiSession: multiSession,
+						Status:       st,
 					}
+				}
+				break
+			}
+		}
+	}
+
+	// dm_user_user:填 OtherUser 摘要(对方 = user 参与者中非当前请求者),
+	// 对齐 ListForUser 语义;client displayName 优先 otherUser,
+	// 缺失时 fallback participants 首个 user 不排除自己,会显示成自己的昵称。
+	if conv.Type == model.ConvTypeDMUserUser {
+		for _, p := range parts {
+			if p.MemberType == "user" && p.MemberID != userID {
+				nick := p.Nickname
+				item.OtherUser = &model.UserSummary{
+					Username:  p.Username,
+					Nickname:  &nick,
+					AvatarURL: p.AvatarURL,
 				}
 				break
 			}

@@ -116,6 +116,31 @@ check_node() {
     info "Node.js 版本: $ver"
 }
 
+# ─── 确保 SDK 构建产物就绪 ─────────────────────────────────────────────────
+# wanling-sdk 以 file: symlink 引用仓内 sdk/ts,而 dist 被 gitignore——
+# 全新 clone 后缺 dist,tsc 会因找不到 wanling-sdk 类型声明而失败。
+# 兜底:缺产物就在 sdk/ts 就地 npm install + build,仍失败则报清晰错误。
+ensure_sdk_dist() {
+    local sdk_dir
+    sdk_dir="$(cd "$SCRIPT_DIR/../../sdk/ts" 2>/dev/null && pwd)" \
+        || die "未找到 SDK 源目录: $SCRIPT_DIR/../../sdk/ts(请在本仓 plugin/opencode-plugin/ 下运行 install.sh)"
+    if [[ -f "$sdk_dir/dist/index.js" && -f "$sdk_dir/dist/index.d.ts" ]]; then
+        return 0
+    fi
+    info "wanling-sdk 缺少 dist 构建产物,开始在 $sdk_dir 就地构建..."
+    local npm_log
+    # npm ci --include=dev:按 lock 全量重建(先清 node_modules),可自愈脏状态;
+    # 显式带 dev 是因为 tsc 属 devDependencies,用户全局 omit=dev 时缺省装不上
+    if ! npm_log=$(cd "$sdk_dir" && npm ci --include=dev 2>&1); then
+        die "SDK npm ci 失败:${npm_log:+ $npm_log}"
+    fi
+    if ! npm_log=$(cd "$sdk_dir" && npm run build 2>&1); then
+        die "SDK 构建失败(npm run build):${npm_log:+ $npm_log}"
+    fi
+    [[ -f "$sdk_dir/dist/index.js" ]] || die "SDK 构建后仍缺 dist/index.js,请检查 SDK 工程"
+    ok "wanling-sdk 构建产物已就绪"
+}
+
 # ─── 配置读写 ──────────────────────────────────────────────────────────────
 read_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -183,6 +208,7 @@ install_deps() {
 build_code() {
     info "编译 TypeScript..."
     cd "$PLUGIN_DIR"
+    ensure_sdk_dist
     if [[ ! -x node_modules/.bin/tsc ]]; then
         die "未找到 tsc 编译器，请先运行 npm install 安装依赖"
     fi

@@ -70,4 +70,46 @@ describe("project.list handler", () => {
     const paths = result.projects.map((p) => p.path)
     expect(new Set(paths).size).toBe(paths.length)
   })
+
+  it("worktree 挂载的 sandboxes 展开为独立条目(wanling 挂 chat 场景)", async () => {
+    const mockClient: any = {
+      project: {
+        list: async () => ({
+          data: [
+            { worktree: "/workspace/app/chat", sandboxes: ["/workspace/app/wanling"] },
+            { worktree: "/workspace/kangli-system" },
+          ],
+        }),
+      },
+    }
+    const ctx = { getClient: () => mockClient }
+
+    const result = await projectListHandler({}, ctx)
+
+    expect(result.projects).toEqual([
+      { path: "/workspace/app/chat", name: "chat" },
+      { path: "/workspace/app/wanling", name: "wanling" },
+      { path: "/workspace/kangli-system", name: "kangli-system" },
+    ])
+  })
+
+  it("sandbox 与 worktree 重复时按 path 去重", async () => {
+    const mockClient: any = {
+      project: {
+        list: async () => ({
+          data: [
+            { worktree: "/workspace/app/chat", sandboxes: ["/workspace/app/chat", "/workspace/app/wanling"] },
+          ],
+        }),
+      },
+    }
+    const ctx = { getClient: () => mockClient }
+
+    const result = await projectListHandler({}, ctx)
+
+    expect(result.projects).toEqual([
+      { path: "/workspace/app/chat", name: "chat" },
+      { path: "/workspace/app/wanling", name: "wanling" },
+    ])
+  })
 })

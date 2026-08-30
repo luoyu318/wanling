@@ -1,6 +1,16 @@
 """消息 payload 类型(TypedDict,与 TS types.ts 对齐)。"""
 
+from dataclasses import dataclass
 from typing import Any, TypedDict
+
+
+@dataclass
+class DownloadedFile:
+    """GET /api/files/:id 的返回:字节流附 server 端嗅探矫正过的 Content-Type。"""
+
+    buffer: bytes
+    # server 端嗅探矫正过的 Content-Type(未知时 octet-stream);桥接层 magic bytes 兜底。
+    content_type: str | None = None
 
 
 class WSMessage(TypedDict, total=False):

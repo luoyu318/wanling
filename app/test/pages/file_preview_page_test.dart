@@ -41,10 +41,10 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: const MaterialApp(
         home: FilePreviewPage(
-          browserKey: const (agentId: 'a', convId: 'c'),
-          entry: const FileEntry(name: 'a.txt', type: 'file', size: 5),
+          browserKey: (agentId: 'a', convId: 'c'),
+          entry: FileEntry(name: 'a.txt', type: 'file', size: 5),
         ),
       ),
     ));
@@ -75,10 +75,10 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: const MaterialApp(
         home: FilePreviewPage(
-          browserKey: const (agentId: 'a', convId: 'c'),
-          entry: const FileEntry(name: 'a.txt', type: 'file', size: 5),
+          browserKey: (agentId: 'a', convId: 'c'),
+          entry: FileEntry(name: 'a.txt', type: 'file', size: 5),
         ),
       ),
     ));
@@ -101,10 +101,10 @@ void main() {
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: const MaterialApp(
         home: FilePreviewPage(
-          browserKey: const (agentId: 'a', convId: 'c'),
-          entry: const FileEntry(name: 'app.db', type: 'file', size: 1024, binary: true),
+          browserKey: (agentId: 'a', convId: 'c'),
+          entry: FileEntry(name: 'app.db', type: 'file', size: 1024, binary: true),
         ),
       ),
     ));
@@ -137,9 +137,9 @@ void main() {
 
     final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
     unawaited(navigator.push(MaterialPageRoute(
-      builder: (_) => FilePreviewPage(
+      builder: (_) => const FilePreviewPage(
         browserKey: key,
-        entry: const FileEntry(name: 'a.txt', type: 'file', size: 5),
+        entry: FileEntry(name: 'a.txt', type: 'file', size: 5),
       ),
     )));
     await tester.pumpAndSettle();

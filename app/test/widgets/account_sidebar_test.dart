@@ -1,6 +1,15 @@
+// 双层侧滑栏测试:左竖条(账号切换/长按编辑/添加) + 主面板(菜单/退出)。
+// 原 AccountSidebar 单面板卡片测试随双层重构适配。
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+// package_info_plus 未 re-export 其平台接口,这里直接引用该包的 transitive 依赖
+// 以便在测试中把 Linux 实现(真实文件 IO,fake-async 下永不完成)换成可 mock 的通道实现。
+// ignore: depend_on_referenced_packages
+import 'package:package_info_plus_platform_interface/method_channel_package_info.dart';
+// ignore: depend_on_referenced_packages
+import 'package:package_info_plus_platform_interface/package_info_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/account_mark.dart';
 import 'package:wanling_core/models/saved_login.dart';
@@ -8,8 +17,13 @@ import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
 import 'package:app/widgets/account_sidebar.dart';
+import 'package:app/widgets/sidebar_profile_panel.dart';
+
+/// package_info 通道名(package_info_plus 的 MethodChannelPackageInfo 所用)。
+const _packageInfoChannel = MethodChannel('dev.fluttercommunity.plus/package_info');
 
 void main() {
   group('accountCardTitle', () {
@@ -99,17 +113,28 @@ void main() {
       );
     });
 
-    testWidgets('渲染账号卡片与当前标记 + 用户头部', (tester) async {
+    /// 当前项绿框高亮:竖条头像外层 Container 的 Border.all(accentGreen)。
+    Finder currentHighlight() => find.byWidgetPredicate((w) {
+          if (w is! Container) return false;
+          final deco = w.decoration;
+          return deco is BoxDecoration &&
+              deco.border is Border &&
+              (deco.border as Border).top.color == AppColors.accentGreen;
+        });
+
+    testWidgets('竖条渲染账号名 + 当前项绿框高亮 + 主面板显示用户名', (tester) async {
       await pumpSidebar(tester);
-      expect(find.text('Alice'), findsWidgets);
-      expect(find.text('Hello'), findsOneWidget);
+      // 竖条账号名(备注 > 昵称 > 账号名)
       expect(find.text('正式服'), findsOneWidget);
       expect(find.text('测试服'), findsOneWidget);
-      expect(find.text('uA @ http://prod'), findsOneWidget);
-      expect(find.text('当前'), findsOneWidget);
+      // 当前项(index 0)绿框
+      expect(currentHighlight(), findsOneWidget);
+      // 主面板用户头部:名字 + 简介
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Hello'), findsOneWidget);
     });
 
-    testWidgets('点非当前卡片触发 switchTo 并回调 onClose', (tester) async {
+    testWidgets('点非当前头像触发 switchTo 并回调 onClose', (tester) async {
       await pumpSidebar(tester);
       await tester.tap(find.text('测试服'));
       await tester.pumpAndSettle();
@@ -118,7 +143,7 @@ void main() {
       expect(closeCalls, 1);
     });
 
-    testWidgets('点当前卡片不触发切换', (tester) async {
+    testWidgets('点当前头像不触发切换', (tester) async {
       await pumpSidebar(tester);
       await tester.tap(find.text('正式服'));
       await tester.pumpAndSettle();
@@ -127,7 +152,7 @@ void main() {
       expect(closeCalls, 0);
     });
 
-    testWidgets('空列表显示暂无记录 + 添加按钮可用', (tester) async {
+    testWidgets('空列表:竖条只有添加按钮 + 主面板菜单仍在', (tester) async {
       final emptyNotifier = SavedLoginsNotifier(
         prefs: await SharedPreferences.getInstance(),
         storage: SecureStorage(deviceId: 'test-device'),
@@ -149,8 +174,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('暂无记录'), findsOneWidget);
-      expect(find.text('添加服务器'), findsOneWidget);
+      // 旧「暂无记录」空态已随账号卡片一并移除
+      expect(find.text('暂无记录'), findsNothing);
+      expect(find.text('添加'), findsOneWidget);
+      expect(find.byType(SidebarProfilePanel), findsOneWidget);
+      expect(find.text('编辑资料'), findsOneWidget);
+      expect(find.text('退出登录'), findsOneWidget);
     });
 
     testWidgets('切换失败显示错误提示且不关闭面板', (tester) async {
@@ -221,10 +250,10 @@ void main() {
       expect(find.text('切换中…'), findsNothing);
     });
 
-    testWidgets('点 ⋯ 弹编辑 dialog 并保存', (tester) async {
+    testWidgets('长按头像弹菜单:编辑 dialog 并保存', (tester) async {
       await pumpSidebar(tester);
-      // 第二张卡(测试服,非当前)的 ⋯ 菜单
-      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
+      // 长按第二个账号头像(测试服,非当前)弹出动作菜单
+      await tester.longPress(find.text('测试服'));
       await tester.pumpAndSettle();
       expect(find.text('编辑'), findsOneWidget);
       await tester.tap(find.text('编辑'));
@@ -239,10 +268,10 @@ void main() {
       expect(notifier.state.logins[1].label, '改备注');
     });
 
-    testWidgets('点 ⋯ 复制生成完整副本', (tester) async {
+    testWidgets('长按头像弹菜单:复制生成完整副本', (tester) async {
       await pumpSidebar(tester);
       final before = notifier.state.logins.length;
-      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
+      await tester.longPress(find.text('测试服'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('复制'));
       await tester.pumpAndSettle();
@@ -255,9 +284,9 @@ void main() {
       expect(notifier.state.selectedIndex, 0);
     });
 
-    testWidgets('点 ⋯ 删除弹确认并删除', (tester) async {
+    testWidgets('长按头像弹菜单:删除弹确认并删除', (tester) async {
       await pumpSidebar(tester);
-      await tester.tap(find.byIcon(Icons.more_horiz).at(1));
+      await tester.longPress(find.text('测试服'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('删除'));
       await tester.pumpAndSettle();
@@ -267,11 +296,42 @@ void main() {
       expect(notifier.state.logins.length, 1);
     });
 
-    testWidgets('点添加服务器弹 dialog', (tester) async {
+    testWidgets('点添加弹 dialog', (tester) async {
       await pumpSidebar(tester);
-      await tester.tap(find.text('添加服务器'));
+      await tester.tap(find.text('添加'));
       await tester.pumpAndSettle();
       expect(find.text('添加账号'), findsOneWidget);
+    });
+
+    testWidgets('主面板退出登录二次确认弹窗', (tester) async {
+      await pumpSidebar(tester);
+      await tester.tap(find.text('退出登录'));
+      await tester.pumpAndSettle();
+      expect(find.text('确定要退出吗？'), findsOneWidget);
+    });
+
+    testWidgets('关于菜单显示版本号', (tester) async {
+      // PackageInfo.fromPlatform 默认走 Linux 平台实现(真实文件 IO),
+      // 在 fake-async 测试环境永不完成;改用 MethodChannel 实现 + mock 通道。
+      final defaultInstance = PackageInfoPlatform.instance;
+      PackageInfoPlatform.instance = MethodChannelPackageInfo();
+      addTearDown(() => PackageInfoPlatform.instance = defaultInstance);
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        _packageInfoChannel,
+        (call) async => {
+          'appName': 'wanling',
+          'packageName': 'com.wanling.app',
+          'version': '1.2.3',
+          'buildNumber': '45',
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger
+            .setMockMethodCallHandler(_packageInfoChannel, null);
+      });
+      await pumpSidebar(tester);
+      // 版本号显示在关于行 trailing
+      expect(find.text('v1.2.3+45'), findsOneWidget);
     });
   });
 }

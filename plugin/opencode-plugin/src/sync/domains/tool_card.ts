@@ -90,12 +90,16 @@ export class ToolCardManager {
 
     if (status === "running") {
       state.pendingToolCard = { toolName: toolName, input: input || {}, partId: part.id }
+      // 存活信号 S1:running 态即登记(同步段,不等发卡),供子 agent 兜底超时体检
+      ;(state.runningToolParts ??= new Set()).add(part.id)
       // 普通工具无 child session 关联,清空避免残留上一次 task 的字段
       state.pendingChildSessionId = undefined
       state.pendingParentSessionId = undefined
       setImmediate(() => this.flushPending(state))
 
     } else if (status === "completed") {
+      // 终态分支入口无条件清存活信号(不依赖 PATCH 成功——part 状态以 opencode 事件为准)
+      state.runningToolParts?.delete(part.id)
       // 聚合模式:聚合卡内定位目标工具元素并全量替换更新(status/completed + output + file_diff),
       // 不再 resolveMsgId(无独立卡 msgId,聚合卡 msgId 由 updateElement 内部 ensureCard 拿)。
       if (this.useAggregate(state)) {
@@ -134,6 +138,8 @@ export class ToolCardManager {
       }
 
     } else if (status === "error") {
+      // 终态分支入口无条件清存活信号(不依赖 PATCH 成功——part 状态以 opencode 事件为准)
+      state.runningToolParts?.delete(part.id)
       // 聚合模式:定位目标工具元素更新 status:error + error 字段。
       if (this.useAggregate(state)) {
         await this.updateToolElement(state, part, {
@@ -233,6 +239,8 @@ export class ToolCardManager {
       //    childSessionId/parentSessionId 存入 state(wide-review I-1),
       //    让所有 flush 路径(含审批/提问抢占)一致读取,不再仅靠参数传递。
       state.pendingToolCard = { toolName: "task", input: input || {}, partId: part.id }
+      // 存活信号 S1:task running 态即登记(同步段,不等发卡),供子 agent 兜底超时体检
+      ;(state.runningToolParts ??= new Set()).add(part.id)
       state.pendingChildSessionId = childSessionId
       state.pendingParentSessionId = sessionID
       // 2) 提前注册 childSessionTree(task running 同步段,setImmediate 之前):
@@ -247,6 +255,8 @@ export class ToolCardManager {
       setImmediate(() => this.flushPending(state, childSessionId, sessionID))
 
     } else if (status === "completed") {
+      // 终态分支入口无条件清存活信号(不依赖 PATCH 成功——part 状态以 opencode 事件为准)
+      state.runningToolParts?.delete(part.id)
       // 聚合模式:更新聚合卡内 task 元素(status:completed + output + duration + sub_session_id),
       // 非聚合走下方独立 task 卡 updateMessageContent。
       if (this.useAggregate(state)) {
@@ -300,6 +310,8 @@ export class ToolCardManager {
       if (patched) this.store.cleanupChild(childSessionId)
 
     } else if (status === "error") {
+      // 终态分支入口无条件清存活信号(不依赖 PATCH 成功——part 状态以 opencode 事件为准)
+      state.runningToolParts?.delete(part.id)
       // 聚合模式:更新聚合卡内 task 元素(status:error + error 字段)。
       if (this.useAggregate(state)) {
         let patched = false
@@ -419,6 +431,12 @@ export class ToolCardManager {
     promise.then((msgId) => {
       state.toolCardMsgIds.set(pending.partId, msgId)
       state.toolCardInflight.delete(pending.partId)
+      // 存活信号 S1 补登记:发卡成功才视作工具真正开跑(审批/提问抢占刷新路径
+      // 此处兜底)。inflight 窗口内 part 已终态(终态分支入口先删信号并记终态账本)
+      // 则不再复活 S1 信号,否则体检无法判死。
+      if (!state.toolPartsSent.has(`${pending.partId}:completed`) && !state.toolPartsSent.has(`${pending.partId}:error`)) {
+        ;(state.runningToolParts ??= new Set()).add(pending.partId)
+      }
 
       // task 工具:sendCardMessage 成功后注册 childSessionTree,
       // 后续子 session 事件才能命中 getOrCreateState 走透传路径(不再被丢弃)。

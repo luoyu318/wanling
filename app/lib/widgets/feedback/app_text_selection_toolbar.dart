@@ -78,7 +78,7 @@ class AppTextSelectionToolbar extends StatelessWidget {
       _safeEdgePadding,
       math.max(_safeEdgePadding, screenW - menuW - _safeEdgePadding),
     );
-    final tailMin = AppMenuStyle.radiusFloating;
+    const tailMin = AppMenuStyle.radiusFloating;
     final tailMax = math.max(tailMin, menuW - _tailWidth - AppMenuStyle.radiusFloating);
     final tailLeft = (anchorX - menuLeft - _tailWidth / 2).clamp(tailMin, tailMax);
 
@@ -142,8 +142,8 @@ class AppTextSelectionToolbar extends StatelessWidget {
             Positioned(
               bottom: -5,
               left: tailLeft,
-              child: CustomPaint(
-                size: const Size(_tailWidth, _tailHeight),
+              child: const CustomPaint(
+                size: Size(_tailWidth, _tailHeight),
                 painter: _TailPainter(
                   color: AppMenuStyle.darkBg,
                   pointDown: true,

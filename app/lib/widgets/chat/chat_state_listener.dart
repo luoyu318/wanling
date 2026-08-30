@@ -118,18 +118,14 @@ class ChatStateListener {
   Timer? _cardFollowTimer;
 
   /// 自己消息 echo 后滚到底(pendingScroll 在 build 消费)。
-  bool _pendingScroll = false;
-  bool get pendingScroll => _pendingScroll;
-  set pendingScroll(bool v) => _pendingScroll = v;
+  bool pendingScroll = false;
 
   /// 首屏初始化完成(isInitialLoading: true→false)且无未读定位需求时,
   /// 在 build 消费一次 jumpTo(maxScrollExtent) 兜底定位到最新消息。
   ///
   /// 双 sliver center 几何下,初始 pixels=0 落在空锚点(center sliver 起点),
   /// 而非最新消息;若不兜底,进入既有会话首屏可能停在空白或过卷位置。
-  bool _pendingInitialScroll = false;
-  bool get pendingInitialScroll => _pendingInitialScroll;
-  set pendingInitialScroll(bool v) => _pendingInitialScroll = v;
+  bool pendingInitialScroll = false;
 
   /// ref.listen(chatProvider) 回调:从 chat_page build 原样搬入,只替换依赖注入访问。
   ///
@@ -177,7 +173,7 @@ class ChatStateListener {
           '[listen] (init) schedule initial jumpTo bottom '
           '(server initialized, no unread locator)',
         );
-        _pendingInitialScroll = true;
+        pendingInitialScroll = true;
       }
     }
 
@@ -294,7 +290,7 @@ class ChatStateListener {
           // 初始 true 会误入本分支 → incrementUnread +1 → 右下角「1条新消息」
           // 浮标误报(用户实时观看后残留,2026-08-10 修复)。
           final prevInit = prev;
-          if (prevInit != null && !prevInit.isServerInitialized) {
+          if (!prevInit.isServerInitialized) {
             debugLog(
               '[listen] (2) skip unread count during init '
               '(prev.isServerInitialized=false)',
@@ -422,7 +418,7 @@ class ChatStateListener {
         ? null
         : prev?.displayMessages.first.id;
     if (prevFirstId != next.displayMessages.first.id) {
-      _pendingScroll = true;
+      pendingScroll = true;
     }
     _ctx.onRefreshExtraItems();
   }

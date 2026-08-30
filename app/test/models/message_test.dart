@@ -5,7 +5,7 @@ import 'package:wanling_core/models/quote.dart';
 void main() {
   group('Quote', () {
     test('JSON round-trip preserves all 6 fields', () {
-      final q = Quote(
+      const q = Quote(
         messageId: 'm1',
         senderType: 'user',
         senderId: 'u1',

@@ -355,7 +355,7 @@ void main() {
 
     testWidgets('404(MessageNotFoundException)→ 原消息已删除', (tester) async {
       final capturedCtx = await _pumpMinimalContext(tester);
-      final api = _FakeApi(error: MessageNotFoundException());
+      final api = _FakeApi(error: const MessageNotFoundException());
       final ref = _StubRef(
         chatState: const ChatState(),
         api: api,
@@ -376,7 +376,7 @@ void main() {
 
     testWidgets('403(NoAccessException)→ 无权查看此消息', (tester) async {
       final capturedCtx = await _pumpMinimalContext(tester);
-      final api = _FakeApi(error: NoAccessException());
+      final api = _FakeApi(error: const NoAccessException());
       final ref = _StubRef(
         chatState: const ChatState(),
         api: api,
@@ -455,7 +455,6 @@ void main() {
       );
       // 停在中间,距底部 > 5
       scrollCtrl.jumpTo(100);
-      final before = scrollCtrl.position.pixels;
       final ctrl = JumpController(_buildContext(
         getScrollCtrl: () => scrollCtrl,
         getLiveEmpty: () => false,

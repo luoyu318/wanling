@@ -216,7 +216,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
@@ -496,7 +496,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
@@ -695,9 +695,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned
-                    ? Icons.push_pin
-                    : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
@@ -795,9 +793,9 @@ class _ConversationDetailPageState
                 ] else if (conv.type == 'dm_user_agent' &&
                     conv.agent != null) ...[
                   const SizedBox(height: 4),
-                  Text(
+                  const Text(
                     'Agent',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Color(0xFF999999), fontSize: 12),
                   ),
                 ],
@@ -834,11 +832,11 @@ class _ConversationDetailPageState
               .read(conversationProvider.notifier)
               .updateGroupProfile(widget.convId, title: title);
           await _loadConversation();
-          if (mounted) {
+          if (context.mounted) {
             showAppSnackBar(context, '已更新', type: SnackBarType.success);
           }
         } catch (e) {
-          if (mounted) {
+          if (context.mounted) {
             showAppSnackBar(context, '保存失败: $e', type: SnackBarType.error);
           }
         }
@@ -898,7 +896,7 @@ class _ConversationDetailPageState
       }
       await _loadConversation();
     } catch (e) {
-      if (mounted) {
+      if (context.mounted) {
         showAppSnackBar(context, '操作失败: $e', type: SnackBarType.error);
       }
     }
@@ -918,7 +916,7 @@ class _ConversationDetailPageState
             _navigateAfterRemoval(context, conv);
           }
         } catch (e) {
-          if (mounted) {
+          if (context.mounted) {
             showAppSnackBar(context, '隐藏失败: $e', type: SnackBarType.error);
           }
         }
@@ -947,7 +945,7 @@ class _ConversationDetailPageState
           }
           if (context.mounted) _navigateAfterRemoval(context, conv);
         } catch (e) {
-          if (mounted) {
+          if (context.mounted) {
             showAppSnackBar(context, '操作失败: $e',
                 type: SnackBarType.error);
           }

@@ -24,7 +24,7 @@ void main() {
 
   group('Avatar widget', () {
     testWidgets('渲染首字母（取名字第一个字符）', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: 'Bob', size: 40)),
         ),
@@ -33,7 +33,7 @@ void main() {
     });
 
     testWidgets('英文名首字母大写', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: 'alice', size: 40)),
         ),
@@ -42,7 +42,7 @@ void main() {
     });
 
     testWidgets('中文名取首字符', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: '小爱', size: 40)),
         ),
@@ -51,7 +51,7 @@ void main() {
     });
 
     testWidgets('空名 fallback 显示 ?', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: '', size: 40)),
         ),
@@ -62,7 +62,7 @@ void main() {
 
   group('Avatar badge', () {
     testWidgets('unreadCount > 0 显示数字', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 3)),
         ),
@@ -71,7 +71,7 @@ void main() {
     });
 
     testWidgets('unreadCount = 0 不显示 badge 文本', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: 'Alice', unreadCount: 0)),
         ),
@@ -82,7 +82,7 @@ void main() {
     });
 
     testWidgets('不传 unreadCount 不显示 badge', (tester) async {
-      await tester.pumpWidget(ProviderScope(
+      await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(
           home: Scaffold(body: Avatar(name: 'Alice')),
         ),

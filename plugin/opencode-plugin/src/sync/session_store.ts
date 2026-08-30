@@ -6,6 +6,10 @@ import { findBySessionId } from "./mapper.js"
 import type { SessionState, ChildSessionEntry } from "./types.js"
 import type { MessageRouter } from "./messaging.js"
 import { getAggregateCard } from "./domains/aggregate_bridge.js"
+import { hasPendingCardForSession } from "./card_store.js"
+
+// 存活信号 S3 事件窗口:子 session 最近一次事件落在该窗口内视为活跃(体检续期)。
+const LIVENESS_EVENT_WINDOW_MS = 5 * 60 * 1000
 
 // SessionStore:跨事件共享状态仓。
 // 持有 sessions / childSessionTree / partIndex / idleHandled / createStateInflight
@@ -22,6 +26,8 @@ export class SessionStore {
   private readonly wanling: WanlingClient
   private readonly router: MessageRouter
   private readonly childTimeoutMs: number
+  private readonly childHardTimeoutMs: number
+  private readonly abortChild: (childSessionId: string) => Promise<void>
 
   public readonly sessions: Map<string, SessionState> = new Map()
   private createStateInflight = new Map<string, Promise<SessionState | null>>()
@@ -39,12 +45,16 @@ export class SessionStore {
     wanling: WanlingClient
     router: MessageRouter
     childTimeoutMs: number
+    hardTimeoutMs: number
+    abortChild: (childSessionId: string) => Promise<void>
   }) {
     this.mainSessionId = deps.mainSessionId
     this.ensureDeps = deps.ensureDeps
     this.wanling = deps.wanling
     this.router = deps.router
     this.childTimeoutMs = deps.childTimeoutMs
+    this.childHardTimeoutMs = deps.hardTimeoutMs
+    this.abortChild = deps.abortChild
   }
 
   // 输出路由（OC sessionID → APP convId）只读查询，绝不反向改写映射。
@@ -60,6 +70,8 @@ export class SessionStore {
     // 首个事件到达时 PATCH 父 task 卡片切 working(每个 child 仅一次);PATCH 失败不丢弃事件。
     const child = this.childSessionTree.get(sessionID)
     if (child) {
+      // 存活信号 S3:子 session 每次事件都刷新最近活跃时刻
+      child.lastEventAt = Date.now()
       child.state.isChildSession = true
       child.state.childEntry = child
       if (!child.hasFirstEvent) {
@@ -156,15 +168,66 @@ export class SessionStore {
     return this.childSessionTree.get(childSessionId)
   }
 
-  // 清理 childSessionTree 条目:撤销兜底超时 timer 后删除条目。
-  // 正常路径(task/completed|error)调用;漏发终态时由 _flushPendingToolCard 注册的超时兜底。
+  // 清理 childSessionTree 条目:撤销兜底 timer(体检 + 硬上限)后删除条目。
+  // 正常路径(task/completed|error)调用;漏发终态时由注册的体检/硬上限兜底。
   cleanupChild(childSessionId: string | undefined): void {
     if (!childSessionId) return
     const entry = this.childSessionTree.get(childSessionId)
     if (entry?.cleanupTimer) {
       clearTimeout(entry.cleanupTimer)
     }
+    if (entry?.hardTimer) {
+      clearTimeout(entry.hardTimer)
+    }
     this.childSessionTree.delete(childSessionId)
+  }
+
+  // 判死:清双 timer + 删条目 + 真取消 opencode 子 session + PATCH 父卡 error。
+  // abort 失败仅日志(opencode 侧可能已自行结束),PATCH 失败不阻塞(卡片可能已被终态 PATCH)。
+  private killChild(
+    childSessionId: string,
+    entry: ChildSessionEntry,
+    reason: "idle" | "hard",
+  ): void {
+    if (entry.cleanupTimer) clearTimeout(entry.cleanupTimer)
+    if (entry.hardTimer) clearTimeout(entry.hardTimer)
+    this.childSessionTree.delete(childSessionId)
+    console.warn(
+      `[streamer] 子 session 判死(${reason === "idle" ? "长时间无活动" : "超过硬上限"}): ${childSessionId.slice(0, 12)}`,
+    )
+    this.abortChild(childSessionId).catch((abortErr) => {
+      console.error(`[streamer] 子 session abort 失败: ${abortErr instanceof Error ? abortErr.message : abortErr}`)
+    })
+    const output =
+      reason === "idle"
+        ? "子 Agent 长时间无活动,已自动取消"
+        : `子 Agent 超过最长运行时限(${Math.round(this.childHardTimeoutMs / 3600000)}h),已自动取消`
+    if (entry.aggregateElementId && entry.aggregateParentState) {
+      getAggregateCard(entry.aggregateParentState, this.wanling)
+        .updateElement(entry.aggregateElementId, {
+          ...(entry.aggregateElementData ?? {}),
+          output,
+          status: "error",
+        })
+        .catch((patchErr) => {
+          console.error(`[streamer] 超时更新聚合卡 task 元素失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
+        })
+    } else {
+      this.wanling
+        .updateMessageContent(entry.parentMsgId, {
+          msg_type: "tool_card",
+          data: {
+            name: "task",
+            input: entry.taskInput || {},
+            output,
+            status: "error",
+            ...(childSessionId ? { sub_session_id: childSessionId } : {}),
+          },
+        })
+        .catch((patchErr) => {
+          console.error(`[streamer] 超时 PATCH 父卡片失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
+        })
+    }
   }
 
   // registerChild 在 task 卡片 sendCardMessage 成功(resolve 拿到 msgId)后调用,
@@ -177,10 +240,11 @@ export class SessionStore {
   // 必须从父 childEntry 继承,而非永远写「rootMsgId=本次 msgId, depth=1」,
   // 否则二层 task 的 rootMsgId 无法串到最顶层,消息树断裂。
   //
-  // I-N:超时回调 PATCH 父 task 卡片为 error(不再只删 map),避免 task 崩溃后
-  // 父卡片永远停在 working/starting 让用户以为还在跑。
+  // I-N:体检判死时 killChild PATCH 父 task 卡片为 error(不再只删 map),避免
+  // task 崩溃后父卡片永远停在 working/starting 让用户以为还在跑。
   //
-  // I-O:超时阈值由构造注入(默认 30min),可经 WANLING_CHILD_TIMEOUT_MS env 调整。
+  // I-O:体检周期由构造注入(默认 30min),可经 WANLING_CHILD_TIMEOUT_MS env 调整;
+  // 硬上限 hardTimeoutMs(WANLING_CHILD_HARD_TIMEOUT_MS,默认 24h)到期无条件判死。
   registerChild(
     parentState: SessionState,
     taskCardMsgId: string,
@@ -215,6 +279,8 @@ export class SessionStore {
       hasFirstEvent: false,
       taskInput,
       childSessionId,
+      createdAt: Date.now(),
+      lastEventAt: Date.now(),
     }
     // 聚合模式:task 卡是聚合卡内元素,记录 element_id + 父 state,
     // working PATCH / 超时兜底 PATCH 经 updateElement 更新聚合元素。
@@ -224,43 +290,43 @@ export class SessionStore {
       entry.aggregateParentState = parentState
     }
     childState.childEntry = entry
-    // wide-review M-2:同 childSessionId key 覆盖旧 entry 时先 clearTimeout 旧 timer,
+    // wide-review M-2:同 childSessionId key 覆盖旧 entry 时先清旧双 timer,
     // 避免理论边界(同 session 复用)下旧 timer 悬挂泄漏。
     const oldEntry = this.childSessionTree.get(childSessionId)
     if (oldEntry?.cleanupTimer) clearTimeout(oldEntry.cleanupTimer)
+    if (oldEntry?.hardTimer) clearTimeout(oldEntry.hardTimer)
     this.childSessionTree.set(childSessionId, entry)
     logger.info(`[streamer] childSessionTree 注册: child=${childSessionId.slice(0, 12)} parentMsg=${taskCardMsgId.slice(0, 8)} depth=${depth}`)
-    // 兜底超时:task 崩溃或漏发 completed/error SSE 时,30min 后强制清理避免泄漏。
-    // 正常路径(task/completed|error)在 _handleTaskTool 调 cleanupChildSession 前 clearTimeout。
-    // 超时时不仅删 map,还要 PATCH 父卡片为 error,避免父卡片永远转圈(I-N)。
-    entry.cleanupTimer = setTimeout(() => {
-      console.warn(`[streamer] 子 session 超时未完成,清理 + PATCH 父卡片为 error: ${childSessionId.slice(0, 12)}`)
-      this.childSessionTree.delete(childSessionId)
-      if (entry.aggregateElementId && entry.aggregateParentState) {
-        // 聚合模式:更新聚合卡内 task 元素为 error(updateElement 合并保留 input/sub_session_id)。
-        // 分卡旧卡元素 SDK 整体替换:以注册时记账的全量 data 为底再覆盖终态字段。
-        getAggregateCard(entry.aggregateParentState, this.wanling).updateElement(
-          entry.aggregateElementId,
-          { ...(entry.aggregateElementData ?? {}), output: "子 Agent 超时未完成(>30min)", status: "error" },
-        ).catch((patchErr) => {
-          console.error(`[streamer] 超时更新聚合卡 task 元素失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
-        })
-      } else {
-        this.wanling.updateMessageContent(taskCardMsgId, {
-          msg_type: "tool_card",
-          data: {
-            name: "task",
-            input: taskInput,
-            output: "子 Agent 超时未完成(>30min)",
-            status: "error",
-            ...(childSessionId ? { sub_session_id: childSessionId } : {}),
-          },
-        }).catch((patchErr) => {
-          // PATCH 失败不再阻塞,日志即可,卡片可能已被 completed/error PATCH 过
-          console.error(`[streamer] 超时 PATCH 父卡片失败: ${patchErr instanceof Error ? patchErr.message : patchErr}`)
-        })
+    // 兜底体检:每 childTimeoutMs 体检一次存活信号(S1 running part / S2 未决交互卡 /
+    // S3 5min 内有事件),有信号续期不判死,无信号才 killChild 真取消。
+    // 正常路径(task/completed|error)在 _handleTaskTool 调 cleanupChild 前 clearTimeout。
+    const judge = (): void => {
+      // 引用比较:同 id 被覆盖注册(新 entry)时旧 judge 自动失效
+      if (this.childSessionTree.get(childSessionId) !== entry) return
+      const now = Date.now()
+      if (now - entry.createdAt >= this.childHardTimeoutMs) {
+        this.killChild(childSessionId, entry, "hard")
+        return
       }
-    }, this.childTimeoutMs)
+      const alive =
+        (entry.state.runningToolParts?.size ?? 0) > 0 ||
+        hasPendingCardForSession(childSessionId) ||
+        (entry.lastEventAt !== undefined && now - entry.lastEventAt < LIVENESS_EVENT_WINDOW_MS)
+      if (alive) {
+        // 有存活信号:续期,再等一个体检周期(长任务/等审批持续存活则持续续期)
+        entry.cleanupTimer = setTimeout(judge, this.childTimeoutMs)
+        return
+      }
+      this.killChild(childSessionId, entry, "idle")
+    }
+    entry.cleanupTimer = setTimeout(judge, this.childTimeoutMs)
+    // 硬上限兜底:自注册起算,到期无条件判死。防「tool 终态漏发导致 running 集合
+    // 永真」被体检无限续期。
+    entry.hardTimer = setTimeout(() => {
+      if (this.childSessionTree.get(childSessionId) === entry) {
+        this.killChild(childSessionId, entry, "hard")
+      }
+    }, this.childHardTimeoutMs)
     return entry
   }
 
@@ -312,9 +378,10 @@ export class SessionStore {
       this.flushText(state)
     }
     this.sessions.clear()
-    // 撤销所有 child session 的兜底超时 timer,避免 stop 后回调触发操作已清空的 map
+    // 撤销所有 child session 的兜底 timer(体检 + 硬上限),避免 stop 后回调触发操作已清空的 map
     for (const entry of this.childSessionTree.values()) {
       if (entry.cleanupTimer) clearTimeout(entry.cleanupTimer)
+      if (entry.hardTimer) clearTimeout(entry.hardTimer)
     }
     this.childSessionTree.clear()
     this.partIndex.clear()

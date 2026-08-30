@@ -1,10 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
@@ -221,6 +218,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   /// 订阅 MESSAGE_CREATE：agent 回复到达时清掉 typing。
   StreamSubscription<WSMessage>? _msgSub;
+  StreamSubscription<WSMessage>? _updateSub;
+
+  /// 在场期间是否见过本会话的新 agent 内容(MESSAGE_CREATE / 聚合卡翻转)。
+  /// dispose 时据此触发 markReadOnExit 兜底(长回合翻转落在退出后的未读复活)。
+  bool _sawNewAgentContent = false;
 
   /// 缓存 dispose 阶段需要的 notifier / ws 引用。
   late final ConversationListNotifier _convNotifier;
@@ -295,10 +297,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (d == null) return;
       if (d['conversation_id'] == widget.convId &&
           d['sender_type'] == 'agent') {
+        // 在场见证标记:本会话出现过新 agent 内容(含 silent 建卡——回合结束
+        // 翻转的内容用户正在看)。dispose 时据此决定是否补 markReadOnExit。
+        _sawNewAgentContent = true;
         // 聚合卡 silent 建卡（content.silent=true，回合进行中）不清 typing。
         final content = d['content'];
         if (content is Map && content['silent'] == true) return;
         _typingNotifier.clearTyping(widget.convId);
+      }
+    });
+    // MESSAGE_UPDATE:聚合卡翻转(silent true→false)=回合真实结束时刻,
+    // 也是 server IncrUnread +1 的时刻。在场看到翻转 → 离场视为已读。
+    _updateSub = _ws.messages.where((m) => m.t == 'MESSAGE_UPDATE').listen((m) {
+      final d = m.d as Map<String, dynamic>?;
+      if (d == null) return;
+      if (d['conversation_id'] != widget.convId) return;
+      final content = d['content'];
+      if (content is Map && content['silent'] == false) {
+        _sawNewAgentContent = true;
       }
     });
     // 初始化合并偏移量（只在 init 时跑一次，后续靠 listen 更新）
@@ -550,6 +566,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _skeletonTimer?.cancel();
     _skeletonTimer = null;
     _msgSub?.cancel();
+    _updateSub?.cancel();
+    // 兜底 markRead:在场期间见过新 agent 内容 → 离场视为已读。
+    // 覆盖「长回合翻转落在退出后」:server 在翻转时无条件 IncrUnread,
+    // 会话内的 (2.7) 补偿依赖 autoDispose 的 chatProvider 订阅,退出即失效。
+    if (_sawNewAgentContent) {
+      _convSync.markReadOnExit(sawNewAgentContent: true);
+    }
     // 释放文件下载控制器(取消所有进行中的下载订阅)。
     _fileController.dispose();
     _convNotifier.setActiveConv(null);
@@ -755,7 +778,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 菜单(单条)和多选模式(批量)共用此方法,作协调者,保留在 chat_page。
   Future<void> _confirmDelete(List<String> ids, {bool recall = false}) async {
     if (ids.isEmpty) return;
-    showAppDialog(
+    unawaited(showAppDialog(
       context: context,
       title: recall ? '撤回消息' : '删除消息',
       content: Text(
@@ -789,7 +812,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           }
         }
       },
-    );
+    ));
   }
 
   Future<void> _showModelPicker(
@@ -892,9 +915,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
 
     // 监听打字态 + hasMore 变化，合并更新偏移量（避免两路 provider 索引抖动）
-    ref.listen(typingProvider, (_, __) => _refreshExtraItems());
+    ref.listen(typingProvider, (_, _) => _refreshExtraItems());
     // agent 状态(busy/retry/idle)变化同样需要重算 TypingBubble 插槽显隐
-    ref.listen(agentStatusProvider, (_, __) => _refreshExtraItems());
+    ref.listen(agentStatusProvider, (_, _) => _refreshExtraItems());
 
     final agentName = _agentName;
     // 当前 user id,用于判断消息方向（user-user 会话双方 senderType 都是 'user'，

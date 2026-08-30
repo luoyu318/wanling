@@ -109,7 +109,7 @@ permission_card / question_card（交互需回调）、task 工具（子 agent �
 
 ## 工具卡折叠
 
-APP 渲染层按「折叠类别 + 连续性」合并 tool_card 元素为可展开折叠组（对齐 opencode groupParts）：探索组（read/glob/grep）、命令组（bash）、编辑组（edit/write）同类物理连续合并成组，类别切换即拆组，单条也折叠；收起标题语义化（进行中「正在探索/正在执行/正在编辑」、完成「已探索/已执行/已编辑」+ X次读取/搜索/命令/编辑，类别间 `,` 分隔）；webfetch、task 子 agent 卡、permission_card、question_card、todowrite（折叠行，2026-08-08 起不再隐藏）不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。
+APP 渲染层按「折叠类别 + 连续性」合并 tool_card 元素为可展开折叠组（对齐 opencode groupParts）：探索组（read/glob/grep）、命令组（bash）、编辑组（edit/write）、工具组（未知兜底）同类物理连续合并成组，类别切换即拆组，单条也折叠；白名单/前缀规则（browser_*、read_*、search_*、terminal* 等）不命中的未知工具名——典型为 MCP `<server>_<tool>` 开放集合——默认折叠进工具组（标题「正在执行/已执行 N次工具」，2026-08-29 起，此前未知名平铺）；收起标题语义化（进行中「正在探索/正在执行/正在编辑」、完成「已探索/已执行/已编辑」+ X次读取/搜索/命令/编辑/工具，类别间 `,` 分隔）；webfetch、task 子 agent 卡、permission_card、question_card、todowrite（折叠行，2026-08-08 起不再隐藏）不折叠保持平铺。协议层 elements 仍平铺每个 tool_card，折叠纯属 APP 展示逻辑。
 
 ## 聚合卡样式
 

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:wanling_core/utils/gallery_image.dart';
 
@@ -12,8 +11,6 @@ import '../long_press_detector.dart';
 import '../panel_item.dart';
 import 'photo_view/photo_view.dart';
 import 'photo_view/photo_view_gallery.dart';
-import 'photo_view/src/controller/photo_view_controller.dart';
-import 'photo_view/src/photo_view_scale_state.dart';
 
 /// 全屏图片画廊：用内化的 [PhotoViewGallery] 统一处理翻页与缩放的手势边界。
 ///
@@ -347,7 +344,7 @@ class _ZoomableGalleryState extends State<ZoomableGallery> {
               heroAttributes: i == widget.initialIndex
                   ? PhotoViewHeroAttributes(tag: img.heroTag)
                   : null,
-              onTapUp: (_, __, ___) => close(),
+              onTapUp: (_, _, _) => close(),
               scaleStateController: _scaleStateControllers[i],
             );
           },

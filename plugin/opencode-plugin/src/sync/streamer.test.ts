@@ -22,7 +22,18 @@ const { PartDispatcher } = await import("./domains/part_dispatcher.js")
 import { EventEmitter } from "events"
 import type { SessionState } from "./types.js"
 
-function makeStreamer(mainSessionId: string, opts: { dispatcher?: RPCDispatcher; agentId?: string } = {}) {
+function makeStreamer(
+  mainSessionId: string,
+  opts: {
+    dispatcher?: RPCDispatcher
+    agentId?: string
+    // 聚合卡开关:默认 false(现有整链测试断言旧逐条发送语义);
+    // appendImageToCard 等聚合路径测试显式传 true。
+    aggregateCardEnabled?: boolean
+    // 子 agent 运行时注入(体检式判死):hardTimeoutMs 硬上限 + abortChild 真取消
+    childRuntime?: { hardTimeoutMs: number; abortChild: (id: string) => Promise<void> }
+  } = {},
+) {
   const subscriber = { on: vi.fn(), start: vi.fn() } as any
   const wanling = {
     sendTypedMessage: vi.fn(),
@@ -43,7 +54,7 @@ function makeStreamer(mainSessionId: string, opts: { dispatcher?: RPCDispatcher;
   const dispatcher = opts.dispatcher ?? new RPCDispatcher()
   // aggregateCardEnabled=false:现有整链测试断言旧逐条发送语义,聚合路径由
   // part_dispatcher.test.ts 单独覆盖(PartDispatcher 聚合卡改造)。
-  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, false)
+  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, opts.aggregateCardEnabled ?? false, opts.childRuntime)
   return { streamer, wanling, opencode, dispatcher }
 }
 
@@ -394,10 +405,11 @@ describe("Streamer childSessionTree 兜底超时", () => {
     const { streamer, wanling } = makeStreamer("sess-main")
     wanling.sendCardMessage.mockResolvedValue("task-msg-1")
     wanling.updateMessageContent.mockResolvedValue(undefined)
-    // 仅 fake setTimeout/clearTimeout,setImmediate 保持真实(注册链路依赖 setImmediate)
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    // Date 一并 fake:体检式判死下 S3 事件窗口按虚拟时钟计算,注册后不喂事件,
+    // 快进 30min 才能烧掉 5min 窗口触发判死(idle);setImmediate 保持真实(注册链路依赖)
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
 
-    // 1) task/running 注册 childSessionTree + 设置 30min 兜底 timer
+    // 1) task/running 注册 childSessionTree + 设置双 timer(体检 + 硬上限)
     await (streamer as any).onPartUpdated({
       sessionID: "sess-main",
       part: {
@@ -417,10 +429,10 @@ describe("Streamer childSessionTree 兜底超时", () => {
     expect(tree.has("sess-child-t")).toBe(true)
     expect(tree.get("sess-child-t").cleanupTimer).toBeDefined()
 
-    // 2) 推进 30min,timer 触发清理 + PATCH 父卡片为 error + 告警日志
+    // 2) 推进 30min 到体检点:无任何存活信号 → 判死(清条目 + PATCH 父卡片 error + 告警日志)
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     vi.advanceTimersByTime(30 * 60 * 1000)
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("子 session 超时未完成"))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("子 session 判死"))
     warnSpy.mockRestore()
 
     expect(tree.has("sess-child-t")).toBe(false)
@@ -581,6 +593,69 @@ describe("Streamer childSessionTree 兜底超时", () => {
   })
 })
 
+describe("Streamer S2 续期集成(未决交互卡不误杀)", () => {
+  beforeEach(() => _resetInflight())
+  afterEach(() => { vi.useRealTimers() })
+
+  it("体检点 card_store 有未决卡(S2)→ 续期不判死;deleteCard 后下一周期恢复判死", async () => {
+    const abortMock = vi.fn().mockResolvedValue(undefined)
+    const { streamer, wanling } = makeStreamer("sess-main", {
+      childRuntime: { hardTimeoutMs: 24 * 60 * 60 * 1000, abortChild: abortMock },
+    })
+    wanling.sendCardMessage.mockResolvedValue("task-msg-s2")
+    wanling.updateMessageContent.mockResolvedValue(undefined)
+    // Date 一并 fake:注册后不喂事件,烧掉 5min S3 窗口才能证明续期只靠 S2
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+
+    // 真 card_store 落盘(config mock → TMP,复用文件头既有 vi.mock)
+    const { saveCard, deleteCard } = await import("./card_store.js")
+
+    // 1) task/running 注册 child(复用超时用例注册路径)
+    await (streamer as any).onPartUpdated({
+      sessionID: "sess-main",
+      part: {
+        type: "tool", id: "p-task-s2", tool: "task", callID: "call-s2",
+        state: {
+          status: "running",
+          input: { description: "等审批", prompt: "..." },
+          metadata: { parentSessionId: "sess-main", sessionId: "sess-child-s2" },
+        },
+      },
+      time: 1,
+    })
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+
+    const tree = (streamer as any).childSessionTree as Map<string, any>
+    expect(tree.has("sess-child-s2")).toBe(true)
+
+    // 2) 落一张 sessionId 指向 child 的未决交互卡(最小 entry)
+    saveCard("req-s2", { msgId: "card-msg-s2", convId: "conv-new", type: "permission", sessionId: "sess-child-s2" })
+
+    // 3) 快进 30min 体检点:S1 空 + S3 窗口已过,仅 S2 命中 → 续期不判死
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    expect(abortMock).not.toHaveBeenCalled()
+    expect(wanling.updateMessageContent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ data: expect.objectContaining({ status: "error" }) }),
+    )
+    expect(tree.has("sess-child-s2")).toBe(true)
+
+    // 4) 卡撤销后快进下一个体检周期:无任何存活信号 → 判死(锁「卡撤销后恢复判死」)
+    deleteCard("req-s2")
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    warnSpy.mockRestore()
+    expect(abortMock).toHaveBeenCalledTimes(1)
+    expect(abortMock).toHaveBeenCalledWith("sess-child-s2")
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith("task-msg-s2", expect.objectContaining({
+      msg_type: "tool_card",
+      data: expect.objectContaining({ name: "task", status: "error" }),
+    }))
+    expect(tree.has("sess-child-s2")).toBe(false)
+  })
+})
+
 describe("Streamer M13 测试补齐(嵌套继承 / 失败路径 / 迟到事件)", () => {
   beforeEach(() => _resetInflight())
   afterEach(() => { vi.useRealTimers() })
@@ -665,10 +740,10 @@ describe("Streamer M13 测试补齐(嵌套继承 / 失败路径 / 迟到事件)"
     const { streamer, wanling } = makeStreamer("sess-main")
     wanling.sendCardMessage.mockResolvedValue("task-msg-late")
     wanling.updateMessageContent.mockResolvedValue(undefined)
-    // 仅 fake setTimeout/clearTimeout,setImmediate 保持真实(注册链路依赖 setImmediate)
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    // Date 一并 fake:注册后无事件,快进 30min 烧掉 S3 窗口才能触发体检判死
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
 
-    // 1) task/running 注册 child + 30min 兜底 timer
+    // 1) task/running 注册 child + 兜底 timer
     await (streamer as any).onPartUpdated({
       sessionID: "sess-main",
       part: {
@@ -687,7 +762,7 @@ describe("Streamer M13 测试补齐(嵌套继承 / 失败路径 / 迟到事件)"
     const tree = (streamer as any).childSessionTree as Map<string, any>
     expect(tree.has("sess-child-late")).toBe(true)
 
-    // 2) 推进 30min,timer 触发清理
+    // 2) 推进 30min 到体检点,无存活信号 → 判死清理
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     vi.advanceTimersByTime(30 * 60 * 1000)
     expect(tree.has("sess-child-late")).toBe(false)
@@ -704,6 +779,107 @@ describe("Streamer M13 测试补齐(嵌套继承 / 失败路径 / 迟到事件)"
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("非主 session 事件丢弃"))
     expect(wanling.sendTypedMessage).not.toHaveBeenCalled()
 
+    warnSpy.mockRestore()
+  })
+
+  it("超时到期但 S1 命中(running part 未终态):续期不判死,硬上限到期才强杀", async () => {
+    const abortMock = vi.fn().mockResolvedValue(undefined)
+    const { streamer, wanling } = makeStreamer("sess-main", {
+      childRuntime: { hardTimeoutMs: 24 * 60 * 60 * 1000, abortChild: abortMock },
+    })
+    wanling.sendCardMessage.mockResolvedValue("task-msg-h1")
+    wanling.updateMessageContent.mockResolvedValue(undefined)
+    // 仅 fake setTimeout/clearTimeout,setImmediate 保持真实(注册链路依赖 setImmediate)
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+
+    // 1) task/running 注册 child + 双 timer(cleanupTimer 体检 + hardTimer 硬上限)
+    await (streamer as any).onPartUpdated({
+      sessionID: "sess-main",
+      part: {
+        type: "tool", id: "p-task-h1", tool: "task", callID: "call-h1",
+        state: {
+          status: "running",
+          input: { description: "长任务", prompt: "..." },
+          metadata: { parentSessionId: "sess-main", sessionId: "sess-child-h1" },
+        },
+      },
+      time: 1,
+    })
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+
+    const tree = (streamer as any).childSessionTree as Map<string, any>
+    expect(tree.has("sess-child-h1")).toBe(true)
+    expect(tree.get("sess-child-h1").hardTimer).toBeDefined()
+
+    // 2) 手动喂一个 running bash part(子 session 有工具在跑 → S1 命中)
+    await (streamer as any).onPartUpdated({
+      sessionID: "sess-child-h1",
+      part: {
+        type: "tool", id: "p-bash-h1", tool: "bash",
+        state: { status: "running", input: { command: "sleep 3600" } },
+      },
+      time: 2,
+    })
+
+    // 3) 快进 30min 到体检点:S1 非空 → 续期不判死(不 abort、不 PATCH error)
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    expect(abortMock).not.toHaveBeenCalled()
+    expect(wanling.updateMessageContent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ data: expect.objectContaining({ status: "error" }) }),
+    )
+    expect(tree.has("sess-child-h1")).toBe(true)
+
+    // 4) 续期后再跑满硬上限:无条件强杀 + abort 真取消 + PATCH 父卡 error
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000)
+    expect(abortMock).toHaveBeenCalledTimes(1)
+    expect(abortMock).toHaveBeenCalledWith("sess-child-h1")
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith("task-msg-h1", expect.objectContaining({
+      msg_type: "tool_card",
+      data: expect.objectContaining({ name: "task", status: "error", output: expect.stringContaining("已自动取消") }),
+    }))
+    expect(tree.has("sess-child-h1")).toBe(false)
+    warnSpy.mockRestore()
+  })
+
+  it("超时到期且无任何存活信号:abort 真取消 + PATCH 父卡 error", async () => {
+    const abortMock = vi.fn().mockResolvedValue(undefined)
+    const { streamer, wanling } = makeStreamer("sess-main", {
+      childRuntime: { hardTimeoutMs: 24 * 60 * 60 * 1000, abortChild: abortMock },
+    })
+    wanling.sendCardMessage.mockResolvedValue("task-msg-i2")
+    wanling.updateMessageContent.mockResolvedValue(undefined)
+    // Date 一并 fake:注册时 lastEventAt=虚拟 now,快进 30min 才能烧掉 5min 事件窗口
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+
+    // 1) task/running 注册 child,之后不喂任何事件
+    await (streamer as any).onPartUpdated({
+      sessionID: "sess-main",
+      part: {
+        type: "tool", id: "p-task-i2", tool: "task", callID: "call-i2",
+        state: {
+          status: "running",
+          input: { description: "无活动", prompt: "..." },
+          metadata: { parentSessionId: "sess-main", sessionId: "sess-child-i2" },
+        },
+      },
+      time: 1,
+    })
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+
+    // 2) 快进 30min+1s 到体检点:无 S1/S2,S3 事件窗口(5min)已过 → 判死
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.advanceTimersByTime(30 * 60 * 1000 + 1000)
+    expect(abortMock).toHaveBeenCalledTimes(1)
+    expect(abortMock).toHaveBeenCalledWith("sess-child-i2")
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith("task-msg-i2", expect.objectContaining({
+      msg_type: "tool_card",
+      data: expect.objectContaining({ name: "task", status: "error", output: expect.stringContaining("长时间无活动") }),
+    }))
+    expect(((streamer as any).childSessionTree as Map<string, any>).has("sess-child-i2")).toBe(false)
     warnSpy.mockRestore()
   })
 })
@@ -2401,5 +2577,78 @@ describe("Streamer 消息顺序(text 终态先于 tool_card 落库,对齐 TUI �
       expect.objectContaining({ text: "完整的文本" }),
       expect.any(Object),
     )
+  })
+})
+
+describe("Streamer appendImageToCard(control API 图片进聚合卡)", () => {
+  beforeEach(() => _resetInflight())
+
+  // 塞一个带活跃聚合卡桥的主 session state(桥伪造,不触真实 SDK)
+  function seedActiveCard(streamer: any, overrides: { sealed?: boolean } = {}) {
+    const appendElement = vi.fn().mockResolvedValue(undefined)
+    const state = {
+      reasoning: null,
+      text: null,
+      convId: "conv-main",
+      toolPartsSent: new Set(),
+      textPartsFlushed: new Set(),
+      toolCardMsgIds: new Map(),
+      toolCardInflight: new Map(),
+      aggregateCard: {
+        sealed: overrides.sealed ?? false,
+        cardMessageId: "card-msg-1",
+        appendElement,
+        elementCardIds: new Map(),
+      },
+    }
+    ;(streamer as any).sessions.set("sess-main", state)
+    return { state, appendElement }
+  }
+
+  it("活跃卡存在 → appended,markdown 元素含图片与递增 seq", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer)
+    ;(streamer as any).sessions.get("sess-main").aggregateSeq = 3
+
+    const result = await streamer.appendImageToCard("f-12345678", "截图")
+    expect(result).toBe("appended")
+    expect(appendElement).toHaveBeenCalledTimes(1)
+    const element = appendElement.mock.calls[0][0]
+    expect(element.type).toBe("markdown")
+    expect(element.element_id).toBe("markdown_4")
+    expect(element.data.text).toBe("![截图](/api/files/f-12345678)")
+    expect((streamer as any).sessions.get("sess-main").aggregateSeq).toBe(4)
+  })
+
+  it("无 state(主 session 从未建过卡)→ no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+  })
+
+  it("卡已收尾(sealed)→ no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer, { sealed: true })
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+    expect(appendElement).not.toHaveBeenCalled()
+  })
+
+  it("聚合卡开关关闭 → no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: false })
+    const { appendElement } = seedActiveCard(streamer)
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+    expect(appendElement).not.toHaveBeenCalled()
+  })
+
+  it("alt 含 markdown 语法字符被清洗,缺省 alt 用「图片」", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer)
+    await streamer.appendImageToCard("f-a", "a[b](c)\\d")
+    expect(appendElement.mock.calls[0][0].data.text).toBe("![a b c d](/api/files/f-a)")
+
+    await streamer.appendImageToCard("f-b")
+    expect(appendElement.mock.calls[1][0].data.text).toBe("![图片](/api/files/f-b)")
   })
 })

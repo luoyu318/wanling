@@ -74,7 +74,9 @@ void main() {
         tailOffsetX: 5,
         pointDown: true,
       );
+      // ignore: unrelated_type_equality_checks
       expect(a == 'not a MenuPlacement', isFalse);
+      // ignore: unrelated_type_equality_checks
       expect(a == 42, isFalse);
     });
   });

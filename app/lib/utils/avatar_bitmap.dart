@@ -77,7 +77,7 @@ Future<Uint8List> loadAvatarBitmap({
 Uint8List _cropRounded(Uint8List srcBytes) {
   final src = img.decodeImage(srcBytes);
   if (src == null) {
-    throw FormatException('头像解码失败(响应可能不是图片)');
+    throw const FormatException('头像解码失败(响应可能不是图片)');
   }
   // 先裁正方形(居中)
   final side = src.width < src.height ? src.width : src.height;

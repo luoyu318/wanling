@@ -22,7 +22,7 @@ void main() {
               'data': {
                 'text': text,
                 'finished': ?finished,
-                if (duration != null) 'duration': duration,
+                'duration': ?duration,
               },
             },
             ctx,

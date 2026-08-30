@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -52,11 +51,11 @@ class AgentDetailPage extends ConsumerWidget {
       body: CustomScrollView(
         slivers: [
           // 顶部白底横幅，pinned 让标题区域固定。
-          SliverAppBar(
+          const SliverAppBar(
             pinned: true,
             backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFF111111),
-            title: const Text(''),
+            foregroundColor: Color(0xFF111111),
+            title: Text(''),
           ),
           SliverToBoxAdapter(
             child: Container(

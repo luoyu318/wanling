@@ -1,6 +1,6 @@
 # APP Pages
 
-lib/pages/ 目录下的 27 个 page(含 `pages/chat/` 子目录)。
+lib/pages/ 目录下的 25 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
 
 ## SplashPage
 
@@ -12,7 +12,11 @@ lib/pages/ 目录下的 27 个 page(含 `pages/chat/` 子目录)。
 
 ## HomePage
 
-Scaffold + BottomNavigationBar（3 tab 容器）
+主容器：动态底部导航(NavTabBar：消息/万灵固定槽 + pinned agent 头像槽 + conv: 会话槽 + 可选「更多」槽) + NestedPageView 多页(页 0 = 消息+万灵 A 组合页,页 1..N = pinned agent sessions 页)。槽位溢出(≥4 个 pinned)收进「更多」底部抽屉点选切换;pin 收缩时页码越界自动回 A 组页。conv: 会话槽点击按消息列表逻辑路由(与消息列表一致:multi_session→sessions 页,其余→聊天页),不占平铺页
+
+## NavEditPage
+
+底栏编辑页(`/nav-edit`,更多抽屉「编辑」/抽屉项长按/底栏槽长按兜底进入)：上半溢出项网格池 + 底部白条主排序区(底栏实时预览)。支持会话槽渲染与减号 unpin,白条整条拖拽换位/拖出收进更多,拖拽 move 语义实时持久化;固定项无减号不可移除
 
 ## MessagesPage
 
@@ -28,7 +32,7 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AgentSessionsPage
 
-**多 session agent(opencode/dsh 等)session 群二级列表页**。从一级列表/AgentListPage 点多 session type agent 入口进入（路由判据:server 注册表 `multi_session`,普通 type 直接跳 ChatPage）。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
+**多 session agent(opencode/dsh 等)session 群二级列表页**,双模式:路由页(`embedded=false`,从一级列表/AgentListPage 点多 session type agent 进入,AppBar 带 pin 按钮（支持新账号首次 pin）)与底栏 embedded 模式(`embedded=true`,HomePage PageView 页挂载:无返回键 + AppBar 带实心 pin 按钮固定/取消固定底栏(仅 multiSession agent 渲染,防御门控) + AutomaticKeepAliveClientMixin 保活)。`GET /api/agents/:agentId/sessions` 拉该 agent 下所有 agent_session 群。IM 风格紧凑列表（Avatar 48px + 标题 + 相对时间 + 分割线 + 按压反馈 + RefreshIndicator），点击进对应 session 的 ChatPage
 
 ## ChatPage
 
@@ -40,17 +44,13 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 **子 Agent 详情页**(v1.0.10)。从 ChatPage task 卡片点击跳转,路由 `/chat/subagent/:taskCardId?convId=:convId`(必须排在 `/chat/:convId` 之前,否则 GoRouter 把 'subagent' 当成 convId)。展示某 task 卡片下挂的全部子 agent 事件流(reasoning / tool_card / markdown 子树)。数据来源:HTTP `api.getSubagentMessages(convId, taskCardId)` 拉 root 子树 + WS 双订阅(MESSAGE_CREATE 按 root_msg_id 过滤追加 / MESSAGE_UPDATE 按 message_id 替换条目内容,同步 task 卡片 running→completed 终态)。MessageRenderContext 注入 convId/messageId 让嵌套 task 卡片跳转可用,空 convId/taskCardId 时 router 直接返错误页
 
-## ProfilePage
-
-我的 tab 入口，展示用户信息 + 头像。设置项分组：切换账号（≥2 账号才显示，拉起 `SwitchAccountSheet`）/ 通知权限跳转 / 修改密码 / 关于 / 退出登录。**原设置内页入口已隐藏**
-
 ## ScanPairPage / PairSelectAgentPage
 
 扫码配对两件套（见「扫码配对」节），AgentListPage 右上角 `+` 拉起
 
 ## 好友 / 群组页面（UI 未开放，代码保留）
 
-以下 4 个页面 **UI 入口已下线**（ProfilePage 无好友入口、MessagesPage 无建群按钮、ConversationDetail 邀请成员为占位 SnackBar），但页面文件 + 路由 + provider + server handler 全部保留，互相跳转形成孤儿闭环，待重新开放时接通入口：
+以下 4 个页面 **UI 入口已下线**（侧滑栏无好友入口、MessagesPage 无建群按钮、ConversationDetail 邀请成员为占位 SnackBar），但页面文件 + 路由 + provider + server handler 全部保留，互相跳转形成孤儿闭环，待重新开放时接通入口：
 
 - **CreateGroupPage**（`/conversations/new/group`）— 多选好友建群，`conversationProvider.createGroup(memberUsernames:)` → server `resolveMemberUsernames` 反查 user_id
 - **FriendsListPage**（`/friends`）— 三 Tab 好友中心（我的好友/收到请求/已发出请求），`friendListProvider` 三列表 + WS 事件同步
@@ -67,7 +67,7 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AboutPage
 
-关于（用 `package_info_plus` 取版本号）。**`SettingsPage` 已移除**（服务器地址配置内页废弃），设置入口在 ProfilePage 暂时隐藏；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
+关于（用 `package_info_plus` 取版本号）。**`SettingsPage` 已移除**（服务器地址配置内页废弃），设置入口在侧滑栏主面板(SidebarProfilePanel)；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
 
 ## ConversationDetailPage
 

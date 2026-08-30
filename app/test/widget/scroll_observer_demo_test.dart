@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
@@ -42,7 +44,7 @@ void main() {
     await tester.pump();
 
     // 设计文档 §5.6 修正点：jumpTo 接受 alignment 参数（0=顶部对齐，1=底部对齐）。
-    observerController.jumpTo(index: 10, alignment: 0.3);
+    unawaited(observerController.jumpTo(index: 10, alignment: 0.3));
     await tester.pumpAndSettle();
 
     // jumpTo 命中目标 item（reverse ListView 里 item 10 此时位于视口顶部）。
@@ -50,7 +52,7 @@ void main() {
 
     // standby 不抛异常（库提供的位置保持入口，会让后续内联插入保持底部锚点；
     // 本身会触发一次基于底部锚点的 offset 调整，属预期行为）。
-    chatObserver.standby();
+    unawaited(chatObserver.standby());
     await tester.pump();
   });
 }

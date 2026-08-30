@@ -1361,6 +1361,55 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// 发送图文混合消息（APP 选图挂载预览后与文字一起发送）。
+  ///
+  /// 合同（dsh 桥 incoming.ts 判别联合）：文本放顶层 data.text（空则省略字段，
+  /// 不发空串）；items 至少 1 个 {type:'image', file_id}，图片条目 file_id 非空，
+  /// 否则 agent 桥整条拒收。文字不放进 items。渲染层把 mixed 拆为图+文双气泡。
+  /// 发送 mixed(附件+文字)消息。附件单挂载语义:图片或文件二选一。
+  ///
+  /// [itemType] 附件类型:'image'(默认,图文同发)或 'file'(文件+文字同发)。
+  /// file 条目携带完整元信息(filename/mime_type/file_size,与 sendFile 同构):
+  /// server enhanceContentFromFile 只富化顶层 image/file,不处理 mixed items,
+  /// 元信息必须客户端写入,否则接收端文件卡无文件名/大小可显。
+  Future<void> sendMixed(String text, String fileId,
+      {String itemType = 'image',
+      String filename = '',
+      String mimeType = '',
+      int fileSize = 0}) async {
+    final content = {
+      'msg_type': 'mixed',
+      'data': {
+        if (text.isNotEmpty) 'text': text,
+        'items': [
+          {
+            'type': itemType,
+            'file_id': fileId,
+            if (filename.isNotEmpty) 'filename': filename,
+            if (mimeType.isNotEmpty) 'mime_type': mimeType,
+            if (fileSize > 0) 'file_size': fileSize,
+          },
+        ],
+      },
+    };
+    _mergePendingQuote(content);
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    _appendOptimisticMessage(content: content, localId: localId);
+    try {
+      final result = await api.sendMessage(conversationId, content);
+      _replaceLocalWithServerId(
+        localId,
+        serverId: result.messageId,
+        serverCreatedAt: result.createdAt,
+      );
+    } catch (e) {
+      _markFailed(localId);
+    }
+    if (state.pendingQuote != null) {
+      state = state.copyWith(clearPendingQuote: true);
+    }
+  }
+
   /// 重试失败的发送消息。点击失败气泡的重试按钮时调。
   ///
   /// 流程:找失败消息 → 切回 sending → 调 api.sendMessage →

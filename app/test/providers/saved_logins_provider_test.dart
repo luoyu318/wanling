@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/account_mark.dart';
-import 'package:wanling_core/models/saved_login.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/utils/secure_storage.dart';
 
@@ -467,7 +466,7 @@ void main() {
   group('迁移兼容', () {
     test('load 老格式数据(无 label/mark)→ 均为 null', () async {
       // 手写老格式密文(只有 server/username/password)
-      final plaintext =
+      const plaintext =
           '[{"server":"http://old","username":"u","password":"p"}]';
       final ciphertext = await storage.encrypt(plaintext);
       await prefs.setString('saved_logins', ciphertext);

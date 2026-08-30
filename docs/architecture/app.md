@@ -1,6 +1,6 @@
 # APP 架构
 
-Flutter APP,3-tab IM 风格(消息/万灵/我的),仅 Android 发布。
+Flutter APP,动态底部 tab IM 风格(消息/万灵固定 + 可 pin 多会话 agent,溢出收进更多抽屉),仅 Android 发布。
 
 ## 子系统拓扑
 
@@ -21,7 +21,7 @@ flowchart TB
     end
 
     subgraph 视图层
-        PAGES[27 个 pages]
+        PAGES[25 个 pages]
         WIDGETS[widgets/<br/>gallery+feedback+chat]
         RENDER[rendering/<br/>消息内容注册表]
     end
@@ -53,7 +53,7 @@ flowchart TB
 
 ### 入口与路由
 - `lib/main.dart` — 入口,runApp 前调 restoreSession(zh locale 固定)。详见 [entry.md](./app/entry.md#maindart)
-- `lib/router.dart` — GoRouter 平铺路由(22 条)+ 22 路由统一横向平移转场;3-tab 由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
+- `lib/router.dart` — GoRouter 平铺路由(22 条)+ 22 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
 - `lib/router_helpers.dart` — chatRoute 拼路径 + startChatAndPush 统一跳转。详见 [entry.md](./app/entry.md#router_helpersdart)
 
 ### Services
@@ -65,10 +65,10 @@ flowchart TB
 - `lib/services/file_download_service.dart` — 聊天文件下载管理器,进度流 + 取消 + fileId 校验(v1.0.6)。详见 [services.md](./app/services.md#file_download_servicedart)
 
 ### Providers(Riverpod)
-- `lib/providers/` — 状态管理 15 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore(connState 定义在 chat_provider 内,非独立文件)。详见 [providers.md](./app/providers.md)
+- `lib/providers/` — 状态管理 17 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore(connState 定义在 chat_provider 内,非独立文件)。详见 [providers.md](./app/providers.md)
 
 ### Pages
-- `lib/pages/` — 27 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / Profile / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About / TextPreview(v1.0.6)。详见 [pages.md](./app/pages.md)
+- `lib/pages/` — 25 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About。详见 [pages.md](./app/pages.md)
 
 ### Rendering
 - `lib/rendering/` — 消息内容渲染器体系(注册表模式):renderer 接口 + 内置(text/markdown/image/file/card) + Agent 过程渲染器(tuiUser/reasoning/toolCall/toolResult/toolError/subagent/question/stepFinish/fileDiff, v1.0.7) + tool_card_renderer(v1.0.10,工具调用统一卡片 + task 4 状态机 + read 高亮视图)。详见 [rendering.md](./app/rendering.md)

@@ -42,6 +42,10 @@ class MessageInputBar extends StatefulWidget {
   /// 选了 slash 命令后,发送时触发(传命令名 + 用户输入的 args)。
   /// 仅 agent_session 用,dm/群聊为 null。
   final void Function(String name, String args)? onSendSlash;
+  /// 有待发送图片挂载:发送按钮常显,且允许空文字触发 onSend('')。
+  final bool hasPendingAttachment;
+  /// 输入框占位文案。默认「给万灵下达指令…」,ChatPage 按 convTitle 传「发送给 XXX」。
+  final String hintText;
 
   const MessageInputBar({
     super.key,
@@ -58,6 +62,8 @@ class MessageInputBar extends StatefulWidget {
     this.middleSlot,
     this.topSlot,
     this.onSendSlash,
+    this.hasPendingAttachment = false,
+    this.hintText = '给万灵下达指令…',
   });
 
   @override
@@ -72,7 +78,8 @@ class _MessageInputBarState extends State<MessageInputBar> {
   String _text = '';
   SlashCommand? _pendingSlash;
 
-  bool get _showSendButton => _text.trim().isNotEmpty || _pendingSlash != null;
+  bool get _showSendButton =>
+      _text.trim().isNotEmpty || _pendingSlash != null || widget.hasPendingAttachment;
 
   @override
   void initState() {
@@ -118,7 +125,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
         _pendingSlash = null;
       });
     } else {
-      if (text.isEmpty) return;
+      if (text.isEmpty && !widget.hasPendingAttachment) return;
       widget.onSend(text);
     }
     _inputCtrl.clear();
@@ -281,13 +288,12 @@ class _MessageInputBarState extends State<MessageInputBar> {
         // isDense: 去掉 Material 默认额外间距,让单行高度贴近文字+padding。
         style: const TextStyle(
             fontSize: 17, fontWeight: FontWeight.w300, height: 1.2),
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           isDense: true,
           border: InputBorder.none,
-          contentPadding:
-              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          hintText: '给万灵下达指令…',
-          hintStyle: TextStyle(color: Color(0xFFBBBBBB), fontSize: 17),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          hintText: widget.hintText,
+          hintStyle: const TextStyle(color: Color(0xFFBBBBBB), fontSize: 17),
         ),
         // 长按选区弹深色胶囊文字级菜单（统一 AppTextSelectionToolbar 风格）
         contextMenuBuilder: (context, editableTextState) {

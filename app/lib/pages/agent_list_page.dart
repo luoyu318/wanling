@@ -196,103 +196,97 @@ class _AgentTileState extends State<_AgentTile> {
         onTap: widget.onTap,
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
-        child: Column(
-          children: [
-            Container(
-              color: tileBg,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-              child: Row(
-                children: [
-                  Avatar(
-                    name: agent.name,
-                    url: agent.avatarUrl,
-                    unreadCount: widget.unreadCount,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
+        child: Container(
+          color: tileBg,
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Avatar(
+                name: agent.name,
+                url: agent.avatarUrl,
+                size: 48,
+                radius: 13,
+                tinted: true,
+                unreadCount: widget.unreadCount,
+              ),
+              const SizedBox(width: 10),
+              // Padding(top:3) 让昵称相对头像顶部下移 3dp(与会话列表同款视觉平衡)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              agent.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  color: Color(0xFF111111),
+                                  fontWeight: FontWeight.w400),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          AgentBadge(type: agent.type),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: agent.status == AgentStatus.online
+                                  ? const Color(0xFF07C160)
+                                  : const Color(0xFFCCCCCC),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            agent.status == AgentStatus.online
+                                ? '在线'
+                                : '离线',
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF999999),
+                                fontWeight: FontWeight.w400),
+                          ),
+                          // 简介非空：状态右侧竖线 + bio（单行省略）
+                          if (agent.bio != null && agent.bio!.isNotEmpty) ...[
+                            const Text(
+                              '  |  ',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFFCCCCCC),
+                                  fontWeight: FontWeight.w400),
+                            ),
+                            Expanded(
                               child: Text(
-                                agent.name,
+                                agent.bio!,
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    fontSize: 15,
-                                    color: Color(0xFF111111),
-                                    fontWeight: FontWeight.w300),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            AgentBadge(type: agent.type),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: agent.status == AgentStatus.online
-                                    ? const Color(0xFF07C160)
-                                    : const Color(0xFFCCCCCC),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              agent.status == AgentStatus.online
-                                  ? '在线'
-                                  : '离线',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF999999),
-                                  fontWeight: FontWeight.w300),
-                            ),
-                            // 简介非空：状态右侧竖线 + bio（单行省略）
-                            if (agent.bio != null && agent.bio!.isNotEmpty) ...[
-                              Text(
-                                '  |  ',
-                                style: const TextStyle(
                                     fontSize: 12,
-                                    color: Color(0xFFCCCCCC),
-                                    fontWeight: FontWeight.w300),
+                                    color: Color(0xFF999999),
+                                    fontWeight: FontWeight.w400),
                               ),
-                              Expanded(
-                                child: Text(
-                                  agent.bio!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Color(0xFF999999),
-                                      fontWeight: FontWeight.w300),
-                                ),
-                              ),
-                            ],
+                            ),
                           ],
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-            // 分割线区域：外层填白与 tile 同色无缝；内层从 left=62 开始画线段
-            // 62 = 12 padding + 40 avatar + 10 spacing
-            Container(
-              height: 0.5,
-              color: Colors.white,
-              child: Container(
-                margin: const EdgeInsets.only(left: 62),
-                color: const Color(0xFFE4E4E4),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
