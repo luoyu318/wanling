@@ -155,4 +155,30 @@ void main() {
       expect(prefs.getInt('nav_visible_'), isNull);
     });
   });
+
+  test('conv 前缀 helper:往返与判定', () {
+    expect(navConvRef('c1'), 'conv:c1');
+    expect(isConvNavId('conv:c1'), isTrue);
+    expect(isConvNavId('a1'), isFalse);
+    expect(isConvNavId(kNavTabMsg), isFalse);
+    expect(navConvIdOf('conv:c1'), 'c1');
+    expect(navConvIdOf('a1'), isNull);
+    expect(navConvIdOf(kNavTabWanling), isNull);
+  });
+
+  test('sanitize:conv 槽按普通项处理(去重保序,不与固定项混淆)', () async {
+    final (_, n) = await make('u1', seed: {
+      'nav_order_u1': ['conv:c1', 'conv:c1', kNavTabMsg, 'a1', kNavTabWanling],
+    });
+    expect(n.state, ['conv:c1', kNavTabMsg, 'a1', kNavTabWanling]);
+  });
+
+  test('pin/unpin 对 conv 槽 id 生效', () async {
+    final (_, n) = await make('u1');
+    n.pin(navConvRef('c1'));
+    expect(n.isPinned('conv:c1'), isTrue);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, 'conv:c1']);
+    n.unpin(navConvRef('c1'));
+    expect(n.isPinned('conv:c1'), isFalse);
+  });
 }

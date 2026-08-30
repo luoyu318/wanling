@@ -4,12 +4,26 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'agent_provider.dart' show agentListProvider;
 import 'auth_provider.dart' show authProvider;
+import 'conversation_provider.dart' show conversationProvider;
 import 'saved_logins_provider.dart' show sharedPrefsProvider;
 
 /// 底栏固定 tab 的保留 id(agent id 为 UUID,不会与之冲突)。
 const kNavTabMsg = 'msg';
 const kNavTabWanling = 'wanling';
 const kNavFixedIds = {kNavTabMsg, kNavTabWanling};
+
+/// 会话槽前缀:底栏序列中会话槽存 'conv:<convId>'(agent 为 UUID,不会冲突)。
+const kNavConvPrefix = 'conv:';
+
+/// 该序列元素是否为会话槽。
+bool isConvNavId(String id) => id.startsWith(kNavConvPrefix);
+
+/// 'conv:<convId>' → convId;非会话槽返回 null。
+String? navConvIdOf(String id) =>
+    isConvNavId(id) ? id.substring(kNavConvPrefix.length) : null;
+
+/// convId → 会话槽序列元素。
+String navConvRef(String convId) => '$kNavConvPrefix$convId';
 
 /// 底部导航槽位有序序列(含固定项 + pinned agent)。
 ///
@@ -127,15 +141,21 @@ final navOrderProvider =
   return NavOrderNotifier(prefs: prefs, ownerId: ownerId);
 });
 
-/// 有效性派生:序列 ∩ 当前 agent 列表(固定项恒保留)。agent 被删除时自动收缩,
+/// 有效性派生:序列 ∩ 当前 agent 列表与会话列表(固定项恒保留)。agent 被删除、
+/// 会话被删除/隐藏(移出 conversationProvider state)时自动收缩,
 /// 底栏/PageView/编辑页以此为唯一事实源。
 final effectiveNavOrderProvider = Provider<List<String>>((ref) {
   final order = ref.watch(navOrderProvider);
   final agents = ref.watch(agentListProvider);
-  return [
-    for (final id in order)
-      if (kNavFixedIds.contains(id) || agents.any((a) => a.id == id)) id,
-  ];
+  final convs = ref.watch(conversationProvider);
+  bool alive(String id) {
+    if (kNavFixedIds.contains(id)) return true;
+    final convId = navConvIdOf(id);
+    if (convId != null) return convs.any((c) => c.id == convId);
+    return agents.any((a) => a.id == id);
+  }
+
+  return [for (final id in order) if (alive(id)) id];
 });
 
 /// 底栏可见槽数(用户在编辑页拖项进/出「更多」决定;未显式设置时自动推导)。

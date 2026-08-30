@@ -1,6 +1,7 @@
 // NavEditPage widget 测试:白条/网格渲染、白条内换位(含固定项)、跨区拖拽、减号 unpin、完成 pop。
 // Harness 与 agent_sessions_embedded_test 同款:MockApi + FakeWS + restoreSession。
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
@@ -36,8 +37,10 @@ Agent _agent(String id) => Agent(
 
 /// 预种 4 个溢出场景 agent:白条=[msg,wanling,a1,a2]+更多格,网格=[a3,a4]。
 /// [seed] 可覆盖 nav_order_u1(如 agent 前置序列场景)。
+/// [convs] 预种会话列表(effectiveNavOrderProvider 依赖 conversationProvider,
+/// ConversationListNotifier 构造即 load,必须 stub getConversations)。
 Future<ProviderContainer> _harness(WidgetTester tester,
-    {List<String>? seed}) async {
+    {List<String>? seed, List<Conversation> convs = const []}) async {
   SharedPreferences.setMockInitialValues({
     'token': 'fake-token',
     'nav_order_u1':
@@ -49,6 +52,7 @@ Future<ProviderContainer> _harness(WidgetTester tester,
   when(() => api.getAgents())
       .thenAnswer((_) async => [_agent('a1'), _agent('a2'), _agent('a3'), _agent('a4')]);
   when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+  when(() => api.getConversations()).thenAnswer((_) async => convs);
   final ws = FakeWS();
   final container = ProviderContainer(overrides: [
     apiProvider.overrideWithValue(api),
