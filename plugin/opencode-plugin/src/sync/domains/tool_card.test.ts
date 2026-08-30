@@ -747,6 +747,39 @@ describe("ToolCardManager 存活信号采集(runningToolParts 随状态机增删
     )
     expect(state.runningToolParts.has("p2")).toBe(false)
   })
+
+  it("子 session(非聚合)inflight 窗口内 completed 到达:终态后不复活 S1 存活信号", async () => {
+    const { manager, state, router } = makeFixture()
+    state.isChildSession = true
+    state.runningToolParts = new Set<string>()
+    // 手动控制 sendCard promise 的 resolve 时机,模拟 WS 往返期间(inflight 窗口)
+    let resolveCard: (msgId: string) => void = () => {}
+    const cardPromise = new Promise<string>((r) => { resolveCard = r })
+    router.sendCard = vi.fn().mockReturnValue(cardPromise)
+
+    // running:同步段 S1 即登记,setImmediate 排空后 flushPending 发卡入 inflight
+    await manager.onPartUpdated(
+      toolPart("p3", "bash", "running", { input: { command: "ls" } }),
+      state, "sess-child",
+    )
+    expect(state.runningToolParts.has("p3")).toBe(true)
+    await new Promise((r) => setImmediate(r))
+    expect(state.toolCardInflight.has("p3")).toBe(true)
+
+    // completed 在 WS 往返期间到达:终态分支入口先删 S1(不依赖 PATCH 成功),
+    // 随后 resolveMsgId 挂起在 await inflight 上
+    const completedCall = manager.onPartUpdated(
+      toolPart("p3", "bash", "completed", { input: { command: "ls" }, output: "done" }),
+      state, "sess-child",
+    )
+    expect(state.runningToolParts.has("p3")).toBe(false)
+
+    // promise resolve → .then 回调执行:守卫应阻止已终态的 partId 复活 S1
+    resolveCard("tool-msg-1")
+    await completedCall
+    await new Promise((r) => setImmediate(r))
+    expect(state.runningToolParts.has("p3")).toBe(false)
+  })
 })
 
 describe("ToolCardManager 子 session 不聚合", () => {

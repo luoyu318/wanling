@@ -432,8 +432,11 @@ export class ToolCardManager {
       state.toolCardMsgIds.set(pending.partId, msgId)
       state.toolCardInflight.delete(pending.partId)
       // 存活信号 S1 补登记:发卡成功才视作工具真正开跑(审批/提问抢占刷新路径
-      // 此处兜底;抢占竞态下 pending 已被终态消费,本方法早退不会执行到这里)
-      ;(state.runningToolParts ??= new Set()).add(pending.partId)
+      // 此处兜底)。inflight 窗口内 part 已终态(终态分支入口先删信号并记终态账本)
+      // 则不再复活 S1 信号,否则体检无法判死。
+      if (!state.toolPartsSent.has(`${pending.partId}:completed`) && !state.toolPartsSent.has(`${pending.partId}:error`)) {
+        ;(state.runningToolParts ??= new Set()).add(pending.partId)
+      }
 
       // task 工具:sendCardMessage 成功后注册 childSessionTree,
       // 后续子 session 事件才能命中 getOrCreateState 走透传路径(不再被丢弃)。
