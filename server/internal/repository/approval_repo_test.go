@@ -218,7 +218,7 @@ func TestApprovalDecidedAnswersRoundTrip(t *testing.T) {
 			{ID: "answer", Label: "提交答案", Style: "primary"},
 			{ID: "reject", Label: "拒绝", Style: "danger"},
 		},
-		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
 		SessionKey: "question:1",
 	})
 	if err != nil {
@@ -248,7 +248,7 @@ func TestApprovalDecidedAnswersRoundTrip(t *testing.T) {
 			{ID: "allow_once", Label: "允许", Icon: "check", Style: "primary"},
 			{ID: "deny", Label: "拒绝", Icon: "x", Style: "danger"},
 		},
-		ExpiresAt: time.Now().Add(5 * time.Minute).UTC(),
+		ExpiresAt:  time.Now().Add(5 * time.Minute).UTC(),
 		SessionKey: "tool:2",
 	})
 	if err := repo.MarkDecided(t.Context(), created2.ID, "allow_once", "user", userID, "", nil, nil); err != nil {
