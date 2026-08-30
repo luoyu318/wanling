@@ -35,10 +35,13 @@ Agent _agent(String id) => Agent(
     );
 
 /// 预种 4 个溢出场景 agent:白条=[msg,wanling,a1,a2]+更多格,网格=[a3,a4]。
-Future<ProviderContainer> _harness(WidgetTester tester) async {
+/// [seed] 可覆盖 nav_order_u1(如 agent 前置序列场景)。
+Future<ProviderContainer> _harness(WidgetTester tester,
+    {List<String>? seed}) async {
   SharedPreferences.setMockInitialValues({
     'token': 'fake-token',
-    'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'a3', 'a4'],
+    'nav_order_u1':
+        seed ?? [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'a3', 'a4'],
   });
   final api = MockApi();
   when(() => api.baseUrl).thenReturn('http://test.local');
@@ -102,6 +105,32 @@ void main() {
     // a3 插到序列位 2,其余顺移:a2 掉溢出区
     expect(container.read(navOrderProvider),
         [kNavTabMsg, kNavTabWanling, 'a3', 'a1', 'a2', 'a4']);
+  });
+
+  testWidgets('agent 前置序列:白条含消息/万灵,溢出 agent 不双渲染', (tester) async {
+    await _harness(tester,
+        seed: ['a1', 'a2', 'a3', 'a4', kNavTabMsg, kNavTabWanling]);
+    // 固定项恒驻白条(不再被前缀截取挤掉)
+    expect(find.text('消息'), findsOneWidget);
+    expect(find.text('万灵'), findsOneWidget);
+    // a1/a2 可见(白条),a3/a4 溢出(网格)——各恰一次,无双渲染
+    expect(find.text('n-a1'), findsOneWidget);
+    expect(find.text('n-a3'), findsOneWidget);
+  });
+
+  testWidgets('固定项不可拖入网格池(被拒)', (tester) async {
+    final container = await _harness(tester);
+    final msgCenter = tester.getCenter(find.text('消息'));
+    final a3Center = tester.getCenter(find.text('n-a3'));
+    final gesture = await tester.startGesture(msgCenter);
+    await tester.pump(const Duration(seconds: 1));
+    await gesture.moveBy(a3Center - msgCenter);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    // 网格池拒绝固定项:序列原位不动
+    expect(container.read(navOrderProvider),
+        [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'a3', 'a4']);
   });
 
   testWidgets('减号 unpin:列表收缩且白条刷新', (tester) async {

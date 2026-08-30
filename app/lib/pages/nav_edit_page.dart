@@ -31,7 +31,13 @@ class NavEditPage extends ConsumerWidget {
     ];
     final showMore = agents.length >= 4;
     final visibleAgentCount = showMore ? 2 : 3;
-    final barIds = order.take(2 + visibleAgentCount).toList();
+    // 白条 = 固定项恒入栏 + 可见 agent 截取(与溢出池互补),保持序列相对序——
+    // 任意排序下固定 tab 不可从编辑页白条消失(与 home_page._visibleSlots 同模式)
+    final visibleAgentIds = agents.take(visibleAgentCount).toSet();
+    final barIds = [
+      for (final id in order)
+        if (kNavFixedIds.contains(id) || visibleAgentIds.contains(id)) id
+    ];
     final overflowIds = agents.skip(visibleAgentCount).toList();
 
     return Scaffold(
@@ -231,7 +237,9 @@ class _GridPoolItem extends ConsumerWidget {
       delay: const Duration(milliseconds: 120),
       feedback: _dragFeedback(ref, agentId, NavEditPage._gridBox),
       child: DragTarget<String>(
-        onWillAcceptWithDetails: (d) => d.data != agentId,
+        // 固定项不可移除,不接受拖入溢出池。
+        onWillAcceptWithDetails: (d) =>
+            d.data != agentId && !kNavFixedIds.contains(d.data),
         onAcceptWithDetails: (d) => ref
             .read(navOrderProvider.notifier)
             .reorder(d.data, seqIdx),
