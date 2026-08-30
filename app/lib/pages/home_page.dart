@@ -44,11 +44,8 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  /// pinned agent 数达到该值即出现「更多」槽(总项 = 2 固定 + agent ≥ 4 > 5 槽)。
-  static const int _kOverflowThreshold = 4;
-
-  /// 溢出时底栏可见槽数(序列前缀截取,固定项/agent 混合)。
-  static const int _kVisibleSlotsWhenOverflow = 4;
+  // 底栏切换只靠点按导航槽;PageView 禁用拖动手势(避免与二级页横滑手势冲突)。
+  static const _kPageViewPhysics = NeverScrollableScrollPhysics();
 
   final PageController _pageCtrl = PageController(initialPage: 0);
   String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
@@ -218,17 +215,15 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
     _effectiveOrder = ref.watch(effectiveNavOrderProvider);
-    final pinnedAgents = [
-      for (final id in _effectiveOrder) if (!kNavFixedIds.contains(id)) id
-    ];
-    _showMore = pinnedAgents.length >= _kOverflowThreshold;
-    // 可见槽 = 序列前缀截取(固定项/agent 混合按序);被截掉的项(含固定项)
-    // 全部进「更多」抽屉且可点选可达——底栏组成完全由用户排序决定。
-    _visibleSlots = _effectiveOrder
-        .take(_showMore ? _kVisibleSlotsWhenOverflow : _effectiveOrder.length)
-        .toList();
+    final storedVisible = ref.watch(navVisibleCountProvider);
+    // 可见槽数由用户在编辑页拖项进/出「更多」决定(存 SP);未设置时自动:
+    // 总项 ≤4 全可见,否则可见 4。最少保留 1 个导航元素在底栏。
+    final visibleCount =
+        resolveVisibleCount(storedVisible, _effectiveOrder.length);
+    _showMore = _effectiveOrder.length > visibleCount;
+    _visibleSlots = _effectiveOrder.take(visibleCount).toList();
     _overflowItems = _showMore
-        ? _effectiveOrder.skip(_kVisibleSlotsWhenOverflow).toList()
+        ? _effectiveOrder.skip(visibleCount).toList()
         : [];
 
     // 收缩守卫:序列变化时按激活 tab 身份判定落点(位置左移跳新位;消失回页 0)。
@@ -254,6 +249,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           Scaffold(
             body: NestedPageView(
               controller: _pageCtrl,
+              physics: _kPageViewPhysics,
               onPageChanged: _onPageChanged,
               children: [
                 for (final id in _effectiveOrder)

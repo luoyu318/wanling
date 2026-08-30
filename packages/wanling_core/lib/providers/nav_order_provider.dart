@@ -137,3 +137,49 @@ final effectiveNavOrderProvider = Provider<List<String>>((ref) {
       if (kNavFixedIds.contains(id) || agents.any((a) => a.id == id)) id,
   ];
 });
+
+/// 底栏可见槽数(用户在编辑页拖项进/出「更多」决定;未显式设置时自动推导)。
+/// SP `nav_visible_{ownerId}`,值 -1 表示未显式设置(自动模式)。
+class NavVisibleCountNotifier extends StateNotifier<int> {
+  NavVisibleCountNotifier({
+    required SharedPreferences prefs,
+    required String ownerId,
+  })  : _prefs = prefs,
+        _key = 'nav_visible_$ownerId',
+        _anonymous = ownerId.isEmpty,
+        super(ownerId.isEmpty ? autoVisibleCount : (prefs.getInt('nav_visible_$ownerId') ?? autoVisibleCount));
+
+  final SharedPreferences _prefs;
+  final String _key;
+
+  /// 登出/切账号中间态不读不写。
+  final bool _anonymous;
+
+  void set(int n) {
+    if (_anonymous) return;
+    final v = n.clamp(1, 4);
+    if (v == state) return;
+    state = v;
+    _prefs.setInt(_key, v);
+  }
+
+  void _persist() => _prefs.setInt(_key, state);
+}
+
+final navVisibleCountProvider =
+    StateNotifierProvider<NavVisibleCountNotifier, int>((ref) {
+  final prefs = ref.watch(sharedPrefsProvider);
+  final ownerId = ref.watch(authProvider.select((s) => s.user?.id ?? ''));
+  return NavVisibleCountNotifier(prefs: prefs, ownerId: ownerId);
+});
+
+/// 未显式设置时的自动可见数:总项 ≤4 全可见,>4 可见 4。
+const int autoVisibleCount = -1;
+
+/// 可见槽数推导:显式存储优先(clamp 1..4 且 ≤总项),未设置时按自动规则。
+/// totalItems = 有效导航序列总长;返回值恒 ≥1(底栏最少保留一个导航元素)。
+int resolveVisibleCount(int stored, int totalItems) {
+  if (totalItems <= 0) return 1;
+  if (stored <= autoVisibleCount) return totalItems <= 4 ? totalItems : 4;
+  return stored.clamp(1, 4).clamp(1, totalItems);
+}

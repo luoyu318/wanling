@@ -120,4 +120,39 @@ void main() {
     final u2 = NavOrderNotifier(prefs: prefs, ownerId: 'u2');
     expect(u2.state, [kNavTabMsg, kNavTabWanling]);
   });
+
+  group('可见槽数 NavVisibleCountNotifier', () {
+    test('未设置:-1 自动,resolveVisibleCount 按 total 推导', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final n = NavVisibleCountNotifier(prefs: prefs, ownerId: 'u1');
+      expect(n.state, autoVisibleCount);
+      // 自动规则:≤4 全可见,>4 可见 4;最少保留 1。
+      expect(resolveVisibleCount(autoVisibleCount, 2), 2);
+      expect(resolveVisibleCount(autoVisibleCount, 4), 4);
+      expect(resolveVisibleCount(autoVisibleCount, 6), 4);
+      expect(resolveVisibleCount(autoVisibleCount, 0), 1);
+    });
+
+    test('set 写盘 + clamp 1..4;重载还原;空 ownerId 不写', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final n = NavVisibleCountNotifier(prefs: prefs, ownerId: 'u1');
+      n.set(2);
+      expect(n.state, 2);
+      expect(prefs.getInt('nav_visible_u1'), 2);
+      n.set(0); // 低于下限 clamp 到 1
+      expect(n.state, 1);
+      n.set(9); // 高于上限 clamp 到 4
+      expect(n.state, 4);
+      expect(resolveVisibleCount(4, 2), 2); // 显式值 ≤ 总项
+      final reloaded = NavVisibleCountNotifier(prefs: prefs, ownerId: 'u1');
+      expect(reloaded.state, 4);
+
+      final anon = NavVisibleCountNotifier(prefs: prefs, ownerId: '');
+      anon.set(3);
+      expect(anon.state, autoVisibleCount);
+      expect(prefs.getInt('nav_visible_'), isNull);
+    });
+  });
 }

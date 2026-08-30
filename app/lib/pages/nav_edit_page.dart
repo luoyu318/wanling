@@ -27,16 +27,13 @@ class NavEditPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final order = ref.watch(effectiveNavOrderProvider);
-    final agents = [
-      for (final id in order) if (!kNavFixedIds.contains(id)) id
-    ];
-    final showMore = agents.length >= 4;
-    // 白条 = 序列前缀截取(固定项/agent 混合,与 home_page._visibleSlots 同模式);
-    // 被截掉的项(含固定项)进网格池,仍可达。
-    const visibleCount = 4;
-    final barIds = order.take(showMore ? visibleCount : order.length).toList();
-    final overflowIds =
-        order.skip(showMore ? visibleCount : order.length).toList();
+    final storedVisible = ref.watch(navVisibleCountProvider);
+    // 白条 = 可见项(底栏实时预览);网格池 = 溢出项(含消息/万灵)。
+    // 可见数由用户拖拽增减(拖项进「更多」格减,池项拖回白条加),最少保留 1。
+    final visibleCount = resolveVisibleCount(storedVisible, order.length);
+    final showMore = order.length > visibleCount;
+    final barIds = order.take(visibleCount).toList();
+    final overflowIds = order.skip(visibleCount).toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
@@ -86,7 +83,8 @@ class NavEditPage extends ConsumerWidget {
                       ],
                     ),
             ),
-            _BottomBarPreview(barIds: barIds, showMore: showMore),
+            _BottomBarPreview(
+                barIds: barIds, showMore: showMore, visibleCount: visibleCount),
           ],
         ),
       ),
@@ -136,7 +134,7 @@ class _SlotBox extends ConsumerWidget {
       final agent = ref.watch(agentByIdProvider(tabId));
       final unread = ref.watch(agentTabUnreadProvider(tabId));
       // agent:大圆角方形头像本体(与固定项图标方块同尺寸同圆角);
-      // UnreadBadge 无 child 参数,用 Stack + Positioned 叠右上角红标。
+      // UnreadBadge 无 child 参数,减号压住头像右上角,均用 Stack + Positioned。
       inner = Stack(
         clipBehavior: Clip.none,
         children: [
@@ -152,11 +150,29 @@ class _SlotBox extends ConsumerWidget {
               right: -4,
               child: UnreadBadge(count: unread),
             ),
+          if (onUnpin != null)
+            Positioned(
+              top: -5,
+              right: -5,
+              child: GestureDetector(
+                key: ValueKey('unpin-$tabId'),
+                onTap: onUnpin,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: const BoxDecoration(
+                      color: AppColors.danger, shape: BoxShape.circle),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.remove,
+                      size: 14, color: Colors.white),
+                ),
+              ),
+            ),
         ],
       );
     }
 
-    final labeled = Column(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         inner,
@@ -173,31 +189,6 @@ class _SlotBox extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
                 fontSize: 12, color: AppColors.textSecondary),
-          ),
-        ),
-      ],
-    );
-
-    if (onUnpin == null) return labeled;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        labeled,
-        Positioned(
-          top: -6,
-          right: -6,
-          child: GestureDetector(
-            key: ValueKey('unpin-$tabId'),
-            onTap: onUnpin,
-            child: Container(
-              width: 20,
-              height: 20,
-              decoration: const BoxDecoration(
-                  color: AppColors.danger, shape: BoxShape.circle),
-              alignment: Alignment.center,
-              child:
-                  const Icon(Icons.remove, size: 14, color: Colors.white),
-            ),
           ),
         ),
       ],
@@ -255,12 +246,51 @@ class _GridPoolItem extends ConsumerWidget {
   }
 }
 
-/// 底部白条主排序区:序列前缀(固定项/agent 混合)+「更多」格(不可拖不可落)。
+/// 「更多」格:白底格子图标;接收白条项拖入 = 收进更多(可见数-1,最少保留 1)。
+class _MoreDropSlot extends ConsumerWidget {
+  const _MoreDropSlot({required this.visibleCount});
+
+  final int visibleCount;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Expanded(
+      child: DragTarget<String>(
+        // 仅接受白条(可见)来源项,且底栏最少保留 1 个导航元素。
+        onWillAcceptWithDetails: (d) {
+          final order = ref.read(effectiveNavOrderProvider);
+          if (visibleCount <= 1) return false;
+          final from = order.indexOf(d.data);
+          return from >= 0 && from < visibleCount;
+        },
+        onAcceptWithDetails: (d) {
+          ref.read(navOrderProvider.notifier).reorder(d.data, visibleCount - 1);
+          ref.read(navVisibleCountProvider.notifier).set(visibleCount - 1);
+        },
+        builder: (context, candidate, _) => Opacity(
+          opacity: candidate.isNotEmpty ? 0.6 : 1,
+          child: const _SlotBox(
+            tabId: '__more__',
+            box: NavEditPage._barBox,
+            name: '更多',
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 底部白条主排序区:可见项(底栏预览)+「更多」格(可接收白条项=收进更多)。
 class _BottomBarPreview extends ConsumerWidget {
-  const _BottomBarPreview({required this.barIds, required this.showMore});
+  const _BottomBarPreview({
+    required this.barIds,
+    required this.showMore,
+    required this.visibleCount,
+  });
 
   final List<String> barIds;
   final bool showMore;
+  final int visibleCount;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -275,23 +305,22 @@ class _BottomBarPreview extends ConsumerWidget {
         children: [
           for (final id in barIds)
             Expanded(
-              child: _BarSlot(tabId: id),
+              child: _BarSlot(tabId: id, visibleCount: visibleCount),
             ),
-          if (showMore)
-            const Expanded(
-              child: _SlotBox(tabId: '__more__', box: NavEditPage._barBox, name: '更多'),
-            ),
+          if (showMore) _MoreDropSlot(visibleCount: visibleCount),
         ],
       ),
     );
   }
 }
 
-/// 白条槽:可拖可落。落点 = 该槽在序列中的位置(reorder move 语义)。
+/// 白条槽:可拖可落。落点 = 该槽在序列中的位置(reorder move 语义);
+/// 池项拖入 = 进可见区并扩容可见数(≤4)。
 class _BarSlot extends ConsumerWidget {
-  const _BarSlot({required this.tabId});
+  const _BarSlot({required this.tabId, required this.visibleCount});
 
   final String tabId;
+  final int visibleCount;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -306,8 +335,16 @@ class _BarSlot extends ConsumerWidget {
       feedback: _dragFeedback(ref, tabId, NavEditPage._barBox),
       child: DragTarget<String>(
         onWillAcceptWithDetails: (d) => d.data != tabId,
-        onAcceptWithDetails: (d) =>
-            ref.read(navOrderProvider.notifier).reorder(d.data, seqIdx),
+        onAcceptWithDetails: (d) {
+          ref
+              .read(navOrderProvider.notifier)
+              .reorder(d.data, seqIdx);
+          // 来源在池(可见区之外)则本次落入扩容可见数。
+          final from = order.indexOf(d.data);
+          if (from >= visibleCount) {
+            ref.read(navVisibleCountProvider.notifier).set(visibleCount + 1);
+          }
+        },
         builder: (context, candidate, _) => Opacity(
           opacity: candidate.isNotEmpty ? 0.5 : 1,
           child: _SlotBox(
