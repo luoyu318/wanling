@@ -60,6 +60,8 @@ export class SessionStore {
     // 首个事件到达时 PATCH 父 task 卡片切 working(每个 child 仅一次);PATCH 失败不丢弃事件。
     const child = this.childSessionTree.get(sessionID)
     if (child) {
+      // 存活信号 S3:子 session 每次事件都刷新最近活跃时刻
+      child.lastEventAt = Date.now()
       child.state.isChildSession = true
       child.state.childEntry = child
       if (!child.hasFirstEvent) {
@@ -215,6 +217,8 @@ export class SessionStore {
       hasFirstEvent: false,
       taskInput,
       childSessionId,
+      createdAt: Date.now(),
+      lastEventAt: Date.now(),
     }
     // 聚合模式:task 卡是聚合卡内元素,记录 element_id + 父 state,
     // working PATCH / 超时兜底 PATCH 经 updateElement 更新聚合元素。

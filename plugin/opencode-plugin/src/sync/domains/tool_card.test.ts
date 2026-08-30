@@ -708,6 +708,47 @@ describe("ToolCardManager 非聚合回退(AGGREGATE_CARD_ENABLED=false)", () => 
   })
 })
 
+describe("ToolCardManager 存活信号采集(runningToolParts 随状态机增删)", () => {
+  it("tool part 终态后 runningToolParts 清除该 partId(存活信号 S1)", async () => {
+    const { manager, state } = makeFixture()
+    state.runningToolParts = new Set<string>()
+    // 普通工具 running → completed 全链路:running 时 partId 即入集合(同步段,不等发卡),
+    // 终态分支入口无条件清除(part 状态以 opencode 事件为准)
+    await manager.onPartUpdated(
+      toolPart("p1", "bash", "running", { input: { command: "sleep 100" } }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p1")).toBe(true)
+    await manager.onPartUpdated(
+      toolPart("p1", "bash", "completed", { input: { command: "sleep 100" }, output: "done" }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p1")).toBe(false)
+  })
+
+  it("task part 终态后 runningToolParts 清除该 partId(存活信号 S1)", async () => {
+    const { manager, state } = makeFixture()
+    state.runningToolParts = new Set<string>()
+    await manager.onPartUpdated(
+      toolPart("p2", "task", "running", {
+        input: { description: "子任务", prompt: "..." },
+        metadata: { parentSessionId: "s1", sessionId: "sess-child" },
+      }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p2")).toBe(true)
+    await manager.onPartUpdated(
+      toolPart("p2", "task", "completed", {
+        input: { description: "子任务", prompt: "..." },
+        output: "任务完成",
+        metadata: { parentSessionId: "s1", sessionId: "sess-child" },
+      }),
+      state, "s1",
+    )
+    expect(state.runningToolParts.has("p2")).toBe(false)
+  })
+})
+
 describe("ToolCardManager 子 session 不聚合", () => {
   it("子 session 工具 running 仍发独立卡(保持 parent/root 串树),不追加聚合元素", async () => {
     const { manager, state, router, wanling } = makeFixture()

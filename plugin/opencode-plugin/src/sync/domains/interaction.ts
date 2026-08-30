@@ -108,7 +108,7 @@ export class InteractionCards {
         ...(state.isChildSession ? { sub_session_id: state.childEntry?.childSessionId } : {}),
       }, false)
 
-      await saveCard(payload.id, { msgId, convId: state.convId, type: "permission", directory: payload.directory, data: { action: payload.action, resources: payload.resources, save: payload.save || [], metadata: payload.metadata || {} } })
+      await saveCard(payload.id, { msgId, convId: state.convId, type: "permission", directory: payload.directory, sessionId: payload.sessionID, data: { action: payload.action, resources: payload.resources, save: payload.save || [], metadata: payload.metadata || {} } })
 
       // permission_card 已创建,现在刷新 pending tool_card（如果有）,确保顺序: 审批卡→工具卡
       this.toolCard.flushPending(state)
@@ -159,7 +159,7 @@ export class InteractionCards {
         ...(state.isChildSession ? { sub_session_id: state.childEntry?.childSessionId } : {}),
       }, false)
 
-      await saveCard(payload.id, { msgId, convId: state.convId, type: "question", directory: payload.directory, data: { questions: payload.questions } })
+      await saveCard(payload.id, { msgId, convId: state.convId, type: "question", directory: payload.directory, sessionId: payload.sessionID, data: { questions: payload.questions } })
 
       this.toolCard.flushPending(state)
     } catch (err) {
