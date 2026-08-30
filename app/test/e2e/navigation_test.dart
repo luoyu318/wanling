@@ -532,9 +532,9 @@ void main() {
       expect(find.text('编辑底栏'), findsOneWidget);
     });
 
-    testWidgets('agent 全前置排序:固定项恒在底栏,可见 agent 截取 2 个', (tester) async {
-      // 回归:_visibleSlots 曾用序列前缀截取,agent 全前置时固定 tab 从底栏
-      // 双双消失。现约定:固定项恒入栏,可见 agent 按 agents 子序列截取。
+    testWidgets('agent 全前置排序:底栏=前 4 agent,消息/万灵进更多抽屉可点选', (tester) async {
+      // 模型:底栏可见=序列前缀截取(固定项/agent 混合),被截掉的项(含固定项)
+      // 全部进「更多」抽屉且可点选可达——底栏组成完全由用户排序决定。
       SharedPreferences.setMockInitialValues({
         'token': 'fake-token',
         'nav_order_u1': ['a1', 'a2', 'a3', 'a4', kNavTabMsg, kNavTabWanling],
@@ -569,23 +569,29 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 固定项恒在底栏,溢出出更多槽(4 agent ≥ 阈值)
+      // 底栏 = 前 4 个 agent + 更多格(固定项被排后全部进溢出区)
       final navBar = find.byType(NavTabBar);
-      expect(
-          find.descendant(of: navBar, matching: find.text('消息')),
-          findsOneWidget);
-      expect(
-          find.descendant(of: navBar, matching: find.text('万灵')),
-          findsOneWidget);
       expect(find.descendant(of: navBar, matching: find.text('更多')),
           findsOneWidget);
-      // 仅前 2 个 agent 可见,溢出的 a3/a4 只在抽屉(不点开不渲染)
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsOneWidget);
-      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+      expect(find.descendant(of: navBar, matching: find.text('ag-4')),
           findsOneWidget);
-      expect(find.text('ag-3'), findsNothing);
-      expect(find.text('ag-4'), findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('消息')),
+          findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('万灵')),
+          findsNothing);
+
+      // 点更多格:抽屉里渲染消息/万灵图标方块
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
+      expect(find.text('消息'), findsOneWidget);
+      expect(find.text('万灵'), findsOneWidget);
+
+      // 点抽屉「消息」→ 收起抽屉并跳到消息页
+      await tester.tap(find.text('消息'));
+      await tester.pumpAndSettle();
+      expect(find.text('消息'), findsNothing); // 抽屉已收起
     });
 
     testWidgets('固定项居中排序:槽序=序列序,默认激活身份仍映射消息槽',

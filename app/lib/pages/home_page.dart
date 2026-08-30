@@ -44,11 +44,11 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  /// pinned 数达到该值即出现「更多」槽(总槽 = 2 固定 + 2 agent + 更多 = 5)。
+  /// pinned agent 数达到该值即出现「更多」槽(总项 = 2 固定 + agent ≥ 4 > 5 槽)。
   static const int _kOverflowThreshold = 4;
 
-  /// 溢出时可见 agent 数(槽 2/3)。
-  static const int _kVisibleWhenOverflow = 2;
+  /// 溢出时底栏可见槽数(序列前缀截取,固定项/agent 混合)。
+  static const int _kVisibleSlotsWhenOverflow = 4;
 
   final PageController _pageCtrl = PageController(initialPage: 0);
   String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
@@ -58,8 +58,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   // build 时刷新,手势回调读取(避免回调里重复 watch)
   List<String> _effectiveOrder = const [];
   bool _showMore = false;
-  List<String> _visibleSlots = const []; // 可见槽位(固定项恒入栏+可见 agent)
-  List<String> _overflowPinned = const [];
+  List<String> _visibleSlots = const []; // 可见槽位(序列前缀,固定项/agent 混合)
+  List<String> _overflowItems = const []; // 溢出项(含固定项,进更多抽屉可达)
 
   void _openSidebar() => setState(() => _sidebarOpen = true);
   void _closeSidebar() => setState(() => _sidebarOpen = false);
@@ -123,7 +123,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     return _showMore ? _visibleSlots.length : 0;
   }
 
-  /// 「更多」底部抽屉:溢出 agent 4 列网格 + 右上「编辑」进底栏编辑页。
+  /// 「更多」底部抽屉:溢出项(含消息/万灵)4 列网格 + 右上「编辑」进底栏编辑页。
   void _showMoreSheet() {
     showModalBottomSheet<void>(
       context: context,
@@ -172,16 +172,27 @@ class _HomePageState extends ConsumerState<HomePage> {
               crossAxisSpacing: 8,
               childAspectRatio: 0.72,
               children: [
-                for (final id in _overflowPinned)
-                  _MoreSheetItem(
-                    key: ValueKey('more-$id'),
-                    agentId: id,
-                    active: id == _activeTabId,
-                    onTap: () {
-                      Navigator.pop(sheetCtx);
-                      _jumpToAgentPage(id);
-                    },
-                  ),
+                for (final id in _overflowItems)
+                  if (kNavFixedIds.contains(id))
+                    _MoreSheetIconItem(
+                      key: ValueKey('more-$id'),
+                      tabId: id,
+                      active: id == _activeTabId,
+                      onTap: () {
+                        Navigator.pop(sheetCtx);
+                        _switchTab(id);
+                      },
+                    )
+                  else
+                    _MoreSheetItem(
+                      key: ValueKey('more-$id'),
+                      agentId: id,
+                      active: id == _activeTabId,
+                      onTap: () {
+                        Navigator.pop(sheetCtx);
+                        _jumpToAgentPage(id);
+                      },
+                    ),
               ],
             ),
           ],
@@ -211,16 +222,13 @@ class _HomePageState extends ConsumerState<HomePage> {
       for (final id in _effectiveOrder) if (!kNavFixedIds.contains(id)) id
     ];
     _showMore = pinnedAgents.length >= _kOverflowThreshold;
-    // 可见 agent 按 agents 子序列截取(与 _overflowPinned 互补);固定项恒入栏,
-    // 位置保持序列相对序——任意排序下固定 tab 不可从底栏消失(5 槽约束)。
-    final visibleAgentIds =
-        pinnedAgents.take(_showMore ? _kVisibleWhenOverflow : 3).toSet();
-    _visibleSlots = [
-      for (final id in _effectiveOrder)
-        if (kNavFixedIds.contains(id) || visibleAgentIds.contains(id)) id
-    ];
-    _overflowPinned = _showMore
-        ? pinnedAgents.skip(_kVisibleWhenOverflow).toList()
+    // 可见槽 = 序列前缀截取(固定项/agent 混合按序);被截掉的项(含固定项)
+    // 全部进「更多」抽屉且可点选可达——底栏组成完全由用户排序决定。
+    _visibleSlots = _effectiveOrder
+        .take(_showMore ? _kVisibleSlotsWhenOverflow : _effectiveOrder.length)
+        .toList();
+    _overflowItems = _showMore
+        ? _effectiveOrder.skip(_kVisibleSlotsWhenOverflow).toList()
         : [];
 
     // 收缩守卫:序列变化时按激活 tab 身份判定落点(位置左移跳新位;消失回页 0)。
@@ -281,7 +289,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                     NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
               ],
               showMore: _showMore,
-              moreTab: _overflowPinned.contains(_activeTabId)
+              moreTab: _overflowItems.contains(_activeTabId) &&
+                      !kNavFixedIds.contains(_activeTabId)
                   ? _toNavAgentTab(_activeTabId)
                   : null,
               onSlotTap: _onNavTap,
@@ -340,7 +349,63 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 }
 
-/// 抽屉网格项:白圆角方块(头像+在线绿点+未读角标)+灰名字;激活绿描边。
+/// 抽屉网格项(固定项):白圆角图标方块+灰名字;激活绿描边。
+class _MoreSheetIconItem extends ConsumerWidget {
+  const _MoreSheetIconItem({
+    super.key,
+    required this.tabId,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String tabId;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isMsg = tabId == kNavTabMsg;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: active
+                  ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                  : null,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              isMsg ? Icons.chat_bubble_outline : Icons.auto_awesome_outlined,
+              size: 32,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            isMsg ? '消息' : '万灵',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 抽屉网格项(agent):大圆角方形头像本体(在线绿点+未读角标)+灰名字;激活绿描边。
 class _MoreSheetItem extends ConsumerWidget {
   const _MoreSheetItem({
     super.key,
@@ -359,6 +424,7 @@ class _MoreSheetItem extends ConsumerWidget {
     final unread = ref.watch(agentTabUnreadProvider(agentId));
     final name = agent?.name ?? agentId;
     final box = GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -366,38 +432,25 @@ class _MoreSheetItem extends ConsumerWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
+              // 大圆角方形头像本体(无白底包裹);激活描边用 foregroundDecoration
+              // 叠边框,不影响头像裁剪。
               Container(
                 width: 64,
                 height: 64,
-                padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: Colors.white,
+                foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   border: active
                       ? Border.all(color: AppColors.accentGreen, width: 1.5)
                       : null,
                 ),
-                // UnreadBadge 无 child 参数,用 Stack + Positioned 叠右上角红标。
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Center(
-                      child: Avatar(
-                        name: name,
-                        url: agent?.avatarUrl,
-                        size: 40,
-                        radius: 20,
-                      ),
-                    ),
-                    if (unread > 0)
-                      Positioned(
-                        top: -4,
-                        right: -4,
-                        child: UnreadBadge(count: unread),
-                      ),
-                  ],
-                ),
+                child: Avatar(name: name, url: agent?.avatarUrl, size: 64, radius: 16),
               ),
+              if (unread > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: UnreadBadge(count: unread),
+                ),
               if (agent?.status == AgentStatus.online)
                 Positioned(
                   right: 2,

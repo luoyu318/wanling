@@ -107,18 +107,21 @@ void main() {
         [kNavTabMsg, kNavTabWanling, 'a3', 'a1', 'a2', 'a4']);
   });
 
-  testWidgets('agent 前置序列:白条含消息/万灵,溢出 agent 不双渲染', (tester) async {
+  testWidgets('agent 前置序列:白条=前 4 agent,消息/万灵进网格池仍可达', (tester) async {
     await _harness(tester,
         seed: ['a1', 'a2', 'a3', 'a4', kNavTabMsg, kNavTabWanling]);
-    // 固定项恒驻白条(不再被前缀截取挤掉)
+    // 白条 = 序列前缀(4 agent)+更多格
+    expect(find.text('更多'), findsOneWidget);
+    expect(find.text('n-a1'), findsOneWidget);
+    expect(find.text('n-a2'), findsOneWidget);
+    // 消息/万灵被截进网格池(图标方块,无减号),各恰一次
     expect(find.text('消息'), findsOneWidget);
     expect(find.text('万灵'), findsOneWidget);
-    // a1/a2 可见(白条),a3/a4 溢出(网格)——各恰一次,无双渲染
-    expect(find.text('n-a1'), findsOneWidget);
-    expect(find.text('n-a3'), findsOneWidget);
+    expect(find.byKey(const ValueKey('unpin-$kNavTabMsg')), findsNothing);
+    expect(find.byKey(const ValueKey('unpin-$kNavTabWanling')), findsNothing);
   });
 
-  testWidgets('固定项不可拖入网格池(被拒)', (tester) async {
+  testWidgets('固定项拖入网格池:移到溢出区,可从池拖回白条', (tester) async {
     final container = await _harness(tester);
     final msgCenter = tester.getCenter(find.text('消息'));
     final a3Center = tester.getCenter(find.text('n-a3'));
@@ -128,9 +131,9 @@ void main() {
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
-    // 网格池拒绝固定项:序列原位不动
+    // move 语义:msg 插到 a3 当前序列位(4),a1/a2/a3 顺移前移
     expect(container.read(navOrderProvider),
-        [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'a3', 'a4']);
+        [kNavTabWanling, 'a1', 'a2', 'a3', kNavTabMsg, 'a4']);
   });
 
   testWidgets('减号 unpin:列表收缩且白条刷新', (tester) async {

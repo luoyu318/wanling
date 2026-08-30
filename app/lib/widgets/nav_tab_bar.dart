@@ -69,7 +69,7 @@ class NavTabBar extends StatelessWidget {
     required this.onSlotLongPress,
   })  : assert(slots.length <= (showMore ? 4 : 5), '可见槽(消息/万灵/agent)最多 4/5 个');
 
-  /// 可见槽位内容(固定项+可见 agent,顺序即渲染顺序)
+  /// 可见槽位内容(序列前缀,固定项/agent 混合,顺序即渲染顺序)
   final List<NavSlot> slots;
   final int currentIndex;
 
@@ -82,10 +82,6 @@ class NavTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // agent 槽上限契约:whereType 方法调用不能进 const 构造器的初始化 assert,
-    // 断言下沉到 build(仅 debug 生效,契约语义不变)。
-    assert(slots.whereType<NavAgentSlot>().length <= (showMore ? 2 : 3),
-        'showMore 时可见 agent 最多 2 个, 否则最多 3 个(溢出归「更多」)');
     return SafeArea(
       top: false,
       child: Container(
@@ -252,7 +248,7 @@ class _MoreSlot extends StatelessWidget {
       : name;
 }
 
-/// agent 头像:圆形(有头像用图片,否则哈希色首字母) + 在线小绿点 + 未读角标。
+/// agent 头像:大圆角方形(有头像用图片,否则哈希色首字母) + 在线小绿点 + 未读角标。
 /// 选中态不用外圈,由槽位文字颜色/字重表达(对齐消息/万灵槽的选中语言)。
 class _AgentAvatar extends StatelessWidget {
   final NavAgentTab tab;
@@ -272,7 +268,7 @@ class _AgentAvatar extends StatelessWidget {
             name: tab.name,
             url: tab.avatarUrl,
             size: size,
-            radius: size / 2,
+            radius: size * 0.28,
           )
         else
           Container(
@@ -280,7 +276,7 @@ class _AgentAvatar extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               color: Avatar.colorFor(tab.name),
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(size * 0.28),
             ),
             alignment: Alignment.center,
             child: Text(

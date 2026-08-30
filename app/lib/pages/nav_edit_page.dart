@@ -9,11 +9,12 @@ import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/avatar.dart';
 import '../widgets/unread_badge.dart';
 
-/// 底栏编辑页:上半溢出 agent 网格池 + 底部白条主排序区。
+/// 底栏编辑页:上半溢出项网格池 + 底部白条主排序区。
 ///
-/// - 白条 = 完整底栏实时预览,任意槽(除「更多」格)可长按拖拽换位,
-///   固定项(msg/wanling)可拖可落但无减号(不可移除)
-/// - 网格 = 溢出 agent 池,方块右上减号 unpin;与白条跨区拖拽 = 可见性互换
+/// - 白条 = 底栏实时预览(序列前缀,固定项/agent 混合),任意槽(除「更多」格)
+///   可长按拖拽换位;固定项无减号(不可移除)
+/// - 网格 = 溢出项池(含消息/万灵),agent 右上减号 unpin;与白条跨区拖拽 =
+///   可见性互换(拖入「更多」的固定项仍可点选可达)
 /// - 拖拽统一 move 语义(reorder:插入目标位其余顺移),实时持久化,「完成」仅 pop
 class NavEditPage extends ConsumerWidget {
   const NavEditPage({super.key});
@@ -30,15 +31,12 @@ class NavEditPage extends ConsumerWidget {
       for (final id in order) if (!kNavFixedIds.contains(id)) id
     ];
     final showMore = agents.length >= 4;
-    final visibleAgentCount = showMore ? 2 : 3;
-    // 白条 = 固定项恒入栏 + 可见 agent 截取(与溢出池互补),保持序列相对序——
-    // 任意排序下固定 tab 不可从编辑页白条消失(与 home_page._visibleSlots 同模式)
-    final visibleAgentIds = agents.take(visibleAgentCount).toSet();
-    final barIds = [
-      for (final id in order)
-        if (kNavFixedIds.contains(id) || visibleAgentIds.contains(id)) id
-    ];
-    final overflowIds = agents.skip(visibleAgentCount).toList();
+    // 白条 = 序列前缀截取(固定项/agent 混合,与 home_page._visibleSlots 同模式);
+    // 被截掉的项(含固定项)进网格池,仍可达。
+    const visibleCount = 4;
+    final barIds = order.take(showMore ? visibleCount : order.length).toList();
+    final overflowIds =
+        order.skip(showMore ? visibleCount : order.length).toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
@@ -84,7 +82,7 @@ class NavEditPage extends ConsumerWidget {
                       childAspectRatio: 0.72,
                       children: [
                         for (final id in overflowIds)
-                          _GridPoolItem(key: ValueKey('grid-$id'), agentId: id),
+                          _GridPoolItem(key: ValueKey('grid-$id'), tabId: id),
                       ],
                     ),
             ),
@@ -96,8 +94,8 @@ class NavEditPage extends ConsumerWidget {
   }
 }
 
-/// 槽位内容:固定项图标方块 / 「更多」图标方块 / agent 头像方块。
-/// 减号仅在显式传入 onUnpin 时出现。
+/// 槽位内容:固定项图标方块 / 「更多」图标方块 / agent 大圆角方形头像。
+/// 减号仅在显式传入 onUnpin 时出现(固定项无减号,不可移除)。
 class _SlotBox extends ConsumerWidget {
   const _SlotBox({
     required this.tabId,
@@ -129,7 +127,7 @@ class _SlotBox extends ConsumerWidget {
         height: box,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(box * 0.28),
+          borderRadius: BorderRadius.circular(box * 0.25),
         ),
         alignment: Alignment.center,
         child: Icon(icon, size: box * 0.5, color: AppColors.textSecondary),
@@ -137,6 +135,7 @@ class _SlotBox extends ConsumerWidget {
     } else {
       final agent = ref.watch(agentByIdProvider(tabId));
       final unread = ref.watch(agentTabUnreadProvider(tabId));
+      // agent:大圆角方形头像本体(与固定项图标方块同尺寸同圆角);
       // UnreadBadge 无 child 参数,用 Stack + Positioned 叠右上角红标。
       inner = Stack(
         clipBehavior: Clip.none,
@@ -144,8 +143,8 @@ class _SlotBox extends ConsumerWidget {
           Avatar(
             name: name,
             url: agent?.avatarUrl,
-            size: box * 0.72,
-            radius: box * 0.36,
+            size: box,
+            radius: box * 0.25,
           ),
           if (unread > 0)
             Positioned(
@@ -220,41 +219,43 @@ Widget _dragFeedback(WidgetRef ref, String tabId, double box) {
   );
 }
 
-/// 上半网格池单格:溢出 agent,可拖(进白条变可见)、可收(白条 agent 落入)、减号 unpin。
+/// 上半网格池单格:溢出项(含固定项),可拖(进白条变可见)、可收(白条项落入);
+/// agent 带减号 unpin,固定项无减号(不可移除,可从池拖回白条恢复)。
 class _GridPoolItem extends ConsumerWidget {
-  const _GridPoolItem({super.key, required this.agentId});
+  const _GridPoolItem({super.key, required this.tabId});
 
-  final String agentId;
+  final String tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final agent = ref.watch(agentByIdProvider(agentId));
-    final name = agent?.name ?? agentId;
-    final seqIdx =
-        ref.watch(effectiveNavOrderProvider).indexOf(agentId);
+    final isFixed = kNavFixedIds.contains(tabId);
+    final agent = isFixed ? null : ref.watch(agentByIdProvider(tabId));
+    final name = isFixed
+        ? (tabId == kNavTabMsg ? '消息' : '万灵')
+        : (agent?.name ?? tabId);
+    final seqIdx = ref.watch(effectiveNavOrderProvider).indexOf(tabId);
     return LongPressDraggable<String>(
-      data: agentId,
+      data: tabId,
       delay: const Duration(milliseconds: 120),
-      feedback: _dragFeedback(ref, agentId, NavEditPage._gridBox),
+      feedback: _dragFeedback(ref, tabId, NavEditPage._gridBox),
       child: DragTarget<String>(
-        // 固定项不可移除,不接受拖入溢出池。
-        onWillAcceptWithDetails: (d) =>
-            d.data != agentId && !kNavFixedIds.contains(d.data),
-        onAcceptWithDetails: (d) => ref
-            .read(navOrderProvider.notifier)
-            .reorder(d.data, seqIdx),
+        onWillAcceptWithDetails: (d) => d.data != tabId,
+        onAcceptWithDetails: (d) =>
+            ref.read(navOrderProvider.notifier).reorder(d.data, seqIdx),
         builder: (context, candidate, _) => _SlotBox(
-          tabId: agentId,
+          tabId: tabId,
           box: NavEditPage._gridBox,
           name: name,
-          onUnpin: () => ref.read(navOrderProvider.notifier).unpin(agentId),
+          onUnpin: isFixed
+              ? null
+              : () => ref.read(navOrderProvider.notifier).unpin(tabId),
         ),
       ),
     );
   }
 }
 
-/// 底部白条主排序区:序列前缀(固定项+可见 agent)+「更多」格(不可拖不可落)。
+/// 底部白条主排序区:序列前缀(固定项/agent 混合)+「更多」格(不可拖不可落)。
 class _BottomBarPreview extends ConsumerWidget {
   const _BottomBarPreview({required this.barIds, required this.showMore});
 
