@@ -233,6 +233,8 @@ Widget _markdownImageBuilder(
   return Hero(
     tag: 'gallery_$fileId',
     child: GestureDetector(
+      // opaque：整块图片区域可点，不依赖子树 hitTest（占位/加载态也能点开画廊）。
+      behavior: HitTestBehavior.opaque,
       onTap: () => openGallery?.call(fileId),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),

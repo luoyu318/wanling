@@ -131,6 +131,26 @@ List<GalleryImage> collectConversationImages(
           result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
         }
       }
+    } else if (type == MsgType.aggregateCard) {
+      // 聚合卡内 markdown 元素的内嵌图片也进画廊:图片以 markdown 元素进卡后,
+      // 点击放大需定位(否则 openGallery indexWhere 落空/收集为空直接 return,
+      // 表现为点击无反应)。与独立 markdown 消息同一提取逻辑。函数末尾按消息级
+      // newest-first 反转,但卡内 elements 是元素时序,反向遍历抵消反转(mixed
+      // items 同款处理),画廊内保持「先 append 的先看」。
+      final elements = (((m.content['data']?['elements'] as List?) ?? const [])
+              .whereType<Map>()
+              .toList())
+          .reversed;
+      for (final element in elements) {
+        if (element['type'] != 'markdown') continue;
+        final text = (element['data'] as Map?)?['text'] as String?;
+        // 元素内多张图也反向:与 elements 反向遍历共同完整抵消消息级反转。
+        for (final fileId in extractInternalImageIds(text).reversed) {
+          if (seen.add(fileId)) {
+            result.add(GalleryImage.fromInternal(fileId, baseUrl, token));
+          }
+        }
+      }
     }
   }
   // 反转：messages 是 newest first，反转后 index 0 = 最旧，符合左滑下一张习惯。

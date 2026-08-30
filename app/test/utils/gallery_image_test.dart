@@ -157,6 +157,70 @@ void main() {
       expect(collectConversationImages(messages, 'https://h', 'tok'),
           <GalleryImage>[]);
     });
+
+    test('aggregate_card 内 markdown 元素的图片收集', () {
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'state': 'generating',
+          'elements': [
+            {
+              'type': 'reasoning',
+              'element_id': 'reasoning_1',
+              'data': {'text': '思考中'},
+            },
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_2',
+              'data': {'text': '![截图](/api/files/agg1)'},
+            },
+          ],
+        }),
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      expect(result.map((g) => g.fileId), ['agg1']);
+      expect(result[0].heroTag, 'gallery_agg1');
+    });
+
+    test('aggregate_card 跨元素多图保持时序 + 与独立 image 混排去重', () {
+      // newest first:m1(聚合卡,最新)在前。agg 卡内 markdown_2/img1 与
+      // m2 独立 image img1 重复 → 去重保留 m1 的位置。
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'elements': [
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_1',
+              'data': {'text': '![a](/api/files/agg1) ![b](/api/files/img1)'},
+            },
+          ],
+        }),
+        msg('m2', 'image', {'file_id': 'img1'}), // 重复,去重
+      ];
+      final result = collectConversationImages(messages, 'https://h', 'tok');
+      // 反转后:较旧的独立 img2 不存在,agg 卡(m1,最新)在后;卡内 agg1 在 img1 前
+      expect(result.map((g) => g.fileId), ['agg1', 'img1']);
+    });
+
+    test('aggregate_card 非 markdown 元素 / 外部 URL 跳过', () {
+      final messages = [
+        msg('m1', 'aggregate_card', {
+          'elements': [
+            {
+              'type': 'reasoning',
+              'element_id': 'reasoning_1',
+              'data': {'text': '![伪图](/api/files/should-skip)'},
+            },
+            {
+              'type': 'markdown',
+              'element_id': 'markdown_2',
+              'data': {'text': '![外](https://evil.com/x.png)'},
+            },
+          ],
+        }),
+      ];
+      expect(collectConversationImages(messages, 'https://h', 'tok'),
+          <GalleryImage>[]);
+    });
   });
 
   group('saveToGallery', () {

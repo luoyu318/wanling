@@ -20,7 +20,7 @@ lib/utils/ 工具集合。
 
 ## gallery_image.dart
 
-画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`GalleryImage.fromInternal` 拼**原图** URL（画廊全屏看大图用高清）；`thumbUrl(baseUrl, fileId)` 拼**缩略图** URL（`?thumb=1`，服务端返回 600px 长边小图，无缩略图时自动降级原图，消息列表/气泡/markdown 内嵌图场景用）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown 消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载字节，3 秒超时 → `Gal.putImageBytes` 写相册，gal 按 magic bytes 自动推断格式免临时文件，返回 `SaveResult` 枚举，gal 写入免权限）
+画廊数据层。`GalleryImage` 模型（url/fileId/headers/heroTag='gallery_$fileId'）；`GalleryImage.fromInternal` 拼**原图** URL（画廊全屏看大图用高清）；`thumbUrl(baseUrl, fileId)` 拼**缩略图** URL（`?thumb=1`，服务端返回 600px 长边小图，无缩略图时自动降级原图，消息列表/气泡/markdown 内嵌图场景用）；`extractInternalImageIds` 用正则从 markdown 提取 `/api/files/{id}`；`collectConversationImages` 遍历会话 image + markdown + aggregate_card（卡内 markdown 元素反向遍历抵消消息级反转）消息去重收集，结尾反转（chatProvider 是 newest-first，反转后 index 0 = 最旧）；`saveToGallery` 将画廊图片保存到系统相册（dio 鉴权下载字节，3 秒超时 → `Gal.putImageBytes` 写相册，gal 按 magic bytes 自动推断格式免临时文件，返回 `SaveResult` 枚举，gal 写入免权限）
 
 ## image_cache_key.dart
 
