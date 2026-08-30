@@ -14,26 +14,37 @@ import 'feedback/app_dialog.dart';
 ///
 /// 参数：
 /// - [isPinned]：会话置顶状态（列表内排序）
-/// - [isNavPinned]：是否已固定到底栏（含 conv 槽与 agent 槽两种形态,由调用方折算）
-/// - [onPinToggle]/[onNavPinToggle]/[onHide]：对应动作回调
+/// - [showNavAction]：是否展示「固定到底栏」项。agent_session 会话
+///   （multi_session agent 的二级 session）结构性不在一级消息列表,固定槽
+///   无法渲染,二级页传 false 隐藏该入口
+/// - [isNavPinned]：是否已固定到底栏（含 conv 槽与 agent 槽两种形态,由调用方
+///   折算）,仅 [showNavAction] 为 true 时生效
+/// - [onPinToggle]/[onNavPinToggle]/[onHide]：对应动作回调；
+///   [onNavPinToggle] 仅 [showNavAction] 为 true 时必须提供
 Future<void> showConvActionMenu(
   BuildContext context,
   Offset globalPos, {
   required bool isPinned,
-  required bool isNavPinned,
   required Future<void> Function() onPinToggle,
-  required Future<void> Function() onNavPinToggle,
   required Future<void> Function() onHide,
+  bool showNavAction = true,
+  bool isNavPinned = false,
+  Future<void> Function()? onNavPinToggle,
 }) async {
+  assert(
+    !showNavAction || onNavPinToggle != null,
+    'showNavAction=true 时必须提供 onNavPinToggle',
+  );
   final selected = await showAppActionMenu(
     context,
     globalPos,
     items: [
-      ActionMenuItem(
-        value: 'nav',
-        label: isNavPinned ? '从底栏移除' : '固定到底栏',
-        icon: isNavPinned ? Icons.dock_outlined : Icons.dock,
-      ),
+      if (showNavAction)
+        ActionMenuItem(
+          value: 'nav',
+          label: isNavPinned ? '从底栏移除' : '固定到底栏',
+          icon: isNavPinned ? Icons.dock_outlined : Icons.dock,
+        ),
       ActionMenuItem(
         value: 'pin',
         label: isPinned ? '取消置顶' : '置顶',
@@ -54,7 +65,7 @@ Future<void> showConvActionMenu(
   if (selected == 'nav') {
     unawaited(HapticFeedback.selectionClick());
     try {
-      await onNavPinToggle();
+      await onNavPinToggle?.call();
     } catch (_) {
       if (context.mounted) {
         showAppSnackBar(context, '操作失败,请重试', type: SnackBarType.error);

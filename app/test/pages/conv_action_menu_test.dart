@@ -2,6 +2,7 @@
 // multi_session 聚合行固定 agent 槽。harness 同 messages_page_route_test 模式
 // (stub getConversations 注入会话),sharedPrefs override 供 navOrderProvider。
 import 'package:app/pages/messages_page.dart';
+import 'package:app/widgets/conv_action_menu.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/user.dart';
@@ -108,5 +109,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(container.read(navOrderProvider), contains('a-oc'));
     expect(container.read(navOrderProvider), isNot(contains('conv:c-ms')));
+  });
+
+  testWidgets('showNavAction=false 隐藏固定项,置顶回调正常(agent_session 二级页)',
+      (tester) async {
+    // 不传 onNavPinToggle,用例跑通即证明 assert 未触发
+    var pinToggled = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () => showConvActionMenu(
+                context,
+                const Offset(100, 100),
+                isPinned: false,
+                onPinToggle: () async {
+                  pinToggled = true;
+                },
+                onHide: () async {},
+                showNavAction: false,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('固定到底栏'), findsNothing);
+    expect(find.text('从底栏移除'), findsNothing);
+    expect(find.text('置顶'), findsOneWidget);
+    expect(find.text('删除会话'), findsOneWidget);
+    await tester.tap(find.text('置顶'));
+    await tester.pumpAndSettle();
+    expect(pinToggled, isTrue);
   });
 }
