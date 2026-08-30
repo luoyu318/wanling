@@ -55,6 +55,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   // build 时刷新,手势回调读取(避免回调里重复 watch)
   List<String> _effectiveOrder = const [];
   bool _showMore = false;
+  bool _moreSheetOpen = false; // 「更多」抽屉开关(Stack 层,不遮底栏)
   List<String> _visibleSlots = const []; // 可见槽位(序列前缀,固定项/agent 混合)
   List<String> _overflowItems = const []; // 溢出项(含固定项,进更多抽屉可达)
 
@@ -67,10 +68,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.dispose();
   }
 
-  /// 底栏点按:更多槽(=可见槽数)弹抽屉,其余按序列切页。
+  /// 底栏点按:更多槽(=可见槽数)弹抽屉,其余按序列切页;点按同时收起抽屉。
   void _onNavTap(int slot) {
+    if (_moreSheetOpen) _closeMoreSheet();
     if (_showMore && slot == _visibleSlots.length) {
-      _showMoreSheet();
+      _openMoreSheet();
       return;
     }
     if (slot < 0 || slot >= _visibleSlots.length) return;
@@ -105,9 +107,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => jump());
   }
 
-  /// 跳指定 agent 页(抽屉点选/各处入口);溢出 agent 同样点亮更多槽。
-  void _jumpToAgentPage(String agentId) => _switchTab(agentId);
-
   void _onPageChanged(int page) {
     if (page < 0 || page >= _effectiveOrder.length) return;
     setState(() => _activeTabId = _effectiveOrder[page]);
@@ -120,83 +119,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     return _showMore ? _visibleSlots.length : 0;
   }
 
-  /// 「更多」底部抽屉:溢出项(含消息/万灵)4 列网格 + 右上「编辑」进底栏编辑页。
-  void _showMoreSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFFF7F7F7),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-              child: Row(
-                children: [
-                  const Text('更多',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(sheetCtx);
-                      context.push('/nav-edit');
-                    },
-                    child: const Text('编辑',
-                        style: TextStyle(color: Color(0xFF3370FF))),
-                  ),
-                ],
-              ),
-            ),
-            GridView.count(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              crossAxisCount: 4,
-              mainAxisSpacing: 16,
-              crossAxisSpacing: 8,
-              childAspectRatio: 0.72,
-              children: [
-                for (final id in _overflowItems)
-                  if (kNavFixedIds.contains(id))
-                    _MoreSheetIconItem(
-                      key: ValueKey('more-$id'),
-                      tabId: id,
-                      active: id == _activeTabId,
-                      onTap: () {
-                        Navigator.pop(sheetCtx);
-                        _switchTab(id);
-                      },
-                    )
-                  else
-                    _MoreSheetItem(
-                      key: ValueKey('more-$id'),
-                      agentId: id,
-                      active: id == _activeTabId,
-                      onTap: () {
-                        Navigator.pop(sheetCtx);
-                        _jumpToAgentPage(id);
-                      },
-                    ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  /// 「更多」抽屉:state 驱动的 Stack 层,遮罩只盖导航条上方(导航条保持
+  /// 可见可点,对齐主流 IM)。抽屉弹出时长按底栏项 → 进底栏编辑页。
+  void _openMoreSheet() => setState(() => _moreSheetOpen = true);
+
+  void _closeMoreSheet() => setState(() => _moreSheetOpen = false);
+
+  /// 底栏总高(NavTabBar = SafeArea 底部 + 56)。
+  double get _navBarHeight =>
+      56 + MediaQuery.of(context).padding.bottom;
 
   /// pinned agent id → 底栏槽位数据（名字/在线态/未读）。
   NavAgentTab _toNavAgentTab(String id) {
@@ -239,9 +170,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
 
     return PopScope(
-      canPop: !_sidebarOpen,
+      canPop: !_sidebarOpen && !_moreSheetOpen,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _sidebarOpen) _closeSidebar();
+        if (didPop) return;
+        if (_sidebarOpen) {
+          _closeSidebar();
+        } else if (_moreSheetOpen) {
+          _closeMoreSheet();
+        }
       },
       // Stack 在 Scaffold 外层：遮罩 + 侧滑面板覆盖整个 Scaffold(含底部 tab 栏)
       child: Stack(
@@ -290,10 +226,47 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ? _toNavAgentTab(_activeTabId)
                   : null,
               onSlotTap: _onNavTap,
-              onMoreTap: _showMoreSheet,
-              onSlotLongPress: (_) => context.push('/nav-edit'),
+              onMoreTap: _openMoreSheet,
+              // 编辑入口:有更多槽时须先弹抽屉再长按(避免误触);无更多槽
+              // (项≤4,抽屉不可达)保留长按直进兜底。
+              onSlotLongPress: (_) {
+                if (_showMore && !_moreSheetOpen) return;
+                if (_moreSheetOpen) _closeMoreSheet();
+                context.push('/nav-edit');
+              },
             ),
           ),
+          // —— 「更多」抽屉层:遮罩+面板都在导航条上方,导航条不被遮挡可点 ——
+          if (_moreSheetOpen) ...[
+            Positioned.fill(
+              bottom: _navBarHeight,
+              child: GestureDetector(
+                onTap: _closeMoreSheet,
+                child: const ColoredBox(color: Colors.black38),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: _navBarHeight,
+              child: Material(
+                color: Colors.transparent,
+                child: _MoreSheetPanel(
+                  overflowItems: _overflowItems,
+                  activeTabId: _activeTabId,
+                  onClose: _closeMoreSheet,
+                  onEdit: () {
+                    _closeMoreSheet();
+                    context.push('/nav-edit');
+                  },
+                  onPickItem: (id) {
+                    _closeMoreSheet();
+                    _switchTab(id);
+                  },
+                ),
+              ),
+            ),
+          ],
           // —— 遮罩：覆盖全 Scaffold(含 tab 栏),常驻动画控制透明度 ——
           Positioned.fill(
             child: IgnorePointer(
@@ -340,6 +313,93 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 「更多」抽屉面板:溢出项(含消息/万灵)4 列网格 + 右上「编辑」。
+/// 由 HomePage 以 Stack 层承载(导航条上方),不再用 modal route。
+class _MoreSheetPanel extends ConsumerWidget {
+  const _MoreSheetPanel({
+    required this.overflowItems,
+    required this.activeTabId,
+    required this.onClose,
+    required this.onEdit,
+    required this.onPickItem,
+  });
+
+  final List<String> overflowItems;
+  final String activeTabId;
+  final VoidCallback onClose;
+  final VoidCallback onEdit;
+  final ValueChanged<String> onPickItem;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Row(
+                children: [
+                  const Text('更多',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: onEdit,
+                    child: const Text('编辑',
+                        style: TextStyle(color: Color(0xFF3370FF))),
+                  ),
+                ],
+              ),
+            ),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              crossAxisCount: 4,
+              mainAxisSpacing: 16,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.72,
+              children: [
+                for (final id in overflowItems)
+                  if (kNavFixedIds.contains(id))
+                    _MoreSheetIconItem(
+                      key: ValueKey('more-$id'),
+                      tabId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                    )
+                  else
+                    _MoreSheetItem(
+                      key: ValueKey('more-$id'),
+                      agentId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                    ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -524,7 +524,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 底栏排序/编辑已收编编辑页:长按任意槽 push /nav-edit
+      // 编辑入口:无更多槽(项≤4,抽屉不可达)时长按直进兜底
       final navBar = find.byType(NavTabBar);
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
@@ -592,6 +592,18 @@ void main() {
       await tester.tap(find.text('消息'));
       await tester.pumpAndSettle();
       expect(find.text('消息'), findsNothing); // 抽屉已收起
+
+      // 编辑入口(有更多槽):平时长按无效;抽屉弹出后长按底栏槽生效
+      await tester.longPress(
+          find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑底栏'), findsNothing);
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
+      await tester.longPress(
+          find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑底栏'), findsOneWidget);
     });
 
     testWidgets('固定项居中排序:槽序=序列序,默认激活身份仍映射消息槽',
@@ -638,7 +650,7 @@ void main() {
         _multiSessionAgent('a2', 'ag-2'),
       ]);
 
-      // 长按底栏 agent 槽 → /nav-edit
+      // 编辑入口:4 项无更多格,长按直进兜底
       final navBar = find.byType(NavTabBar);
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
@@ -717,7 +729,7 @@ void main() {
         _multiSessionAgent('a2', 'ag-2'),
       ]);
 
-      // 进编辑页白条拖拽:ag-1 → 消息槽,序列变 [a1, msg, wanling, a2]
+      // 进编辑页:4 项无更多格,长按直进兜底;白条拖拽 ag-1 → 消息槽
       final navBar = find.byType(NavTabBar);
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
