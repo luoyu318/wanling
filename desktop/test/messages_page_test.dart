@@ -72,7 +72,8 @@ class _SeededConvNotifier extends ConversationListNotifier {
 /// 种子 agent session 二级列表 notifier(构造即 load,种子同步覆盖)。
 class _SeededSessionsNotifier extends AgentSessionsNotifier {
   _SeededSessionsNotifier(List<Conversation> seed, String agentId)
-    : super(ApiService(baseUrl: ''), WebSocketService(), 'test-user', agentId) {
+    : super(ApiService(baseUrl: ''), WebSocketService(), 'test-user', agentId,
+        NoopLocalMessageStore()) {
     state = seed;
   }
 }
