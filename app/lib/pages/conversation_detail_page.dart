@@ -216,7 +216,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
@@ -496,7 +496,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
@@ -695,9 +695,7 @@ class _ConversationDetailPageState
           child: SettingsGroup(
             children: [
               SettingsTile(
-                icon: conv.isPinned
-                    ? Icons.push_pin
-                    : Icons.push_pin_outlined,
+                icon: Icons.vertical_align_top,
                 label: conv.isPinned ? '取消置顶' : '置顶会话',
                 onTap: () => _togglePin(context, conv),
               ),
