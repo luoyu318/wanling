@@ -1,8 +1,23 @@
 // NavOrderNotifier 纯单元测试:迁移/sanitize/reorder move 语义/固定项守卫/持久化/账号隔离。
 // 不经 riverpod(无 UI 依赖),直接构造 Notifier,SharedPreferences 用 setMockInitialValues。
+// 另含 effectiveNavOrderProvider 容器级测试:会话/agent 收缩与恢复的派生语义。
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/providers/agent_provider.dart'
+    show AgentListNotifier, agentListProvider;
+import 'package:wanling_core/providers/conversation_provider.dart'
+    show ConversationListNotifier, conversationProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
+import 'package:wanling_core/services/api_service.dart';
+import 'package:wanling_core/services/noop_local_message_store.dart';
+
+import '../helpers/fake_ws.dart';
+
+class MockApi extends Mock implements ApiService {}
 
 void main() {
   Future<(SharedPreferences, NavOrderNotifier)> make(String ownerId,
@@ -180,5 +195,92 @@ void main() {
     expect(n.state, [kNavTabMsg, kNavTabWanling, 'conv:c1']);
     n.unpin(navConvRef('c1'));
     expect(n.isPinned('conv:c1'), isFalse);
+  });
+
+  // ========== effectiveNavOrderProvider 容器级测试:会话/agent 收缩派生 ==========
+  group('effectiveNavOrderProvider 容器级测试', () {
+    late MockApi api;
+
+    setUp(() {
+      api = MockApi();
+      when(() => api.baseUrl).thenReturn('http://test.local');
+    });
+
+    Conversation conv(String id) => Conversation(
+          id: id,
+          type: 'dm_user_agent',
+          participants: const [],
+          lastMessageContent: null,
+          lastMessageAt: DateTime(2026),
+          createdAt: DateTime(2026),
+        );
+
+    Future<SharedPreferences> seedPrefs(Map<String, List<String>> seed) async {
+      SharedPreferences.setMockInitialValues(seed);
+      return SharedPreferences.getInstance();
+    }
+
+    // conversation/agent notifier 用 autoload:false 构造后直接赋 state 注入,
+    // 避免触发未 stub 的 load;navOrderProvider 注入同一 prefs 的真实构造。
+    ProviderContainer makeContainer(SharedPreferences prefs) {
+      final container = ProviderContainer(overrides: [
+        conversationProvider.overrideWith((ref) => ConversationListNotifier(
+            api, FakeWS(), 'u1', NoopLocalMessageStore(),
+            autoload: false)),
+        agentListProvider.overrideWith((ref) => AgentListNotifier(api,
+            FakeWS(),
+            store: NoopLocalMessageStore(), ownerId: 'u1', autoload: false)),
+        navOrderProvider.overrideWith(
+            (ref) => NavOrderNotifier(prefs: prefs, ownerId: 'u1')),
+      ]);
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('会话收缩:conv:c2 不在会话列表 → 收缩,固定项恒在,顺序保持', () async {
+      final prefs = await seedPrefs({
+        'nav_order_u1': [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling],
+      });
+      final container = makeContainer(prefs);
+
+      container.read(conversationProvider.notifier).state = [conv('c1')];
+
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, 'conv:c1', kNavTabWanling]);
+    });
+
+    test('会话恢复:同容器内 c1+c2 都在 → effective 重新含 conv:c2', () async {
+      final prefs = await seedPrefs({
+        'nav_order_u1': [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling],
+      });
+      final container = makeContainer(prefs);
+      final notifier = container.read(conversationProvider.notifier);
+
+      notifier.state = [conv('c1')];
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, 'conv:c1', kNavTabWanling]);
+
+      // 模拟会话恢复/新会话出现:c2 回到会话列表
+      notifier.state = [conv('c1'), conv('c2')];
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling]);
+    });
+
+    test('agent 分支行为锁:agent 列表为空 → 收缩;agent 出现 → 保留', () async {
+      final prefs = await seedPrefs({
+        'nav_order_u1': [kNavTabMsg, 'a1', 'a2', kNavTabWanling],
+      });
+      final container = makeContainer(prefs); // agent 列表初始为空
+
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, kNavTabWanling]);
+
+      // 仅 a1 出现:a2 仍收缩
+      container.read(agentListProvider.notifier).state = [
+        Agent(id: 'a1', name: 'Bot', status: AgentStatus.online),
+      ];
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, 'a1', kNavTabWanling]);
+    });
   });
 }
