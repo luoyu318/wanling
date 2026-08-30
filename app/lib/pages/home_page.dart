@@ -263,6 +263,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                     _closeMoreSheet();
                     _switchTab(id);
                   },
+                  onLongPressItem: (id) {
+                    _closeMoreSheet();
+                    context.push('/nav-edit');
+                  },
                 ),
               ),
             ),
@@ -327,6 +331,7 @@ class _MoreSheetPanel extends ConsumerWidget {
     required this.onClose,
     required this.onEdit,
     required this.onPickItem,
+    required this.onLongPressItem,
   });
 
   final List<String> overflowItems;
@@ -334,6 +339,7 @@ class _MoreSheetPanel extends ConsumerWidget {
   final VoidCallback onClose;
   final VoidCallback onEdit;
   final ValueChanged<String> onPickItem;
+  final ValueChanged<String> onLongPressItem;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -388,6 +394,7 @@ class _MoreSheetPanel extends ConsumerWidget {
                       tabId: id,
                       active: id == activeTabId,
                       onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
                     )
                   else
                     _MoreSheetItem(
@@ -395,6 +402,7 @@ class _MoreSheetPanel extends ConsumerWidget {
                       agentId: id,
                       active: id == activeTabId,
                       onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
                     ),
               ],
             ),
@@ -412,11 +420,13 @@ class _MoreSheetIconItem extends ConsumerWidget {
     required this.tabId,
     required this.active,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final String tabId;
   final bool active;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -424,6 +434,7 @@ class _MoreSheetIconItem extends ConsumerWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -468,11 +479,13 @@ class _MoreSheetItem extends ConsumerWidget {
     required this.agentId,
     required this.active,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final String agentId;
   final bool active;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -482,6 +495,7 @@ class _MoreSheetItem extends ConsumerWidget {
     final box = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
