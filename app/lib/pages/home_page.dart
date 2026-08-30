@@ -5,16 +5,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart' show Conversation;
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
+import '../router_helpers.dart' show chatRoute, sessionsRoute;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
-    show totalUnreadProvider;
+    show conversationProvider, totalUnreadProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
@@ -46,6 +48,10 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   // 底栏切换只靠点按导航槽;PageView 禁用拖动手势(避免与二级页横滑手势冲突)。
   static const _kPageViewPhysics = NeverScrollableScrollPhysics();
+
+  /// PageView 页序列:导航序列去掉会话槽(会话槽是跳转入口,不占平铺页)。
+  List<String> get _pages =>
+      [for (final id in _effectiveOrder) if (!isConvNavId(id)) id];
 
   final PageController _pageCtrl = PageController(initialPage: 0);
   String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
@@ -81,6 +87,23 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _switchTab(String tabId) {
     if (!_effectiveOrder.contains(tabId)) return;
+    // 会话槽:按消息列表项同款逻辑跳转(multi_session 聚合 → sessions 页,
+    // 其余 → 聊天页),不改变 tab 激活态。
+    final convId = navConvIdOf(tabId);
+    if (convId != null) {
+      final matches = ref
+          .read(conversationProvider)
+          .where((c) => c.id == convId)
+          .toList();
+      if (matches.isEmpty) return;
+      final conv = matches.first;
+      if (conv.agent?.isMultiSession ?? false) {
+        context.push(sessionsRoute(conv.agent!.id));
+      } else {
+        context.push(chatRoute(conv.id, conv.agent?.id));
+      }
+      return;
+    }
     setState(() => _activeTabId = tabId);
     _jumpToPageSafe(tabId);
   }
@@ -95,7 +118,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final epoch = ++_jumpEpoch;
     void jump() {
       if (!mounted || !_pageCtrl.hasClients || epoch != _jumpEpoch) return;
-      final page = _effectiveOrder.indexOf(tabId);
+      final page = _pages.indexOf(tabId);
       if (page < 0) return;
       if (_pageCtrl.page?.round() != page) {
         _pageCtrl.jumpToPage(page);
@@ -108,8 +131,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _onPageChanged(int page) {
-    if (page < 0 || page >= _effectiveOrder.length) return;
-    setState(() => _activeTabId = _effectiveOrder[page]);
+    if (page < 0 || page >= _pages.length) return;
+    setState(() => _activeTabId = _pages[page]);
   }
 
   /// 底栏选中态:激活 tab 在可见槽中的位置;溢出 agent 归更多槽。
@@ -139,6 +162,24 @@ class _HomePageState extends ConsumerState<HomePage> {
       avatarUrl: a?.avatarUrl,
       online: a?.status == AgentStatus.online,
       unread: unread,
+    );
+  }
+
+  /// 会话槽 id → 底栏槽位数据(名字/头像/未读,与消息列表同源)。
+  NavConvTab _toNavConvTab(String id) {
+    final convId = navConvIdOf(id)!;
+    Conversation? conv;
+    for (final c in ref.watch(conversationProvider)) {
+      if (c.id == convId) {
+        conv = c;
+        break;
+      }
+    }
+    return NavConvTab(
+      id: convId,
+      name: conv?.displayName ?? convId,
+      avatarUrl: conv?.displayAvatarUrl,
+      unread: conv?.unreadCount ?? 0,
     );
   }
 
@@ -188,7 +229,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               physics: _kPageViewPhysics,
               onPageChanged: _onPageChanged,
               children: [
-                for (final id in _effectiveOrder)
+                for (final id in _pages)
                   KeyedSubtree(
                     key: ValueKey('nav-tab-$id'),
                     child: switch (id) {
@@ -217,6 +258,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                         label: '万灵',
                         icon: Icons.auto_awesome_outlined,
                         activeIcon: Icons.auto_awesome)
+                  else if (isConvNavId(id))
+                    NavConvSlot(tabId: id, tab: _toNavConvTab(id))
                   else
                     NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
               ],
@@ -396,6 +439,14 @@ class _MoreSheetPanel extends ConsumerWidget {
                       onTap: () => onPickItem(id),
                       onLongPress: () => onLongPressItem(id),
                     )
+                  else if (isConvNavId(id))
+                    _MoreSheetConvItem(
+                      key: ValueKey('more-$id'),
+                      convId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
+                    )
                   else
                     _MoreSheetItem(
                       key: ValueKey('more-$id'),
@@ -551,6 +602,79 @@ class _MoreSheetItem extends ConsumerWidget {
       ),
     );
     return box;
+  }
+}
+
+/// 抽屉网格项(会话):大圆角方形头像(未读角标,无在线点)+灰名字;激活绿描边。
+/// 点击由 HomePage onPickItem → _switchTab 路由跳聊天页。
+class _MoreSheetConvItem extends ConsumerWidget {
+  const _MoreSheetConvItem({
+    super.key,
+    required this.convId,
+    required this.active,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String convId;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    Conversation? conv;
+    for (final c in ref.watch(conversationProvider)) {
+      if (c.id == convId) {
+        conv = c;
+        break;
+      }
+    }
+    final name = conv?.displayName ?? convId;
+    final unread = conv?.unreadCount ?? 0;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: active
+                      ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                      : null,
+                ),
+                child: Avatar(
+                    name: name, url: conv?.displayAvatarUrl, size: 64, radius: 16),
+              ),
+              if (unread > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: UnreadBadge(count: unread),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            name.characters.length > 6
+                ? '${name.characters.take(6).join()}…'
+                : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
   }
 }
 
