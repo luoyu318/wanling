@@ -776,10 +776,14 @@ PreferredSizeWidget buildHomeAppBar({
         tooltip: '更多',
         onPressed: () async {
           final box = btnCtx.findRenderObject() as RenderBox?;
-          final pos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+          // 锚点 = 按钮右下角:菜单右上角贴按钮右缘,顶部在按钮下方 8px
+          final pos = box != null
+              ? box.localToGlobal(Offset(box.size.width, box.size.height))
+              : Offset.zero;
           final selected = await showAppActionMenu(
             btnCtx,
             pos,
+            align: AppMenuAlign.belowRight,
             items: const [
               ActionMenuItem(
                 value: 'scan',

@@ -2,7 +2,79 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/widgets/app_action_menu.dart';
 
+const _menuKey = ValueKey('app-action-menu');
+
+Future<void> _pumpWithButton(WidgetTester tester,
+    {required AppMenuAlign align}) async {
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      appBar: AppBar(actions: [
+        Builder(
+          builder: (btnCtx) => IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () async {
+              final box = btnCtx.findRenderObject() as RenderBox;
+              final pos =
+                  box.localToGlobal(Offset(box.size.width, box.size.height));
+              await showAppActionMenu(
+                btnCtx,
+                pos,
+                align: align,
+                items: const [
+                  ActionMenuItem(
+                      value: 'scan',
+                      label: '扫一扫',
+                      icon: Icons.qr_code_scanner),
+                ],
+              );
+            },
+          ),
+        ),
+      ]),
+      body: const SizedBox.expand(),
+    ),
+  ));
+}
+
 void main() {
+  testWidgets('belowRight:菜单右上角贴按钮右缘,顶部在按钮下方 8px', (tester) async {
+    await _pumpWithButton(tester, align: AppMenuAlign.belowRight);
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    final btnRect = tester.getRect(find.byType(IconButton));
+    final menuRect = tester.getRect(find.byKey(_menuKey));
+    expect((menuRect.right - btnRect.right).abs(), lessThanOrEqualTo(1.0));
+    expect(menuRect.top, closeTo(btnRect.bottom + 8, 1.0));
+  });
+
+  testWidgets('默认 topLeft:菜单左上角对齐传入点(长按语义不变)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (ctx) => Center(
+            child: ElevatedButton(
+              onPressed: () => showAppActionMenu(
+                ctx,
+                const Offset(100, 120),
+                items: const [
+                  ActionMenuItem(
+                      value: 'scan',
+                      label: '扫一扫',
+                      icon: Icons.qr_code_scanner),
+                ],
+              ),
+              child: const Text('OPEN'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('OPEN'));
+    await tester.pumpAndSettle();
+    final menuRect = tester.getRect(find.byKey(_menuKey));
+    expect(menuRect.topLeft, const Offset(100, 120));
+  });
+
   Future<String?> Function(WidgetTester tester) pumpMenu({
     required List<ActionMenuItem> items,
   }) {
