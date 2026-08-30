@@ -612,8 +612,10 @@ class _MoreSheetConvItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final conv = ref.watch(convByIdProvider(convId));
-    final name = conv?.displayName ?? convId;
+    // 溢出项序列元素是 'conv:<convId>'，先去前缀再查会话(与底栏可见槽/编辑页同语义)。
+    final cid = navConvIdOf(convId) ?? convId;
+    final conv = ref.watch(convByIdProvider(cid));
+    final name = conv?.displayName ?? cid;
     final unread = conv?.unreadCount ?? 0;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,

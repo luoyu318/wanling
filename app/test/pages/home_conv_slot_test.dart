@@ -208,6 +208,9 @@ void main() {
     // 5 项 → 可见 4 + 更多槽;弹抽屉
     await tester.tap(find.descendant(of: _navFinder, matching: find.text('更多')));
     await tester.pumpAndSettle();
+    // 抽屉 conv 项名字必须渲染 displayName 而非原始槽 id(回归:去前缀查会话)
+    expect(find.textContaining('conv:'), findsNothing);
+    expect(find.text('好友A'), findsWidgets);
     // 点击抽屉 conv 项(key: more-conv:<convId>) → 跳聊天页
     await tester.tap(find.byKey(const ValueKey('more-conv:c-friend')));
     await tester.pumpAndSettle();
