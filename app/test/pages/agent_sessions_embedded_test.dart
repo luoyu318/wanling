@@ -134,7 +134,7 @@ void main() {
     expect(container.read(navOrderProvider), isNot(contains('a1')));
   });
 
-  testWidgets('embedded: pin 状态持久化还原后图标为实心', (tester) async {
+  testWidgets('embedded: pin 状态持久化还原后图标为 dock_outlined', (tester) async {
     // 直接预置 pin 列表验证图标态(覆盖 provider 重读路径)
     SharedPreferences.setMockInitialValues({
       'token': 'fake-token',

@@ -152,7 +152,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     }
   }
 
-  /// AppBar pin 按钮:实心 = 已固定,点击取消固定并从底栏即时消失。
+  /// AppBar pin 按钮:实心 dock = 未固定,空心 dock_outlined = 已固定,点击取消固定并从底栏即时消失。
   /// 设计边界:仅 multiSession agent 显示 pin 按钮(单会话 agent 不进底栏导航);
   /// agent 数据未加载(null)时保持渲染现状不过滤,避免按钮闪现/消失抖动。
   Widget _buildPinAction(Agent? agent) {

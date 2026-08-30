@@ -125,7 +125,7 @@ void main() {
   });
 
   testWidgets('已置顶会话左滑显示「取消置顶」,点击调 unpin API', (tester) async {
-    await _harness(tester, convs: [_conv(pinned: true)]);
+    final container = await _harness(tester, convs: [_conv(pinned: true)]);
 
     await tester.drag(find.text('对话一'), const Offset(-300, 0));
     await tester.pumpAndSettle();
@@ -133,6 +133,7 @@ void main() {
 
     await tester.tap(find.text('取消置顶'));
     await tester.pumpAndSettle();
+    verify(() => container.read(apiProvider).unpinConversation('c1')).called(1);
   });
 
   testWidgets('点击删除会话弹确认框,确认后调 hideConversation 且行移除',
