@@ -12,12 +12,14 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:app/pages/messages_page.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
+import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../helpers/fake_ws.dart';
 
@@ -52,10 +54,14 @@ void main() {
     ws = FakeWS();
   });
 
-  ProviderContainer makeContainer() {
+  Future<ProviderContainer> makeContainer() async {
+    // build 新增 navOrderProvider watch,其依赖 sharedPrefsProvider,必须注入。
+    SharedPreferences.setMockInitialValues({'token': 'fake-token'});
     final container = ProviderContainer(overrides: [
       apiProvider.overrideWithValue(api),
       wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider
+          .overrideWithValue(await SharedPreferences.getInstance()),
     ]);
     addTearDown(container.dispose);
     return container;
@@ -103,7 +109,7 @@ void main() {
       when(() => api.getConversations()).thenAnswer((_) async => [conv]);
       when(() => api.getAgentSessions('a-oc')).thenAnswer((_) async => []);
 
-      final container = makeContainer();
+      final container = await makeContainer();
       await tester.pumpWidget(buildApp(container));
       // 等 conversationProvider.load() 完成把列表渲染出来。
       await tester.pumpAndSettle();
@@ -126,7 +132,7 @@ void main() {
       final conv = _mkConv(id: 'c-nm', type: 'dm_user_agent', agent: normalAgent);
       when(() => api.getConversations()).thenAnswer((_) async => [conv]);
 
-      final container = makeContainer();
+      final container = await makeContainer();
       await tester.pumpWidget(buildApp(container));
       await tester.pumpAndSettle();
 
