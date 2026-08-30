@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/agent.dart' hide AgentStatus;
 import 'package:wanling_core/theme/app_colors.dart';
@@ -19,6 +20,7 @@ import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/conv_action_menu.dart';
+import '../widgets/conv_slidable.dart';
 import 'package:wanling_core/widgets/chat/shimmer_text.dart';
 import '../widgets/chat/three_body_indicator.dart';
 import '../widgets/directory_menu_badge.dart';
@@ -159,7 +161,7 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     }
     final pinned = ref.watch(navOrderProvider).contains(widget.agentId);
     return IconButton(
-      icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
+      icon: Icon(pinned ? Icons.dock_outlined : Icons.dock),
       tooltip: pinned ? '从导航栏移除' : '固定到导航栏',
       onPressed: () {
         final notifier = ref.read(navOrderProvider.notifier);
@@ -470,28 +472,62 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     return RefreshIndicator(
       color: AppColors.accentGreen,
       onRefresh: notifier.load,
-      child: ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: filtered.length,
-        itemBuilder: (_, i) {
-          final c = filtered[i];
-          return _SessionTile(
-            conv: c,
-            currentUserId: currentUserId,
-            onTap: () => context.push(chatRoute(c.id, widget.agentId)),
-            onLongPressStart: (details) => showConvActionMenu(
-              context,
-              details.globalPosition,
-              // agent_session 会话结构性不在一级消息列表,固定槽无法渲染,
-              // 隐藏「固定到底栏」入口(置顶/删除仍可用)。
-              showNavAction: false,
-              isPinned: c.isPinned,
-              onPinToggle: () =>
-                  c.isPinned ? notifier.unpin(c.id) : notifier.pin(c.id),
-              onHide: () => notifier.hide(c.id),
-            ),
-          );
-        },
+      child: SlidableAutoCloseBehavior(
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: filtered.length,
+          itemBuilder: (_, i) {
+            final c = filtered[i];
+            return ConvSlidable(
+              slideKey: ValueKey('slide_session_${c.id}'),
+              actions: [
+                SlideActionSpec(
+                  icon: Icons.vertical_align_top,
+                  label: c.isPinned ? '取消置顶' : '置顶',
+                  color: const Color(0xFFFFA426),
+                  onTap: () async {
+                    try {
+                      final n = notifier;
+                      if (c.isPinned) {
+                        await n.unpin(c.id);
+                      } else {
+                        await n.pin(c.id);
+                      }
+                    } catch (_) {
+                      if (context.mounted) {
+                        showAppSnackBar(context, '操作失败,请重试',
+                            type: SnackBarType.error);
+                      }
+                    }
+                  },
+                ),
+                SlideActionSpec(
+                  icon: Icons.delete_outline,
+                  label: '删除会话',
+                  color: const Color(0xFFFA5151),
+                  onTap: () =>
+                      confirmHideConversation(context, () => notifier.hide(c.id)),
+                ),
+              ],
+              child: _SessionTile(
+                conv: c,
+                currentUserId: currentUserId,
+                onTap: () => context.push(chatRoute(c.id, widget.agentId)),
+                onLongPressStart: (details) => showConvActionMenu(
+                  context,
+                  details.globalPosition,
+                  // agent_session 会话结构性不在一级消息列表,固定槽无法渲染,
+                  // 隐藏「固定到底栏」入口(置顶/删除仍可用)。
+                  showNavAction: false,
+                  isPinned: c.isPinned,
+                  onPinToggle: () =>
+                      c.isPinned ? notifier.unpin(c.id) : notifier.pin(c.id),
+                  onHide: () => notifier.hide(c.id),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
