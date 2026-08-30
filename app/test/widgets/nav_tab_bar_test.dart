@@ -166,4 +166,36 @@ void main() {
     await tester.longPress(find.text('项目群'));
     expect(longPressed, 1);
   });
+
+  testWidgets('在线绿点只出现在 agent 槽,会话槽无绿点', (tester) async {
+    await tester.pumpWidget(_wrap(NavTabBar(
+      slots: const [
+        NavAgentSlot(
+            tabId: 'a1',
+            tab: NavAgentTab(id: 'a1', name: 'n-a1', online: true)),
+        NavConvSlot(
+            tabId: 'conv:c1', tab: NavConvTab(id: 'c1', name: '项目群')),
+      ],
+      currentIndex: -1,
+      showMore: false,
+      onSlotTap: (_) {},
+      onMoreTap: () {},
+      onSlotLongPress: (_) {},
+    )));
+    const dot = ValueKey('nav-online-dot');
+    // 渲染 widget(_AgentSlot/_ConvSlot)为私有类,改按槽位下标定位:
+    // Row 内每槽一个 Expanded,位 0 = agent 槽,位 1 = conv 槽。
+    final slotsFinder = find.descendant(
+        of: find.byType(NavTabBar), matching: find.byType(Expanded));
+    // agent 槽(位 0)范围内恰一个绿点
+    expect(
+      find.descendant(of: slotsFinder.at(0), matching: find.byKey(dot)),
+      findsOneWidget,
+    );
+    // 会话槽(位 1)范围内不允许出现绿点(会话无在线概念)
+    expect(
+      find.descendant(of: slotsFinder.at(1), matching: find.byKey(dot)),
+      findsNothing,
+    );
+  });
 }

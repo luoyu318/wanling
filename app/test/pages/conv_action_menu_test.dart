@@ -80,6 +80,12 @@ void main() {
     expect(find.text('固定到底栏'), findsOneWidget);
     expect(find.text('置顶'), findsOneWidget);
     expect(find.text('删除会话'), findsOneWidget);
+    // 顺序锁:三项 dy 严格递增(固定到底栏 < 置顶 < 删除会话)
+    final navDy = tester.getTopLeft(find.text('固定到底栏')).dy;
+    final pinDy = tester.getTopLeft(find.text('置顶')).dy;
+    final hideDy = tester.getTopLeft(find.text('删除会话')).dy;
+    expect(navDy, lessThan(pinDy));
+    expect(pinDy, lessThan(hideDy));
     await tester.tap(find.text('固定到底栏'));
     await tester.pumpAndSettle();
     expect(container.read(navOrderProvider), contains('conv:c-friend'));

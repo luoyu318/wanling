@@ -384,6 +384,8 @@ class _AgentAvatar extends StatelessWidget {
             right: -1,
             bottom: -1,
             child: Container(
+              // key 供负向断言:绿点只允许出现在 agent 槽(会话槽无在线概念)。
+              key: const ValueKey('nav-online-dot'),
               width: size * 0.3,
               height: size * 0.3,
               decoration: BoxDecoration(

@@ -177,6 +177,8 @@ void main() {
     expect(isConvNavId('a1'), isFalse);
     expect(isConvNavId(kNavTabMsg), isFalse);
     expect(navConvIdOf('conv:c1'), 'c1');
+    // 空 convId:返回空串而非 null(与「非会话槽返回 null」区分)。
+    expect(navConvIdOf('conv:'), '');
     expect(navConvIdOf('a1'), isNull);
     expect(navConvIdOf(kNavTabWanling), isNull);
   });
@@ -264,6 +266,16 @@ void main() {
       notifier.state = [conv('c1'), conv('c2')];
       expect(container.read(effectiveNavOrderProvider),
           [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling]);
+    });
+
+    test('空 convId 坏数据:conv: 不在会话列表 → effective 收缩不渲染', () async {
+      final prefs = await seedPrefs({
+        'nav_order_u1': [kNavTabMsg, 'conv:', kNavTabWanling],
+      });
+      final container = makeContainer(prefs);
+
+      expect(container.read(effectiveNavOrderProvider),
+          [kNavTabMsg, kNavTabWanling]);
     });
 
     test('agent 分支行为锁:agent 列表为空 → 收缩;agent 出现 → 保留', () async {

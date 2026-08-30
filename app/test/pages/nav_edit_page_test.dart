@@ -210,6 +210,8 @@ void main() {
     );
     expect(find.byKey(const ValueKey('grid-conv:c1')), findsOneWidget);
     expect(find.text('好友A'), findsOneWidget);
+    // 唯一性前提:harness 中 a1/a2 无 sessions 未读、固定项无角标,
+    // 故 '2' 只匹配 conv:c1 的未读角标。
     expect(find.text('2'), findsOneWidget); // 未读角标
     await tester.tap(find.byKey(const ValueKey('unpin-conv:c1')));
     await tester.pumpAndSettle();

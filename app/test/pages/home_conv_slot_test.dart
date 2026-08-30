@@ -214,6 +214,26 @@ void main() {
     expect(find.text('chat-c-friend?agent=null'), findsOneWidget);
   });
 
+  testWidgets('更多抽屉 conv 项:长按进编辑页', (tester) async {
+    // seed 同「更多抽屉 conv 项」用例:conv:c-friend 排第 5 位溢出进抽屉
+    await _harness(
+      tester,
+      navOrder: [
+        kNavTabMsg,
+        kNavTabWanling,
+        'conv:c-group',
+        'a9',
+        'conv:c-friend',
+      ],
+      convs: [_friendConv(), _groupConv()],
+    );
+    await tester.tap(find.descendant(of: _navFinder, matching: find.text('更多')));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey('more-conv:c-friend')));
+    await tester.pumpAndSettle();
+    expect(find.text('EDIT-PAGE'), findsOneWidget);
+  });
+
   testWidgets('会话被删除(hide)后底栏槽自动收缩', (tester) async {
     final container = await _harness(
       tester,
@@ -226,5 +246,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.descendant(of: _navFinder, matching: find.text('好友A')),
         findsNothing);
+    // 不降级渲染原始 id(fail-soft 兜底文案走 displayName ?? convId,
+    // 会话已不在列表时槽位整体收缩,不允许残留 'c-friend' 字样)。
+    expect(find.text('c-friend'), findsNothing);
   });
 }
