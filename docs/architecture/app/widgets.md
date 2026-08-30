@@ -150,7 +150,7 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## NavTabBar
 
-自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + 可选「更多」槽，槽位编号 0=消息 1=万灵 2..=agent(showMore 时 4=更多)。agent 槽为 `LongPressDraggable + DragTarget`(长按拖拽排序,`onAgentReorder` 传 agentTabs 列表内下标,由 HomePage 换算成 pinned 列表下标),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；agent 头像含在线绿点 + 未读角标 + 选中环。`showMore=true` 时构造断言 agentSlots ≤ 2(第 5 槽固定为更多)
+自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + `NavConvSlot` 会话槽(好友/群会话,无在线态) + 可选「更多」槽，槽位由 HomePage 从有效序列派生纯展示(无拖拽,点按 onSlotTap/更多 onMoreTap/长按 onSlotLongPress 进编辑页),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；头像含在线绿点(agent 槽) + 未读角标。构造断言可见槽 ≤(showMore?4:5) 个
 
 ## AccountSidebar
 
