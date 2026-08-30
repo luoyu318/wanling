@@ -22,7 +22,7 @@
 #   2. exec 调用该插件的 install.sh（透传所有参数），由它完成实际安装
 #
 # 各插件下载内容：
-#   hermes-plugin:   hermes-plugin/{adapter.py, __init__.py, plugin.yaml, install.sh}
+#   hermes-plugin:   hermes-plugin/{adapter.py, aggregate_card.py, __init__.py, plugin.yaml, install.sh}
 #   opencode-plugin: opencode-plugin/install.sh + 从主仓库 release 下载单文件二进制
 #                    (附件名 wanling-opencode-plugin-<os>-<arch>,由 --version 指定 tag)
 #
@@ -120,8 +120,8 @@ if [[ "$PLUGIN_NAME" == "opencode-plugin" ]]; then
         chmod +x "$TMP_DIR/$bin_name"
     fi
 else
-    # hermes 插件(默认):4 个文件
-    PLUGIN_FILES=(adapter.py __init__.py plugin.yaml install.sh)
+    # hermes 插件(默认):5 个文件(aggregate_card.py 为聚合卡迁移引入)
+    PLUGIN_FILES=(adapter.py aggregate_card.py __init__.py plugin.yaml install.sh)
     for f in "${PLUGIN_FILES[@]}"; do
         download "$RAW_BASE/hermes-plugin/$f" "$TMP_DIR/$f"
     done
