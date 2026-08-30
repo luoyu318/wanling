@@ -78,9 +78,8 @@ class NavConvSlot extends NavSlot {
 
 /// 底栏槽位名截断:>5 字符(字素簇计数)取前 5 + '…'。
 /// _AgentSlot/_ConvSlot/_MoreSlot 统一走此函数,禁止各写一份。
-String _navSlotLabel(String name) => name.characters.length > 5
-    ? '${name.characters.take(5).join()}…'
-    : name;
+String _navSlotLabel(String name) =>
+    name.characters.length > 5 ? '${name.characters.take(5).join()}…' : name;
 
 /// 自绘底部导航:槽位由上层按导航序列派生(任意排序),组件纯展示。
 ///
@@ -96,7 +95,7 @@ class NavTabBar extends StatelessWidget {
     required this.onSlotTap,
     required this.onMoreTap,
     required this.onSlotLongPress,
-  })  : assert(slots.length <= (showMore ? 4 : 5), '可见槽(消息/万灵/agent)最多 4/5 个');
+  }) : assert(slots.length <= (showMore ? 4 : 5), '可见槽(消息/万灵/agent)最多 4/5 个');
 
   /// 可见槽位内容(序列前缀,固定项/agent 混合,顺序即渲染顺序)
   final List<NavSlot> slots;
@@ -111,44 +110,49 @@ class NavTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        color: const Color(0xFFF7F7F7),
-        height: 56,
-        child: Row(
-          children: [
-            for (var i = 0; i < slots.length; i++)
-              switch (slots[i]) {
-                NavIconSlot s => _IconSlot(
+    // 色块 Container 必须包在 SafeArea 外层:SafeArea 在外会把底部手势条 inset
+    // 让出,56 高的色块只画在 inset 上方,inset 区域露 Scaffold 白底成缝隙。
+    // 色块在外则底色延伸填满手势条区域(对齐旧 BottomNavigationBar 行为)。
+    return Container(
+      color: const Color(0xFFF7F7F7),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              for (var i = 0; i < slots.length; i++)
+                switch (slots[i]) {
+                  NavIconSlot s => _IconSlot(
                     slot: i,
                     data: s,
                     selected: currentIndex == i,
                     onTap: onSlotTap,
                     onLongPress: onSlotLongPress,
                   ),
-                NavAgentSlot s => _AgentSlot(
+                  NavAgentSlot s => _AgentSlot(
                     slot: i,
                     tab: s.tab,
                     selected: currentIndex == i,
                     onTap: onSlotTap,
                     onLongPress: onSlotLongPress,
                   ),
-                NavConvSlot s => _ConvSlot(
+                  NavConvSlot s => _ConvSlot(
                     slot: i,
                     tab: s.tab,
                     selected: currentIndex == i,
                     onTap: onSlotTap,
                     onLongPress: onSlotLongPress,
                   ),
-              },
-            if (showMore)
-              _MoreSlot(
-                tab: moreTab,
-                selected: currentIndex == slots.length,
-                onTap: onMoreTap,
-              ),
-          ],
+                },
+              if (showMore)
+                _MoreSlot(
+                  tab: moreTab,
+                  selected: currentIndex == slots.length,
+                  onTap: onMoreTap,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -182,17 +186,22 @@ class _IconSlot extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _Badge(
-                count: data.badge,
-                child: Icon(
-                    selected ? data.activeIcon : data.icon,
-                    size: 24,
-                    color: color)),
+              count: data.badge,
+              child: Icon(
+                selected ? data.activeIcon : data.icon,
+                size: 24,
+                color: color,
+              ),
+            ),
             const SizedBox(height: 2),
-            Text(data.label,
-                style: TextStyle(
-                    fontSize: 10,
-                    color: color,
-                    fontWeight: selected ? FontWeight.w600 : null)),
+            Text(
+              data.label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: selected ? FontWeight.w600 : null,
+              ),
+            ),
           ],
         ),
       ),
@@ -236,11 +245,14 @@ class _AgentSlot extends StatelessWidget {
               size: 24,
             ),
             const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 10,
-                    color: color,
-                    fontWeight: selected ? FontWeight.w600 : null)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: selected ? FontWeight.w600 : null,
+              ),
+            ),
           ],
         ),
       ),
@@ -276,13 +288,20 @@ class _ConvSlot extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _AgentAvatar(
-                name: tab.name, avatarUrl: tab.avatarUrl, unread: tab.unread, size: 24),
+              name: tab.name,
+              avatarUrl: tab.avatarUrl,
+              unread: tab.unread,
+              size: 24,
+            ),
             const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 10,
-                    color: color,
-                    fontWeight: selected ? FontWeight.w600 : null)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: selected ? FontWeight.w600 : null,
+              ),
+            ),
           ],
         ),
       ),
@@ -296,7 +315,11 @@ class _MoreSlot extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
-  const _MoreSlot({required this.tab, required this.selected, required this.onTap});
+  const _MoreSlot({
+    required this.tab,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -314,15 +337,17 @@ class _MoreSlot extends StatelessWidget {
                     avatarUrl: active.avatarUrl,
                     online: active.online,
                     unread: active.unread,
-                    size: 24)
+                    size: 24,
+                  )
                 : Icon(Icons.apps, size: 24, color: color),
             const SizedBox(height: 2),
             Text(
               active != null ? _navSlotLabel(active.name) : '更多',
               style: TextStyle(
-                  fontSize: 10,
-                  color: color,
-                  fontWeight: selected ? FontWeight.w600 : null),
+                fontSize: 10,
+                color: color,
+                fontWeight: selected ? FontWeight.w600 : null,
+              ),
             ),
           ],
         ),
@@ -356,12 +381,7 @@ class _AgentAvatar extends StatelessWidget {
         // 有头像走 Avatar(网络图,真实 app 在 ProviderScope 内);
         // 无头像走哈希色首字母(纯本地渲染,widget 测试无需 riverpod)
         if (avatarUrl != null)
-          Avatar(
-            name: name,
-            url: avatarUrl,
-            size: size,
-            radius: size * 0.28,
-          )
+          Avatar(name: name, url: avatarUrl, size: size, radius: size * 0.28)
         else
           Container(
             width: size,
@@ -374,9 +394,10 @@ class _AgentAvatar extends StatelessWidget {
             child: Text(
               name.isEmpty ? '?' : name.characters.first.toUpperCase(),
               style: TextStyle(
-                  fontSize: size * 0.5,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600),
+                fontSize: size * 0.5,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         if (online)
@@ -429,7 +450,10 @@ class _Badge extends StatelessWidget {
               count > 99 ? '99+' : '$count',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  fontSize: 9, color: Colors.white, height: 1.2),
+                fontSize: 9,
+                color: Colors.white,
+                height: 1.2,
+              ),
             ),
           ),
         ),

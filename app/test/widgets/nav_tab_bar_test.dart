@@ -26,6 +26,35 @@ Widget _wrap(Widget child) => MaterialApp(
     );
 
 void main() {
+  testWidgets('底部手势条 inset 区域被底栏色填满(无缝隙)', (tester) async {
+    // 模拟手势导航设备:bottom inset 24。色块 Container 必须包在 SafeArea 外层,
+    // 让 #F7F7F7 延伸填满 inset 区域;若 SafeArea 在外层,inset 区域露 Scaffold 白底(回归)。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(padding: EdgeInsets.only(bottom: 24)),
+          child: Scaffold(
+            bottomNavigationBar: NavTabBar(
+              slots: _slots(),
+              currentIndex: 0,
+              showMore: false,
+              onSlotTap: (_) {},
+              onMoreTap: () {},
+              onSlotLongPress: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    // 底栏根色块:总高 = 内容 56 + inset 24 = 80,颜色 #F7F7F7
+    final container = tester.widget<Container>(
+      find.byWidgetPredicate(
+        (w) => w is Container && w.color == const Color(0xFFF7F7F7),
+      ),
+    );
+    expect(tester.getSize(find.byWidget(container)).height, 80);
+  });
+
   testWidgets('无 agent:只渲染消息/万灵两槽', (tester) async {
     await tester.pumpWidget(_wrap(NavTabBar(
       slots: _slots(),
