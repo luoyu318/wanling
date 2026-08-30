@@ -134,4 +134,36 @@ void main() {
     await tester.longPress(find.text('n-a1'));
     expect(longPressedSlot, 2);
   });
+
+  testWidgets('会话槽:渲染名字/未读角标,点按与长按回调槽位号', (tester) async {
+    var tapped = -1;
+    var longPressed = -1;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        bottomNavigationBar: NavTabBar(
+          slots: const [
+            NavIconSlot(
+                tabId: 'msg',
+                label: '消息',
+                icon: Icons.chat_bubble_outline,
+                activeIcon: Icons.chat_bubble),
+            NavConvSlot(
+                tabId: 'conv:c1',
+                tab: NavConvTab(id: 'c1', name: '项目群', unread: 5)),
+          ],
+          currentIndex: -1,
+          showMore: false,
+          onSlotTap: (i) => tapped = i,
+          onMoreTap: () {},
+          onSlotLongPress: (i) => longPressed = i,
+        ),
+      ),
+    ));
+    expect(find.text('项目群'), findsOneWidget);
+    expect(find.text('5'), findsOneWidget); // 未读角标
+    await tester.tap(find.text('项目群'));
+    expect(tapped, 1);
+    await tester.longPress(find.text('项目群'));
+    expect(longPressed, 1);
+  });
 }

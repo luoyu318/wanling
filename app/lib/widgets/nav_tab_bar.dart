@@ -22,6 +22,22 @@ class NavAgentTab {
   });
 }
 
+/// 会话槽位数据(与 Conversation 模型解耦,widget 测试无需构造完整模型)。
+/// 无在线态(会话没有在线概念),仅名字/头像/未读。
+class NavConvTab {
+  final String id;
+  final String name;
+  final String? avatarUrl;
+  final int unread;
+
+  const NavConvTab({
+    required this.id,
+    required this.name,
+    this.avatarUrl,
+    this.unread = 0,
+  });
+}
+
 /// 底栏槽位描述:由 HomePage 从有效导航序列派生,组件保持纯展示(无拖拽)。
 sealed class NavSlot {
   const NavSlot({required this.tabId});
@@ -51,6 +67,13 @@ class NavAgentSlot extends NavSlot {
   const NavAgentSlot({required super.tabId, required this.tab});
 
   final NavAgentTab tab;
+}
+
+/// 会话头像槽(好友/群/普通 agent 单聊/单 session):点按由上层路由跳聊天页。
+class NavConvSlot extends NavSlot {
+  const NavConvSlot({required super.tabId, required this.tab});
+
+  final NavConvTab tab;
 }
 
 /// 自绘底部导航:槽位由上层按导航序列派生(任意排序),组件纯展示。
@@ -99,6 +122,13 @@ class NavTabBar extends StatelessWidget {
                     onLongPress: onSlotLongPress,
                   ),
                 NavAgentSlot s => _AgentSlot(
+                    slot: i,
+                    tab: s.tab,
+                    selected: currentIndex == i,
+                    onTap: onSlotTap,
+                    onLongPress: onSlotLongPress,
+                  ),
+                NavConvSlot s => _ConvSlot(
                     slot: i,
                     tab: s.tab,
                     selected: currentIndex == i,
@@ -194,7 +224,57 @@ class _AgentSlot extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _AgentAvatar(tab: tab, size: 24),
+            _AgentAvatar(
+              name: tab.name,
+              avatarUrl: tab.avatarUrl,
+              online: tab.online,
+              unread: tab.unread,
+              size: 24,
+            ),
+            const SizedBox(height: 2),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: color,
+                    fontWeight: selected ? FontWeight.w600 : null)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 会话头像槽:点按由上层路由跳聊天页,长按进编辑页。无在线态。
+class _ConvSlot extends StatelessWidget {
+  final int slot;
+  final NavConvTab tab;
+  final bool selected;
+  final ValueChanged<int> onTap;
+  final ValueChanged<int> onLongPress;
+
+  const _ConvSlot({
+    required this.slot,
+    required this.tab,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
+    final label = tab.name.characters.length > 5
+        ? '${tab.name.characters.take(5).join()}…'
+        : tab.name;
+    return Expanded(
+      child: InkWell(
+        onTap: () => onTap(slot),
+        onLongPress: () => onLongPress(slot),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _AgentAvatar(
+                name: tab.name, avatarUrl: tab.avatarUrl, unread: tab.unread, size: 24),
             const SizedBox(height: 2),
             Text(label,
                 style: TextStyle(
@@ -227,7 +307,12 @@ class _MoreSlot extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             active != null
-                ? _AgentAvatar(tab: active, size: 24)
+                ? _AgentAvatar(
+                    name: active.name,
+                    avatarUrl: active.avatarUrl,
+                    online: active.online,
+                    unread: active.unread,
+                    size: 24)
                 : Icon(Icons.apps, size: 24, color: color),
             const SizedBox(height: 2),
             Text(
@@ -251,10 +336,19 @@ class _MoreSlot extends StatelessWidget {
 /// agent 头像:大圆角方形(有头像用图片,否则哈希色首字母) + 在线小绿点 + 未读角标。
 /// 选中态不用外圈,由槽位文字颜色/字重表达(对齐消息/万灵槽的选中语言)。
 class _AgentAvatar extends StatelessWidget {
-  final NavAgentTab tab;
+  final String name;
+  final String? avatarUrl;
+  final bool online;
+  final int unread;
   final double size;
 
-  const _AgentAvatar({required this.tab, required this.size});
+  const _AgentAvatar({
+    required this.name,
+    this.avatarUrl,
+    this.online = false,
+    this.unread = 0,
+    required this.size,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -263,10 +357,10 @@ class _AgentAvatar extends StatelessWidget {
       children: [
         // 有头像走 Avatar(网络图,真实 app 在 ProviderScope 内);
         // 无头像走哈希色首字母(纯本地渲染,widget 测试无需 riverpod)
-        if (tab.avatarUrl != null)
+        if (avatarUrl != null)
           Avatar(
-            name: tab.name,
-            url: tab.avatarUrl,
+            name: name,
+            url: avatarUrl,
             size: size,
             radius: size * 0.28,
           )
@@ -275,19 +369,19 @@ class _AgentAvatar extends StatelessWidget {
             width: size,
             height: size,
             decoration: BoxDecoration(
-              color: Avatar.colorFor(tab.name),
+              color: Avatar.colorFor(name),
               borderRadius: BorderRadius.circular(size * 0.28),
             ),
             alignment: Alignment.center,
             child: Text(
-              tab.name.isEmpty ? '?' : tab.name.characters.first.toUpperCase(),
+              name.isEmpty ? '?' : name.characters.first.toUpperCase(),
               style: TextStyle(
                   fontSize: size * 0.5,
                   color: Colors.white,
                   fontWeight: FontWeight.w600),
             ),
           ),
-        if (tab.online)
+        if (online)
           Positioned(
             right: -1,
             bottom: -1,
@@ -303,7 +397,7 @@ class _AgentAvatar extends StatelessWidget {
           ),
       ],
     );
-    return _Badge(count: tab.unread, child: inner);
+    return _Badge(count: unread, child: inner);
   }
 }
 
