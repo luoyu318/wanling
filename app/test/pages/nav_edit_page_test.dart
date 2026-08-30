@@ -92,7 +92,7 @@ void main() {
         ['a1', kNavTabMsg, kNavTabWanling, 'a2', 'a3', 'a4']);
   });
 
-  testWidgets('跨区拖拽:网格 agent 拖进白条,可见性互换', (tester) async {
+  testWidgets('跨区拖拽:网格 agent 拖到白条槽上,可见性互换并扩容', (tester) async {
     final container = await _harness(tester);
     final a3Center = tester.getCenter(find.text('n-a3'));
     final a1Center = tester.getCenter(find.text('n-a1'));
@@ -102,9 +102,32 @@ void main() {
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
-    // a3 插到序列位 2,其余顺移:a2 掉溢出区
+    // a3 插到序列位 2,其余顺移:a2 掉溢出区;可见数上限 4,set(5) 被 clamp
     expect(container.read(navOrderProvider),
         [kNavTabMsg, kNavTabWanling, 'a3', 'a1', 'a2', 'a4']);
+    expect(container.read(navVisibleCountProvider), 4);
+  });
+
+  testWidgets('池项拖到白条空白处放手:按落点 x 计算插入槽位', (tester) async {
+    final container = await _harness(tester);
+    // 白条槽宽:barRect 宽/5,落点选第 4 槽(a2,序列位 3)中部
+    // → floor 后 idx=3 → a3 插到 a2 前
+    final a3Center = tester.getCenter(find.text('n-a3'));
+    final barBox = tester.getRect(find.byKey(const ValueKey('nav-edit-bar')));
+    final dropX = barBox.left + 8 + (barBox.width - 16) / 5 * 3.2;
+    final gesture = await tester.startGesture(a3Center);
+    await tester.pump(const Duration(seconds: 1));
+    // 用绝对坐标 moveTo:先水平移到目标 x,再垂直落到白条中线
+    await gesture.moveTo(Offset(dropX, a3Center.dy));
+    await tester.pump();
+    await gesture.moveTo(Offset(dropX, barBox.center.dy));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(container.read(navOrderProvider),
+        [kNavTabMsg, kNavTabWanling, 'a1', 'a3', 'a2', 'a4']);
+    // 可见数已在上限 4:set(5) 被 clamp,新项挤进白条末位原项掉池(交换语义)
+    expect(container.read(navVisibleCountProvider), 4);
   });
 
   testWidgets('agent 前置序列:白条=前 4 agent,消息/万灵进网格池仍可达', (tester) async {
@@ -121,7 +144,7 @@ void main() {
     expect(find.byKey(const ValueKey('unpin-$kNavTabWanling')), findsNothing);
   });
 
-  testWidgets('固定项拖入网格池:移到溢出区,可从池拖回白条', (tester) async {
+  testWidgets('白条项拖到池区放手:收进更多(插入池首,可见数-1)', (tester) async {
     final container = await _harness(tester);
     final msgCenter = tester.getCenter(find.text('消息'));
     final a3Center = tester.getCenter(find.text('n-a3'));
@@ -131,9 +154,11 @@ void main() {
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
-    // move 语义:msg 插到 a3 当前序列位(4),a1/a2/a3 顺移前移
+    // 池格不再接受白条来源项 → 拖出白条放手 = 收进更多:
+    // msg move 到池首(原 visible-1=3),可见数 4→3
     expect(container.read(navOrderProvider),
-        [kNavTabWanling, 'a1', 'a2', 'a3', kNavTabMsg, 'a4']);
+        [kNavTabWanling, 'a1', 'a2', kNavTabMsg, 'a3', 'a4']);
+    expect(container.read(navVisibleCountProvider), 3);
   });
 
   testWidgets('减号 unpin:列表收缩且白条刷新', (tester) async {

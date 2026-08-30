@@ -11,25 +11,33 @@ import '../widgets/unread_badge.dart';
 
 /// 底栏编辑页:上半溢出项网格池 + 底部白条主排序区。
 ///
-/// - 白条 = 底栏实时预览(序列前缀,固定项/agent 混合),任意槽(除「更多」格)
-///   可长按拖拽换位;固定项无减号(不可移除)
-/// - 网格 = 溢出项池(含消息/万灵),agent 右上减号 unpin;与白条跨区拖拽 =
-///   可见性互换(拖入「更多」的固定项仍可点选可达)
+/// - 白条 = 底栏实时预览(可见项),整条可拖拽:换位 / 拖出白条放手=收进更多
+///   (最少保留 1);固定项无减号(不可移除)
+/// - 网格 = 溢出项池(含消息/万灵),agent 右上减号 unpin;池项拖到白条任意
+///   位置放手 = 按落点计算插入槽位并扩容可见数
 /// - 拖拽统一 move 语义(reorder:插入目标位其余顺移),实时持久化,「完成」仅 pop
-class NavEditPage extends ConsumerWidget {
+class NavEditPage extends ConsumerStatefulWidget {
   const NavEditPage({super.key});
+
+  @override
+  ConsumerState<NavEditPage> createState() => _NavEditPageState();
 
   // 白条方块/网格方块尺寸(对齐主流 IM 参照:白条 48、网格 64 圆角 16)
   static const _barBox = 48.0;
   static const _gridBox = 64.0;
   static const _blue = Color(0xFF3370FF);
+}
+
+class _NavEditPageState extends ConsumerState<NavEditPage> {
+  /// 白条整体 GlobalKey:拖拽放手时用落点全局坐标反算插入槽位。
+  final GlobalKey _barKey = GlobalKey();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final order = ref.watch(effectiveNavOrderProvider);
     final storedVisible = ref.watch(navVisibleCountProvider);
     // 白条 = 可见项(底栏实时预览);网格池 = 溢出项(含消息/万灵)。
-    // 可见数由用户拖拽增减(拖项进「更多」格减,池项拖回白条加),最少保留 1。
+    // 可见数由用户拖拽增减(白条项拖出白条减,池项拖回白条加),最少保留 1。
     final visibleCount = resolveVisibleCount(storedVisible, order.length);
     final showMore = order.length > visibleCount;
     final barIds = order.take(visibleCount).toList();
@@ -52,7 +60,7 @@ class NavEditPage extends ConsumerWidget {
             padding: const EdgeInsets.only(right: 12),
             child: TextButton(
               style: TextButton.styleFrom(
-                backgroundColor: _blue,
+                backgroundColor: NavEditPage._blue,
                 foregroundColor: Colors.white,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
@@ -79,12 +87,21 @@ class NavEditPage extends ConsumerWidget {
                       childAspectRatio: 0.72,
                       children: [
                         for (final id in overflowIds)
-                          _GridPoolItem(key: ValueKey('grid-$id'), tabId: id),
+                          _GridPoolItem(
+                            key: ValueKey('grid-$id'),
+                            tabId: id,
+                            barKey: _barKey,
+                            visibleCount: visibleCount,
+                          ),
                       ],
                     ),
             ),
             _BottomBarPreview(
-                barIds: barIds, showMore: showMore, visibleCount: visibleCount),
+              barIds: barIds,
+              showMore: showMore,
+              visibleCount: visibleCount,
+              barKey: _barKey,
+            ),
           ],
         ),
       ),
@@ -210,12 +227,19 @@ Widget _dragFeedback(WidgetRef ref, String tabId, double box) {
   );
 }
 
-/// 上半网格池单格:溢出项(含固定项),可拖(进白条变可见)、可收(白条项落入);
+/// 上半网格池单格:溢出项(含固定项),可拖(拖到白条任意位置放手=按落点插入);
 /// agent 带减号 unpin,固定项无减号(不可移除,可从池拖回白条恢复)。
 class _GridPoolItem extends ConsumerWidget {
-  const _GridPoolItem({super.key, required this.tabId});
+  const _GridPoolItem({
+    super.key,
+    required this.tabId,
+    required this.barKey,
+    required this.visibleCount,
+  });
 
   final String tabId;
+  final GlobalKey barKey;
+  final int visibleCount;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -229,8 +253,25 @@ class _GridPoolItem extends ConsumerWidget {
       data: tabId,
       delay: const Duration(milliseconds: 120),
       feedback: _dragFeedback(ref, tabId, NavEditPage._gridBox),
+      // 拖拽结束:未落在任何 DragTarget 且放手点在白条内 → 按落点 x 计算插入槽位。
+      onDragEnd: (details) {
+        if (details.wasAccepted) return;
+        final slotWidth = _barSlotWidth(barKey, visibleCount);
+        if (slotWidth == null) return;
+        if (!_barRectContains(barKey, details.offset)) return;
+        final barLeft = _barLeft(barKey)!;
+        final idx =
+            ((details.offset.dx - barLeft) / slotWidth).floor().clamp(0, visibleCount);
+        ref.read(navOrderProvider.notifier).reorder(tabId, idx);
+        ref.read(navVisibleCountProvider.notifier).set(visibleCount + 1);
+      },
       child: DragTarget<String>(
-        onWillAcceptWithDetails: (d) => d.data != tabId,
+        // 仅接受池内来源项(池内换位);白条项有专门的「拖出白条=收进更多」语义。
+        onWillAcceptWithDetails: (d) {
+          final order = ref.read(effectiveNavOrderProvider);
+          final from = order.indexOf(d.data);
+          return d.data != tabId && from >= visibleCount;
+        },
         onAcceptWithDetails: (d) =>
             ref.read(navOrderProvider.notifier).reorder(d.data, seqIdx),
         builder: (context, candidate, _) => _SlotBox(
@@ -286,41 +327,56 @@ class _BottomBarPreview extends ConsumerWidget {
     required this.barIds,
     required this.showMore,
     required this.visibleCount,
+    required this.barKey,
   });
 
   final List<String> barIds;
   final bool showMore;
   final int visibleCount;
+  final GlobalKey barKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          for (final id in barIds)
-            Expanded(
-              child: _BarSlot(tabId: id, visibleCount: visibleCount),
-            ),
-          if (showMore) _MoreDropSlot(visibleCount: visibleCount),
-        ],
+    return KeyedSubtree(
+      key: const ValueKey('nav-edit-bar'),
+      child: Container(
+        key: barKey,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            for (final id in barIds)
+              Expanded(
+                child: _BarSlot(
+                  tabId: id,
+                  visibleCount: visibleCount,
+                  barKey: barKey,
+                ),
+              ),
+            if (showMore) _MoreDropSlot(visibleCount: visibleCount),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// 白条槽:可拖可落。落点 = 该槽在序列中的位置(reorder move 语义);
-/// 池项拖入 = 进可见区并扩容可见数(≤4)。
+/// 白条槽:可拖可落(落点=该槽序列位,move 语义换位)。
+/// 拖出白条(落点不在白条区域)放手 = 收进更多(最少保留 1)。
 class _BarSlot extends ConsumerWidget {
-  const _BarSlot({required this.tabId, required this.visibleCount});
+  const _BarSlot({
+    required this.tabId,
+    required this.visibleCount,
+    required this.barKey,
+  });
 
   final String tabId;
   final int visibleCount;
+  final GlobalKey barKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -333,12 +389,19 @@ class _BarSlot extends ConsumerWidget {
       data: tabId,
       delay: const Duration(milliseconds: 120),
       feedback: _dragFeedback(ref, tabId, NavEditPage._barBox),
+      // 拖拽结束:未落到任何 DragTarget(白条槽/更多格)且放手点在白条外
+      // → 视为收进更多。落点在白条内但未命中(如拖回原位被自拒)= 无操作。
+      onDragEnd: (details) {
+        if (details.wasAccepted) return;
+        if (visibleCount <= 1) return; // 底栏最少保留 1 个导航元素
+        if (_barRectContains(barKey, details.offset)) return;
+        ref.read(navOrderProvider.notifier).reorder(tabId, visibleCount - 1);
+        ref.read(navVisibleCountProvider.notifier).set(visibleCount - 1);
+      },
       child: DragTarget<String>(
         onWillAcceptWithDetails: (d) => d.data != tabId,
         onAcceptWithDetails: (d) {
-          ref
-              .read(navOrderProvider.notifier)
-              .reorder(d.data, seqIdx);
+          ref.read(navOrderProvider.notifier).reorder(d.data, seqIdx);
           // 来源在池(可见区之外)则本次落入扩容可见数。
           final from = order.indexOf(d.data);
           if (from >= visibleCount) {
@@ -356,4 +419,26 @@ class _BarSlot extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// 白条 GlobalKey 工具:放手点是否落在白条区域内 / 单槽宽(扣除水平 padding)。
+bool _barRectContains(GlobalKey key, Offset globalPoint) {
+  final box = key.currentContext?.findRenderObject() as RenderBox?;
+  if (box == null || !box.attached) return false;
+  final topLeft = box.localToGlobal(Offset.zero);
+  return (topLeft & box.size).contains(globalPoint);
+}
+
+double? _barLeft(GlobalKey key) {
+  final box = key.currentContext?.findRenderObject() as RenderBox?;
+  if (box == null || !box.attached) return null;
+  return box.localToGlobal(Offset.zero).dx;
+}
+
+/// 单槽宽 = (白条宽 - 水平 padding)/槽位数;槽位数 = 可见项 + (更多格)。
+double? _barSlotWidth(GlobalKey key, int visibleCount) {
+  final box = key.currentContext?.findRenderObject() as RenderBox?;
+  if (box == null || !box.attached) return null;
+  final slots = visibleCount + 1; // +「更多」格(即使 showMore=false 多算也 clamp 兜底)
+  return (box.size.width - 16) / slots;
 }
