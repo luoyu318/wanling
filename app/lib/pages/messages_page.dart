@@ -12,9 +12,12 @@ import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import '../router_helpers.dart';
 import 'package:wanling_core/utils/emoji_span.dart';
+import 'package:wanling_core/utils/snackbar.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/conv_action_menu.dart';
+import '../widgets/conv_slidable.dart';
 
 /// 消息列表页（IM 风格）。
 ///
@@ -49,6 +52,8 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
     super.build(context); // AutomaticKeepAliveClientMixin 必须调
     final list = ref.watch(conversationProvider);
     final currentUserId = ref.watch(authProvider).user?.id ?? '';
+    // 左滑「固定到底栏」按钮文案由底栏固定序列驱动,pin/unpin 后即时刷新。
+    final navIds = ref.watch(navOrderProvider);
 
     // AppBar 移到 HomePage 共享管理，这里直接返回 body 内容。
     // 背景白底衬会话 tile。
@@ -61,7 +66,8 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
             ? _EmptyState(
                 onRetry: () => ref.read(conversationProvider.notifier).load(),
               )
-            : ListView.builder(
+            : SlidableAutoCloseBehavior(
+                child: ListView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
                 itemCount: list.length,
                 itemBuilder: (_, i) {
@@ -71,44 +77,102 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                   final navId = (c.agent?.isMultiSession ?? false)
                       ? c.agent!.id
                       : navConvRef(c.id);
-                  return _ConvTile(
-                    conv: c,
-                    key: ValueKey('conv_${c.id}'),
-                    currentUserId: currentUserId,
-                    // 一级列表按 agent.type 路由(spec §7.1):
-                    //   多 session 开发型 agent(opencode 类)→ 二级 session 群列表页
-                    //   对话型 agent / user-user → 单聊页
-                    // 老服务器 ag.type 缺字段时 fallback '',走单聊分支(向后兼容)。
-                    onTap: () {
-                      // server 按 type 注册表注入 multi_session;null(老
-                      // server)fallback type=='opencode'(AgentSummary 内)。
-                      if (c.agent?.isMultiSession ?? false) {
-                        context.push(sessionsRoute(c.agent!.id));
-                      } else {
-                        context.push(chatRoute(c.id, c.agent?.id));
-                      }
-                    },
-                    onLongPressStart: (details) => showConvActionMenu(
-                      context,
-                      details.globalPosition,
-                      isPinned: c.isPinned,
-                      isNavPinned: ref.read(navOrderProvider).contains(navId),
-                      onPinToggle: () => c.isPinned
-                          ? ref.read(conversationProvider.notifier).unpin(c.id)
-                          : ref.read(conversationProvider.notifier).pin(c.id),
-                      // NavOrderNotifier.pin/unpin 是同步 void,async 包装
-                      // 适配 onNavPinToggle 的 Future<void> Function() 签名。
-                      onNavPinToggle: () async => ref
-                                  .read(navOrderProvider)
-                                  .contains(navId)
-                              ? ref.read(navOrderProvider.notifier).unpin(navId)
-                              : ref.read(navOrderProvider.notifier).pin(navId),
-                      onHide: () =>
-                          ref.read(conversationProvider.notifier).hide(c.id),
+                  final navPinned = navIds.contains(navId);
+                  return ConvSlidable(
+                    slideKey: ValueKey('slide_conv_${c.id}'),
+                    actions: [
+                      SlideActionSpec(
+                        icon: navPinned ? Icons.dock_outlined : Icons.dock,
+                        label: navPinned ? '从底栏移除' : '固定到底栏',
+                        color: const Color(0xFF3C7CF7),
+                        onTap: () async {
+                          try {
+                            final n = ref.read(navOrderProvider.notifier);
+                            if (navPinned) {
+                              n.unpin(navId);
+                            } else {
+                              n.pin(navId);
+                            }
+                          } catch (_) {
+                            if (context.mounted) {
+                              showAppSnackBar(context, '操作失败,请重试',
+                                  type: SnackBarType.error);
+                            }
+                          }
+                        },
+                      ),
+                      SlideActionSpec(
+                        icon: Icons.vertical_align_top,
+                        label: c.isPinned ? '取消置顶' : '置顶',
+                        color: const Color(0xFFFFA426),
+                        onTap: () async {
+                          try {
+                            final n = ref.read(conversationProvider.notifier);
+                            if (c.isPinned) {
+                              await n.unpin(c.id);
+                            } else {
+                              await n.pin(c.id);
+                            }
+                          } catch (_) {
+                            if (context.mounted) {
+                              showAppSnackBar(context, '操作失败,请重试',
+                                  type: SnackBarType.error);
+                            }
+                          }
+                        },
+                      ),
+                      SlideActionSpec(
+                        icon: Icons.delete_outline,
+                        label: '删除会话',
+                        color: const Color(0xFFFA5151),
+                        onTap: () => confirmHideConversation(
+                          context,
+                          () =>
+                              ref.read(conversationProvider.notifier).hide(c.id),
+                        ),
+                      ),
+                    ],
+                    child: _ConvTile(
+                      conv: c,
+                      key: ValueKey('conv_${c.id}'),
+                      currentUserId: currentUserId,
+                      // 一级列表按 agent.type 路由(spec §7.1):
+                      //   多 session 开发型 agent(opencode 类)→ 二级 session 群列表页
+                      //   对话型 agent / user-user → 单聊页
+                      // 老服务器 ag.type 缺字段时 fallback '',走单聊分支(向后兼容)。
+                      onTap: () {
+                        // server 按 type 注册表注入 multi_session;null(老
+                        // server)fallback type=='opencode'(AgentSummary 内)。
+                        if (c.agent?.isMultiSession ?? false) {
+                          context.push(sessionsRoute(c.agent!.id));
+                        } else {
+                          context.push(chatRoute(c.id, c.agent?.id));
+                        }
+                      },
+                      onLongPressStart: (details) => showConvActionMenu(
+                        context,
+                        details.globalPosition,
+                        isPinned: c.isPinned,
+                        isNavPinned: navPinned,
+                        onPinToggle: () => c.isPinned
+                            ? ref
+                                .read(conversationProvider.notifier)
+                                .unpin(c.id)
+                            : ref
+                                .read(conversationProvider.notifier)
+                                .pin(c.id),
+                        // NavOrderNotifier.pin/unpin 是同步 void,async 包装
+                        // 适配 onNavPinToggle 的 Future<void> Function() 签名。
+                        onNavPinToggle: () async => navPinned
+                            ? ref.read(navOrderProvider.notifier).unpin(navId)
+                            : ref.read(navOrderProvider.notifier).pin(navId),
+                        onHide: () =>
+                            ref.read(conversationProvider.notifier).hide(c.id),
+                      ),
                     ),
                   );
                 },
-              ),
+              )),
       ),
     );
   }
