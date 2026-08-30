@@ -9,6 +9,7 @@ import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 import 'package:app/pages/agent_sessions_page.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
@@ -164,6 +165,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.dock_outlined), findsOneWidget);
+    // 已固定态图标标主题绿,与未固定默认色可辨
+    expect(
+      tester.widget<Icon>(find.byIcon(Icons.dock_outlined)).color,
+      AppColors.accentGreen,
+    );
   });
 
   testWidgets('非 multiSession agent:AppBar 不渲染 pin 按钮(防御门控)',

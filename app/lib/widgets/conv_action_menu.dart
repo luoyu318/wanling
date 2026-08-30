@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 import 'app_action_menu.dart';
 import 'feedback/app_dialog.dart';
@@ -44,11 +45,15 @@ Future<void> showConvActionMenu(
           value: 'nav',
           label: isNavPinned ? '从底栏移除' : '固定到底栏',
           icon: isNavPinned ? Icons.dock_outlined : Icons.dock,
+          // 已固定标主题绿(与底栏选中态同语义),状态可辨
+          color: isNavPinned ? AppColors.accentGreen : null,
         ),
       ActionMenuItem(
         value: 'pin',
         label: isPinned ? '取消置顶' : '置顶',
         icon: Icons.vertical_align_top,
+        // 已置顶标橙(与左滑置顶按钮同色),状态可辨
+        color: isPinned ? const Color(0xFFFFA426) : null,
       ),
       const ActionMenuItem(
         value: 'hide',

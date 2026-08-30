@@ -117,6 +117,31 @@ void main() {
     expect(container.read(navOrderProvider), isNot(contains('conv:c-ms')));
   });
 
+  testWidgets('已置顶会话菜单置顶项标橙,状态可辨', (tester) async {
+    await _pump(
+      tester,
+      convs: [_conv(id: 'c-friend').copyWith(isPinned: true)],
+    );
+    await tester.longPress(find.text('私聊'));
+    await tester.pumpAndSettle();
+    expect(find.text('取消置顶'), findsOneWidget);
+    final pinIcon = tester.widget<Icon>(find.byIcon(Icons.vertical_align_top));
+    expect(pinIcon.color, const Color(0xFFFFA426));
+  });
+
+  testWidgets('已固定会话菜单固定项标主题绿,状态可辨', (tester) async {
+    await _pump(
+      tester,
+      convs: [_conv(id: 'c-friend')],
+      navOrder: [kNavTabMsg, kNavTabWanling, 'conv:c-friend'],
+    );
+    await tester.longPress(find.text('私聊'));
+    await tester.pumpAndSettle();
+    expect(find.text('从底栏移除'), findsOneWidget);
+    final navIcon = tester.widget<Icon>(find.byIcon(Icons.dock_outlined));
+    expect(navIcon.color, const Color(0xFF07C160));
+  });
+
   testWidgets('showNavAction=false 隐藏固定项,置顶回调正常(agent_session 二级页)',
       (tester) async {
     // 不传 onNavPinToggle,用例跑通即证明 assert 未触发

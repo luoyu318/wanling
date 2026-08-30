@@ -161,7 +161,11 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     }
     final pinned = ref.watch(navOrderProvider).contains(widget.agentId);
     return IconButton(
-      icon: Icon(pinned ? Icons.dock_outlined : Icons.dock),
+      // 已固定图标标主题绿(与底栏选中态同语义),未固定默认色,状态可辨
+      icon: Icon(
+        pinned ? Icons.dock_outlined : Icons.dock,
+        color: pinned ? AppColors.accentGreen : null,
+      ),
       tooltip: pinned ? '从导航栏移除' : '固定到导航栏',
       onPressed: () {
         final notifier = ref.read(navOrderProvider.notifier);
