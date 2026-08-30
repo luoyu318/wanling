@@ -5,12 +5,16 @@ import { createServer } from "http"
 import type { SyncEngine } from "../sync/engine.js"
 import type { OpencodeBridge } from "../opencode/bridge.js"
 import type { WanlingClient } from "../wanling/client.js"
+import type { Streamer } from "../sync/streamer.js"
 
 interface ControlApiOptions {
   port: number
   wanling: WanlingClient
   opencode: OpencodeBridge
   sync: SyncEngine
+  // streamer 在 wanling connected 回调内惰性创建且 WS 重连时重建,
+  // control API 与其生命周期解耦,经 getter 闭包取当前实例(可为 undefined)。
+  getStreamer: () => Streamer | undefined
 }
 
 export async function startControlApi(
@@ -73,6 +77,32 @@ async function handleRequest(
       writeJson(res, 200, { ok: true, data: { wanlingConvId, sessionId } })
     } catch (err) {
       writeJson(res, 409, { ok: false, error: String(err) })
+    }
+    return
+  }
+
+  if (url.pathname === "/aggregate/append-image" && method === "POST") {
+    const body = await readBody(req)
+    const fileId = String(body?.file_id ?? "")
+    if (!fileId) {
+      writeJson(res, 400, { ok: false, error: "missing file_id" })
+      return
+    }
+    const streamer = opts.getStreamer()
+    if (!streamer) {
+      // streamer 未就绪(启动中/断线重连窗口):等同无活跃卡,调用方退回独立消息。
+      writeJson(res, 200, { ok: true, data: { result: "no_active_card" } })
+      return
+    }
+    // body.session_id 仅日志参考(tool 执行上下文的 session,可能是子 session),
+    // 卡定位固定由 streamer 用主 session 完成。
+    const alt = typeof body?.alt === "string" ? body.alt : undefined
+    logger.info(`[control] append-image: file=${fileId.slice(0, 8)}… session=${String(body?.session_id ?? "-").slice(0, 12)}`)
+    try {
+      const result = await streamer.appendImageToCard(fileId, alt)
+      writeJson(res, 200, { ok: true, data: { result } })
+    } catch (err) {
+      writeJson(res, 500, { ok: false, error: String(err) })
     }
     return
   }

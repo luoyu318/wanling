@@ -27,6 +27,9 @@ function makeStreamer(
   opts: {
     dispatcher?: RPCDispatcher
     agentId?: string
+    // 聚合卡开关:默认 false(现有整链测试断言旧逐条发送语义);
+    // appendImageToCard 等聚合路径测试显式传 true。
+    aggregateCardEnabled?: boolean
     // 子 agent 运行时注入(体检式判死):hardTimeoutMs 硬上限 + abortChild 真取消
     childRuntime?: { hardTimeoutMs: number; abortChild: (id: string) => Promise<void> }
   } = {},
@@ -51,7 +54,7 @@ function makeStreamer(
   const dispatcher = opts.dispatcher ?? new RPCDispatcher()
   // aggregateCardEnabled=false:现有整链测试断言旧逐条发送语义,聚合路径由
   // part_dispatcher.test.ts 单独覆盖(PartDispatcher 聚合卡改造)。
-  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, false, opts.childRuntime)
+  const streamer = new Streamer(subscriber, wanling, mainSessionId, { opencode, ownerUserId: "u" } as any, dispatcher, undefined, opts.aggregateCardEnabled ?? false, opts.childRuntime)
   return { streamer, wanling, opencode, dispatcher }
 }
 
@@ -2574,5 +2577,78 @@ describe("Streamer 消息顺序(text 终态先于 tool_card 落库,对齐 TUI �
       expect.objectContaining({ text: "完整的文本" }),
       expect.any(Object),
     )
+  })
+})
+
+describe("Streamer appendImageToCard(control API 图片进聚合卡)", () => {
+  beforeEach(() => _resetInflight())
+
+  // 塞一个带活跃聚合卡桥的主 session state(桥伪造,不触真实 SDK)
+  function seedActiveCard(streamer: any, overrides: { sealed?: boolean } = {}) {
+    const appendElement = vi.fn().mockResolvedValue(undefined)
+    const state = {
+      reasoning: null,
+      text: null,
+      convId: "conv-main",
+      toolPartsSent: new Set(),
+      textPartsFlushed: new Set(),
+      toolCardMsgIds: new Map(),
+      toolCardInflight: new Map(),
+      aggregateCard: {
+        sealed: overrides.sealed ?? false,
+        cardMessageId: "card-msg-1",
+        appendElement,
+        elementCardIds: new Map(),
+      },
+    }
+    ;(streamer as any).sessions.set("sess-main", state)
+    return { state, appendElement }
+  }
+
+  it("活跃卡存在 → appended,markdown 元素含图片与递增 seq", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer)
+    ;(streamer as any).sessions.get("sess-main").aggregateSeq = 3
+
+    const result = await streamer.appendImageToCard("f-12345678", "截图")
+    expect(result).toBe("appended")
+    expect(appendElement).toHaveBeenCalledTimes(1)
+    const element = appendElement.mock.calls[0][0]
+    expect(element.type).toBe("markdown")
+    expect(element.element_id).toBe("markdown_4")
+    expect(element.data.text).toBe("![截图](/api/files/f-12345678)")
+    expect((streamer as any).sessions.get("sess-main").aggregateSeq).toBe(4)
+  })
+
+  it("无 state(主 session 从未建过卡)→ no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+  })
+
+  it("卡已收尾(sealed)→ no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer, { sealed: true })
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+    expect(appendElement).not.toHaveBeenCalled()
+  })
+
+  it("聚合卡开关关闭 → no_active_card", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: false })
+    const { appendElement } = seedActiveCard(streamer)
+    const result = await streamer.appendImageToCard("f-1")
+    expect(result).toBe("no_active_card")
+    expect(appendElement).not.toHaveBeenCalled()
+  })
+
+  it("alt 含 markdown 语法字符被清洗,缺省 alt 用「图片」", async () => {
+    const { streamer } = makeStreamer("sess-main", { aggregateCardEnabled: true })
+    const { appendElement } = seedActiveCard(streamer)
+    await streamer.appendImageToCard("f-a", "a[b](c)\\d")
+    expect(appendElement.mock.calls[0][0].data.text).toBe("![a b c d](/api/files/f-a)")
+
+    await streamer.appendImageToCard("f-b")
+    expect(appendElement.mock.calls[1][0].data.text).toBe("![图片](/api/files/f-b)")
   })
 })
