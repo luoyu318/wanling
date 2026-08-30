@@ -152,4 +152,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(pinToggled, isTrue);
   });
+
+  testWidgets('置顶项 icon 统一 vertical_align_top(两态同 icon)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () => showConvActionMenu(
+                context,
+                const Offset(100, 100),
+                isPinned: false,
+                onPinToggle: () async {},
+                onHide: () async {},
+                showNavAction: false,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    // 未置顶态不再用 push_pin_outlined,统一上箭头顶横线。
+    expect(find.byIcon(Icons.vertical_align_top), findsOneWidget);
+    expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+  });
 }

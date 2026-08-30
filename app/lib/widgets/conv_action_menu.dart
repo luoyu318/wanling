@@ -48,7 +48,7 @@ Future<void> showConvActionMenu(
       ActionMenuItem(
         value: 'pin',
         label: isPinned ? '取消置顶' : '置顶',
-        icon: isPinned ? Icons.vertical_align_top : Icons.push_pin_outlined,
+        icon: Icons.vertical_align_top,
       ),
       const ActionMenuItem(
         value: 'hide',
@@ -80,20 +80,29 @@ Future<void> showConvActionMenu(
       }
     }
   } else if (selected == 'hide') {
-    await showAppDialog(
-      context: context,
-      title: '确认删除该会话?',
-      content: const Text('聊天记录将保留,有新消息时会话自动恢复。'),
-      confirmText: '删除',
-      onConfirm: () async {
-        try {
-          await onHide();
-        } catch (_) {
-          if (context.mounted) {
-            showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
-          }
-        }
-      },
-    );
+    await confirmHideConversation(context, onHide);
   }
+}
+
+/// 「删除会话」确认框(长按菜单与左滑按钮共用)。
+/// 聊天记录保留,有新消息时会话自动恢复(hide 语义)。
+Future<void> confirmHideConversation(
+  BuildContext context,
+  Future<void> Function() onHide,
+) async {
+  await showAppDialog(
+    context: context,
+    title: '确认删除该会话?',
+    content: const Text('聊天记录将保留,有新消息时会话自动恢复。'),
+    confirmText: '删除',
+    onConfirm: () async {
+      try {
+        await onHide();
+      } catch (_) {
+        if (context.mounted) {
+          showAppSnackBar(context, '删除失败,请重试', type: SnackBarType.error);
+        }
+      }
+    },
+  );
 }
