@@ -351,10 +351,14 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
   /// 左竖条:全部账号头像(当前绿框高亮),点按切换,长按弹编辑/复制/删除菜单,
   /// 底部「+」添加服务器。切换中遮罩沿用原实现(覆盖整个双层面板)。
   Widget _buildAccountStrip(SavedLoginsState state) {
+    // 宽度对齐整数物理像素:88dp 在非整数 dpr(如 2.55)下宽度非整数物理像素,
+    // 与主面板的接缝列亚像素混合会透出下层形成断续暗线。对齐后分界为干净
+    // 直切,保留 F7F7F7|白 的色差区分且无接缝线。
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final stripWidth = (88 * dpr).roundToDouble() / dpr;
     return Container(
-      width: 88,
-      // 纯白与主面板同色:消除 F7F7F7|白 的色差分界(用户要求无线)
-      color: Colors.white,
+      width: stripWidth,
+      color: const Color(0xFFF7F7F7),
       child: SafeArea(
         child: Column(
           children: [
