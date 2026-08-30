@@ -7,10 +7,13 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/models/ws_message.dart';
 import 'package:wanling_core/services/api_service.dart';
+import 'package:wanling_core/services/local_message_store_abstract.dart';
+import 'package:wanling_core/services/noop_local_message_store.dart';
 import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/diff_merge.dart';
 import 'auth_provider.dart' show apiProvider, authProvider;
 import 'chat_provider.dart' show wsProvider;
+import 'local_message_store_provider.dart' show localMessageStoreProvider;
 
 /// agent session 二级列表状态管理（对齐 conversationProvider 模式）。
 ///
@@ -22,13 +25,17 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
   final WebSocketService _ws;
   final String _currentUserId;
   final String _agentId;
+  /// 本地缓存 store。hide 会话时同步清草稿(防孤儿数据残留)。
+  /// store 加载中 / 失败时由 Provider 注入 NoopLocalMessageStore 占位。
+  final LocalMessageStore _store;
 
   StreamSubscription<WSMessage>? _msgSub;
   StreamSubscription<WSMessage>? _readSub;
   StreamSubscription<WSMessage>? _updateSub;
   String? _activeConvId;
 
-  AgentSessionsNotifier(this._api, this._ws, this._currentUserId, this._agentId)
+  AgentSessionsNotifier(this._api, this._ws, this._currentUserId, this._agentId,
+      this._store)
     : super(null) {
     load();
     _msgSub = _ws.messages
@@ -294,6 +301,9 @@ class AgentSessionsNotifier extends StateNotifier<List<Conversation>?> {
 
   Future<void> hide(String convId) async {
     await _api.hideConversation(convId);
+    _store
+        .deleteDraft(_currentUserId, convId)
+        .catchError((e) => debugPrint('[sessions] deleteDraft($convId) fail: $e'));
     final s = state;
     if (s == null) return;
     state = s.where((c) => c.id != convId).toList();
@@ -334,6 +344,10 @@ final agentSessionsProvider =
         ref.watch(wsProvider),
         ref.watch(authProvider.select((s) => s.user?.id ?? '')),
         agentId,
+        // store 加载中/失败时退化 Noop(对齐 conversationProvider 先例)
+        ref.watch(localMessageStoreProvider
+                .select((async) => async.valueOrNull)) ??
+            NoopLocalMessageStore(),
       ),
     );
 
