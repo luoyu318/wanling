@@ -50,6 +50,8 @@ class ConvSlidable extends StatelessWidget {
               autoClose: true,
               backgroundColor: a.color,
               foregroundColor: Colors.white,
+              // 默认内边距过大导致「删除会话」四字被截断,收窄保证完整显示
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
