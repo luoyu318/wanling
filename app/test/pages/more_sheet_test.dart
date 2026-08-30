@@ -1,6 +1,7 @@
 // 「更多」抽屉测试:网格渲染/激活描边/点选切换/编辑入口。
 // 预种 3 个溢出 agent(总 4 agent)触发更多槽。harness 同 e2e 模式。
 import 'package:app/pages/home_page.dart';
+import 'package:app/widgets/nav_tab_bar.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
@@ -77,5 +78,15 @@ void main() {
     await tester.tap(find.text('n-a3'));
     await tester.pumpAndSettle();
     expect(find.text('编辑'), findsNothing);
+    // 激活态:溢出 agent 激活时更多槽点亮(槽文案被 agent 名替代),
+    // 激活 index = 可见槽数(更多槽自身下标)
+    final navBar = find.byType(NavTabBar);
+    expect(
+        find.descendant(of: navBar, matching: find.text('n-a3')),
+        findsOneWidget);
+    expect(
+        find.descendant(of: navBar, matching: find.text('更多')),
+        findsNothing);
+    expect(tester.widget<NavTabBar>(navBar).currentIndex, 4);
   });
 }

@@ -58,7 +58,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   // build 时刷新,手势回调读取(避免回调里重复 watch)
   List<String> _effectiveOrder = const [];
   bool _showMore = false;
-  List<String> _visibleSlots = const []; // 序列前缀(固定项+可见 agent)
+  List<String> _visibleSlots = const []; // 可见槽位(固定项恒入栏+可见 agent)
   List<String> _overflowPinned = const [];
 
   void _openSidebar() => setState(() => _sidebarOpen = true);

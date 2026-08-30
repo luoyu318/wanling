@@ -69,7 +69,7 @@ class NavTabBar extends StatelessWidget {
     required this.onSlotLongPress,
   })  : assert(slots.length <= (showMore ? 4 : 5), '可见槽(消息/万灵/agent)最多 4/5 个');
 
-  /// 可见槽位内容(序列前缀,顺序即渲染顺序)
+  /// 可见槽位内容(固定项+可见 agent,顺序即渲染顺序)
   final List<NavSlot> slots;
   final int currentIndex;
 

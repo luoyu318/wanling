@@ -1,4 +1,5 @@
-// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换、pin/unpin/长按进编辑页。
+// 端到端路由测试：覆盖未登录/已登录 redirect、底部 tab 切换、pin/unpin、
+// 编辑页白条拖拽排序全链路与固定项任意槽序回归。
 //
 // 关键 Mock 策略：
 // - apiProvider：用 mocktail 的 MockApi，stub getMe/getAgents/getConversations
@@ -6,13 +7,15 @@
 //   wsProvider 在 auth.isAuthenticated 时会调用 connect()，连真实 WS 会失败/超时；
 //   FakeWS.messages 返回空 Stream，conversationProvider 订阅后不会收到任何消息
 // - SharedPreferences：用 setMockInitialValues 模拟 token 持久化
-//   （pinned tab 用 `nav_pins_{ownerId}` 预种）
+//   （导航序列用 `nav_order_{ownerId}` 预种；旧 `nav_pins_{ownerId}` 预种
+//   顺带覆盖首读迁移路径）
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/saved_logins_provider.dart';
+import 'package:app/pages/nav_edit_page.dart';
 import 'package:app/router.dart';
 import 'package:app/widgets/nav_tab_bar.dart';
 import 'package:wanling_core/services/api_service.dart';
@@ -59,6 +62,42 @@ void main() {
   // 调用会读 api.baseUrl。
   void stubBaseUrl(MockApi api) {
     when(() => api.baseUrl).thenReturn('http://test.local');
+  }
+
+  /// 编辑页流/槽序类用例共用 harness：预种导航序列 + stub agents/会话，
+  /// 登录后 pump 完整路由（与既有用例的内联接线一致，仅作提取）。
+  /// 返回 container 供用例断言 provider 状态。
+  Future<ProviderContainer> pumpNavHome(
+    WidgetTester tester, {
+    required Map<String, Object> prefsSeed,
+    required List<Agent> agents,
+  }) async {
+    SharedPreferences.setMockInitialValues(prefsSeed);
+    final api = MockApi();
+    stubBaseUrl(api);
+    final ws = FakeWS();
+    when(() => api.getMe()).thenAnswer((_) async => _testUser);
+    when(() => api.getAgents()).thenAnswer((_) async => agents);
+    when(() => api.getConversations()).thenAnswer((_) async => []);
+    when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+
+    final container = ProviderContainer(overrides: [
+      apiProvider.overrideWithValue(api),
+      wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider
+          .overrideWithValue(await SharedPreferences.getInstance()),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(authProvider.notifier).restoreSession();
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: Consumer(builder: (_, ref, _) {
+        return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+      }),
+    ));
+    await tester.pumpAndSettle();
+    return container;
   }
 
   group('路由 redirect', () {
@@ -547,6 +586,183 @@ void main() {
           findsOneWidget);
       expect(find.text('ag-3'), findsNothing);
       expect(find.text('ag-4'), findsNothing);
+    });
+
+    testWidgets('固定项居中排序:槽序=序列序,默认激活身份仍映射消息槽',
+        (tester) async {
+      // 回归:序列 [a1, msg, a2, wanling] — agent 槽可在固定项之前,
+      // 槽序必须严格等于序列序(而非固定项强制前置)。
+      await pumpNavHome(tester, prefsSeed: {
+        'token': 'fake-token',
+        'nav_order_u1': ['a1', kNavTabMsg, 'a2', kNavTabWanling],
+      }, agents: [
+        _multiSessionAgent('a1', 'ag-1'),
+        _multiSessionAgent('a2', 'ag-2'),
+      ]);
+
+      final navBar = find.byType(NavTabBar);
+      // 2 个 agent 不触发更多槽,四槽全渲染
+      for (final label in ['ag-1', '消息', 'ag-2', '万灵']) {
+        expect(find.descendant(of: navBar, matching: find.text(label)),
+            findsOneWidget,
+            reason: '底栏缺槽位 $label');
+      }
+      expect(
+          find.descendant(of: navBar, matching: find.text('更多')),
+          findsNothing);
+      // 槽序 = 序列序:ag-1 在「消息」之前,wanling 在 ag-2 之后
+      double slotDx(String label) => tester
+          .getCenter(find.descendant(of: navBar, matching: find.text(label)))
+          .dx;
+      expect(slotDx('ag-1'), lessThan(slotDx('消息')));
+      expect(slotDx('消息'), lessThan(slotDx('ag-2')));
+      expect(slotDx('ag-2'), lessThan(slotDx('万灵')));
+      // 激活态按 tabId 身份映射:默认激活消息页(此刻位于槽 1)
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 1);
+    });
+
+    testWidgets('编辑页白条拖拽排序:完成即生效,重建 container 模拟重启保序',
+        (tester) async {
+      // harness:预种 nav_order_u1 = [msg, wanling, a1, a2]
+      final container = await pumpNavHome(tester, prefsSeed: {
+        'token': 'fake-token',
+        'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2'],
+      }, agents: [
+        _multiSessionAgent('a1', 'ag-1'),
+        _multiSessionAgent('a2', 'ag-2'),
+      ]);
+
+      // 长按底栏 agent 槽 → /nav-edit
+      final navBar = find.byType(NavTabBar);
+      await tester.longPress(
+          find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑底栏'), findsOneWidget);
+      expect(find.text('完成'), findsOneWidget);
+
+      // 白条内把 ag-1 拖到「消息」槽
+      // (编辑页与底栏同文案并存,定位必须 scoped 到编辑页子树)
+      final editPage = find.byType(NavEditPage);
+      final a1Center = tester
+          .getCenter(find.descendant(of: editPage, matching: find.text('ag-1')));
+      final msgCenter = tester
+          .getCenter(find.descendant(of: editPage, matching: find.text('消息')));
+      final g = await tester.startGesture(a1Center);
+      await tester.pump(const Duration(seconds: 1)); // 越过长按拖拽启动阈值
+      await g.moveBy(msgCenter - a1Center);
+      await tester.pump();
+      await g.up();
+      await tester.pumpAndSettle();
+      // move 语义:ag-1 落到消息槽位(0),其余项顺移
+      expect(container.read(navOrderProvider),
+          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+
+      // 「完成」仅 pop:底栏槽序即时生效(ag-1 → 消息 → 万灵 → ag-2)
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑底栏'), findsNothing);
+      double slotDx(String label) => tester
+          .getCenter(find.descendant(of: navBar, matching: find.text(label)))
+          .dx;
+      expect(slotDx('ag-1'), lessThan(slotDx('消息')));
+      expect(slotDx('消息'), lessThan(slotDx('万灵')));
+      expect(slotDx('万灵'), lessThan(slotDx('ag-2')));
+
+      // 模拟重启:重建 container(同一 SP mock 存储)重新挂路由,读回序列保序
+      final api2 = MockApi();
+      stubBaseUrl(api2);
+      when(() => api2.getMe()).thenAnswer((_) async => _testUser);
+      when(() => api2.getAgents()).thenAnswer((_) async => [
+            _multiSessionAgent('a1', 'ag-1'),
+            _multiSessionAgent('a2', 'ag-2'),
+          ]);
+      when(() => api2.getConversations()).thenAnswer((_) async => []);
+      when(() => api2.getAgentSessions(any())).thenAnswer((_) async => []);
+      final container2 = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api2),
+        wsProvider.overrideWithValue(FakeWS()),
+        sharedPrefsProvider
+            .overrideWithValue(await SharedPreferences.getInstance()),
+      ]);
+      addTearDown(container2.dispose);
+      await container2.read(authProvider.notifier).restoreSession();
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container2,
+        child: Consumer(builder: (_, ref, _) {
+          return MaterialApp.router(routerConfig: ref.watch(routerProvider));
+        }),
+      ));
+      await tester.pumpAndSettle();
+      expect(container2.read(navOrderProvider),
+          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+      expect(slotDx('ag-1'), lessThan(slotDx('消息')));
+    });
+
+    testWidgets('编辑页改序后快速连点两槽:最终激活态=最后点按的 tab(污染回归)',
+        (tester) async {
+      // 回归:编辑页拖拽使序列变化 → PageView children 重建,快速连点期间
+      // 旧跳页链会被 clamp 落中间页发 onPageChanged 污染激活态;_jumpEpoch 使
+      // 旧链失效 + 落点复核纠正,终态必须归最后点按的 tab。
+      final container = await pumpNavHome(tester, prefsSeed: {
+        'token': 'fake-token',
+        'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2'],
+      }, agents: [
+        _multiSessionAgent('a1', 'ag-1'),
+        _multiSessionAgent('a2', 'ag-2'),
+      ]);
+
+      // 进编辑页白条拖拽:ag-1 → 消息槽,序列变 [a1, msg, wanling, a2]
+      final navBar = find.byType(NavTabBar);
+      await tester.longPress(
+          find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pumpAndSettle();
+      final editPage = find.byType(NavEditPage);
+      final a1Center = tester
+          .getCenter(find.descendant(of: editPage, matching: find.text('ag-1')));
+      final msgCenter = tester
+          .getCenter(find.descendant(of: editPage, matching: find.text('消息')));
+      final g = await tester.startGesture(a1Center);
+      await tester.pump(const Duration(seconds: 1));
+      await g.moveBy(msgCenter - a1Center);
+      await tester.pump();
+      await g.up();
+      await tester.pumpAndSettle();
+      expect(container.read(navOrderProvider),
+          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+
+      // 快速连点:ag-2 槽(页 3)后立刻 ag-1 槽(页 0),中间不 settle
+      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-2')));
+      await tester.pump();
+      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-1')));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      // 终态 = 最后点按的 ag-1:底栏激活 index 0 + agent 会话页可见
+      // (unpin 保活页树可能同时存在两个会话页空态,故用 findsWidgets)
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
+      expect(find.text('暂无会话'), findsWidgets);
+    });
+
+    testWidgets('更多抽屉「编辑」入口进底栏编辑页', (tester) async {
+      // 抽屉网格渲染/点选细节已在 more_sheet_test 覆盖,e2e 只断言路由跳转。
+      await pumpNavHome(tester, prefsSeed: {
+        'token': 'fake-token',
+        'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'a3', 'a4'],
+      }, agents: [
+        _multiSessionAgent('a1', 'ag-1'),
+        _multiSessionAgent('a2', 'ag-2'),
+        _multiSessionAgent('a3', 'ag-3'),
+        _multiSessionAgent('a4', 'ag-4'),
+      ]);
+
+      await tester.tap(find.text('更多'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑'));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑底栏'), findsOneWidget);
     });
   });
 }
