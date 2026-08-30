@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:wanling_core/models/conversation.dart' show Conversation;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
+import 'package:wanling_core/providers/conversation_provider.dart'
+    show conversationProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/avatar.dart';
@@ -109,6 +112,20 @@ class _NavEditPageState extends ConsumerState<NavEditPage> {
   }
 }
 
+/// 槽位显示名:固定项文案 / 会话 displayName / agent 名,缺数据回退原始 id。
+String _slotName(WidgetRef ref, String tabId) {
+  if (tabId == kNavTabMsg) return '消息';
+  if (tabId == kNavTabWanling) return '万灵';
+  final convId = navConvIdOf(tabId);
+  if (convId != null) {
+    for (final c in ref.watch(conversationProvider)) {
+      if (c.id == convId) return c.displayName;
+    }
+    return tabId;
+  }
+  return ref.watch(agentByIdProvider(tabId))?.name ?? tabId;
+}
+
 /// 槽位内容:固定项图标方块 / 「更多」图标方块 / agent 大圆角方形头像。
 /// 减号仅在显式传入 onUnpin 时出现(固定项无减号,不可移除)。
 class _SlotBox extends ConsumerWidget {
@@ -148,16 +165,31 @@ class _SlotBox extends ConsumerWidget {
         child: Icon(icon, size: box * 0.5, color: AppColors.textSecondary),
       );
     } else {
-      final agent = ref.watch(agentByIdProvider(tabId));
-      final unread = ref.watch(agentTabUnreadProvider(tabId));
-      // agent:大圆角方形头像本体(与固定项图标方块同尺寸同圆角);
+      final convId = navConvIdOf(tabId);
+      final String? avatarUrl;
+      final int unread;
+      if (convId != null) {
+        Conversation? conv;
+        for (final c in ref.watch(conversationProvider)) {
+          if (c.id == convId) {
+            conv = c;
+            break;
+          }
+        }
+        avatarUrl = conv?.displayAvatarUrl;
+        unread = conv?.unreadCount ?? 0;
+      } else {
+        avatarUrl = ref.watch(agentByIdProvider(tabId))?.avatarUrl;
+        unread = ref.watch(agentTabUnreadProvider(tabId));
+      }
+      // agent/会话:大圆角方形头像本体(与固定项图标方块同尺寸同圆角);
       // UnreadBadge 无 child 参数,减号压住头像右上角,均用 Stack + Positioned。
       inner = Stack(
         clipBehavior: Clip.none,
         children: [
           Avatar(
             name: name,
-            url: agent?.avatarUrl,
+            url: avatarUrl,
             size: box,
             radius: box * 0.25,
           ),
@@ -216,14 +248,11 @@ class _SlotBox extends ConsumerWidget {
 /// 拖拽 feedback:放大方块 + 投影。
 /// 仅在 build 期间被引用(闭包捕获),此处 ref.watch 合法。
 Widget _dragFeedback(WidgetRef ref, String tabId, double box) {
-  final agent = kNavFixedIds.contains(tabId)
-      ? null
-      : ref.watch(agentByIdProvider(tabId));
   return Material(
     color: Colors.transparent,
     elevation: 6,
     borderRadius: BorderRadius.circular(box * 0.28),
-    child: _SlotBox(tabId: tabId, box: box, name: agent?.name ?? tabId),
+    child: _SlotBox(tabId: tabId, box: box, name: _slotName(ref, tabId)),
   );
 }
 
@@ -244,10 +273,7 @@ class _GridPoolItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isFixed = kNavFixedIds.contains(tabId);
-    final agent = isFixed ? null : ref.watch(agentByIdProvider(tabId));
-    final name = isFixed
-        ? (tabId == kNavTabMsg ? '消息' : '万灵')
-        : (agent?.name ?? tabId);
+    final name = _slotName(ref, tabId);
     final seqIdx = ref.watch(effectiveNavOrderProvider).indexOf(tabId);
     return LongPressDraggable<String>(
       data: tabId,
@@ -381,9 +407,7 @@ class _BarSlot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final order = ref.watch(effectiveNavOrderProvider);
-    final agent = kNavFixedIds.contains(tabId)
-        ? null
-        : ref.watch(agentByIdProvider(tabId));
+    final name = _slotName(ref, tabId);
     final seqIdx = order.indexOf(tabId);
     return LongPressDraggable<String>(
       data: tabId,
@@ -413,7 +437,7 @@ class _BarSlot extends ConsumerWidget {
           child: _SlotBox(
             tabId: tabId,
             box: NavEditPage._barBox,
-            name: agent?.name ?? tabId,
+            name: name,
           ),
         ),
       ),

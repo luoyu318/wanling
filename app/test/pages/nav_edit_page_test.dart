@@ -3,6 +3,7 @@
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/user.dart';
+import 'package:wanling_core/models/user_summary.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
@@ -186,5 +187,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('完成'), findsNothing); // 页面已退出
     expect(container.read(navOrderProvider).length, 6); // 数据未被破坏
+  });
+
+  testWidgets('会话槽:池渲染名字/未读,减号 unpin 生效', (tester) async {
+    // conv:c1 垫在 a1/a2 之后(5 项,visible=4)使其溢出进网格池;
+    // 简报原 seed 3 项全可见落白条,grid key 永远找不到,按测试语义适配。
+    final container = await _harness(
+      tester,
+      seed: [kNavTabMsg, kNavTabWanling, 'a1', 'a2', 'conv:c1'],
+      convs: [
+        Conversation(
+          id: 'c1',
+          type: 'dm_user_user',
+          otherUser: UserSummary(username: 'f1', nickname: '好友A', avatarUrl: ''),
+          participants: const [],
+          lastMessageContent: null,
+          lastMessageAt: DateTime.parse('2026-07-10T10:00:00Z'),
+          createdAt: DateTime.parse('2026-07-10T09:00:00Z'),
+          unreadCount: 2,
+        ),
+      ],
+    );
+    expect(find.byKey(const ValueKey('grid-conv:c1')), findsOneWidget);
+    expect(find.text('好友A'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget); // 未读角标
+    await tester.tap(find.byKey(const ValueKey('unpin-conv:c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('grid-conv:c1')), findsNothing);
+    expect(container.read(navOrderProvider),
+        [kNavTabMsg, kNavTabWanling, 'a1', 'a2']);
   });
 }
