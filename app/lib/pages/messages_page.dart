@@ -18,6 +18,7 @@ import '../widgets/agent_badge.dart';
 import '../widgets/avatar.dart';
 import '../widgets/conv_action_menu.dart';
 import '../widgets/conv_slidable.dart';
+import '../widgets/draft_preview.dart';
 
 /// 消息列表页（IM 风格）。
 ///
@@ -379,18 +380,21 @@ class _ConvTileState extends State<_ConvTile> {
                             ),
                           )
                         else
-                          buildEmojiColoredText(
-                            conv.lastMessagePreview(
-                              currentUserId: widget.currentUserId,
-                              isGroup: conv.isGroup,
-                              senderDisplayName: conv.lastMessageSenderName,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF999999),
-                              fontWeight: FontWeight.w400,
+                          DraftAwarePreview(
+                            convId: conv.id,
+                            fallback: buildEmojiColoredText(
+                              conv.lastMessagePreview(
+                                currentUserId: widget.currentUserId,
+                                isGroup: conv.isGroup,
+                                senderDisplayName: conv.lastMessageSenderName,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF999999),
+                                fontWeight: FontWeight.w400,
+                              ),
                             ),
                           ),
                       ],
