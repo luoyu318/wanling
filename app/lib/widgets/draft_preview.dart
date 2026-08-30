@@ -31,7 +31,7 @@ class DraftAwarePreview extends ConsumerWidget {
     return Row(
       children: [
         const Icon(
-          Icons.edit_note,
+          Icons.drive_file_rename_outline,
           size: 15,
           color: Color(0xFFFA5151),
         ),

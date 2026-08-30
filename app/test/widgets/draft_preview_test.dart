@@ -54,18 +54,18 @@ void main() {
     await tester.pumpWidget(harness());
     await tester.pumpAndSettle();
     expect(find.text('最后一条:123'), findsOneWidget);
-    expect(find.byIcon(Icons.edit_note), findsNothing);
+    expect(find.byIcon(Icons.drive_file_rename_outline), findsNothing);
   });
 
   testWidgets('有草稿显示红色书写 icon + 草稿文本(替换摘要)', (tester) async {
     await store.putDraft('u1', 'conv-x', '未发送的草稿');
     await tester.pumpWidget(harness());
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.edit_note), findsOneWidget);
+    expect(find.byIcon(Icons.drive_file_rename_outline), findsOneWidget);
     expect(find.text('未发送的草稿'), findsOneWidget);
     expect(find.text('最后一条:123'), findsNothing);
     // 红色 #FA5151
-    final icon = tester.widget<Icon>(find.byIcon(Icons.edit_note));
+    final icon = tester.widget<Icon>(find.byIcon(Icons.drive_file_rename_outline));
     expect(icon.color, const Color(0xFFFA5151));
   });
 
