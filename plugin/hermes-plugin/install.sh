@@ -482,6 +482,11 @@ run_update_mode() {
         info "同步到 $t"
         sync_plugin_files "$t"
         [[ "$DRY_RUN" != "true" ]] && ok "已同步：$t"
+        # display 默认项随版本可能新增(工具进度关断等),update 只同步代码会漏配
+        # 新项——按 target 反推对应 profile 的 config.yaml 补写。幂等:已有
+        # wanling: 条目则函数内部跳过,不会覆盖用户自定义。
+        local base="${t%/plugins/*}"
+        ensure_wanling_display_defaults "$base/config.yaml"
     done
 
     echo
