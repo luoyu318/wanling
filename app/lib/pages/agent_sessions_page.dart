@@ -223,6 +223,9 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
 
     return Scaffold(
       drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
+      // 白底:非整数 dpr 下 AppBar 底缘半覆盖行会透出 Scaffold 底色(灰缝线),
+      // 列表 tile 本就白底,底色改白让缝隐形
+      backgroundColor: Colors.white,
       appBar: AppBar(
         // 内嵌模式下位于页面栈底,禁自动返回键(否则空列表时冒出返回箭头)
         automaticallyImplyLeading: !widget.embedded,

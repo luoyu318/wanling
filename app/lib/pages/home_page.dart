@@ -238,15 +238,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                     NavIconSlot(
                         tabId: id,
                         label: kNavTabMsgLabel,
-                        icon: Icons.chat_bubble_outline,
-                        activeIcon: Icons.chat_bubble,
+                        // 选中态用镂空 outline、未选中用 filled(用户偏好,与常规相反)
+                        icon: Icons.chat_bubble,
+                        activeIcon: Icons.chat_bubble_outline,
                         badge: totalUnread)
                   else if (id == kNavTabWanling)
                     const NavIconSlot(
                         tabId: kNavTabWanling,
                         label: kNavTabWanlingLabel,
-                        icon: Icons.auto_awesome_outlined,
-                        activeIcon: Icons.auto_awesome)
+                        icon: Icons.auto_awesome,
+                        activeIcon: Icons.auto_awesome_outlined)
                   else if (isConvNavId(id))
                     NavConvSlot(tabId: id, tab: _toNavConvTab(id))
                   else
@@ -673,6 +674,9 @@ class _MsgNavPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
     return Scaffold(
+      // 白底:dpr 非整数倍时 AppBar 底缘半覆盖行会透出 Scaffold 底色,
+      // 全局灰底(#EDEDED)在此显成一条淡灰缝线,页面本身是白底列表,底色改白让缝隐形
+      backgroundColor: Colors.white,
       appBar: buildHomeAppBar(
         isWanling: false,
         user: user,
@@ -701,6 +705,7 @@ class _WanlingNavPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: buildHomeAppBar(
         isWanling: true,
         user: user,

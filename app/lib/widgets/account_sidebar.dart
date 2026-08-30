@@ -304,6 +304,11 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
       width: width,
       child: Stack(
         children: [
+          // 垫底白色:竖条 88dp 在非整数 dpr 下宽度非整数物理像素,接缝列
+          // 亚像素混合会透出下层灰底形成断续"边框线",垫白后混合结果恒为白
+          const Positioned.fill(
+            child: ColoredBox(color: Colors.white),
+          ),
           // stretch:主面板与竖条同撑满全高,否则面板按内容高度垂直居中成浮动卡片
           Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -348,7 +353,8 @@ class _AccountSidebarState extends ConsumerState<AccountSidebar> {
   Widget _buildAccountStrip(SavedLoginsState state) {
     return Container(
       width: 88,
-      color: const Color(0xFFF7F7F7),
+      // 纯白与主面板同色:消除 F7F7F7|白 的色差分界(用户要求无线)
+      color: Colors.white,
       child: SafeArea(
         child: Column(
           children: [
