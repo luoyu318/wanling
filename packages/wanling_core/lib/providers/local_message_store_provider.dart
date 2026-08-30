@@ -148,5 +148,17 @@ class _DriftStoreAdapter implements LocalMessageStore {
       db.getConversationMeta(ownerId, convId);
 
   @override
+  Future<void> putDraft(String ownerId, String convId, String text) =>
+      db.putDraft(ownerId, convId, text);
+
+  @override
+  Future<String?> getDraft(String ownerId, String convId) =>
+      db.getDraft(ownerId, convId);
+
+  @override
+  Future<void> deleteDraft(String ownerId, String convId) =>
+      db.deleteDraft(ownerId, convId);
+
+  @override
   Future<void> clearLists(String ownerId) => db.clearLists(ownerId);
 }
