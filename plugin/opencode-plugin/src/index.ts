@@ -88,7 +88,10 @@ async function main(): Promise<void> {
       streamer = new Streamer(subscriber, wanling, mainSessionId, {
         opencode,
         ownerUserId: config.ownerUserId,
-      }, dispatcher, config.childTimeoutMs, config.aggregateCardEnabled)
+      }, dispatcher, config.childTimeoutMs, config.aggregateCardEnabled, {
+        hardTimeoutMs: config.childHardTimeoutMs,
+        abortChild: (id) => opencode.abortSession(id),
+      })
       subscriber.on("error", (err: unknown) => console.error("[subscriber] error:", err))
       streamer.on("error", (err: Error) => console.error("[streamer] error:", err.message))
       subscriber.start().catch((err) => console.error("[subscriber] failed:", err))

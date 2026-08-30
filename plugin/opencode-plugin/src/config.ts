@@ -15,6 +15,7 @@ export interface Config {
   controlPort: number
   proxyPort: number
   childTimeoutMs: number
+  childHardTimeoutMs: number
   defaultDirectory: string
   proxyPassword: string
   maxDownloadBytes: number
@@ -65,6 +66,9 @@ export function loadConfig(): Config {
     // I-O:子 session 兜底超时(task 崩溃/漏发终态时强制清理)。默认 30min,
     // 复杂 task 可能跑久,运维可经 WANLING_CHILD_TIMEOUT_MS(ms)调整不重编译。
     childTimeoutMs: Number(envStr("WANLING_CHILD_TIMEOUT_MS", "1800000")),
+    // 子 agent 硬上限:自注册起算,到期无条件判死(仍先 abort)。防「tool 终态漏发
+    // 导致 running 集合永真」被体检无限续期。默认 24h,env 可调不重编译。
+    childHardTimeoutMs: Number(envStr("WANLING_CHILD_HARD_TIMEOUT_MS", "86400000")),
     defaultDirectory: envStr("WANLING_DEFAULT_DIRECTORY", ""),
     proxyPassword: envStr("WANLING_PROXY_PASSWORD", ""),
     maxDownloadBytes: Number(envStr("WANLING_MAX_DOWNLOAD_BYTES", String(20 * 1024 * 1024))),

@@ -75,6 +75,9 @@ export class Streamer extends EventEmitter {
     dispatcher: RPCDispatcher,
     childTimeoutMs?: number,
     aggregateCardEnabled?: boolean,
+    // 子 agent 运行时注入(体检式判死):hardTimeoutMs 硬上限 + abortChild 真取消。
+    // 可选:缺省 24h 硬上限 + no-op abort,保证既有测试零破坏。
+    childRuntime?: { hardTimeoutMs: number; abortChild: (id: string) => Promise<void> },
   ) {
     super()
     this.subscriber = subscriber
@@ -91,6 +94,8 @@ export class Streamer extends EventEmitter {
       wanling,
       router: this.router,
       childTimeoutMs: childTimeoutMs ?? Streamer.DEFAULT_CHILD_TIMEOUT_MS,
+      hardTimeoutMs: childRuntime?.hardTimeoutMs ?? 24 * 60 * 60 * 1000,
+      abortChild: childRuntime?.abortChild ?? (async () => {}),
     })
     this.metaSync = new MetaSync({
       store: this.store,
