@@ -224,7 +224,8 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
     final otherPending = dirs.fold(0, (sum, d) => sum + d.pendingCount);
 
     return Scaffold(
-      drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
+      // 目录抽屉仅左缘 80dp 可右滑拉出:全屏手势层会抢走列表左滑(slidable)
+      drawerEdgeDragWidth: 80,
       // 白底:非整数 dpr 下 AppBar 底缘半覆盖行会透出 Scaffold 底色(灰缝线),
       // 列表 tile 本就白底,底色改白让缝隐形
       backgroundColor: Colors.white,
