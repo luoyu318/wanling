@@ -578,7 +578,16 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
           widget.onLongPressStart(details);
         },
         child: InkWell(
-          onTap: widget.onTap,
+          onTap: () {
+            // 左滑展开态点击内容区:仅收起,不进会话(slidable 无此默认行为,显式守卫)。
+            final slidable = Slidable.of(context);
+            if (slidable != null &&
+                slidable.actionPaneType.value != ActionPaneType.none) {
+              unawaited(slidable.close());
+              return;
+            }
+            widget.onTap();
+          },
           splashColor: Colors.transparent,
           highlightColor: Colors.transparent,
           child: Column(

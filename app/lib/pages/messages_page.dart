@@ -292,7 +292,16 @@ class _ConvTileState extends State<_ConvTile> {
           }
         },
         child: InkWell(
-          onTap: widget.onTap,
+          onTap: () {
+            // 左滑展开态点击内容区:仅收起,不进会话(slidable 无此默认行为,显式守卫)。
+            final slidable = Slidable.of(context);
+            if (slidable != null &&
+                slidable.actionPaneType.value != ActionPaneType.none) {
+              unawaited(slidable.close());
+              return;
+            }
+            widget.onTap();
+          },
           // tap 反馈归位由 Listener.onPointerUp 处理（更早、更可靠）
           splashColor: Colors.transparent,
           highlightColor: Colors.transparent,

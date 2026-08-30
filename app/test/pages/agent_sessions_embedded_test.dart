@@ -226,4 +226,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('确认删除该会话?'), findsOneWidget);
   });
+
+  testWidgets('展开态点击内容区:仅收起该行,不进会话', (tester) async {
+    await _harness(
+      tester,
+      child: const AgentSessionsPage(agentId: 'a1', embedded: true),
+      convs: [_session()],
+    );
+    await tester.drag(find.text('会话一'), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('置顶'), findsOneWidget);
+    // 展开后内容区随 pane 左移,左侧已出屏;点 tile InkWell 右缘可视区。
+    final inkRight = tester.getTopRight(
+      find.ancestor(of: find.text('会话一'), matching: find.byType(InkWell)),
+    );
+    await tester.tapAt(Offset(inkRight.dx - 30, inkRight.dy + 24));
+    await tester.pumpAndSettle();
+    // 未守卫时 push 抛错测试即红;收起后 action pane 移出组件树。
+    expect(find.text('置顶'), findsNothing);
+  });
 }

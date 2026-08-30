@@ -149,4 +149,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('对话一'), findsNothing);
   });
+
+  testWidgets('展开态点击内容区:仅收起该行,不进会话', (tester) async {
+    await _harness(tester, convs: [_conv()]);
+    await tester.drag(find.text('对话一'), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('固定到底栏'), findsOneWidget);
+    // 展开后内容区随 pane 左移,左侧已出屏;点 tile InkWell 右缘可视区。
+    final inkRight = tester.getTopRight(
+      find.ancestor(of: find.text('对话一'), matching: find.byType(InkWell)),
+    );
+    await tester.tapAt(Offset(inkRight.dx - 30, inkRight.dy + 24));
+    await tester.pumpAndSettle();
+    // 未守卫时 push 抛错测试即红;收起后 action pane 移出组件树。
+    expect(find.text('固定到底栏'), findsNothing);
+  });
 }
