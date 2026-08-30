@@ -590,6 +590,69 @@ describe("Streamer childSessionTree 兜底超时", () => {
   })
 })
 
+describe("Streamer S2 续期集成(未决交互卡不误杀)", () => {
+  beforeEach(() => _resetInflight())
+  afterEach(() => { vi.useRealTimers() })
+
+  it("体检点 card_store 有未决卡(S2)→ 续期不判死;deleteCard 后下一周期恢复判死", async () => {
+    const abortMock = vi.fn().mockResolvedValue(undefined)
+    const { streamer, wanling } = makeStreamer("sess-main", {
+      childRuntime: { hardTimeoutMs: 24 * 60 * 60 * 1000, abortChild: abortMock },
+    })
+    wanling.sendCardMessage.mockResolvedValue("task-msg-s2")
+    wanling.updateMessageContent.mockResolvedValue(undefined)
+    // Date 一并 fake:注册后不喂事件,烧掉 5min S3 窗口才能证明续期只靠 S2
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+
+    // 真 card_store 落盘(config mock → TMP,复用文件头既有 vi.mock)
+    const { saveCard, deleteCard } = await import("./card_store.js")
+
+    // 1) task/running 注册 child(复用超时用例注册路径)
+    await (streamer as any).onPartUpdated({
+      sessionID: "sess-main",
+      part: {
+        type: "tool", id: "p-task-s2", tool: "task", callID: "call-s2",
+        state: {
+          status: "running",
+          input: { description: "等审批", prompt: "..." },
+          metadata: { parentSessionId: "sess-main", sessionId: "sess-child-s2" },
+        },
+      },
+      time: 1,
+    })
+    await new Promise((r) => setImmediate(r))
+    await Promise.resolve()
+
+    const tree = (streamer as any).childSessionTree as Map<string, any>
+    expect(tree.has("sess-child-s2")).toBe(true)
+
+    // 2) 落一张 sessionId 指向 child 的未决交互卡(最小 entry)
+    saveCard("req-s2", { msgId: "card-msg-s2", convId: "conv-new", type: "permission", sessionId: "sess-child-s2" })
+
+    // 3) 快进 30min 体检点:S1 空 + S3 窗口已过,仅 S2 命中 → 续期不判死
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    expect(abortMock).not.toHaveBeenCalled()
+    expect(wanling.updateMessageContent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ data: expect.objectContaining({ status: "error" }) }),
+    )
+    expect(tree.has("sess-child-s2")).toBe(true)
+
+    // 4) 卡撤销后快进下一个体检周期:无任何存活信号 → 判死(锁「卡撤销后恢复判死」)
+    deleteCard("req-s2")
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    warnSpy.mockRestore()
+    expect(abortMock).toHaveBeenCalledTimes(1)
+    expect(abortMock).toHaveBeenCalledWith("sess-child-s2")
+    expect(wanling.updateMessageContent).toHaveBeenCalledWith("task-msg-s2", expect.objectContaining({
+      msg_type: "tool_card",
+      data: expect.objectContaining({ name: "task", status: "error" }),
+    }))
+    expect(tree.has("sess-child-s2")).toBe(false)
+  })
+})
+
 describe("Streamer M13 测试补齐(嵌套继承 / 失败路径 / 迟到事件)", () => {
   beforeEach(() => _resetInflight())
   afterEach(() => { vi.useRealTimers() })
