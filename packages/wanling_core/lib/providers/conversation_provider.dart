@@ -624,6 +624,16 @@ final totalUnreadProvider = Provider<int>((ref) {
   return list.fold(0, (sum, c) => sum + c.unreadCount);
 });
 
+/// 按 id 查单个会话(底栏会话槽/编辑页取数收口,替代各处线性扫描)。
+/// 未找到返回 null(调用方 fail-soft)。注意:重建粒度与 conversationProvider 一致
+/// (列表任何变化触发依赖本 provider 的槽位重算,槽位 ≤5 规模下无感)。
+final convByIdProvider = Provider.family<Conversation?, String>((ref, convId) {
+  for (final c in ref.watch(conversationProvider)) {
+    if (c.id == convId) return c;
+  }
+  return null;
+});
+
 /// 同步所有 agent 的 avatar_url 到 bg-service isolate(供通知下载头像)。
 ///
 /// 在拉会话列表成功后调。经桥接发送,桌面/测试为 no-op,不阻塞 UI。

@@ -12,6 +12,10 @@ const kNavTabMsg = 'msg';
 const kNavTabWanling = 'wanling';
 const kNavFixedIds = {kNavTabMsg, kNavTabWanling};
 
+/// 固定项底栏文案(与 id 常量同源,消费方禁止再写字面量)。
+const kNavTabMsgLabel = '消息';
+const kNavTabWanlingLabel = '万灵';
+
 /// 会话槽前缀:底栏序列中会话槽存 'conv:<convId>'(agent 为 UUID,不会冲突)。
 const kNavConvPrefix = 'conv:';
 
@@ -19,6 +23,8 @@ const kNavConvPrefix = 'conv:';
 bool isConvNavId(String id) => id.startsWith(kNavConvPrefix);
 
 /// 'conv:<convId>' → convId;非会话槽返回 null。
+/// `'conv:'`(空 convId)返回空串而非 null,alive 收缩按会话不存在处理
+/// (fail-soft 安全边界,不会让坏数据撑爆底栏)。
 String? navConvIdOf(String id) =>
     isConvNavId(id) ? id.substring(kNavConvPrefix.length) : null;
 

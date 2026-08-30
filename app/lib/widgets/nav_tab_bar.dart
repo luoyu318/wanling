@@ -76,6 +76,12 @@ class NavConvSlot extends NavSlot {
   final NavConvTab tab;
 }
 
+/// 底栏槽位名截断:>5 字符(字素簇计数)取前 5 + '…'。
+/// _AgentSlot/_ConvSlot/_MoreSlot 统一走此函数,禁止各写一份。
+String _navSlotLabel(String name) => name.characters.length > 5
+    ? '${name.characters.take(5).join()}…'
+    : name;
+
 /// 自绘底部导航:槽位由上层按导航序列派生(任意排序),组件纯展示。
 ///
 /// - 点按 onSlotTap(槽位号);长按 onSlotLongPress(进编辑页);更多槽点按 onMoreTap
@@ -213,9 +219,7 @@ class _AgentSlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
-    final label = tab.name.characters.length > 5
-        ? '${tab.name.characters.take(5).join()}…'
-        : tab.name;
+    final label = _navSlotLabel(tab.name);
     return Expanded(
       // 热区撑满整个槽位,避免点击头像/文字以外区域无响应
       child: InkWell(
@@ -263,9 +267,7 @@ class _ConvSlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
-    final label = tab.name.characters.length > 5
-        ? '${tab.name.characters.take(5).join()}…'
-        : tab.name;
+    final label = _navSlotLabel(tab.name);
     return Expanded(
       child: InkWell(
         onTap: () => onTap(slot),
@@ -316,7 +318,7 @@ class _MoreSlot extends StatelessWidget {
                 : Icon(Icons.apps, size: 24, color: color),
             const SizedBox(height: 2),
             Text(
-              active != null ? _truncate(active.name) : '更多',
+              active != null ? _navSlotLabel(active.name) : '更多',
               style: TextStyle(
                   fontSize: 10,
                   color: color,
@@ -327,10 +329,6 @@ class _MoreSlot extends StatelessWidget {
       ),
     );
   }
-
-  static String _truncate(String name) => name.characters.length > 5
-      ? '${name.characters.take(5).join()}…'
-      : name;
 }
 
 /// agent 头像:大圆角方形(有头像用图片,否则哈希色首字母) + 在线小绿点 + 未读角标。

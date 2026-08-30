@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:wanling_core/models/conversation.dart' show Conversation;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
 import 'package:wanling_core/providers/conversation_provider.dart'
-    show conversationProvider;
+    show convByIdProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/avatar.dart';
@@ -114,14 +113,11 @@ class _NavEditPageState extends ConsumerState<NavEditPage> {
 
 /// 槽位显示名:固定项文案 / 会话 displayName / agent 名,缺数据回退原始 id。
 String _slotName(WidgetRef ref, String tabId) {
-  if (tabId == kNavTabMsg) return '消息';
-  if (tabId == kNavTabWanling) return '万灵';
+  if (tabId == kNavTabMsg) return kNavTabMsgLabel;
+  if (tabId == kNavTabWanling) return kNavTabWanlingLabel;
   final convId = navConvIdOf(tabId);
   if (convId != null) {
-    for (final c in ref.watch(conversationProvider)) {
-      if (c.id == convId) return c.displayName;
-    }
-    return tabId;
+    return ref.watch(convByIdProvider(convId))?.displayName ?? tabId;
   }
   return ref.watch(agentByIdProvider(tabId))?.name ?? tabId;
 }
@@ -169,13 +165,7 @@ class _SlotBox extends ConsumerWidget {
       final String? avatarUrl;
       final int unread;
       if (convId != null) {
-        Conversation? conv;
-        for (final c in ref.watch(conversationProvider)) {
-          if (c.id == convId) {
-            conv = c;
-            break;
-          }
-        }
+        final conv = ref.watch(convByIdProvider(convId));
         avatarUrl = conv?.displayAvatarUrl;
         unread = conv?.unreadCount ?? 0;
       } else {
@@ -228,12 +218,9 @@ class _SlotBox extends ConsumerWidget {
         const SizedBox(height: 6),
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: box + 24),
+          // 调用方已保证 name 语义:_MoreDropSlot 传「更多」,其余走 _slotName。
           child: Text(
-            isMore
-                ? '更多'
-                : isFixed
-                    ? (tabId == kNavTabMsg ? '消息' : '万灵')
-                    : name,
+            name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(

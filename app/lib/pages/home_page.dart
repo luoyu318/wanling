@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/agent.dart';
-import 'package:wanling_core/models/conversation.dart' show Conversation;
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/agent_sessions_page.dart';
@@ -16,7 +15,7 @@ import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
-    show conversationProvider, totalUnreadProvider;
+    show conversationProvider, convByIdProvider, totalUnreadProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
@@ -168,13 +167,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 会话槽 id → 底栏槽位数据(名字/头像/未读,与消息列表同源)。
   NavConvTab _toNavConvTab(String id) {
     final convId = navConvIdOf(id)!;
-    Conversation? conv;
-    for (final c in ref.watch(conversationProvider)) {
-      if (c.id == convId) {
-        conv = c;
-        break;
-      }
-    }
+    final conv = ref.watch(convByIdProvider(convId));
     return NavConvTab(
       id: convId,
       name: conv?.displayName ?? convId,
@@ -248,14 +241,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                   if (id == kNavTabMsg)
                     NavIconSlot(
                         tabId: id,
-                        label: '消息',
+                        label: kNavTabMsgLabel,
                         icon: Icons.chat_bubble_outline,
                         activeIcon: Icons.chat_bubble,
                         badge: totalUnread)
                   else if (id == kNavTabWanling)
                     const NavIconSlot(
                         tabId: kNavTabWanling,
-                        label: '万灵',
+                        label: kNavTabWanlingLabel,
                         icon: Icons.auto_awesome_outlined,
                         activeIcon: Icons.auto_awesome)
                   else if (isConvNavId(id))
@@ -623,13 +616,7 @@ class _MoreSheetConvItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Conversation? conv;
-    for (final c in ref.watch(conversationProvider)) {
-      if (c.id == convId) {
-        conv = c;
-        break;
-      }
-    }
+    final conv = ref.watch(convByIdProvider(convId));
     final name = conv?.displayName ?? convId;
     final unread = conv?.unreadCount ?? 0;
     return GestureDetector(
@@ -776,10 +763,12 @@ PreferredSizeWidget buildHomeAppBar({
         tooltip: '更多',
         onPressed: () async {
           final box = btnCtx.findRenderObject() as RenderBox?;
+          // 按钮未挂树(渲染对象尚未就位)时直接不弹:比兜底 Offset.zero
+          // 把菜单弹到屏幕左上角诚实。
+          if (box == null) return;
           // 锚点 = 按钮右下角:菜单右上角贴按钮右缘,顶部在按钮下方 8px
-          final pos = box != null
-              ? box.localToGlobal(Offset(box.size.width, box.size.height))
-              : Offset.zero;
+          final pos =
+              box.localToGlobal(Offset(box.size.width, box.size.height));
           final selected = await showAppActionMenu(
             btnCtx,
             pos,
