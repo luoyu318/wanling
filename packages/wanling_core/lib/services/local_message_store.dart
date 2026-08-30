@@ -512,6 +512,43 @@ extension LocalMessageStoreImpl on LocalMessageDatabase {
     }
   }
 
+  /// KVS:draft 命名空间 {ownerId}:{convId} → 草稿文本。
+  /// 草稿是增强功能,读写失败只 debugPrint 不抛(不阻塞聊天主流程)。
+  @override
+  Future<void> putDraft(String ownerId, String convId, String text) async {
+    try {
+      await into(kvs).insertOnConflictUpdate(KvsCompanion(
+        key: Value('draft:$ownerId:$convId'),
+        value: Value(text),
+      ));
+    } catch (e) {
+      debugPrint('[draft] putDraft fail: $e');
+    }
+  }
+
+  @override
+  Future<String?> getDraft(String ownerId, String convId) async {
+    try {
+      final row = await (select(kvs)
+            ..where((t) => t.key.equals('draft:$ownerId:$convId')))
+          .getSingleOrNull();
+      return row?.value;
+    } catch (e) {
+      debugPrint('[draft] getDraft fail: $e');
+      return null;
+    }
+  }
+
+  @override
+  Future<void> deleteDraft(String ownerId, String convId) async {
+    try {
+      await (delete(kvs)..where((t) => t.key.equals('draft:$ownerId:$convId')))
+          .go();
+    } catch (e) {
+      debugPrint('[draft] deleteDraft fail: $e');
+    }
+  }
+
   /// 清空指定会话的所有消息 + 元数据(退出会话 / 注销场景)。
   /// 用 transaction 包裹,任一失败回滚,避免留中间态。
   Future<void> clearConversation(String conversationId) async {

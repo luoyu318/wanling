@@ -100,5 +100,14 @@ class NoopLocalMessageStore implements LocalMessageStore {
   Future<({String type, String? title})?> getConversationMeta(String ownerId, String convId) async => null;
 
   @override
+  Future<void> putDraft(String ownerId, String convId, String text) async {}
+
+  @override
+  Future<String?> getDraft(String ownerId, String convId) async => null;
+
+  @override
+  Future<void> deleteDraft(String ownerId, String convId) async {}
+
+  @override
   Future<void> clearLists(String ownerId) async {}
 }
