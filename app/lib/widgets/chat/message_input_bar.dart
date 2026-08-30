@@ -46,6 +46,11 @@ class MessageInputBar extends StatefulWidget {
   final bool hasPendingAttachment;
   /// 输入框占位文案。默认「给万灵下达指令…」,ChatPage 按 convTitle 传「发送给 XXX」。
   final String hintText;
+  /// 草稿回填文本。变化且输入框为空时填充(不覆盖正在输入的内容)。
+  /// 由 ChatInputBar 注入(draftProvider),本 widget 保持不依赖 Provider。
+  final String? initialText;
+  /// 输入文本变化回调(含程序 clear 触发的空串)。ChatInputBar 转发给 draftProvider。
+  final ValueChanged<String>? onTextChanged;
 
   const MessageInputBar({
     super.key,
@@ -63,6 +68,8 @@ class MessageInputBar extends StatefulWidget {
     this.topSlot,
     this.onSendSlash,
     this.hasPendingAttachment = false,
+    this.initialText,
+    this.onTextChanged,
     this.hintText = '给万灵下达指令…',
   });
 
@@ -87,12 +94,38 @@ class _MessageInputBarState extends State<MessageInputBar> {
     _inputCtrl.addListener(_onTextChanged);
     // 输入框获焦→收面板(键盘与面板互斥)
     _focusNode.addListener(_onFocusChanged);
+    // 挂载即有草稿:直接注入(listener 会同步 _text,initState 内禁 setState)
+    final init = widget.initialText;
+    if (init != null && init.isNotEmpty) {
+      _inputCtrl.value = TextEditingValue(
+        text: init,
+        selection: TextSelection.collapsed(offset: init.length),
+      );
+      _text = init;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant MessageInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = widget.initialText;
+    // 仅空框回填:保护用户正在输入的内容;next==old 值不重复注入
+    if (next != null &&
+        next.isNotEmpty &&
+        next != oldWidget.initialText &&
+        _inputCtrl.text.isEmpty) {
+      _inputCtrl.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      );
+    }
   }
 
   void _onTextChanged() {
     final next = _inputCtrl.text;
     if (next != _text) {
       setState(() => _text = next);
+      widget.onTextChanged?.call(next);
     }
   }
 
