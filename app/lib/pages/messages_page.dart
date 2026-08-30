@@ -9,6 +9,7 @@ import 'package:wanling_core/theme/app_colors.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/nav_order_provider.dart';
 import '../router_helpers.dart';
 import 'package:wanling_core/utils/emoji_span.dart';
 import '../widgets/agent_badge.dart';
@@ -65,6 +66,11 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                 itemCount: list.length,
                 itemBuilder: (_, i) {
                   final c = list[i];
+                  // multi_session 聚合行固定的是 agent 槽(与二级页图钉一致),
+                  // 其余行固定会话槽('conv:<convId>')。
+                  final navId = (c.agent?.isMultiSession ?? false)
+                      ? c.agent!.id
+                      : navConvRef(c.id);
                   return _ConvTile(
                     conv: c,
                     key: ValueKey('conv_${c.id}'),
@@ -86,9 +92,17 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
                       context,
                       details.globalPosition,
                       isPinned: c.isPinned,
+                      isNavPinned: ref.read(navOrderProvider).contains(navId),
                       onPinToggle: () => c.isPinned
                           ? ref.read(conversationProvider.notifier).unpin(c.id)
                           : ref.read(conversationProvider.notifier).pin(c.id),
+                      // NavOrderNotifier.pin/unpin 是同步 void,async 包装
+                      // 适配 onNavPinToggle 的 Future<void> Function() 签名。
+                      onNavPinToggle: () async => ref
+                                  .read(navOrderProvider)
+                                  .contains(navId)
+                              ? ref.read(navOrderProvider.notifier).unpin(navId)
+                              : ref.read(navOrderProvider.notifier).pin(navId),
                       onHide: () =>
                           ref.read(conversationProvider.notifier).hide(c.id),
                     ),

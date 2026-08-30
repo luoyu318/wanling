@@ -480,8 +480,23 @@ class _AgentSessionsPageState extends ConsumerState<AgentSessionsPage>
               context,
               details.globalPosition,
               isPinned: c.isPinned,
+              // 二级页行是 agent_session 会话(非 multi_session 聚合行),
+              // 固定的是会话槽('conv:<convId>')。
+              isNavPinned:
+                  ref.read(navOrderProvider).contains(navConvRef(c.id)),
               onPinToggle: () =>
                   c.isPinned ? notifier.unpin(c.id) : notifier.pin(c.id),
+              // NavOrderNotifier.pin/unpin 是同步 void,async 包装适配
+              // onNavPinToggle 的 Future<void> Function() 签名。
+              onNavPinToggle: () async => ref
+                          .read(navOrderProvider)
+                          .contains(navConvRef(c.id))
+                      ? ref
+                          .read(navOrderProvider.notifier)
+                          .unpin(navConvRef(c.id))
+                      : ref
+                          .read(navOrderProvider.notifier)
+                          .pin(navConvRef(c.id)),
               onHide: () => notifier.hide(c.id),
             ),
           );

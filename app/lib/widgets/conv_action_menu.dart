@@ -1,29 +1,39 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:wanling_core/utils/snackbar.dart';
 import 'app_action_menu.dart';
 import 'feedback/app_dialog.dart';
 
-/// 会话长按操作菜单（置顶/取消置顶 + 删除）。
+/// 会话长按操作菜单（固定到底栏 + 置顶/取消置顶 + 删除）。
 ///
 /// 复用通用 [showAppActionMenu]（白底圆角 + 菜单项 icon + 边缘 clamp），
 /// 菜单左上角对齐到 [globalPos]。
 ///
 /// 参数：
-/// - [isPinned]：当前置顶状态，决定菜单显示「置顶」还是「取消置顶」
-/// - [onPinToggle]：用户点击置顶/取消置顶时的回调
-/// - [onHide]：用户点击删除时的回调（删除确认 dialog 由本函数内部处理）
+/// - [isPinned]：会话置顶状态（列表内排序）
+/// - [isNavPinned]：是否已固定到底栏（含 conv 槽与 agent 槽两种形态,由调用方折算）
+/// - [onPinToggle]/[onNavPinToggle]/[onHide]：对应动作回调
 Future<void> showConvActionMenu(
   BuildContext context,
   Offset globalPos, {
   required bool isPinned,
+  required bool isNavPinned,
   required Future<void> Function() onPinToggle,
+  required Future<void> Function() onNavPinToggle,
   required Future<void> Function() onHide,
 }) async {
   final selected = await showAppActionMenu(
     context,
     globalPos,
     items: [
+      ActionMenuItem(
+        value: 'nav',
+        label: isNavPinned ? '从底栏移除' : '固定到底栏',
+        icon: isNavPinned ? Icons.dock_outlined : Icons.dock,
+      ),
       ActionMenuItem(
         value: 'pin',
         label: isPinned ? '取消置顶' : '置顶',
@@ -41,7 +51,16 @@ Future<void> showConvActionMenu(
   if (selected == null) return;
   if (!context.mounted) return;
 
-  if (selected == 'pin') {
+  if (selected == 'nav') {
+    unawaited(HapticFeedback.selectionClick());
+    try {
+      await onNavPinToggle();
+    } catch (_) {
+      if (context.mounted) {
+        showAppSnackBar(context, '操作失败,请重试', type: SnackBarType.error);
+      }
+    }
+  } else if (selected == 'pin') {
     try {
       await onPinToggle();
     } catch (_) {
