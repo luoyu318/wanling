@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,17 +22,26 @@ const bcryptCost = 12
 
 // AuthHandler 认证处理器
 type AuthHandler struct {
-	userRepo   *repository.UserRepo
-	agentRepo  *repository.AgentRepo
-	jwtSecret  string
-	tokenStore *auth.TokenStore
-	accessTTL  time.Duration
-	refreshTTL time.Duration
+	userRepo       *repository.UserRepo
+	agentRepo      *repository.AgentRepo
+	jwtSecret      string
+	tokenStore     *auth.TokenStore
+	accessTTL      time.Duration
+	refreshTTL     time.Duration
+	adminUsernames []string // ADMIN_USERNAMES;Login/Register 命中则签发 admin
 }
 
 // NewAuthHandler 创建认证处理器
-func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration) *AuthHandler {
-	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL}
+func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration, adminUsernames []string) *AuthHandler {
+	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL, adminUsernames: adminUsernames}
+}
+
+// roleForUsername ADMIN_USERNAMES 命中则签发平台 admin(小程序 publish 审核等)。
+func roleForUsername(adminUsernames []string, username string) string {
+	if slices.Contains(adminUsernames, username) {
+		return "admin"
+	}
+	return "user"
 }
 
 // issueTokenPair 签发 access + refresh token。store 为 nil 时跳过 Redis 读写，仅签发 access。
@@ -95,7 +105,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	access, refresh, err := h.issueTokenPair(user.ID, "user", "")
+	role := roleForUsername(h.adminUsernames, req.Username)
+	access, refresh, err := h.issueTokenPair(user.ID, role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
@@ -144,7 +155,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
-	access, refresh, err := h.issueTokenPair(user.ID, "user", "")
+	role := roleForUsername(h.adminUsernames, user.Username)
+	access, refresh, err := h.issueTokenPair(user.ID, role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return

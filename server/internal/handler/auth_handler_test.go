@@ -60,7 +60,7 @@ func newAuthTestStore(t *testing.T) *auth.TokenStore {
 // userRepo/agentRepo 传 nil：Refresh/Logout 路径不碰 DB（只读/写 Redis）。
 func newAuthHandlerWithStore(t *testing.T) *AuthHandler {
 	t.Helper()
-	return NewAuthHandler(nil, nil, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL)
+	return NewAuthHandler(nil, nil, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL, nil)
 }
 
 // doRefreshRequest 构造 POST /api/auth/refresh 请求。
@@ -83,7 +83,7 @@ func doRefreshRequest(t *testing.T, h *AuthHandler, body string) *httptest.Respo
 //   - 旧 refresh token 应被删除（GetRefresh 返 nil）。
 func TestRefresh_HappyPath(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL, nil)
 	ctx := context.Background()
 
 	const oldRefresh = "old-refresh-abc"
@@ -135,7 +135,7 @@ func TestRefresh_HappyPath(t *testing.T) {
 // TestRefresh_StoreNil_503 验证 Redis 不可用（store=nil）时 refresh 返回 503。
 // refresh 体系强依赖 Redis（rotation + 黑名单），无 store 时直接拒绝。
 func TestRefresh_StoreNil_503(t *testing.T) {
-	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL, nil)
 
 	body := `{"refresh_token":"whatever"}`
 	w := doRefreshRequest(t, h, body)
@@ -157,7 +157,7 @@ func TestRefresh_InvalidToken(t *testing.T) {
 // 场景：refresh token 绑定 ver=0，IncrTokenVersion 后 Redis 中 ver=1 → refresh 时版本不匹配 → 401。
 func TestRefresh_TokenVersionMismatch(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL, nil)
 	ctx := context.Background()
 
 	const oldRefresh = "ver-mismatch-refresh"
@@ -211,7 +211,7 @@ func doLogoutRequest(t *testing.T, h *AuthHandler, store *auth.TokenStore, claim
 //   - 返回 200。
 func TestLogout_BlacklistAndDeleteRefresh(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL, nil)
 	ctx := context.Background()
 
 	const refreshToken = "logout-refresh"
@@ -255,7 +255,7 @@ func TestLogout_BlacklistAndDeleteRefresh(t *testing.T) {
 
 // TestLogout_NoStoreSkipsRedis 验证 store=nil 时 logout 不 panic、不碰 Redis，直接返 200。
 func TestLogout_NoStoreSkipsRedis(t *testing.T) {
-	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL, nil)
 
 	access, err := auth.GenerateToken(authTestSecret, "user-nostore", "user", "", 2*time.Hour, "jti-nostore", 0)
 	if err != nil {
@@ -274,7 +274,7 @@ func TestLogout_NoStoreSkipsRedis(t *testing.T) {
 // logout 把 jti 拉黑后，再用同 token 过 AuthMiddlewareWithStore 应被拦截（401 token_revoked）。
 func TestLogout_BlacklistedTokenRejectedByMiddleware(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL, nil)
 
 	access, err := auth.GenerateToken(authTestSecret, "user-e2e", "user", "", 2*time.Hour, "jti-e2e", 0)
 	if err != nil {
