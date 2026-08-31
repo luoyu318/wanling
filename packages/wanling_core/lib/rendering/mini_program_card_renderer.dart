@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,7 +10,8 @@ import 'message_content_renderer.dart';
 /// 小程序卡片渲染器（mini_program_card）：icon + 名称 + 打开入口。
 ///
 /// 点击统一交容器页处理（自动安装/停用拦截），携带来源会话 conv 供
-/// getChatContext。renderer 不做安装状态校验（M1 容器页已兜底）。
+/// getChatContext；params 非 null 时以 URL 编码 JSON 附在 launch query 上
+/// 透传给小程序（spec §8）。renderer 不做安装状态校验（M1 容器页已兜底）。
 class MiniProgramCardRenderer implements MessageContentRenderer {
   const MiniProgramCardRenderer();
 
@@ -36,8 +39,16 @@ class MiniProgramCardRenderer implements MessageContentRenderer {
               : AppColors.textSecondary));
     }
 
+    // 跳转 URL：conv 固定携带；params 非 null 时追加 launch（URL 编码 JSON，
+    // 容器页转交给 H5 虚拟 origin 入口 query）。
+    final params = data['params'];
+    var target = '/mini-program/$appid?conv=${rc.convId}';
+    if (params != null) {
+      target += '&launch=${Uri.encodeComponent(jsonEncode(params))}';
+    }
+
     return InkWell(
-      onTap: () => context.push('/mini-program/$appid?conv=${rc.convId}'),
+      onTap: () => context.push(target),
       borderRadius: BorderRadius.circular(8),
       child: Container(
         padding: const EdgeInsets.all(10),

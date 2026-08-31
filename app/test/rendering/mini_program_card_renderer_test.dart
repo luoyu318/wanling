@@ -53,7 +53,7 @@ void main() {
     registerBuiltinRenderers();
   });
 
-  testWidgets('卡片渲染 title 且点击跳容器页携带 conv', (tester) async {
+  testWidgets('卡片渲染 title 且点击跳容器页携带 conv + launch(params JSON)', (tester) async {
     String? jumpedTo;
     await tester.pumpWidget(hostWithRouter(
       content: {
@@ -65,6 +65,22 @@ void main() {
 
     expect(find.text('Hello 示例'), findsOneWidget);
     expect(find.text('小程序 · 点击打开'), findsOneWidget);
+
+    await tester.tap(find.text('Hello 示例'));
+    await tester.pumpAndSettle();
+    expect(jumpedTo,
+        '/mini-program/hello?conv=conv-1&launch=%7B%22k%22%3A%22v%22%7D');
+  });
+
+  testWidgets('无 params 时跳转 URI 不含 launch', (tester) async {
+    String? jumpedTo;
+    await tester.pumpWidget(hostWithRouter(
+      content: {
+        'msg_type': 'mini_program_card',
+        'data': {'appid': 'hello', 'title': 'Hello 示例'},
+      },
+      onRoute: (loc) => jumpedTo = loc,
+    ));
 
     await tester.tap(find.text('Hello 示例'));
     await tester.pumpAndSettle();
