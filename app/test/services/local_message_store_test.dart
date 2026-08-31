@@ -563,6 +563,36 @@ test('done 聚合卡即使 elements 空也写库', () async {
       expect(await db.getDraft('u1', 'conv1'), isNull);
     });
   });
+
+  group('mp_perm(Kvs mp_perm:{owner}:{appid} 命名空间,小程序授权)', () {
+    test('授权存取、覆盖、按 appid 隔离、删除幂等', () async {
+      await db.putMpPerms('u1', 'hello', {'wanling.chat.read'});
+      expect(await db.getMpPerms('u1', 'hello'), {'wanling.chat.read'});
+
+      await db.putMpPerms('u1', 'hello', {'wanling.chat.read', 'wanling.chat.share'});
+      expect(await db.getMpPerms('u1', 'hello'),
+          {'wanling.chat.read', 'wanling.chat.share'});
+
+      expect(await db.getMpPerms('u1', 'other'), <String>{}); // 按 appid 隔离
+      expect(await db.getMpPerms('u2', 'hello'), <String>{}); // 按 owner 隔离
+
+      await db.deleteMpPerms('u1', 'hello');
+      expect(await db.getMpPerms('u1', 'hello'), <String>{});
+      await db.deleteMpPerms('u1', 'hello'); // 不抛即幂等
+    });
+
+    test('坏 JSON 兜底返空集不抛(脏数据场景)', () async {
+      await db.customStatement(
+          "INSERT INTO kvs (key, value) VALUES ('mp_perm:u1:broken', 'NOT_JSON')");
+      expect(await db.getMpPerms('u1', 'broken'), <String>{});
+    });
+
+    test('clearAll 清空授权(注销场景)', () async {
+      await db.putMpPerms('u1', 'hello', {'wanling.chat.read'});
+      await db.clearAll();
+      expect(await db.getMpPerms('u1', 'hello'), <String>{});
+    });
+  });
 }
 
 ChatMessage _mkMsg(String id, String convId, {required DateTime createdAt}) {

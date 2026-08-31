@@ -44,6 +44,12 @@ abstract class LocalMessageStore {
   Future<String?> getDraft(String ownerId, String convId);
   Future<void> deleteDraft(String ownerId, String convId);
 
+  /// 小程序授权能力集(mp_perm:{ownerId}:{appid},KVS 持久化)。
+  /// 未记录返空集;解析失败由实现内部兜底返空集,不抛。
+  Future<Set<String>> getMpPerms(String ownerId, String appid);
+  Future<void> putMpPerms(String ownerId, String appid, Set<String> perms);
+  Future<void> deleteMpPerms(String ownerId, String appid); // 幂等
+
   // === 全局元数据 ===
   Future<int?> getGlobalLastSeq();
   Future<void> setGlobalLastSeq(int seq);

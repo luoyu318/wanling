@@ -152,6 +152,7 @@ class FakeLocalMessageStore implements LocalMessageStore {
     _buckets.clear();
     _globalLastSeq = null;
     _drafts.clear();
+    _mpPerms.clear();
   }
 
   // === 列表缓存 + conv_meta ===
@@ -283,5 +284,26 @@ class FakeLocalMessageStore implements LocalMessageStore {
   Future<void> deleteDraft(String ownerId, String convId) async {
     _maybeThrow('deleteDraft');
     _drafts.remove('$ownerId:$convId');
+  }
+
+  /// mp_perm 命名空间 key="{ownerId}:{appid}"
+  final Map<String, Set<String>> _mpPerms = {};
+
+  @override
+  Future<void> putMpPerms(String ownerId, String appid, Set<String> perms) async {
+    _maybeThrow('putMpPerms');
+    _mpPerms['$ownerId:$appid'] = Set.of(perms);
+  }
+
+  @override
+  Future<Set<String>> getMpPerms(String ownerId, String appid) async {
+    _maybeThrow('getMpPerms');
+    return Set.of(_mpPerms['$ownerId:$appid'] ?? <String>{});
+  }
+
+  @override
+  Future<void> deleteMpPerms(String ownerId, String appid) async {
+    _maybeThrow('deleteMpPerms');
+    _mpPerms.remove('$ownerId:$appid');
   }
 }
