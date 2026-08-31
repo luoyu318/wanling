@@ -11,10 +11,18 @@ class MiniProgramBridge {
       proxy;
   final VoidCallback? onClose;
 
+  /// 取当前会话 id;null=当前未接入会话上下文。由容器页注入(bridge 不感知 KVS)。
+  final String? Function()? onChatContext;
+
+  /// 分享到会话;返回 null=用户取消。由容器页注入(bridge 不感知 KVS)。
+  final Future<Object?> Function(Map<String, dynamic> payload)? onShare;
+
   MiniProgramBridge({
     required this.permissions,
     required this.proxy,
     this.onClose,
+    this.onChatContext,
+    this.onShare,
   });
 
   Future<Object?> handle(String handlerName, List<dynamic> args) async {
@@ -40,6 +48,28 @@ class MiniProgramBridge {
         case 'wanlingClose':
           onClose?.call();
           return null;
+        case 'wanlingGetChatContext':
+          if (!permissions.contains('wanling.chat.read')) {
+            return {'ok': false, 'error': 'permission denied: wanling.chat.read'};
+          }
+          final convId = onChatContext?.call();
+          return {
+            'ok': true,
+            'data': convId == null ? null : {'conversation_id': convId},
+          };
+        case 'wanlingShareToChat':
+          if (!permissions.contains('wanling.chat.share')) {
+            return {'ok': false, 'error': 'permission denied: wanling.chat.share'};
+          }
+          if (onShare == null) {
+            return {'ok': false, 'error': 'share unavailable'};
+          }
+          final payload =
+              (args.isNotEmpty ? args.first : null) as Map<String, dynamic>? ??
+                  {};
+          final shareData = await onShare!(payload);
+          if (shareData == null) return {'ok': false, 'error': 'cancelled'};
+          return {'ok': true, 'data': shareData};
         default:
           return {'ok': false, 'error': 'unknown method: $handlerName'};
       }
@@ -67,4 +97,14 @@ class MiniProgramBridge {
       return null;
     }
   }
+}
+
+/// 有效权限 = manifest 声明集与用户授权集的交集规则:
+/// - 非 `wanling.chat.` 前缀权限(如 `wanling.api`)不涉及用户会话数据,直接生效
+/// - `wanling.chat.*` 权限须在容器页算好的 granted 授权集中才生效
+/// granted 中未 declared 的权限一律不生效(只收窄,不放大)。
+Set<String> effectivePermissions(Set<String> declared, Set<String> granted) {
+  return declared
+      .where((p) => !p.startsWith('wanling.chat.') || granted.contains(p))
+      .toSet();
 }
