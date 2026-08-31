@@ -196,14 +196,17 @@ void main() {
     expect(longPressed, 1);
   });
 
-  testWidgets('在线绿点只出现在 agent 槽,会话槽无绿点', (tester) async {
+  testWidgets('在线绿点:agent 槽恒渲染,会话槽仅在 online 时渲染', (tester) async {
     await tester.pumpWidget(_wrap(NavTabBar(
       slots: const [
         NavAgentSlot(
             tabId: 'a1',
             tab: NavAgentTab(id: 'a1', name: 'n-a1', online: true)),
         NavConvSlot(
-            tabId: 'conv:c1', tab: NavConvTab(id: 'c1', name: '项目群')),
+            tabId: 'conv:c1',
+            tab: NavConvTab(id: 'c1', name: '项目群', online: true)),
+        NavConvSlot(
+            tabId: 'conv:c2', tab: NavConvTab(id: 'c2', name: '离线会话')),
       ],
       currentIndex: -1,
       showMore: false,
@@ -213,7 +216,7 @@ void main() {
     )));
     const dot = ValueKey('nav-online-dot');
     // 渲染 widget(_AgentSlot/_ConvSlot)为私有类,改按槽位下标定位:
-    // Row 内每槽一个 Expanded,位 0 = agent 槽,位 1 = conv 槽。
+    // Row 内每槽一个 Expanded,位 0 = agent 槽,位 1/2 = conv 槽。
     final slotsFinder = find.descendant(
         of: find.byType(NavTabBar), matching: find.byType(Expanded));
     // agent 槽(位 0)范围内恰一个绿点
@@ -221,9 +224,14 @@ void main() {
       find.descendant(of: slotsFinder.at(0), matching: find.byKey(dot)),
       findsOneWidget,
     );
-    // 会话槽(位 1)范围内不允许出现绿点(会话无在线概念)
+    // conv 槽 online=true(位 1):渲染绿点(样式与 agent 槽同源)
     expect(
       find.descendant(of: slotsFinder.at(1), matching: find.byKey(dot)),
+      findsOneWidget,
+    );
+    // conv 槽缺省 online=false(位 2):不渲染绿点
+    expect(
+      find.descendant(of: slotsFinder.at(2), matching: find.byKey(dot)),
       findsNothing,
     );
   });
