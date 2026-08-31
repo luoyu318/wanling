@@ -216,20 +216,20 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 	var items []model.ConversationListItem
 	for rows.Next() {
 		var (
-			item           model.ConversationListItem
-			titleNS        sql.NullString
-			avatarURLNS    sql.NullString
-			senderIDNS     sql.NullString
-			senderTypeNS   sql.NullString
-			agentID        sql.NullString
-			agentName      sql.NullString
-			agentAvatar    sql.NullString
-			agentTypeNS    sql.NullString
+			item                model.ConversationListItem
+			titleNS             sql.NullString
+			avatarURLNS         sql.NullString
+			senderIDNS          sql.NullString
+			senderTypeNS        sql.NullString
+			agentID             sql.NullString
+			agentName           sql.NullString
+			agentAvatar         sql.NullString
+			agentTypeNS         sql.NullString
 			agentMultiSessionNS sql.NullBool
-			otherUsername  sql.NullString
-			otherNickname  sql.NullString
-			otherAvatarURL sql.NullString
-			senderNameNS   sql.NullString
+			otherUsername       sql.NullString
+			otherNickname       sql.NullString
+			otherAvatarURL      sql.NullString
+			senderNameNS        sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID, &item.Type, &titleNS, &avatarURLNS, &item.CreatedAt,
@@ -254,11 +254,11 @@ func (r *ConversationRepo) ListForUser(ctx context.Context, userID string) ([]mo
 				multiSession = &ms
 			}
 			item.Agent = &model.AgentSummary{
-				ID:            agentID.String,
-				Name:          agentName.String,
-				AvatarURL:     agentAvatar.String,
-				Type:          model.AgentType(agentTypeNS.String),
-				MultiSession:  multiSession,
+				ID:           agentID.String,
+				Name:         agentName.String,
+				AvatarURL:    agentAvatar.String,
+				Type:         model.AgentType(agentTypeNS.String),
+				MultiSession: multiSession,
 			}
 		}
 		// dm_user_user 才填 OtherUser 摘要(对方 user);其他 type 留 nil。

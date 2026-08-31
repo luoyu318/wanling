@@ -413,7 +413,7 @@ func (p *Processor) HandleIncoming(ctx context.Context, senderType, senderID str
 			return
 		}
 		var payload struct {
-			AgentID string               `json:"agent_id"`
+			AgentID string                `json:"agent_id"`
 			Modes   []model.AgentModeInfo `json:"modes"`
 		}
 		if err := json.Unmarshal(wsMsg.D, &payload); err != nil {
@@ -733,6 +733,10 @@ func (p *Processor) persistAndDispatchOnce(ctx context.Context, convID, senderTy
 			"conv_id", convID, "err", err)
 	}
 
+	// 4.7 multi_session 级联恢复:消息落 agent_session 子会话时,同步恢复对应
+	//     dm 入口行(best-effort,同 4.6 只 log 不阻塞)。
+	p.unhideParentDM(ctx, convID, participants)
+
 	// 5. dispatch(commit 之后):遍历 participants 按 member_type 路由
 	//    必须在 commit 之后才 dispatch,否则 dispatch 了的消息可能因 rollback 没真存。
 	//    payload 加 sender_role 字段(spec §5.2):client 不破坏(忽略未知字段),新版 APP
@@ -787,6 +791,47 @@ func (p *Processor) persistAndDispatchOnce(ctx context.Context, convID, senderTy
 	}
 
 	return msg, nil
+}
+
+// unhideParentDM multi_session 级联恢复(best-effort,commit 之后)。
+//
+// 背景:Unhide 的作用域是「消息落点会话」,multi_session 拓扑下入口行(dm_user_agent)
+// 与消息落点(agent_session)分离——子会话的消息不进 dm。用户在一级列表删除入口行后,
+// dm 的 hidden_at 永远不会被子会话的新消息清掉,入口行从此不再出现在一级列表。
+//
+// 此处从 participants 推 (owner, agent) → FindDMByOwnerAgent 定位入口行 → Unhide。
+// 非 agent_session 会话直接返回(dm 会话走 4.6 常规 Unhide 即可)。
+// 幂等(SET NULL),失败只 log 不阻塞消息投递。
+func (p *Processor) unhideParentDM(ctx context.Context, convID string, participants []model.ConversationParticipant) {
+	conv, err := p.convRepo.GetByID(ctx, convID)
+	if err != nil || conv == nil || conv.Type != model.ConvTypeAgentSession {
+		return
+	}
+	var ownerUserID, agentID string
+	for _, pt := range participants {
+		switch pt.MemberType {
+		case "user":
+			ownerUserID = pt.MemberID
+		case "agent":
+			agentID = pt.MemberID
+		}
+	}
+	if ownerUserID == "" || agentID == "" {
+		return
+	}
+	dm, err := p.convRepo.FindDMByOwnerAgent(ctx, ownerUserID, agentID)
+	if err != nil {
+		logpkg.FromCtx(ctx).WarnContext(ctx, "查 dm 入口行失败(不阻塞消息投递)",
+			"conv_id", convID, "err", err)
+		return
+	}
+	if dm == nil {
+		return
+	}
+	if err := p.participantRepo.Unhide(ctx, dm.ID); err != nil {
+		logpkg.FromCtx(ctx).WarnContext(ctx, "取消 dm 入口行隐藏失败(不阻塞消息投递)",
+			"dm_conv_id", dm.ID, "err", err)
+	}
 }
 
 // validateQuote 校验 content.data.quote.message_id 存在且属于本会话。

@@ -426,6 +426,50 @@ func TestProcessor_HandleIncoming_NewMessageClearsAllHiddenAt(t *testing.T) {
 	}
 }
 
+// TestProcessor_HandleIncoming_AgentSessionMessageUnhidesParentDM multi_session 级联恢复:
+// 用户在一级列表删除 dm 入口行(Hide dm),之后 agent 在 agent_session 子会话回复
+// → dm 入口行应自动恢复(hidden_at 清空),否则入口行永远不出现在一级列表。
+//
+// 背景:Unhide 的作用域是「消息落点会话」,multi_session 拓扑下入口行(dm)与
+// 消息落点(agent_session)分离,子会话消息不进 dm,dm 的 hidden_at 永远无人清。
+// 修复:消息落 agent_session 时级联 Unhide 同 (owner, agent) 的 dm 入口行。
+func TestProcessor_HandleIncoming_AgentSessionMessageUnhidesParentDM(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	// 建 agent_session 子会话(同 owner+agent,自动加 2 participants)
+	session, err := fix.convRepo.CreateAgentSession(t.Context(), fix.userID, fix.agentID, "s1", "")
+	if err != nil {
+		t.Fatalf("CreateAgentSession 失败: %v", err)
+	}
+
+	// 用户删除一级 dm 入口行 + 二级子会话(各自独立隐藏)
+	if err := fix.participantRp.SetHidden(t.Context(), fix.convID, fix.userID, "user", true); err != nil {
+		t.Fatalf("SetHidden dm 失败: %v", err)
+	}
+	if err := fix.participantRp.SetHidden(t.Context(), session.ID, fix.userID, "user", true); err != nil {
+		t.Fatalf("SetHidden session 失败: %v", err)
+	}
+
+	// agent 在子会话回复
+	p.HandleIncoming(t.Context(), "agent", fix.agentID, &model.WSMessage{
+		Op: model.OpDispatch,
+		T:  model.EventMessageCreate,
+		D:  convPayload(session.ID, msgContent("session reply")),
+	})
+
+	// 关键断言:dm 入口行 hidden_at 被级联清空(一级列表恢复显示入口行)
+	dmP, _ := fix.participantRp.Get(t.Context(), fix.convID, fix.userID, "user")
+	if dmP.HiddenAt != nil {
+		t.Errorf("子会话消息后 dm 入口行 hidden_at 应被级联清空,仍非空: %v", dmP.HiddenAt)
+	}
+	// 子会话自身 hidden_at 照常被清(现有行为不回退)
+	sessionP, _ := fix.participantRp.Get(t.Context(), session.ID, fix.userID, "user")
+	if sessionP.HiddenAt != nil {
+		t.Errorf("子会话自身 hidden_at 应被清空,仍非空: %v", sessionP.HiddenAt)
+	}
+}
+
 // TestProcessor_HandleIncoming_AbortsOnInvalidSenderType 验证:
 // HandleIncoming 在 sender_type 非法时优雅失败 — 不污染任何表(messages / deliveries /
 // participants / conversations 都无残留),unread_count 不变。
