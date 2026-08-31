@@ -79,12 +79,13 @@ func (e *mpEnv) user(t *testing.T, tag string) *model.User {
 }
 
 // mpSrv 注册全部小程序路由,身份经闭包变量注入(规避 gin 重复注册 panic,
-// 仿 file_handler_test.go 的 curUser/curRole 模式)。
+// 仿 file_handler_test.go 的 curUser/curRole/curOwner 模式)。
 type mpSrv struct {
-	t       *testing.T
-	r       *gin.Engine
-	curUser string
-	curRole string
+	t        *testing.T
+	r        *gin.Engine
+	curUser  string
+	curRole  string
+	curOwner string
 }
 
 func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
@@ -93,6 +94,9 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 	auth := func(c *gin.Context) {
 		c.Set("userID", s.curUser)
 		c.Set("role", s.curRole)
+		if s.curOwner != "" {
+			c.Set("ownerID", s.curOwner)
+		}
 	}
 	s.r.POST("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.Upload(c) })
 	s.r.GET("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.List(c) })
@@ -103,7 +107,13 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 }
 
 // as 切换当前请求身份(等价 AuthMiddleware 写入的 userID/role)。
-func (s *mpSrv) as(userID, role string) { s.curUser, s.curRole = userID, role }
+func (s *mpSrv) as(userID, role string) { s.curUser, s.curRole, s.curOwner = userID, role, "" }
+
+// asAgent 切换为 agent 身份(agent token 的 sub 是 agent_id,ownerID 是其服务的 user,
+// 等价 AuthMiddleware 对 agent 角色写入的 userID/role/ownerID)。
+func (s *mpSrv) asAgent(agentID, ownerID string) {
+	s.curUser, s.curRole, s.curOwner = agentID, "agent", ownerID
+}
 
 func (s *mpSrv) do(req *http.Request) *httptest.ResponseRecorder {
 	s.t.Helper()
@@ -272,4 +282,72 @@ func TestMiniProgramHandler_DownloadPackage_And_Delete_Permissions(t *testing.T)
 	s.as(u1.ID, "user")
 	AssertErr(t, s.do(httptest.NewRequest("DELETE", "/api/mini-programs/"+id, nil)),
 		http.StatusConflict, "invalid_state")
+}
+
+// TestMiniProgramHandler_Upload_ByAgent_OwnerIsUser 验证 agent 直传(M2):
+// 包 owner 落库为 agent 服务的真实用户(而非 agent_id——不在 users 表,直接落会
+// 触发 users FK 约束)。
+func TestMiniProgramHandler_Upload_ByAgent_OwnerIsUser(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner := e.user(t, "muh")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	s.asAgent("agent-"+uuid.NewString()[:8], owner.ID)
+	w := s.do(mpUploadReq(t, buildTestZip(t, appid, 1)))
+	id, _ := AssertOk(t, w, http.StatusCreated)["id"].(string)
+	if id == "" {
+		t.Fatalf("upload 响应缺 id: %s", w.Body.String())
+	}
+
+	mp, err := e.repo.GetByID(t.Context(), id)
+	if err != nil || mp == nil {
+		t.Fatalf("GetByID: err=%v mp=%v", err, mp)
+	}
+	if mp.OwnerID != owner.ID {
+		t.Errorf("owner 应为用户 %s,实际 %s", owner.ID, mp.OwnerID)
+	}
+}
+
+// TestMiniProgramHandler_Download_ByAgent_OwnersPrivate_OK 验证 agent(M2):
+// 可下载其 owner 的私有包(200 + X-Mini-Program-Sha256 头 + 字节一致)。
+func TestMiniProgramHandler_Download_ByAgent_OwnersPrivate_OK(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner := e.user(t, "mui")
+	appid := "mp-" + uuid.NewString()[:8]
+	zipBytes := buildTestZip(t, appid, 1)
+
+	s.as(owner.ID, "user")
+	wu := s.do(mpUploadReq(t, zipBytes))
+	id, _ := AssertOk(t, wu, http.StatusCreated)["id"].(string)
+
+	s.asAgent("agent-"+uuid.NewString()[:8], owner.ID)
+	w := s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/package", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("agent 下载 owner 私有包应 200,实际 %d %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Mini-Program-Sha256") == "" {
+		t.Errorf("下载响应应带 X-Mini-Program-Sha256 头")
+	}
+	if !bytes.Equal(w.Body.Bytes(), zipBytes) {
+		t.Errorf("下载内容与上传不一致: got %d bytes, want %d bytes", w.Body.Len(), len(zipBytes))
+	}
+}
+
+// TestMiniProgramHandler_Download_ByAgent_OthersPrivate_403 验证 agent(M2):
+// ownerID 指向无关用户时,不能下载他人私有包(归属校验按换算后的 owner 判定)。
+func TestMiniProgramHandler_Download_ByAgent_OthersPrivate_403(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u1, u2 := e.user(t, "muj"), e.user(t, "muk")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	s.as(u1.ID, "user")
+	wu := s.do(mpUploadReq(t, buildTestZip(t, appid, 1)))
+	id, _ := AssertOk(t, wu, http.StatusCreated)["id"].(string)
+
+	s.asAgent("agent-"+uuid.NewString()[:8], u2.ID)
+	AssertErr(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/package", nil)),
+		http.StatusForbidden, "forbidden")
 }

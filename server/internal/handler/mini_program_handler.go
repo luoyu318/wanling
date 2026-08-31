@@ -65,6 +65,13 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 // Upload POST /api/mini-programs:zip 上传 → 新建私有或同 owner 换版本。
 func (h *MiniProgramHandler) Upload(c *gin.Context) {
 	userID := c.GetString("userID")
+	// agent 直传(M2):owner 换算到 agent 服务的真实用户(照抄 file_handler 先例,
+	// agent_id 不在 users 表,直接落库会触发 FK 约束)。
+	if c.GetString("role") == "agent" {
+		if ownerID := c.GetString("ownerID"); ownerID != "" {
+			userID = ownerID
+		}
+	}
 
 	// 限制请求体大小,超限 413(与 FileHandler.Upload 同策略)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxZipBytes)
@@ -172,6 +179,12 @@ func (h *MiniProgramHandler) List(c *gin.Context) {
 // DownloadPackage GET /api/mini-programs/:id/package:owner 或 published 可下载。
 func (h *MiniProgramHandler) DownloadPackage(c *gin.Context) {
 	userID := c.GetString("userID")
+	// agent 下载(M2):owner 换算到 agent 服务的真实用户(照抄 file_handler 先例)。
+	if c.GetString("role") == "agent" {
+		if ownerID := c.GetString("ownerID"); ownerID != "" {
+			userID = ownerID
+		}
+	}
 	mp, err := h.repo.GetByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
