@@ -10,7 +10,11 @@
 
 ## builtin_renderers
 
-内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
+内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`、`MiniProgramCardRenderer`（wanling_core，详见下）。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
+
+### MiniProgramCardRenderer（M2 小程序分享卡片）
+
+`mini_program_card` 渲染器（wanling_core/rendering）：icon + 名称白卡胶囊（`wrapInBubble=true`），缺 appid 脏数据降级占位文案不抛异常。点击 `context.push('/mini-program/:appid?conv=:convId')` 携带来源会话（容器页注入 getChatContext），`data.params` 非 null 时以 URL 编码 JSON 追加 `&launch=` 透传（spec §8）。安装状态校验不做（容器页兜底）。协议见 [websocket-protocol.md](../../ai-handbook/websocket-protocol.md)
 
 ### FileContentRenderer（v1.0.6 重写）
 

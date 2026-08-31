@@ -188,6 +188,10 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 文字级系统选区菜单（commit e51366b）。覆写 Flutter 系统 `TextSelectionToolbar`，深色配色对齐 `app_menu_style`，让长按文字选词后的系统菜单与消息级浮动菜单视觉统一。估算菜单宽度（4 中文按钮 + 分隔线）对齐 anchor
 
+## MiniProgramConversationPicker
+
+小程序分享目标会话选择器（M2）。`showMiniProgramConversationPicker({context, ref}) → Future<String?>` 底部弹层：watch `conversationProvider` 渲染头像首字母 + 名称列表，点击返回 convId；取消/点遮罩返回 null（调用方 bridge 转 cancelled）；空列表显示「暂无会话」
+
 ## v1.0.9+ 新增组件
 
 二级会话目录面板(DirectoryPanel/Tile/PickerSheet + directory_utils)、三体状态指示器(ThreeBodyPhysics/Indicator + ShimmerText)、文件浏览套件(FileEntryIcon + DiffPatchViewer,双栏时代的 SplitView/Breadcrumb/FileListAside/FileViewer 等已废弃)、命令面板(SlashHandle + SlashCommandSheet + ModelPickerSheet)、LocalStoreBanner / ConvActionMenu。详见 [chat-extras.md](./chat-extras.md)

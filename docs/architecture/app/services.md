@@ -39,7 +39,7 @@ flowchart TB
 - **largeIcon**:`loadAvatarBitmap` 四级兜底(内存 bitmap → 文件缓存 `avatar_cache/{agentId}.png` → Dio 下载 3s 超时 + 裁方 192x192 + 圆角 r=36 → 首字母色块)。agent_session 的 sender 永远是 agent(自己 echo 被过滤),`sender_avatar_url` 自然等同会话头像
 - **payload**:JSON `{convId, agentId, agentName}` 点击路由用
 
-msg_type 预览(`notification_payload` → `MsgTypeX.preview`):单一真相源纯函数,覆盖 22 种 msgType(text/markdown 截断 50 字 / image=`[图片]` / file=`[文件] 文件名` / card/mixed/agent 过程类型各有文案);返回 null 时通知 body fallback `[新消息]`(详见 [models.md](./models.md) `MsgTypeX`)。
+msg_type 预览(`notification_payload` → `MsgTypeX.preview`):单一真相源纯函数,覆盖 24 种 msgType(text/markdown 截断 50 字 / image=`[图片]` / file=`[文件] 文件名` / card/mixed/agent 过程类型/mini_program_card 各有文案);返回 null 时通知 body fallback `[新消息]`(详见 [models.md](./models.md) `MsgTypeX`)。
 
 ### 通知取消三条路径(均 `cancel(convId.hashCode)`)
 
@@ -90,7 +90,7 @@ WebSocket 客户端，实现完整 Opcode 协议 + 自动重连 + OpResume 补�
 
 ## local_message_store.dart
 
-drift(SQLCipher 整库加密)本地消息持久化。完整镜像 server messages + conversation_metas + kvs 三表，业务侧通过 `LocalMessageStoreImpl` extension 调用。`setGlobalLastSeq` 用事务 + max 保证 cursor 单调（乱序到达不倒退，避免 Resume 丢消息）。open 失败时备份原文件 `.corrupted.<ts>` + 清密钥重试，二次失败抛 `LocalDatabaseOpenException`。`_fromRow` 单条失败 silently 跳过（满足 abstract 契约）。会话草稿读写（v1.6.2）：`getDraft` / `setDraft` / `deleteDraft`，复用 kvs 表 `draft:` 命名空间 key（`draft:<convId>`），供 draftProvider 落库与列表草稿预览读取。
+drift(SQLCipher 整库加密)本地消息持久化。完整镜像 server messages + conversation_metas + kvs 三表，业务侧通过 `LocalMessageStoreImpl` extension 调用。`setGlobalLastSeq` 用事务 + max 保证 cursor 单调（乱序到达不倒退，避免 Resume 丢消息）。open 失败时备份原文件 `.corrupted.<ts>` + 清密钥重试，二次失败抛 `LocalDatabaseOpenException`。`_fromRow` 单条失败 silently 跳过（满足 abstract 契约）。会话草稿读写（v1.6.2）：`getDraft` / `setDraft` / `deleteDraft`，复用 kvs 表 `draft:` 命名空间 key（`draft:<convId>`），供 draftProvider 落库与列表草稿预览读取。**小程序授权能力集（M2）**：`getMpPerms` / `putMpPerms` / `deleteMpPerms(ownerId, appid, ...)` 三方法，kvs 表 `mp_perm:` 命名空间 key（`mp_perm:{ownerId}:{appid}`，value=json 字符串化 `List<String>`），容器页权限弹窗持久化增量授权 + 卸载时清授权（delete 幂等）；abstract/noop/provider 扩展三处同步签名
 
 ## local_message_key.dart
 
@@ -125,3 +125,5 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 ## mini_program_bridge.dart
 
 小程序 JSBridge 门禁（app/lib，纯逻辑可单测）。安全基线：token 不进 JS（所有万灵 API 经 proxy 原生代理）；权限 fail fast（manifest 未声明 `wanling.api` 直接拒绝）；路径白名单（仅放行 `/api/` 前缀，`Uri.normalizePath` 归一化后复检防 `/api/../xxx` 绕过）。`handle('wanlingRequest'|'wanlingClose')` 返 `{ok, data|error}` envelope 供 JS 侧 then/throw
+
+**M2 会话上下文 4 handler**：`wanlingGetChatContext`（须 `wanling.chat.read`，经容器页注入的 `onChatContext` 回调返 `{conversation_id}`，未接来源会话返 null）+ `wanlingShareToChat`（须 `wanling.chat.share`，经 `onShare` 回调弹会话选择器 → 以 `mini_program_card` 发消息，返 `{message_id}`；用户取消返 cancelled）。`onChatContext`/`onShare` 由容器页构造注入（bridge 不感知 KVS/UI）。**`effectivePermissions(declared, granted)` 纯函数**：非 `wanling.chat.` 前缀权限（如 `wanling.api`）不涉及用户会话数据直接生效，`wanling.chat.*` 须在 granted 授权集中；只收窄不放大（granted 多余项不生效）

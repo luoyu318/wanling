@@ -70,7 +70,7 @@ WebSocket 协议（Hello → Identify → Heartbeat → Dispatch）
 
 ## mini_program_handler.go
 
-小程序容器 4 userAuth + 1 adminAuth 接口。`Upload`（`POST /api/mini-programs` multipart zip：`http.MaxBytesReader` 限体 413 + `.zip` 扩展名校验 + `miniprogram.ValidatePackage` 结构校验 fail-fast → appid 归属判定（他人占用 403 / 自己占用 `ReplaceVersion` 换版本 / 否则新建，sha256 + `storage.Save` + files 落库））、`List`（`GET /api/mini-programs`，published 全量 + 自己的）、`DownloadPackage`（`GET /api/mini-programs/:id/package`，非 owner 仅 published 放行防 IDOR，带 `X-Mini-Program-Sha256` 响应头供 APP 安装校验）、`Delete`（`DELETE /api/mini-programs/:id`，仅 owner 删 private，其余 409）、`UpdateStatus`（`PUT /api/mini-programs/:id/status` 挂 adminAuth 组，状态机白名单 private→published⇄disabled，非法流转 409）。构造 `NewMiniProgramHandler(repo, fileRepo, storage, maxZipBytes)`。
+小程序容器 5 接口，按角色分三个路由组：**mpAuth（user+agent 双角色，M2 Agent 直传）**承载 `Upload`（`POST /api/mini-programs`）与 `DownloadPackage`（`GET /api/mini-programs/:id/package`），**handler 内 owner 换算**（role=agent 时 userID 换成 `ownerID`，照 file_handler 先例规避 users 外键约束，agent_id 不落 users 表）；userAuth 组承载 `List`（`GET /api/mini-programs`，published 全量 + 自己的）与 `Delete`（`DELETE /api/mini-programs/:id`，仅 owner 删 private，其余 409）；adminAuth 组承载 `UpdateStatus`（`PUT /api/mini-programs/:id/status`，状态机白名单 private→published⇄disabled，非法流转 409）。`Upload` multipart zip：`http.MaxBytesReader` 限体 413 + `.zip` 扩展名校验 + `miniprogram.ValidatePackage` 结构校验 fail-fast → appid 归属判定（他人占用 403 / 自己占用 `ReplaceVersion` 换版本 / 否则新建，sha256 + `storage.Save` + files 落库）。`DownloadPackage` 非 owner 仅 published 放行防 IDOR，带 `X-Mini-Program-Sha256` 响应头供 APP 安装校验。构造 `NewMiniProgramHandler(repo, fileRepo, storage, maxZipBytes)`。
 
 ## middleware.go
 

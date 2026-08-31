@@ -134,6 +134,7 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `file` | `{file_id, filename?, file_size?, mime_type?}` | 文件消息（file_size/mime_type 由 server 补全） |
 | `mixed` | `{text?, items: [{type:'image'\|'file', file_id, filename?, mime_type?, file_size?}]}` | 图文/文件混排（text 为顶层字段；items 至少 1 个条目，file_id 必填；server 不富化 items，filename/mime_type/file_size 由发送端写入；dsh/hermes/opencode 消费） |
 | `card` | `{card_type, ...}` | 审批卡片（见 approval-card.md） |
+| `mini_program_card` | `{appid, title, params?}` | 小程序分享卡片（spec §8，APP shareToChat 发出）：点击冷启动/打开容器页 `/mini-program/:appid?conv=&launch=`，conv 携带来源会话供 getChatContext，params 为可选启动参数（URL 编码 JSON 透传入口 query） |
 | `recalled` | — | 撤回占位（server 端写，client 识别后置 isRecalled） |
 
 **Agent 过程消息类型**（仅 opencode-plugin streamer 发，展示 AI 思考/工具/步骤过程）：
