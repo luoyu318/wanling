@@ -2,15 +2,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/services/mini_program_bridge.dart';
 
 void main() {
-  test('无 wanling.api 权限 → request 拒绝', () async {
+  test('无 wanling.api 权限 → request 拒绝且不触达 proxy', () async {
+    var called = false;
     final b = MiniProgramBridge(
       permissions: const {},
-      proxy: (_, _, _) async => throw UnimplementedError(),
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
     );
     final r = await b.handle('wanlingRequest', [
       {'path': '/api/agent-types', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
+    expect(called, isFalse);
   });
 
   test('非 /api/ 路径 → 拒绝且不触达 proxy', () async {
