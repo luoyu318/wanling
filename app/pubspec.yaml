@@ -87,6 +87,7 @@ dev_dependencies:
   drift_dev: ^2.20.0
   build_runner: ^2.4.13
   # 测试直接引用的包(运行时经 wanling_core 传递,测试代码 import 需在此声明)
+  archive: ^4.2.0
   flutter_secure_storage: ^9.2.2
   drift: ^2.20.0
   sqlite3: ^3.5.0
