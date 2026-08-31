@@ -90,7 +90,7 @@ WebSocket 客户端，实现完整 Opcode 协议 + 自动重连 + OpResume 补�
 
 ## local_message_store.dart
 
-drift(SQLCipher 整库加密)本地消息持久化。完整镜像 server messages + conversation_metas + kvs 三表，业务侧通过 `LocalMessageStoreImpl` extension 调用。`setGlobalLastSeq` 用事务 + max 保证 cursor 单调（乱序到达不倒退，避免 Resume 丢消息）。open 失败时备份原文件 `.corrupted.<ts>` + 清密钥重试，二次失败抛 `LocalDatabaseOpenException`。`_fromRow` 单条失败 silently 跳过（满足 abstract 契约）。
+drift(SQLCipher 整库加密)本地消息持久化。完整镜像 server messages + conversation_metas + kvs 三表，业务侧通过 `LocalMessageStoreImpl` extension 调用。`setGlobalLastSeq` 用事务 + max 保证 cursor 单调（乱序到达不倒退，避免 Resume 丢消息）。open 失败时备份原文件 `.corrupted.<ts>` + 清密钥重试，二次失败抛 `LocalDatabaseOpenException`。`_fromRow` 单条失败 silently 跳过（满足 abstract 契约）。会话草稿读写（v1.6.2）：`getDraft` / `setDraft` / `deleteDraft`，复用 kvs 表 `draft:` 命名空间 key（`draft:<convId>`），供 draftProvider 落库与列表草稿预览读取。
 
 ## local_message_key.dart
 
