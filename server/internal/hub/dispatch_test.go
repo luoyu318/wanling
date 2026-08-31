@@ -291,3 +291,47 @@ func TestBroadcastOfflineNoOp(t *testing.T) {
 	// 给一点时间确保没异步崩
 	time.Sleep(10 * time.Millisecond)
 }
+
+// TestBroadcastMessageUpdateWithMetaPayload 验证 WithConvMeta 翻转广播
+// payload 携带会话元信息 + sender 三件套(bg-service 聚合卡翻转弹通知
+// 直接消费,不再依赖 MESSAGE_CREATE 阶段的内存回查——bg 重启后回查必失败,
+// 曾导致通知 title fallback 'Agent' + 头像色块)。
+func TestBroadcastMessageUpdateWithMetaPayload(t *testing.T) {
+	h, convID, userID, agentID := seedHubParticipantDB(t)
+
+	user := newTestClient(userID, "user")
+	registerDirect(h, user)
+
+	content, _ := json.Marshal(map[string]string{"msg_type": "aggregate_card"})
+	h.BroadcastMessageUpdateWithConvMeta(convID, "msg-9", content, MessageUpdateMeta{
+		ConvType:        "agent_session",
+		ConvTitle:       "我的会话",
+		SenderID:        agentID,
+		SenderName:      "灵仔",
+		SenderAvatarURL: "/api/files/abc",
+	})
+
+	got := recvOne(t, user)
+	if got.T != model.EventMessageUpdate {
+		t.Fatalf("expected MESSAGE_UPDATE, got %s", got.T)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(got.D, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["conversation_type"] != "agent_session" {
+		t.Fatalf("expected conversation_type=agent_session, got %v", payload["conversation_type"])
+	}
+	if payload["conversation_title"] != "我的会话" {
+		t.Fatalf("expected conversation_title=我的会话, got %v", payload["conversation_title"])
+	}
+	if payload["sender_id"] != agentID {
+		t.Fatalf("expected sender_id=%s, got %v", agentID, payload["sender_id"])
+	}
+	if payload["sender_name"] != "灵仔" {
+		t.Fatalf("expected sender_name=灵仔, got %v", payload["sender_name"])
+	}
+	if payload["sender_avatar_url"] != "/api/files/abc" {
+		t.Fatalf("expected sender_avatar_url=/api/files/abc, got %v", payload["sender_avatar_url"])
+	}
+}

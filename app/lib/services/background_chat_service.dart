@@ -546,14 +546,30 @@ class BackgroundChatService {
     // 计数(在通知前累加,N 反映含本条)
     _unread.increment(convId);
 
-    // MESSAGE_UPDATE 广播不带 sender 字段,回查 MESSAGE_CREATE 阶段记录的
-    // 会话发送者;取不到(回合中途 bg-service 才启动)fallback 'Agent'。
-    final senderId = _convSenders[convId];
-    final senderName = senderId != null
-        ? ((await SharedPreferences.getInstance())
-                    .getString('agent_name_$senderId') ??
-                'Agent')
-        : 'Agent';
+    // MESSAGE_UPDATE 广播的 sender 三件套(新 server 翻转广播附带):优先直接
+    // 消费——bg-service 回合中途重启时 _convSenders 内存回查必失败,曾导致
+    // 通知 title fallback 'Agent' + 头像色块。同时回填 _convSenders,让该
+    // 会话后续通知(老 server / 无字段场景)也能回查到。
+    // 旧 server 无字段时保持原 fallback 链:内存回查 → prefs agent 名 → 'Agent'。
+    var senderId = data['sender_id'] as String?;
+    final senderNameFromPayload = data['sender_name'] as String?;
+    final senderAvatarUrl = data['sender_avatar_url'] as String?;
+    if (senderId != null && senderId.isNotEmpty) {
+      _convSenders[convId] = senderId;
+    } else {
+      senderId = _convSenders[convId];
+    }
+    String senderName;
+    if (senderNameFromPayload != null && senderNameFromPayload.isNotEmpty) {
+      senderName = senderNameFromPayload;
+    } else if (senderId != null) {
+      senderName =
+          (await SharedPreferences.getInstance())
+              .getString('agent_name_$senderId') ??
+          'Agent';
+    } else {
+      senderName = 'Agent';
+    }
 
     await _notifyIncomingMessage(
       convId: convId,
@@ -561,6 +577,7 @@ class BackgroundChatService {
       senderId: senderId ?? convId,
       senderName: senderName,
       content: content,
+      senderAvatarUrl: senderAvatarUrl,
       // 翻转广播 server 附带会话 type/title(对齐 MESSAGE_CREATE payload):
       // agent_session 通知 title=会话标题,群聊 title=群名;老 server 无此字段
       // 时走原单聊 fallback(title=senderName)。
@@ -655,6 +672,13 @@ class BackgroundChatService {
   /// 测试入口:注入一条原始 WS 帧,走与真实 WS 通道一致的 _handleMessage 路径。
   @visibleForTesting
   Future<void> handleRawMessageForTest(String raw) => _handleMessage(raw);
+
+  /// 测试注入连接信息(等价 IPC start 的 baseUrl/token 副作用,不触发 WS 连接)。
+  @visibleForTesting
+  void setConnectionForTest({required String baseUrl, required String token}) {
+    _baseUrl = baseUrl;
+    _token = token;
+  }
 
   /// 测试入口:读某会话的本地未读计数。
   @visibleForTesting
