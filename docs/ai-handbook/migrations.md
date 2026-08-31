@@ -30,6 +30,7 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 - `009_conversation_directory.sql` — conversations 加 `directory TEXT`(nullable)。OC session 的物理工作目录固化在一级列,不再塞 session_meta JSONB(避免 server 整 JSON 覆盖写时与可变字段 mode/model/git_branch 互相覆盖)。写入时机:APP user 视角 `POST /api/conversations`(type=agent_session)传 directory,server CreateAgentSession 事务内写入。NULL = 用户选「默认」(plugin 用 OC 启动目录)。
 - `010_approval_question.sql` — 审批卡 question 类型:approvals.card_type CHECK 放宽加 `question` + `decided_answers JSONB`(多选答案持久化;decisions 落库后 GET /api/approvals/:id 返回)。协议见 [approval-card.md](./approval-card.md)。
 - `011_agent_type_registry.sql` — agent type 注册表:`agent_type_registry` 表(type PK / multi_session / label / badge_bg / badge_bg_elevated / badge_fg),server 统一下发类型属性,新类型 INSERT 一行即接入(APP 零发版)。预置 hermes/opencode/dsh 三行。拓扑判断(multi_session)驱动 APP 一级列表路由与会话列表 session 聚合;展示属性(label/badge 配色)供徽标与类型下拉。
+- `012_mini_programs.sql` — 小程序注册表:appid 唯一/owner/版本/jsonb manifest/sha256/size/状态机(private→published⇄disabled)。两层模型:用户上传即私有,管理员 publish 上公共库
 
 新 migration 文件命名:`NNN_<feature>.sql`(NNN 递增,如 `005_add_xxx.sql`),不要修改 001_init.sql(会让已部署实例无法重跑 init)。
 
@@ -50,6 +51,7 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 | approvals | 审批卡片(initiator/decider 通用字段) |
 | pairing_tickets | 扫码配对票据(5min TTL,非业务表) |
 | agent_type_registry | agent type 注册表(type → multi_session/label/badge 配色,011) |
+| mini_programs | 小程序注册表(appid 唯一 → owner/版本/manifest/sha256/状态,012) |
 
 ## 关键设计
 

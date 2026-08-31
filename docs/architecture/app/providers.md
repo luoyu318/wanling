@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 18 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft(connState 定义在 chat_provider 内,非独立文件)。
+状态管理 19 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件)。
 
 ## authProvider
 
@@ -49,6 +49,10 @@ agent_session 二级列表状态管理（对齐 conversationProvider 模式，fa
 ## agentStatusProvider
 
 Agent 状态聚合（`StateNotifier<Map<String, AgentStatus>>`，key=agentId）。聚合 typing + pending approval 数 → 三态（idle/busy/retry）供二级列表 SessionTile 三体指示器 + 目录面板 busyCount + chat_page 状态文案。监听 `wsProvider.messages`（agent MESSAGE_CREATE 清 busy）+ `typingProvider`（typing → busy）+ `chatProvider` 的 pending approval 数
+
+## miniProgramsProvider
+
+用户可见小程序列表（`FutureProvider<List<MiniProgramInfo>>`，wanling_core）。`GET /api/mini-programs` 返回 published 全量 + 自己的 private/disabled。非 autoDispose 登录周期内缓存；失败返空列表（列表页空态，不炸 UI）。上传/删除成功后 `invalidate` 刷新
 
 ## navOrderProvider
 

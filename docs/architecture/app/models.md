@@ -22,3 +22,7 @@ lib/models/ 数据模型。
 - `LoginResult` / `RegisterResult`(`login_result.dart` / `register_result.dart`)— 登录 / 注册响应封装(user + token pair)
 - `SlashCommand`(`slash_command.dart`)— OC 命令 / 技能清单条目(`name`/`template`/`description?`/`source` command|skill/`hasArgs`),`GET /api/agents/:id/slash-catalog` 响应 + SlashCommandSheet 渲染用
 - `Friendship` / `UserSummary`（`friendship.dart` / `user_summary.dart`）— **好友/用户搜索 model，UI 未开放代码保留**：好友关系 + 请求记录（`FriendshipStatus` 枚举）/ 用户摘要（id/username/nickname/avatarUrl）。待好友系统重新开放时启用
+
+## 小程序 model
+
+- `MiniProgramInfo`（`mini_program_info.dart`，wanling_core）— `GET /api/mini-programs` 响应条目（id/appid/ownerId/name/version/entry/icon/permissions/status/sha256/size），列表页分组（published=公共库）与容器页安装/校验用

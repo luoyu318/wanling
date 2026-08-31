@@ -1,6 +1,6 @@
 # Server HTTP Handler
 
-internal/handler/ 目录下的 14 个 HTTP handler + middleware/access_log。
+internal/handler/ 目录下的 15 个 HTTP handler + middleware/access_log。
 
 ## handler 总览
 
@@ -67,6 +67,10 @@ WebSocket 协议（Hello → Identify → Heartbeat → Dispatch）
 ## pairing_handler.go
 
 扫码配对 4 接口（`CreateTicket`/`GetTicket`/`ScanTicket`/`CompleteTicket`）。GET completed 返回凭据后**领完即焚**（清空 `pairing_tickets.secret_key`）；scan 幂等（同 user 重扫 OK，跨 user 403）；complete 选已有 agent 重置 secret_key、新建 agent 走 `AgentRepo.Create`。响应统一返 `{status}` 字段串（pending/scanned/completed/expired/not_found）。**agent type 透传**：`CreateTicket` body 可选 `{type}` 声明 agent 类型(opencode 等,默认空串),存入 `pairing_tickets.type`;`CompleteTicket` 新建分支读 `ticket.type` 传给 `AgentRepo.Create`(替代原硬编码空串),实现扫码配对的 opencode agent 全链路 type 透传(APP 可识别 agent 类型)。
+
+## mini_program_handler.go
+
+小程序容器 4 userAuth + 1 adminAuth 接口。`Upload`（`POST /api/mini-programs` multipart zip：`http.MaxBytesReader` 限体 413 + `.zip` 扩展名校验 + `miniprogram.ValidatePackage` 结构校验 fail-fast → appid 归属判定（他人占用 403 / 自己占用 `ReplaceVersion` 换版本 / 否则新建，sha256 + `storage.Save` + files 落库））、`List`（`GET /api/mini-programs`，published 全量 + 自己的）、`DownloadPackage`（`GET /api/mini-programs/:id/package`，非 owner 仅 published 放行防 IDOR，带 `X-Mini-Program-Sha256` 响应头供 APP 安装校验）、`Delete`（`DELETE /api/mini-programs/:id`，仅 owner 删 private，其余 409）、`UpdateStatus`（`PUT /api/mini-programs/:id/status` 挂 adminAuth 组，状态机白名单 private→published⇄disabled，非法流转 409）。构造 `NewMiniProgramHandler(repo, fileRepo, storage, maxZipBytes)`。
 
 ## middleware.go
 

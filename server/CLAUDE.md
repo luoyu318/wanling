@@ -23,10 +23,10 @@ go test ./internal/hub/...         # 运行指定包测试
 flowchart TB
     MAIN[cmd/main.go<br/>路由 + 组装]
     MW[middleware<br/>JWT + access log]
-    HANDLERS[handler/<br/>14 个 HTTP handler]
+    HANDLERS[handler/<br/>15 个 HTTP handler]
     HUB[hub<br/>WS 连接 + dispatch]
     PROC[message/processor<br/>事务 + dispatch]
-    REPO[repository/<br/>11 个 repo]
+    REPO[repository/<br/>12 个 repo]
     SVC[approval + pair<br/>状态机 + cleanup]
     STORAGE[storage + imaging]
     

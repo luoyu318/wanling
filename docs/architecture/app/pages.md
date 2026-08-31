@@ -93,3 +93,11 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 ## SessionDiffFilePage
 
 **单文件 diff 全屏页**（路由 `/session-diff-file/:agentId/:convId`，idx 通过查询参数或状态传递）。展示某文件的完整 unified diff patch（`DiffPatchViewer` 语法高亮 +/- 行）。从 `sessionDiffProvider` 的文件列表按 idx 取单文件 patch。纯展示页
+
+## MiniProgramListPage
+
+**小程序列表页**（路由 `/mini-programs`，设置侧滑栏入口，见 sidebar_profile_panel）。数据源 `miniProgramsProvider`，按 status 分两组渲染：公共库（published）+ 我的（private/disabled，带删除按钮）。上传按钮 → file_picker 选 zip → `MiniProgramService.uploadPackage` 建私有 → invalidate 刷新。删除不可逆（远端 + 本地包 + WebView storage）先弹确认框。点击条目 `context.push('/mini-program/${mp.appid}')` 进容器页
+
+## MiniProgramPage
+
+**小程序 WebView 容器页**（路由 `/mini-program/:appid`）。origin 隔离：每小程序独立虚拟域名 `https://<appid>.mini.wanling.local`。启动流程：TokenVault 取 token → `MiniProgramService.installedDir` 命中即用 / 未装或版本旧则 `install`（下载 → sha256 校验 fail-fast → 解压到 `documents/miniprograms/<appid>/<version>/` 原子替换）。`shouldInterceptRequest` 从本地包读文件（`resolveLocalFile` 包根越界 403 / 缺失 404 + MIME 映射）；`shouldOverrideUrlLoading` 仅放行本 appid 虚拟 origin，外链一律拦截。JS 侧经注入的 `window.wanling.request/close` → `MiniProgramBridge` 门禁（token 不进 JS，权限/`/api/` 路径白名单）→ `apiProvider.proxyRequest` 原生代理。disabled 状态渲染「已被管理员停用」，appid 不存在/已下架返提示

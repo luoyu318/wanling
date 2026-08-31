@@ -117,3 +117,11 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 **init**:必须在 main() runApp 前调一次。创建 channel + 设置点击监听 `onDidReceiveNotificationResponse`。冷启动场景:`getNotificationAppLaunchDetails` 检查用户是否从通知拉起 APP,若有则存 `_launchPayload`,`consumeLaunchPayload()` 取一次清空避免重复跳转。
 
 **onTap 回调**(由 main.dart 注入):反序列化 payload → 调用注入的 `OnNotificationTap`。Linux desktop 跳过冷启动 payload 检查(`getNotificationAppLaunchDetails` 抛 UnimplementedError,且 desktop 无「从系统通知冷启动 APP」的产品语义)。
+
+## mini_program_service.dart
+
+小程序本地包管理（wanling_core，`MiniProgramService({baseUrl, token})`）。`install(mp)`：下载 `GET /api/mini-programs/:id/package`（带登录态）→ `verifySha256`（static 纯函数，不匹配抛 StateError fail-fast 严禁跳过安装）→ `extractPackage`（static，条目名安全校验 + `isWithin` 越界防护）→ 解压到 `documents/miniprograms/<appid>/<version>/` .tmp 原子换目录 + 清理旧版本。`installedDir` 本地已装版本查询；`uploadPackage`/`deleteRemote`/`removeLocal` 上传/远端删除/本地卸载（含 WebView storage）
+
+## mini_program_bridge.dart
+
+小程序 JSBridge 门禁（app/lib，纯逻辑可单测）。安全基线：token 不进 JS（所有万灵 API 经 proxy 原生代理）；权限 fail fast（manifest 未声明 `wanling.api` 直接拒绝）；路径白名单（仅放行 `/api/` 前缀，`Uri.normalizePath` 归一化后复检防 `/api/../xxx` 绕过）。`handle('wanlingRequest'|'wanlingClose')` 返 `{ok, data|error}` envelope 供 JS 侧 then/throw
