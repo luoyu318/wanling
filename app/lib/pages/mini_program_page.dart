@@ -15,13 +15,19 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
+import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/local_message_store_provider.dart'
+    show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 
-/// 注入 window.wanling:request/close 两个桥,底层走 flutter_inappwebview callHandler。
+import '../widgets/feedback/app_dialog.dart';
+
+/// 注入 window.wanling:request/close/getChatContext/shareToChat 四个桥,
+/// 底层走 flutter_inappwebview callHandler。
 const _jsBridgeBootstrap = """
 window.wanling = {
   request: function(opts) {
@@ -34,6 +40,22 @@ window.wanling = {
   },
   close: function() {
     return window.flutter_inappwebview.callHandler('wanlingClose');
+  },
+  getChatContext: function() {
+    return window.flutter_inappwebview
+        .callHandler('wanlingGetChatContext')
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'getChatContext failed');
+        });
+  },
+  shareToChat: function(payload) {
+    return window.flutter_inappwebview
+        .callHandler('wanlingShareToChat', payload || {})
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'shareToChat failed');
+        });
   }
 };
 """;
@@ -82,7 +104,15 @@ String _mimeOf(String path) {
 
 class MiniProgramPage extends ConsumerStatefulWidget {
   final String appid;
-  const MiniProgramPage({super.key, required this.appid});
+
+  /// 从聊天卡片打开时的来源会话(getChatContext 返回 conversation_id)。
+  final String? conversationId;
+
+  /// 卡片跳转携带的 launch 参数(已解码的 params JSON 字符串)。
+  /// 透传到入口 URL query,H5 用 URLSearchParams 自取,不进 bridge。
+  final String? launchParams;
+  const MiniProgramPage(
+      {super.key, required this.appid, this.conversationId, this.launchParams});
 
   @override
   ConsumerState<MiniProgramPage> createState() => _MiniProgramPageState();
@@ -120,16 +150,17 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
       _pkgRoot = dir.path;
       _entryPath = p.join(_pkgRoot!, info.entry);
 
+      final effective = await _ensurePermissions(info);
       _bridge = MiniProgramBridge(
-        permissions: info.permissions.toSet(),
+        permissions: effective,
         proxy: (path, method, body) =>
             ref.read(apiProvider).proxyRequest(path, method: method, body: body),
         onClose: () => context.pop(),
+        onChatContext: () => widget.conversationId,
+        onShare: (payload) => _shareToChat(info, payload),
       );
       await _controller?.loadUrl(
-        urlRequest: URLRequest(
-          url: WebUri('https://$_virtualHost/${info.entry}'),
-        ),
+        urlRequest: URLRequest(url: WebUri(_entryUrl(info).toString())),
       );
     } catch (e) {
       debugPrint('[mini-program] 启动失败: $e');
@@ -137,6 +168,82 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     } finally {
       _starting = false;
     }
+  }
+
+  /// chat 权限授权流程:KVS 读已授权集 → 未决项逐个弹窗 → 持久化增量授权。
+  /// 拒绝项不进 granted(有效权限集不含 → bridge 持续拒绝);
+  /// 非 chat 权限不弹窗(不涉及用户会话数据)。返回有效权限集。
+  Future<Set<String>> _ensurePermissions(MiniProgramInfo info) async {
+    final declared = info.permissions.toSet();
+    final uid = await TokenVault.getUserId() ?? '';
+    final store = ref.read(localMessageStoreProvider).valueOrNull;
+    var granted = await store?.getMpPerms(uid, info.appid) ?? <String>{};
+    final pending = declared
+        .where((p) => p.startsWith('wanling.chat.') && !granted.contains(p))
+        .toList();
+    for (final p in pending) {
+      if (mounted && await _showPermDialog(info, p)) granted.add(p);
+    }
+    if (pending.isNotEmpty) {
+      await store?.putMpPerms(uid, info.appid, granted);
+    }
+    return effectivePermissions(declared, granted);
+  }
+
+  static const _permDesc = {
+    'wanling.chat.read': '读取当前会话 ID（用于关联你正在看的会话）',
+    'wanling.chat.share': '向你选择的好友/群聊分享小程序卡片',
+  };
+
+  /// 权限申请确认框。返回 true=允许;拒绝/点遮罩均视为拒绝。
+  Future<bool> _showPermDialog(MiniProgramInfo info, String perm) async {
+    var allowed = false;
+    await showAppDialog(
+      context: context,
+      title: '权限申请',
+      content: Text('${info.name} 申请以下权限：\n${_permDesc[perm] ?? perm}'),
+      confirmText: '允许',
+      cancelText: '拒绝',
+      onConfirm: () => allowed = true,
+    );
+    return allowed;
+  }
+
+  /// 入口 URL:虚拟 origin + entry。卡片跳转携带的 conv/launch 透传到 query
+  /// (Uri 自动 percent-encode,H5 URLSearchParams 解码往返无损)。
+  Uri _entryUrl(MiniProgramInfo info) {
+    final query = <String, String>{
+      if (widget.conversationId != null) 'conv': widget.conversationId!,
+      if (widget.launchParams != null && widget.launchParams!.isNotEmpty)
+        'launch': widget.launchParams!,
+    };
+    return Uri(
+      scheme: 'https',
+      host: _virtualHost,
+      path: info.entry,
+      queryParameters: query.isEmpty ? null : query,
+    );
+  }
+
+  /// shareToChat:弹会话选择器 → 以 mini_program_card 发消息。
+  /// 返回 null=用户取消(bridge 转 cancelled)。
+  Future<Map<String, dynamic>?> _shareToChat(
+      MiniProgramInfo info, Map<String, dynamic> payload) async {
+    if (info.status != 'published') {
+      throw StateError('仅公开小程序可分享到会话');
+    }
+    final convId =
+        await showMiniProgramConversationPicker(context: context, ref: ref);
+    if (convId == null) return null;
+    final result = await ref.read(apiProvider).sendMessage(convId, {
+      'msg_type': 'mini_program_card',
+      'data': {
+        'appid': info.appid,
+        'title': (payload['title'] as String?) ?? info.name,
+        'params': payload['params'],
+      },
+    });
+    return {'message_id': result.messageId};
   }
 
   /// 文本响应(403 越界 / 404 缺失)。statusCode 需同时带 headers + reasonPhrase(平台约定)。
@@ -197,6 +304,16 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                 handlerName: 'wanlingClose',
                 callback: (args) async =>
                     await _bridge?.handle('wanlingClose', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingGetChatContext',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingGetChatContext', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingShareToChat',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingShareToChat', args),
               );
               unawaited(_start(info));
             },

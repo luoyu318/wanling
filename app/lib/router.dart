@@ -397,7 +397,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/mini-program/:appid',
         pageBuilder: (context, state) => _cupertinoPage(
           child: MiniProgramPage(
-              appid: state.pathParameters['appid']!),
+            appid: state.pathParameters['appid']!,
+            conversationId: state.uri.queryParameters['conv'],
+            launchParams: state.uri.queryParameters['launch'],
+          ),
           key: state.pageKey,
         ),
       ),

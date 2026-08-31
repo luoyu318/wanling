@@ -9,6 +9,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/local_message_store_provider.dart'
+    show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
@@ -143,12 +145,25 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
           baseUrl: ref.read(apiProvider).baseUrl, token: token);
       await service.deleteRemote(mp.id);
       await service.removeLocal(mp.appid);
+      await _clearMpPerms(mp.appid);
       ref.invalidate(miniProgramsProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('删除失败: $e')));
       }
+    }
+  }
+
+  /// 卸载即撤销授权:清 KVS mp_perm(delete 语义)。
+  /// 失败不阻断删除主流程,仅记日志(主数据已删,残留授权无对应小程序)。
+  Future<void> _clearMpPerms(String appid) async {
+    try {
+      final uid = await TokenVault.getUserId() ?? '';
+      final store = ref.read(localMessageStoreProvider).valueOrNull;
+      await store?.deleteMpPerms(uid, appid);
+    } catch (e) {
+      debugPrint('[mini-program] 清理授权失败: $e');
     }
   }
 }
