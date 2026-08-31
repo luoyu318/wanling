@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 振动（消息通知） -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 显示悬浮窗：自由窗口/小窗形态的基础权限声明（HyperOS 等系统识别用） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 拍照（wechat_camera_picker） + 扫码（mobile_scanner） -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 相机特性声明：mobile_scanner 需要；required=false 避免无摄像头设备被过滤 -->
@@ -34,6 +36,8 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
