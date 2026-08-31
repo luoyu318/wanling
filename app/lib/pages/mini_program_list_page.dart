@@ -14,6 +14,8 @@ import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 
+import '../widgets/feedback/app_dialog.dart';
+
 class MiniProgramListPage extends ConsumerStatefulWidget {
   const MiniProgramListPage({super.key});
 
@@ -113,9 +115,22 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       trailing: mp.status != 'published'
           ? IconButton(
               icon: const Icon(Icons.delete_outline),
-              onPressed: () => _deleteLocal(mp),
+              onPressed: () => _confirmDelete(mp),
             )
           : null,
+    );
+  }
+
+  /// 删除不可逆(清远端包+本地包),先弹确认框;取消不执行。
+  void _confirmDelete(MiniProgramInfo mp) {
+    showAppDialog(
+      context: context,
+      title: '确认删除小程序?',
+      content: const Text('将删除该小程序及其本地数据,删除后无法恢复。'),
+      confirmText: '删除',
+      onConfirm: () async {
+        await _deleteLocal(mp);
+      },
     );
   }
 
@@ -123,12 +138,11 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
     // 私有小程序:server 删除 + 本地包清理;仅清本地(未装直接成功)。
     try {
       final token = await TokenVault.getAccessToken();
-      if (token != null) {
-        final service = MiniProgramService(
-            baseUrl: ref.read(apiProvider).baseUrl, token: token);
-        await service.deleteRemote(mp.id);
-        await service.removeLocal(mp.appid);
-      }
+      if (token == null) throw StateError('未登录');
+      final service = MiniProgramService(
+          baseUrl: ref.read(apiProvider).baseUrl, token: token);
+      await service.deleteRemote(mp.id);
+      await service.removeLocal(mp.appid);
       ref.invalidate(miniProgramsProvider);
     } catch (e) {
       if (mounted) {
