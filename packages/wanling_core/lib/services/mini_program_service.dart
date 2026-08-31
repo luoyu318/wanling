@@ -116,6 +116,20 @@ class MiniProgramService {
     return await dir.exists() ? dir : null;
   }
 
+  /// 直传 zip 文件建/换私有小程序(POST /api/mini-programs multipart)。
+  Future<void> uploadPackage(String filePath) async {
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath,
+          filename: p.basename(filePath)),
+    });
+    await _dio.post('/api/mini-programs', data: form);
+  }
+
+  /// 删除自己的私有小程序(server 端;非 owner/private 会 4xx fail fast)。
+  Future<void> deleteRemote(String id) async {
+    await _dio.delete('/api/mini-programs/$id');
+  }
+
   /// 卸载:删除本地包目录(APP 侧同时清 WebView storage)。
   Future<void> removeLocal(String appid) async {
     final root = await _rootDir();

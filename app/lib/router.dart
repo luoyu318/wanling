@@ -17,6 +17,8 @@ import 'pages/edit_profile_page.dart';
 import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/mini_program_list_page.dart';
+import 'pages/mini_program_page.dart';
 import 'pages/nav_edit_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
@@ -381,6 +383,21 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/about',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const AboutPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/mini-programs',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const MiniProgramListPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/mini-program/:appid',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: MiniProgramPage(
+              appid: state.pathParameters['appid']!),
           key: state.pageKey,
         ),
       ),

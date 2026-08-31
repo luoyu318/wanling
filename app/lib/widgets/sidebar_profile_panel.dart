@@ -133,6 +133,14 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 onTap: () => context.push('/change-password'),
               ),
               SettingsTile(
+                icon: Icons.widgets_outlined,
+                iconColor: AppColors.accentGreen,
+                label: '小程序',
+                showDivider: false,
+                showChevron: false,
+                onTap: () => context.push('/mini-programs'),
+              ),
+              SettingsTile(
                 icon: Icons.info,
                 iconColor: const Color(0xFF7A5AF8),
                 label: '关于',
