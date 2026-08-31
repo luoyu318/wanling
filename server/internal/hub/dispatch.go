@@ -26,24 +26,39 @@ func marshalOrWarn(v any) json.RawMessage {
 // 不含会话元信息(convType/convTitle 为空),调用方需 title/type 时用
 // BroadcastMessageUpdateWithConvMeta。
 func (h *Hub) BroadcastMessageUpdate(convID, messageID string, content json.RawMessage) {
-	h.broadcastMessageUpdate(convID, messageID, content, "", "")
+	h.broadcastMessageUpdate(convID, messageID, content, MessageUpdateMeta{})
+}
+
+// MessageUpdateMeta 翻转广播附带的会话与 sender 元信息。
+// 空字段照常下发(client 按 falsy 处理,兼容旧 client 忽略未知字段)。
+type MessageUpdateMeta struct {
+	ConvType        string
+	ConvTitle       string
+	SenderID        string
+	SenderName      string
+	SenderAvatarURL string
 }
 
 // BroadcastMessageUpdateWithConvMeta 同 BroadcastMessageUpdate,附带会话
-// type/title(对齐 MESSAGE_CREATE payload 的 conversation_type/title 字段)。
-// 聚合卡回合结束翻转(set_silent→false)广播用:bg-service 据此判断 agent_session
-// 通知 title=会话标题(否则误走单聊分支 title=senderName)。
-func (h *Hub) BroadcastMessageUpdateWithConvMeta(convID, messageID string, content json.RawMessage, convType, convTitle string) {
-	h.broadcastMessageUpdate(convID, messageID, content, convType, convTitle)
+// 元信息与 sender 三件套。聚合卡回合结束翻转(set_silent→false)广播用:
+//   - conversation_type/title:bg-service 判断 agent_session → 通知 title=会话标题
+//   - sender_id/name/avatar_url:bg-service 弹通知直接消费,不再依赖
+//     MESSAGE_CREATE 阶段的内存回查(bg 重启后回查必失败,曾导致通知
+//     title fallback 'Agent' + 头像色块)
+func (h *Hub) BroadcastMessageUpdateWithConvMeta(convID, messageID string, content json.RawMessage, meta MessageUpdateMeta) {
+	h.broadcastMessageUpdate(convID, messageID, content, meta)
 }
 
-func (h *Hub) broadcastMessageUpdate(convID, messageID string, content json.RawMessage, convType, convTitle string) {
+func (h *Hub) broadcastMessageUpdate(convID, messageID string, content json.RawMessage, meta MessageUpdateMeta) {
 	payload := marshalOrWarn(map[string]any{
 		"message_id":         messageID,
 		"conversation_id":    convID,
 		"content":            content,
-		"conversation_type":  convType,
-		"conversation_title": convTitle,
+		"conversation_type":  meta.ConvType,
+		"conversation_title": meta.ConvTitle,
+		"sender_id":          meta.SenderID,
+		"sender_name":        meta.SenderName,
+		"sender_avatar_url":  meta.SenderAvatarURL,
 	})
 	if payload == nil {
 		return
