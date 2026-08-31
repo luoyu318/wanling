@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
+import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
@@ -173,21 +174,20 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   /// chat 权限授权流程:KVS 读已授权集 → 未决项逐个弹窗 → 持久化增量授权。
   /// 拒绝项不进 granted(有效权限集不含 → bridge 持续拒绝);
   /// 非 chat 权限不弹窗(不涉及用户会话数据)。返回有效权限集。
+  /// 编排逻辑抽在 runPermissionFlow(可注入可测),此处仅接线弹窗与 KVS 落库。
   Future<Set<String>> _ensurePermissions(MiniProgramInfo info) async {
     final declared = info.permissions.toSet();
     final uid = await TokenVault.getUserId() ?? '';
     final store = ref.read(localMessageStoreProvider).valueOrNull;
-    var granted = await store?.getMpPerms(uid, info.appid) ?? <String>{};
-    final pending = declared
-        .where((p) => p.startsWith('wanling.chat.') && !granted.contains(p))
-        .toList();
-    for (final p in pending) {
-      if (mounted && await _showPermDialog(info, p)) granted.add(p);
-    }
-    if (pending.isNotEmpty) {
-      await store?.putMpPerms(uid, info.appid, granted);
-    }
-    return effectivePermissions(declared, granted);
+    final granted = await store?.getMpPerms(uid, info.appid) ?? <String>{};
+    return runPermissionFlow(
+      declared: declared,
+      granted: granted,
+      askUser: (perm) async => mounted && await _showPermDialog(info, perm),
+      persist: (g) async {
+        await store?.putMpPerms(uid, info.appid, g);
+      },
+    );
   }
 
   static const _permDesc = {

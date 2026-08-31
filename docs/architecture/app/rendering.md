@@ -6,7 +6,7 @@
 
 `MessageContentRenderer` 接口（`selectable`/`wrapInBubble`/`build`）+ `ContentRendererRegistry` 注册表（`MsgType → Renderer`）+ `MessageRenderContext`。MessageBubble 只管外壳，内容渲染委托给注册表查到的 renderer。扩展新类型只需写一个 renderer 并 `register`
 
-**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)/`onToolGroupToggle`(折叠展开滚动补偿回调,聚合卡内可折叠元素 todowrite/权限卡终态经它同帧上报 ChatPage jumpTo,history 反向列表展开内容向上顶时视觉锚点不动)/`isHistorySliver`(当前消息所属 sliver 是否 history 反向,由 ChatPage 双 sliver 构建时透传)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
+**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`convId`(当前会话 ID,MessageBubble 从 message.conversationId 注入;权限/问题卡回复发送目标,小程序卡片跳转容器页 conv 参数)/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)/`onToolGroupToggle`(折叠展开滚动补偿回调,聚合卡内可折叠元素 todowrite/权限卡终态经它同帧上报 ChatPage jumpTo,history 反向列表展开内容向上顶时视觉锚点不动)/`isHistorySliver`(当前消息所属 sliver 是否 history 反向,由 ChatPage 双 sliver 构建时透传)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
 
 ## builtin_renderers
 

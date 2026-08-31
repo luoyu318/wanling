@@ -39,7 +39,7 @@ flowchart TB
 - **largeIcon**:`loadAvatarBitmap` 四级兜底(内存 bitmap → 文件缓存 `avatar_cache/{agentId}.png` → Dio 下载 3s 超时 + 裁方 192x192 + 圆角 r=36 → 首字母色块)。agent_session 的 sender 永远是 agent(自己 echo 被过滤),`sender_avatar_url` 自然等同会话头像
 - **payload**:JSON `{convId, agentId, agentName}` 点击路由用
 
-msg_type 预览(`notification_payload` → `MsgTypeX.preview`):单一真相源纯函数,覆盖 24 种 msgType(text/markdown 截断 50 字 / image=`[图片]` / file=`[文件] 文件名` / card/mixed/agent 过程类型/mini_program_card 各有文案);返回 null 时通知 body fallback `[新消息]`(详见 [models.md](./models.md) `MsgTypeX`)。
+msg_type 预览(`notification_payload` → `MsgTypeX.preview`):单一真相源纯函数,覆盖 25 种 msgType(text/markdown 截断 50 字 / image=`[图片]` / file=`[文件] 文件名` / card/mixed/agent 过程类型/mini_program_card 各有文案);返回 null 时通知 body fallback `[新消息]`(详见 [models.md](./models.md) `MsgTypeX`)。
 
 ### 通知取消三条路径(均 `cancel(convId.hashCode)`)
 

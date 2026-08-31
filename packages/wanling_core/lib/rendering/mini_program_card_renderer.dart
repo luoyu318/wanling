@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import 'message_content_renderer.dart';
 
