@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 17 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore(connState 定义在 chat_provider 内,非独立文件)。
+状态管理 18 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft(connState 定义在 chat_provider 内,非独立文件)。
 
 ## authProvider
 
@@ -37,6 +37,10 @@ family，key 是 record `({convId, agentId})`。**双 list 数据流**(2026-07-3
 ## localMessageStoreProvider
 
 `FutureProvider.autoDispose<LocalMessageStore>`（实为 `LocalMessageDatabase`，业务侧用 extension 接口）。依赖 `authProvider.user.id`，open 是 async（SQLCipher 密钥 IO + DB 文件 IO），拿到 store 后供 `chatProvider` / `conversationProvider` 订阅消息流和列表，供 `websocket_service` hello 分支读 `getGlobalLastSeq` 作 Resume `last_seq`。账号切换 / 登出时 autoDispose 自动 `close()` 释放句柄。
+
+## draftProvider
+
+会话草稿（`StateNotifierProvider.family<DraftNotifier, String, ({String ownerId, String convId})>`，wanling_core）。`StateNotifier<String>` 持当前草稿文本，构造时从 `localMessageStore` Kvs draft 命名空间异步回填。写入策略：`setText` 更新内存 + 500ms 防抖落库（连续输入只写最后一次），空文本立即删库；`clear()`（发送成功时调）删内存 + 删库并停掉未触发的防抖 Timer；dispose 兜底 flush 未落库的 `_pendingWrite`，防抖期间杀进程最多丢最后一笔。消费方：`ChatInputBar`（回填 initialText / onTextChanged 接入）+ 消息/二级会话列表的 `DraftAwarePreview`（草稿预览替换摘要行）
 
 ## agentSessionsProvider
 

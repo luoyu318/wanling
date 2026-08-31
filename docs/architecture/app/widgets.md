@@ -29,7 +29,7 @@ lib/widgets/ 组件。3 个子目录：`gallery/`(画廊 + 内化 photo_view)、
 
 ## MessageInputBar `[chat/]`
 
-IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选参数让 agent_session / dm / 群聊共享一个组件):`backgroundColor`(背景色,dm/群聊透明 agent_session 白)、`flatInput`(去掉圆角胶囊改直角,agent_session 用)、`modeBarColor`(左侧 4px 模式竖线色 + 加号/发送按钮色,agent_session 传模式色 Build 蓝 `#597BFF` / Plan 橙 `#F4A742`,dm/群聊 null 走原绿/黑)、`middleSlot`(输入框上方的中间插槽,agent_session 传 SessionMeta 副标题条)。内聚输入文本/焦点/面板显隐/加号↔发送切换状态，对外 5 个回调（`onSend`/`onPickFile`/`onTakePhoto`/`onPickAlbum`，不依赖 Provider）。结构：填充式输入框（`isDense` 锁 40px、`maxLines:null` 1~5 行）+ `AnimatedSwitcher`（150ms 加号 ⊕ ↔ 发送）+ `AnimatedSize`（250ms 上滑）的 `PlusPanel`（九宫格：拍照/相册/文件，去图片）。键盘↔面板互斥（FocusNode listener：输入框获焦收面板；点加号 unfocus 展面板）。**`_SendButton` + `_PlusButton` 内部组件**(v1.0.9):均加 `color` 参数,agent_session 传模式色(Build/Plan)让按钮跟随模式,dm/群聊保持原绿发送 + 黑加号。`ColoredBox` 在 `SafeArea` 外层填满底部安全区。统一字号 16/w300（与气泡一致）
+IM 风聊天输入栏（StatefulWidget）。**v5 参数化**(v1.0.9,4 个可选参数让 agent_session / dm / 群聊共享一个组件):`backgroundColor`(背景色,dm/群聊透明 agent_session 白)、`flatInput`(去掉圆角胶囊改直角,agent_session 用)、`modeBarColor`(左侧 4px 模式竖线色 + 加号/发送按钮色,agent_session 传模式色 Build 蓝 `#597BFF` / Plan 橙 `#F4A742`,dm/群聊 null 走原绿/黑)、`middleSlot`(输入框上方的中间插槽,agent_session 传 SessionMeta 副标题条)。内聚输入文本/焦点/面板显隐/加号↔发送切换状态，对外 5 个回调（`onSend`/`onPickFile`/`onTakePhoto`/`onPickAlbum`，不依赖 Provider）。**草稿接入**(v1.6.2)：新增 `initialText`(外部草稿回填初值)与 `onTextChanged`(文本变化回调)两个可选参数,页面层接 draftProvider 实现「退出留存/重进回填/发送清除」,组件本身不感知 provider。结构：填充式输入框（`isDense` 锁 40px、`maxLines:null` 1~5 行）+ `AnimatedSwitcher`（150ms 加号 ⊕ ↔ 发送）+ `AnimatedSize`（250ms 上滑）的 `PlusPanel`（九宫格：拍照/相册/文件，去图片）。键盘↔面板互斥（FocusNode listener：输入框获焦收面板；点加号 unfocus 展面板）。**`_SendButton` + `_PlusButton` 内部组件**(v1.0.9):均加 `color` 参数,agent_session 传模式色(Build/Plan)让按钮跟随模式,dm/群聊保持原绿发送 + 黑加号。`ColoredBox` 在 `SafeArea` 外层填满底部安全区。统一字号 16/w300（与气泡一致）
 
 ## MessageContextMenu `[chat/]`
 
@@ -148,9 +148,13 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 密码输入框组件（StatefulWidget），内置 obscure 显隐状态 + 右侧 `IconButton`（visibility / visibility_off）。替代 login_page / select_account_page / switch_account_sheet / change_password_page 四处原本各写一份的密码框，统一显隐交互
 
+## DraftAwarePreview
+
+会话列表行草稿预览（v1.6.2，无状态组件）。watch `draftProvider(ownerId, convId)`：草稿非空时显示红色书写图标（`drive_file_rename_outline` #FA5151）+ 草稿文本单行省略替换 fallback 摘要，否则渲染 `fallback`；草稿清空后自动恢复原摘要。messages_page 一级列表 + agent_sessions_page 二级列表行摘要共用（状态行 pending/灵光涌动/重试中优先级不变，草稿只覆盖普通摘要分支）
+
 ## NavTabBar
 
-自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + `NavConvSlot` 会话槽(好友/群会话,无在线态) + 可选「更多」槽，槽位由 HomePage 从有效序列派生纯展示(无拖拽,点按 onSlotTap/更多 onMoreTap/长按 onSlotLongPress 进编辑页),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；头像含在线绿点(agent 槽) + 未读角标。构造断言可见槽 ≤(showMore?4:5) 个
+自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + `NavConvSlot` 会话槽(好友/群会话,关联 agent 在线时也渲染绿点) + 可选「更多」槽，槽位由 HomePage 从有效序列派生纯展示(无拖拽,点按 onSlotTap/更多 onMoreTap/长按 onSlotLongPress 进编辑页),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；头像含在线绿点(agent 槽恒看 status,conv 槽经 conv.agent.id 查 agentByIdProvider 同源联动,无 agent 恒不显示) + 未读角标。构造断言可见槽 ≤(showMore?4:5) 个
 
 ## AccountSidebar
 

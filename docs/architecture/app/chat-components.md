@@ -62,7 +62,7 @@ ChatPage 用 `CustomScrollView(center: liveSliverKey)` 双 sliver 渲染:
 聊天页顶部 AppBar。副标题仅 dm_user_agent 场景渲染在线/离线/正在输入。群聊标题拼「群名(N)」。**白底 + 状态栏跟随**(2026-08-11)：普通模式背景白 `#FFFFFF`(对齐全局 AppBarTheme),ChatPage 包 `AnnotatedRegion<SystemUiOverlayStyle>` 让状态栏(通知栏)随模式切换——普通模式白底深色图标 / 多选模式深色底 `#2A2A2A` 白图标
 
 ### ChatInputBar
-底部输入区容器。`_buildInputBar()` 按 convType 分流：agent_session 走 v5 样式(白底/直角/模式色/SessionMeta 副标题条)，dm/群聊走原胶囊绿
+底部输入区容器。`_buildInputBar()` 按 convType 分流：agent_session 走 v5 样式(白底/直角/模式色/SessionMeta 副标题条)，dm/群聊走原胶囊绿。草稿接入(v1.6.2)：dm/群聊输入初值回填 draftProvider 草稿、文本变化防抖落库、发送成功清草稿(组件透传 initialText/onTextChanged，provider 编排在外层 chat_page)
 
 ### FriendDeletedBanner
 好友被删提示横幅
