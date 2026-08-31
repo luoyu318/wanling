@@ -31,3 +31,4 @@ dependencies:
   url_launcher: ^6.3.1
   markdown: ^7.3.1
   path: ^1.9.0
+  archive: ^4.2.0

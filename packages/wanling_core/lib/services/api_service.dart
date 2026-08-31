@@ -9,6 +9,7 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/friendship.dart';
 import 'package:wanling_core/models/login_result.dart';
 import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/models/pairing.dart';
 import 'package:wanling_core/models/register_result.dart';
 import 'package:wanling_core/models/slash_command.dart';
@@ -601,6 +602,34 @@ class ApiService {
     return list
         .map((e) => AgentTypeInfo.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// 用户可见小程序列表(published 全量 + 自己的私有)。
+  Future<List<MiniProgramInfo>> getMiniPrograms() async {
+    final res = await _dio.get('/api/mini-programs');
+    final body = res.data as Map<String, dynamic>;
+    final list = body['data'] as List? ?? const [];
+    return list
+        .map((e) => MiniProgramInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 小程序 JSBridge 代理:仅放行 /api/ 前缀,带登录态与 401 refresh 重试。
+  /// token 留在原生层,JS 上下文永不接触。
+  Future<dynamic> proxyRequest(
+    String path, {
+    String method = 'GET',
+    Object? body,
+  }) async {
+    if (!path.startsWith('/api/')) {
+      throw ArgumentError('仅允许 /api/ 前缀路径: $path');
+    }
+    final res = await _dio.request<dynamic>(
+      path,
+      data: body,
+      options: Options(method: method),
+    );
+    return res.data;
   }
 
   /// 游标分页拉取历史消息。
