@@ -120,6 +120,8 @@ func main() {
 	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo)
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
+	miniProgramRepo := repository.NewMiniProgramRepo(db)
+	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
@@ -377,6 +379,17 @@ func main() {
 		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
 		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
 		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
+		// 小程序容器(两层模型):上传/列表/包下载/owner 删除。
+		userAuth.POST("/api/mini-programs", miniProgramHandler.Upload)
+		userAuth.GET("/api/mini-programs", miniProgramHandler.List)
+		userAuth.GET("/api/mini-programs/:id/package", miniProgramHandler.DownloadPackage)
+		userAuth.DELETE("/api/mini-programs/:id", miniProgramHandler.Delete)
+	}
+
+	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序 publish/disable 审核等。
+	adminAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "admin"))
+	{
+		adminAuth.PUT("/api/mini-programs/:id/status", miniProgramHandler.UpdateStatus)
 	}
 
 	// 文件相关：user 和 agent 都可访问。

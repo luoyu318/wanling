@@ -1,0 +1,9 @@
+{
+  "appid": "hello-demo",
+  "name": "Hello 示例",
+  "version": 1,
+  "entry": "index.html",
+  "icon": "",
+  "permissions": ["wanling.api"],
+  "minHostVersion": "1.6.3"
+}

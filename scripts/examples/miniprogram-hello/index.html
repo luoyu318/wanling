@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hello 小程序</title>
+<style>body{font-family:sans-serif;padding:16px}pre{background:#f4f4f4;padding:8px;white-space:pre-wrap}</style>
+</head>
+<body>
+<h3>万灵小程序容器 Hello</h3>
+<button onclick="loadTypes()">调用 wanling.request</button>
+<pre id="out">点击按钮验证 JSBridge…</pre>
+<script>
+async function loadTypes() {
+  const out = document.getElementById('out');
+  try {
+    const data = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+    out.textContent = 'agent-types 数量: ' + data.length + '\n' + JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = '失败: ' + (e && e.message);
+  }
+}
+</script>
+</body>
+</html>
