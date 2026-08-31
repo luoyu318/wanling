@@ -539,9 +539,13 @@ class BackgroundChatService {
     if (convId == null || content == null || !isAggregateCardSilentFlip(content)) {
       return;
     }
+    debugLog('[bg-debug] flip UPDATE conv=$convId (aggregate silent→false)');
 
     // 与 MESSAGE_CREATE 同口径:正在看该会话则不弹不计(用户已直接看到)。
-    if (_appInForeground && convId == _activeConvId) return;
+    if (_appInForeground && convId == _activeConvId) {
+      debugLog('[bg-debug] isViewing=true (appInFg=$_appInForeground activeConvId=$_activeConvId) → SKIP flip notif');
+      return;
+    }
 
     // 计数(在通知前累加,N 反映含本条)
     _unread.increment(convId);
