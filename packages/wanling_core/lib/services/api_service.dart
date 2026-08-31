@@ -605,17 +605,18 @@ class ApiService {
   }
 
   /// 用户可见小程序列表(published 全量 + 自己的私有)。
+  /// 拦截器剥 {ok:true,data:[...]} 后 res.data 直接是 list。
   Future<List<MiniProgramInfo>> getMiniPrograms() async {
     final res = await _dio.get('/api/mini-programs');
-    final body = res.data as Map<String, dynamic>;
-    final list = body['data'] as List? ?? const [];
-    return list
+    return (res.data as List)
         .map((e) => MiniProgramInfo.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 
   /// 小程序 JSBridge 代理:仅放行 /api/ 前缀,带登录态与 401 refresh 重试。
   /// token 留在原生层,JS 上下文永不接触。
+  /// 拦截器已剥 envelope,返回值为裸 payload
+  /// (JS 侧 `wanling.request` 拿到的即 REST data 字段内容)。
   Future<dynamic> proxyRequest(
     String path, {
     String method = 'GET',
