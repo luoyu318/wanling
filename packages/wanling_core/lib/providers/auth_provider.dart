@@ -112,10 +112,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (state.user != null) {
       state = AuthState(user: state.user, token: access);
     }
-    // 通知 bg-service 用新 token 重连 WS(若已连接则切到新 token)
+    // 通知 bg-service 用新 token 重连 WS(若已连接则切到新 token);
+    // refreshToken 一并推送,bg isolate 401 头像下载时自主刷新用。
     notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': access,
+      'refreshToken': refresh,
     });
   }
 
@@ -149,10 +151,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
       // 同步 user_id 给 bg-service(防 SharedPreferences 跨 isolate cache 陈旧)
       _syncMyUserIdToBgService(result.user.id);
-      // 通知 service isolate 启动 WS
+      // 通知 service isolate 启动 WS(refreshToken 供 bg 401 自主刷新)
       notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': result.token,
+        'refreshToken': result.refreshToken,
       });
     } finally {
       state = state.copyWith(isLoading: false);
@@ -203,6 +206,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': result.token,
+      'refreshToken': result.refreshToken,
     });
   }
 
@@ -335,6 +339,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': token,
+        // 冷启动恢复的 refresh token,供 bg isolate 401 时自主刷新(可空,
+        // bg 端 null 不覆盖已有值)
+        'refreshToken': _lastKnownRefreshToken,
       });
     }
   }

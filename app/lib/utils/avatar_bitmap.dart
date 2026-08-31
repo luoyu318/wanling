@@ -14,60 +14,110 @@ const _kAvatarSize = 192;
 /// 方形圆角半径(与 _kAvatarSize 成比例 ≈19%,与 APP Avatar 的 9px@48 视觉一致)。
 const _kCornerRadius = 36;
 
+/// 头像下载超时。15s:Doze 模式 / 弱网下 bg isolate 网络调度慢,
+/// 3s 曾导致大量假性超时走色块兜底。
+@visibleForTesting
+const kAvatarDownloadTimeout = Duration(seconds: 15);
+
 /// 加载通知用头像 bitmap。
 ///
 /// 优先级:
-/// 1. [avatarUrl] 非空 → Dio 下载 → 裁方形+圆角 → 写文件缓存 → 返回
+/// 1. [avatarUrl] 非空 → 文件缓存 → Dio 下载 → 裁方形+圆角 → 写文件缓存
 /// 2. 下载失败 / [avatarUrl] 空 → 生成首字母色块(复用 [Avatar.colorFor])
 ///
+/// 返回 `(bytes, isRealAvatar)`:仅文件缓存命中与下载成功为 true。
+/// **色块兜底恒为 false**,调用方(bg-service)据此决定是否写内存缓存,
+/// 防止一次性失败(token 过期/弱网)把色块钉进缓存,后续通知持续色块。
+///
 /// 纯函数,不依赖 Riverpod,可在 bg-service isolate 内直接调用。
-/// 返回 PNG 编码的 bytes(方形 + 圆角)。
 ///
 /// [avatarUrl] 相对路径(`/api/files/xxx`)会拼 [baseUrl];完整 URL(http/https 开头)直接用。
-/// 下载失败不重试(下次新消息自然重试,避免在通知路径卡住)。
-/// 兜底色块不写文件缓存(agent 可能后续设头像,下次重新尝试下载)。
-Future<Uint8List> loadAvatarBitmap({
+/// [onUnauthorized]:下载遇 401(access token 过期,bg isolate 持有的是
+/// 连接时快照)时调用,返回新 access token 则换 header 重试一次,返回 null
+/// 或未传则按失败兜底。非 401 失败不重试(下次新消息自然重试)。
+Future<(Uint8List, bool)> loadAvatarBitmap({
   required String agentId,
   required String name,
   String? avatarUrl,
   required String baseUrl,
   required Map<String, String> httpHeaders,
+  Future<String?> Function()? onUnauthorized,
+  @visibleForTesting Dio? dioOverride,
 }) async {
   // 先读文件缓存(仅当有 URL 要下载时才碰 I/O,避免兜底路径依赖 path_provider)
   if (avatarUrl != null && avatarUrl.isNotEmpty) {
     try {
       final cacheFile = await _cachePath(agentId);
       if (await cacheFile.exists()) {
-        return cacheFile.readAsBytes();
+        return (await cacheFile.readAsBytes(), true);
       }
     } catch (_) {
       // 缓存读取失败,继续走下载流程
     }
 
-    // 下载真实头像
-    try {
-      final fullUrl = avatarUrl.startsWith('http') ? avatarUrl : '$baseUrl$avatarUrl';
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 3),
-        receiveTimeout: const Duration(seconds: 3),
-      ));
-      final resp = await dio.get<List<int>>(
-        fullUrl,
-        options: Options(responseType: ResponseType.bytes, headers: httpHeaders),
-      );
-      if (resp.statusCode == 200 && resp.data != null) {
-        final bytes = Uint8List.fromList(resp.data!);
-        final rounded = _cropRounded(bytes);
-        await _writeCache(agentId, rounded);
-        return rounded;
-      }
-    } catch (_) {
-      // 下载失败兜底色块,不重试(下次新消息自然重试)
+    final bytes = await _download(
+      fullUrl: avatarUrl.startsWith('http') ? avatarUrl : '$baseUrl$avatarUrl',
+      httpHeaders: httpHeaders,
+      onUnauthorized: onUnauthorized,
+      dioOverride: dioOverride,
+    );
+    if (bytes != null) {
+      final rounded = _cropRounded(bytes);
+      await _writeCache(agentId, rounded);
+      return (rounded, true);
     }
   }
 
-  // 兜底:首字母色块(与 APP Avatar 一致)
-  return _initialColorBlock(name);
+  // 兜底:首字母色块(与 APP Avatar 一致),isRealAvatar=false 不进内存缓存
+  return (_initialColorBlock(name), false);
+}
+
+/// 下载头像原始 bytes。401 时经 [onUnauthorized] 换 token 重试一次。
+Future<Uint8List?> _download({
+  required String fullUrl,
+  required Map<String, String> httpHeaders,
+  required Future<String?> Function()? onUnauthorized,
+  required Dio? dioOverride,
+}) async {
+  Future<Uint8List?> attempt(Map<String, String> headers) async {
+    try {
+      final dio = dioOverride ??
+          Dio(BaseOptions(
+            connectTimeout: kAvatarDownloadTimeout,
+            receiveTimeout: kAvatarDownloadTimeout,
+          ));
+      final resp = await dio.get<List<int>>(
+        fullUrl,
+        options: Options(responseType: ResponseType.bytes, headers: headers),
+      );
+      if (resp.statusCode == 200 && resp.data != null) {
+        return Uint8List.fromList(resp.data!);
+      }
+    } on DioException catch (e) {
+      // 401 = access token 过期,交调用方刷新后重试;其余失败不重试
+      if (e.response?.statusCode == 401) {
+        return null;
+      }
+      rethrow;
+    } catch (_) {
+      // 网络/超时/解码等失败,不重试(下次新消息自然重试)
+    }
+    return null;
+  }
+
+  try {
+    final bytes = await attempt(httpHeaders);
+    if (bytes != null) return bytes;
+    if (onUnauthorized == null) return null;
+    final newToken = await onUnauthorized();
+    if (newToken == null || newToken.isEmpty) return null;
+    return attempt({
+      ...httpHeaders,
+      'Authorization': 'Bearer $newToken',
+    });
+  } catch (_) {
+    return null;
+  }
 }
 
 /// 裁剪为方形 + 圆角,返回 PNG bytes。

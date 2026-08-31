@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:wanling_core/models/ws_message.dart';
+import 'package:wanling_core/services/secure_storage.dart';
 import '../utils/avatar_bitmap.dart';
 import 'package:wanling_core/utils/debug_log.dart';
 import 'package:wanling_core/services/notification_service.dart';
@@ -22,6 +24,36 @@ typedef ShowMessageNotifier = Future<void> Function({
   required int unreadCount,
   Uint8List? avatarBytes,
 });
+
+/// 通知头像加载回调。默认走 [loadAvatarBitmap]，测试可注入替身
+/// (返回 `(bytes, isRealAvatar)`,isReal=false 的色块不进内存缓存)。
+typedef AvatarLoader = Future<(Uint8List, bool)> Function({
+  required String agentId,
+  required String name,
+  String? avatarUrl,
+  required String baseUrl,
+  required Map<String, String> httpHeaders,
+  Future<String?> Function()? onUnauthorized,
+});
+
+/// [AvatarLoader] 默认实现:转发 [loadAvatarBitmap](纯函数,bg isolate 直接可用)。
+Future<(Uint8List, bool)> _defaultAvatarLoader({
+  required String agentId,
+  required String name,
+  String? avatarUrl,
+  required String baseUrl,
+  required Map<String, String> httpHeaders,
+  Future<String?> Function()? onUnauthorized,
+}) {
+  return loadAvatarBitmap(
+    agentId: agentId,
+    name: name,
+    avatarUrl: avatarUrl,
+    baseUrl: baseUrl,
+    httpHeaders: httpHeaders,
+    onUnauthorized: onUnauthorized,
+  );
+}
 
 /// IPC handler 名称（UI ↔ Service 通信）。
 class _Ipc {
@@ -82,6 +114,10 @@ class BackgroundChatService {
   bool _reconnectScheduled = false;
   String? _baseUrl;
   String? _token;
+  /// refresh token(bg isolate 自主刷新 access token 用,401 头像下载兜底)。
+  /// 来源:IPC start(主 isolate login/restore/token refresh 后推送)+
+  /// autoRestore 读 TokenVault(冷启动场景,platform channel 不可用时为 null)。
+  String? _refreshToken;
   // 默认 true:bg-service 由 APP 启动(autoStart=true),APP 启动时通常在前台。
   // 之前默认 false(保守)导致 APP 启动后第一条消息会误判为后台弹通知——
   // 用户进入会话期间,即使 _activeConvId 正确同步,_appInForeground 仍是 false
@@ -122,12 +158,16 @@ class BackgroundChatService {
 
   /// 通知发送出口(MESSAGE_CREATE 与聚合卡翻转共用)。
   final ShowMessageNotifier _showNotification;
+  /// 通知头像加载出口(默认 loadAvatarBitmap,测试可注入)。
+  final AvatarLoader _avatarLoader;
 
   BackgroundChatService(
     this.service, {
     ShowMessageNotifier? showNotification,
+    @visibleForTesting AvatarLoader? avatarLoader,
   }) : _showNotification =
-           showNotification ?? NotificationService.instance.showMessageNotification;
+           showNotification ?? NotificationService.instance.showMessageNotification,
+       _avatarLoader = avatarLoader ?? _defaultAvatarLoader;
 
   void run() {
     try {
@@ -176,6 +216,10 @@ class BackgroundChatService {
         final e = event as Map?;
         _baseUrl = e?['baseUrl'] as String?;
         _token = e?['token'] as String?;
+        // 主 isolate login/restore/token refresh 后都会推送新 token pair,
+        // null 不覆盖(bg 可能已从 TokenVault 恢复过)。
+        final rt = e?['refreshToken'] as String?;
+        if (rt != null && rt.isNotEmpty) _refreshToken = rt;
         if (_baseUrl != null && _token != null) {
           await _safeConnect();
         }
@@ -203,6 +247,7 @@ class BackgroundChatService {
       if (token != null && baseUrl != null) {
         _baseUrl = baseUrl;
         _token = token;
+        await _restoreRefreshToken();
         await _safeConnect();
       }
     } catch (e) {
@@ -216,10 +261,56 @@ class BackgroundChatService {
         if (token != null && baseUrl != null) {
           _baseUrl = baseUrl;
           _token = token;
+          await _restoreRefreshToken();
           await _safeConnect();
         }
       } catch (_) {}
     }
+  }
+
+  /// 冷启动恢复 refresh token(secure storage,Android Keystore)。
+  ///
+  /// bg-service isolate 平台通道历史上受限,读失败(异常/null)静默跳过:
+  /// 此时 401 自主刷新退化为主 isolate 推送(IPC start)后可用。
+  Future<void> _restoreRefreshToken() async {
+    try {
+      _refreshToken = await TokenVault.getRefreshToken();
+    } catch (_) {}
+  }
+
+  /// 自主刷新 access token(POST /api/auth/refresh)。
+  ///
+  /// 成功:更新 _token + _refreshToken(内存),返回新 access token;
+  /// 失败:返回 null,调用方按无 token 兜底。
+  /// 轻量裸 dio 实现,不复用 ApiService:isolate 隔离,ApiService 依赖
+  /// auth_provider 回调环(主 isolate 专属),bg 内只要 token 置换语义。
+  Future<String?> _refreshAccessToken() async {
+    final refresh = _refreshToken;
+    final base = _baseUrl;
+    if (refresh == null || refresh.isEmpty || base == null) return null;
+    try {
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 8),
+        receiveTimeout: const Duration(seconds: 8),
+      ));
+      final res = await dio.post(
+        '$base/api/auth/refresh',
+        data: {'refresh_token': refresh},
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map;
+        final newAccess = data['token'] as String?;
+        final newRefresh = data['refresh_token'] as String?;
+        if (newAccess != null && newAccess.isNotEmpty) {
+          _token = newAccess;
+          if (newRefresh != null && newRefresh.isNotEmpty) {
+            _refreshToken = newRefresh;
+          }
+          return newAccess;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _safeConnect() async {
@@ -519,20 +610,27 @@ class BackgroundChatService {
     }
 
     try {
-      // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载 → 兜底色块)
+      // 加载头像 bitmap(内存缓存 → 文件缓存 → 下载(401 自主刷新 token 重试) → 兜底色块)
       Uint8List? avatarBytes;
       final avatarUrl = senderAvatarUrl ?? _avatarUrls[senderId];
-      if (_baseUrl != null && _token != null) {
-        // loadAvatarBitmap 必返回非空(下载失败兜底色块),故用空合并直接赋值
-        avatarBytes = _avatarBitmapCache[senderId] ??
-            await loadAvatarBitmap(
-              agentId: senderId,
-              name: senderName,
-              avatarUrl: avatarUrl,
-              baseUrl: _baseUrl!,
-              httpHeaders: {'Authorization': 'Bearer $_token'},
-            );
-        _avatarBitmapCache[senderId] = avatarBytes;
+      final cached = _avatarBitmapCache[senderId];
+      if (cached != null) {
+        avatarBytes = cached;
+      } else if (_baseUrl != null && _token != null) {
+        final (bytes, isReal) = await _avatarLoader(
+          agentId: senderId,
+          name: senderName,
+          avatarUrl: avatarUrl,
+          baseUrl: _baseUrl!,
+          httpHeaders: {'Authorization': 'Bearer $_token'},
+          // 401 = bg 持有的 access token 快照已过期(WS 健康时不会触发重连刷新
+          // 闭环),自主 refresh 后换 token 重试;主 isolate 存活与否均可用。
+          onUnauthorized: _refreshAccessToken,
+        );
+        avatarBytes = bytes;
+        // 仅真头像进内存缓存:色块缓存住会让该 sender 后续通知持续色块
+        // (直到 isolate 被杀),一次弱网/401 不该有这种放大效应。
+        if (isReal) _avatarBitmapCache[senderId] = bytes;
       }
 
       await _showNotification(
