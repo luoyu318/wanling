@@ -38,6 +38,28 @@ window.wanling = {
 };
 """;
 
+/// 将虚拟域 URL path 解析为包内本地文件;越出包根(含 `../` 越界)返回 null。
+/// zip-slip 第二层防护(第一层在安装解压时)。[pkgRoot] 为包根目录
+/// (install/installedDir 返回值),虚拟域 `/` 与包根一一对应。
+String? resolveLocalFile(String pkgRoot, String requestPath) {
+  final relClean = <String>[];
+  for (final seg in requestPath.split('/')) {
+    if (seg.isEmpty || seg == '.') continue;
+    if (seg == '..') {
+      if (relClean.isEmpty) return null;
+      relClean.removeLast();
+      continue;
+    }
+    relClean.add(seg);
+  }
+  final filePath = p.normalize(p.join(pkgRoot, p.joinAll(relClean)));
+  // 包根目录本身放行(命中目录由调用方走 404),其余越出即拒绝
+  if (filePath != pkgRoot && !p.isWithin(pkgRoot, filePath)) {
+    return null;
+  }
+  return filePath;
+}
+
 /// 扩展名 → MIME,未命中回退 octet-stream。
 String _mimeOf(String path) {
   const map = {
@@ -69,6 +91,7 @@ class MiniProgramPage extends ConsumerStatefulWidget {
 class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   InAppWebViewController? _controller;
   MiniProgramBridge? _bridge;
+  String? _pkgRoot;
   String? _entryPath;
   bool _starting = false;
   String? _error;
@@ -94,7 +117,8 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
           MiniProgramService(baseUrl: ref.read(apiProvider).baseUrl, token: token);
       var dir = await service.installedDir(info.appid, info.version);
       dir ??= await service.install(info);
-      final entryPath = p.join(dir.path, info.entry);
+      _pkgRoot = dir.path;
+      _entryPath = p.join(_pkgRoot!, info.entry);
 
       _bridge = MiniProgramBridge(
         permissions: info.permissions.toSet(),
@@ -102,7 +126,6 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             ref.read(apiProvider).proxyRequest(path, method: method, body: body),
         onClose: () => context.pop(),
       );
-      _entryPath = entryPath;
       await _controller?.loadUrl(
         urlRequest: URLRequest(
           url: WebUri('https://$_virtualHost/${info.entry}'),
@@ -186,14 +209,14 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             },
             shouldInterceptRequest: (controller, request) async {
               // 仅拦截本 appid 虚拟 origin,其余交给 WebView 原生处理
-              if (request.url.host != _virtualHost || _entryPath == null) {
+              if (request.url.host != _virtualHost ||
+                  _pkgRoot == null ||
+                  _entryPath == null) {
                 return null;
               }
-              final root = p.dirname(_entryPath!);
-              final relClean = p.normalize(request.url.path).replaceFirst('/', '');
-              final filePath = p.normalize(p.join(root, relClean));
-              // zip-slip 越界防护:root 本身放行(命中目录再走 404),其余越出即拒绝
-              if (filePath != root && !p.isWithin(root, filePath)) {
+              final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
+              // 越出包根(zip-slip 第二层防护) → 403
+              if (filePath == null) {
                 return _plainResponse('forbidden', 403);
               }
               final file = File(filePath);
