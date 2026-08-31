@@ -29,6 +29,7 @@ enum MsgType {
   slashEcho,
   compactDivider,
   aggregateCard,
+  miniProgramCard,
   unknown;
 }
 
@@ -57,6 +58,7 @@ extension MsgTypeX on MsgType {
         MsgType.slashEcho => 'slash_echo',
         MsgType.compactDivider => 'compact_divider',
         MsgType.aggregateCard => 'aggregate_card',
+        MsgType.miniProgramCard => 'mini_program_card',
         MsgType.unknown => 'unknown',
       };
 
@@ -125,6 +127,9 @@ extension MsgTypeX on MsgType {
         return null;
       case MsgType.aggregateCard:
         return _aggregateCardPreview(data);
+      case MsgType.miniProgramCard:
+        final title = (data?['title'] as String?) ?? '';
+        return title.isNotEmpty ? '[小程序] $title' : '[小程序]';
       case MsgType.mixed:
         return null;
       case MsgType.unknown:
@@ -225,6 +230,8 @@ extension MsgTypeX on MsgType {
         return MsgType.compactDivider;
       case 'aggregate_card':
         return MsgType.aggregateCard;
+      case 'mini_program_card':
+        return MsgType.miniProgramCard;
       default:
         return MsgType.unknown;
     }
