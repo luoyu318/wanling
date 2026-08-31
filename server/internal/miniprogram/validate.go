@@ -56,11 +56,13 @@ func ValidatePackage(zipBytes []byte, maxBytes int64) (*model.MiniprogramManifes
 		if strings.HasPrefix(clean, "../") || clean == ".." || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
 			return nil, fmt.Errorf("非法包内路径: %s", name)
 		}
-		totalUncompressed += f.UncompressedSize64
-		// 防解压炸弹:压缩后很小、解压后巨大的包在此被拒
-		if totalUncompressed > limit {
-			return nil, fmt.Errorf("解压后总大小 %d 超上限 %d", totalUncompressed, maxBytes)
+		// 饱和加:单帧超上限或累加会越过上限 → 直接判超上限(fail fast)。
+		// 防 uint64 回绕:恶意条目声明超大尺寸时,`totalUncompressed +=` 溢出回绕
+		// 变小值绕过检查,饱和加保证任一帧越界即拒。
+		if f.UncompressedSize64 > limit || totalUncompressed > limit-f.UncompressedSize64 {
+			return nil, fmt.Errorf("解压后总大小超上限 %d", maxBytes)
 		}
+		totalUncompressed += f.UncompressedSize64
 		// clean 后不等于 "manifest.json" 的(如 sub/manifest.json)不会被误认
 		if clean == "manifest.json" {
 			if f.UncompressedSize64 > 1<<20 {

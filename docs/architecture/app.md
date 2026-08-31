@@ -53,7 +53,7 @@ flowchart TB
 
 ### 入口与路由
 - `lib/main.dart` — 入口,runApp 前调 restoreSession(zh locale 固定)。详见 [entry.md](./app/entry.md#maindart)
-- `lib/router.dart` — GoRouter 平铺路由(25 条)+ 22 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
+- `lib/router.dart` — GoRouter 平铺路由(25 条)+ 25 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
 - `lib/router_helpers.dart` — chatRoute 拼路径 + startChatAndPush 统一跳转。详见 [entry.md](./app/entry.md#router_helpersdart)
 
 ### Services

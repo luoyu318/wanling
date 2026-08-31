@@ -59,6 +59,12 @@ func AuthMiddlewareWithStore(jwtSecret string, store *auth.TokenStore, allowedRo
 					matched = true
 					break
 				}
+				// admin 兼作 user(用户拍板方案 a):平台管理员可用 APP 全部用户能力,
+				// 仅 agent 角色保持严格隔离(admin 不能当 agent)。
+				if claims.Role == "admin" && role == "user" {
+					matched = true
+					break
+				}
 			}
 			if !matched {
 				Err(c, http.StatusForbidden, "forbidden", "无权限")

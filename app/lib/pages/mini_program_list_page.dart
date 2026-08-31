@@ -112,7 +112,7 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       title: Text(mp.name),
       subtitle: Text('v${mp.version} · ${mp.status == 'published' ? '公共' : mp.status == 'private' ? '私有' : '已停用'}'),
       onTap: () => _open(mp),
-      trailing: mp.status != 'published'
+      trailing: mp.status == 'private'
           ? IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: () => _confirmDelete(mp),

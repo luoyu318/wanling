@@ -175,6 +175,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
           }
           return InAppWebView(
             initialSettings: InAppWebViewSettings(
+              allowFileAccess: false,
               allowFileAccessFromFileURLs: false,
               allowUniversalAccessFromFileURLs: false,
               useHybridComposition: true,
