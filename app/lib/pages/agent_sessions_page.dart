@@ -26,6 +26,7 @@ import '../widgets/chat/three_body_indicator.dart';
 import '../widgets/directory_menu_badge.dart';
 import '../widgets/directory_panel.dart';
 import '../widgets/directory_picker_sheet.dart';
+import '../widgets/draft_preview.dart';
 
 class AgentSessionsPage extends ConsumerStatefulWidget {
   final String agentId;
@@ -662,16 +663,19 @@ class _SessionTileState extends ConsumerState<_SessionTile> {
                               ),
                             )
                           else
-                            Text(
-                              (c.lastAgentReplyContent?.isNotEmpty ?? false)
-                                  ? '${c.lastAgentReplyContent!} · ${_formatCreationDate(c.createdAt)}'
-                                  : _formatCreationDate(c.createdAt),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF999999),
-                                fontWeight: FontWeight.w400,
+                            DraftAwarePreview(
+                              convId: c.id,
+                              fallback: Text(
+                                (c.lastAgentReplyContent?.isNotEmpty ?? false)
+                                    ? '${c.lastAgentReplyContent!} · ${_formatCreationDate(c.createdAt)}'
+                                    : _formatCreationDate(c.createdAt),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF999999),
+                                  fontWeight: FontWeight.w400,
+                                ),
                               ),
                             ),
                         ],

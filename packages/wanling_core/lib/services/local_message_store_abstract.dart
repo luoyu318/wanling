@@ -38,6 +38,12 @@ abstract class LocalMessageStore {
   Future<void> putConversationMeta(String ownerId, String convId, String type, String? title);
   Future<({String type, String? title})?> getConversationMeta(String ownerId, String convId);
 
+  /// 会话输入框草稿(draft:{ownerId}:{convId},未发送文本本地持久化)。
+  /// 空文本不写(用 deleteDraft 表达清除语义)。
+  Future<void> putDraft(String ownerId, String convId, String text);
+  Future<String?> getDraft(String ownerId, String convId);
+  Future<void> deleteDraft(String ownerId, String convId);
+
   // === 全局元数据 ===
   Future<int?> getGlobalLastSeq();
   Future<void> setGlobalLastSeq(int seq);

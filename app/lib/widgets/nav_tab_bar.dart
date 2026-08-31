@@ -23,18 +23,20 @@ class NavAgentTab {
 }
 
 /// 会话槽位数据(与 Conversation 模型解耦,widget 测试无需构造完整模型)。
-/// 无在线态(会话没有在线概念),仅名字/头像/未读。
+/// online 来自会话关联 agent 的实时状态(无 agent 的会话恒 false,不渲染绿点)。
 class NavConvTab {
   final String id;
   final String name;
   final String? avatarUrl;
   final int unread;
+  final bool online;
 
   const NavConvTab({
     required this.id,
     required this.name,
     this.avatarUrl,
     this.unread = 0,
+    this.online = false,
   });
 }
 
@@ -260,7 +262,8 @@ class _AgentSlot extends StatelessWidget {
   }
 }
 
-/// 会话头像槽:点按由上层路由跳聊天页,长按进编辑页。无在线态。
+/// 会话头像槽:点按由上层路由跳聊天页,长按进编辑页。online 时渲染绿点
+/// (样式与 agent 槽同源,均走 _AgentAvatar)。
 class _ConvSlot extends StatelessWidget {
   final int slot;
   final NavConvTab tab;
@@ -290,6 +293,7 @@ class _ConvSlot extends StatelessWidget {
             _AgentAvatar(
               name: tab.name,
               avatarUrl: tab.avatarUrl,
+              online: tab.online,
               unread: tab.unread,
               size: 24,
             ),
@@ -405,7 +409,8 @@ class _AgentAvatar extends StatelessWidget {
             right: -1,
             bottom: -1,
             child: Container(
-              // key 供负向断言:绿点只允许出现在 agent 槽(会话槽无在线概念)。
+              // key 供测试断言:绿点样式 agent 槽与会话槽同源,会话槽仅在
+              // 关联 agent 在线时渲染。
               key: const ValueKey('nav-online-dot'),
               width: size * 0.3,
               height: size * 0.3,

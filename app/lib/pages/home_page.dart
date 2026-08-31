@@ -161,14 +161,19 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   /// 会话槽 id → 底栏槽位数据(名字/头像/未读,与消息列表同源)。
+  /// 在线态取会话关联 agent 的实时状态(agent 槽同源,WS 上下线事件联动);
+  /// 好友/群会话无 agent,恒 false 不渲染绿点。
   NavConvTab _toNavConvTab(String id) {
     final convId = navConvIdOf(id)!;
     final conv = ref.watch(convByIdProvider(convId));
+    final agentId = conv?.agent?.id;
+    final agent = agentId == null ? null : ref.watch(agentByIdProvider(agentId));
     return NavConvTab(
       id: convId,
       name: conv?.displayName ?? convId,
       avatarUrl: conv?.displayAvatarUrl,
       unread: conv?.unreadCount ?? 0,
+      online: agent?.status == AgentStatus.online,
     );
   }
 

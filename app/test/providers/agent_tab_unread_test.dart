@@ -10,13 +10,14 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 
+import '../helpers/fake_local_message_store.dart';
 import '../helpers/fake_ws.dart';
 
 class MockApi extends Mock implements ApiService {}
 
 class _FakeSessionsNotifier extends AgentSessionsNotifier {
   _FakeSessionsNotifier(List<Conversation>? initial)
-      : super(MockApi(), FakeWS(), '', '') {
+      : super(MockApi(), FakeWS(), '', '', FakeLocalMessageStore()) {
     if (initial != null) state = initial;
   }
 
