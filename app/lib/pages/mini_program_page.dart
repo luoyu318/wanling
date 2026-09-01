@@ -559,11 +559,12 @@ class _CapsuleButton extends StatelessWidget {
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: lightFg ? Colors.white : Colors.white.withValues(alpha: .6),
+        // 透底程度对齐微信实拍(彩色 AppBar 上可见底色透出,粉白/浅蓝白)
+        color: lightFg ? Colors.white.withValues(alpha: .38) : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: lightFg
-            ? Border.all(color: Colors.black.withValues(alpha: .1), width: 1)
-            : null,
+            ? null
+            : Border.all(color: Colors.black.withValues(alpha: .2), width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
