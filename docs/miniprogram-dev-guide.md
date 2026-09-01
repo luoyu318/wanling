@@ -22,7 +22,7 @@ manifest.json:
   "name": "Hello 示例",
   "version": 2,
   "entry": "index.html",
-  "icon": "",
+  "icon": "icon.png",
   "permissions": ["wanling.api", "wanling.chat.read", "wanling.chat.share"],
   "minHostVersion": "1.6.3"
 }
@@ -35,6 +35,7 @@ manifest.json:
 - `permissions`:只能从 `wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` 里选,未知值整个包被拒
 - `entry` 缺省 `index.html`,但无论写什么,该文件必须真实存在于包内
 - `navigationBar`(可选):`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`;default=宿主原生 AppBar(可配色),custom=全屏无标题栏
+- `icon`(可选):包内相对路径(如 `icon.png`),扩展名 png/jpg/jpeg/webp,≤256KB;上传时校验文件存在+魔数,缺一整包被拒。建议 512×512 PNG;宿主在列表宫格/底栏直接展示(圆角遮罩由宿主处理),未提供时用「名称首字+哈希色块」fallback
 
 ## 页面与导航约定(容器托管,小程序免画标题栏)
 

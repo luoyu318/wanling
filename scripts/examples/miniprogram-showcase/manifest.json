@@ -1,9 +1,9 @@
 {
   "appid": "showcase",
   "name": "功能演示",
-  "version": 3,
+  "version": 4,
   "entry": "index.html",
-  "icon": "",
+  "icon": "icon.png",
   "permissions": [
     "wanling.api",
     "wanling.chat.read",

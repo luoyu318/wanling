@@ -14,7 +14,7 @@ manifest.json 全字段:
 | name | string | 是 | 显示名 |
 | version | int | 是 | 正整数,同 appid 单调递增;重传即换版本 |
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
-| icon | string | 否 | 图标相对路径 |
+| icon | string | 否 | 图标**包内相对路径**,扩展名 png/jpg/jpeg/webp,≤256KB;上传时校验存在+魔数(fail fast);列表 DTO 下发为相对 URL `/api/mini-programs/{id}/icon?v={版本}`(无 icon 空串,APP 用首字哈希色块 fallback) |
 | permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`,未知值拒绝 |
 | navigationBar | object | 否 | 导航栏声明:`{style, backgroundColor, foregroundColor}`;style ∈ `default`(缺省,宿主原生 AppBar)/`custom`(隐藏 AppBar 全屏,SafeArea 避让状态栏);颜色 `#RRGGBB`,非法值 400 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
@@ -55,6 +55,7 @@ private → published ⇄ disabled
 | GET | /api/mini-programs/signing-key | user | 下发 ed25519 公钥 `{public_key}`(私钥永不出 server) |
 | DELETE | /api/mini-programs/:id | user | 仅 owner 删自己的 private,否则 409 |
 | GET | /api/mini-programs/:id/package | user+agent | 包下载(owner 或 published),响应头 `X-Mini-Program-Sha256` |
+| GET | /api/mini-programs/:id/icon | user+agent | 图标只读(owner 或 published,鉴权同 package);按 `mp-icon/{appid}/{version}` 快照取,`Cache-Control: public, max-age=86400`,Content-Type 按魔数嗅探;无 icon 404 |
 | PUT | /api/mini-programs/:id/status | admin | publish / disable,状态机白名单 |
 
 上传链路:MaxBytesReader 413 → `.zip` 扩展名 415 → `ValidatePackage` 400 → appid 归属判定(他人 403 / 自己换版本 / 新建)→ sha256 + storage.Save + files 落库。
