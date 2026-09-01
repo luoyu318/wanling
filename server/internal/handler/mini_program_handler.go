@@ -63,8 +63,14 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 	if entry == "" {
 		entry = "index.html"
 	}
+	// Icon 字段下发相对 URL(带版本快照参数天然隔离缓存);无 icon 空串走 APP 端 fallback。
+	// manifest.Icon 非空即保证 storage 有对应对象(上传时 ValidatePackage 已 fail fast 校验存在)。
+	iconURL := ""
+	if m.Icon != "" {
+		iconURL = "/api/mini-programs/" + mp.ID + "/icon?v=" + strconv.Itoa(mp.Version)
+	}
 	return mpItem{ID: mp.ID, Appid: mp.Appid, OwnerID: mp.OwnerID, Name: mp.Name,
-		Version: mp.Version, Entry: entry, Icon: m.Icon, Permissions: m.Permissions,
+		Version: mp.Version, Entry: entry, Icon: iconURL, Permissions: m.Permissions,
 		NavigationBar: m.NavigationBar,
 		Status:        mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
 }
@@ -103,10 +109,19 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 		ErrMsg(c, http.StatusBadRequest, "读取上传内容失败")
 		return
 	}
-	manifest, _, err := miniprogram.ValidatePackage(data, h.maxZipBytes)
+	manifest, iconBytes, err := miniprogram.ValidatePackage(data, h.maxZipBytes)
 	if err != nil {
 		Err(c, http.StatusBadRequest, "invalid_package", err.Error())
 		return
+	}
+	// icon 快照按 appid+version 落存储(在 zip 之前,失败无副作用);
+	// SaveThumbnail 支持指定 storageName 覆盖写,key 各段来源受控(appid 正则/version int)无穿越。
+	if iconBytes != nil {
+		iconKey := "mp-icon/" + manifest.Appid + "/" + strconv.Itoa(manifest.Version) + strings.ToLower(path.Ext(manifest.Icon))
+		if err := h.storage.SaveThumbnail(iconKey, iconBytes); err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "存储失败")
+			return
+		}
 	}
 
 	// appid 归属判定:他人占用 → 403;自己占用 → 换版本;否则新建
@@ -223,6 +238,56 @@ func (h *MiniProgramHandler) DownloadPackage(c *gin.Context) {
 	c.Header("X-Mini-Program-Sha256", mp.SHA256)
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.DataFromReader(http.StatusOK, f.Size, "application/zip", reader, nil)
+}
+
+// GetIcon GET /api/mini-programs/:id/icon:登录后只读下发包 icon。
+// 非敏感公开展示资源(列表/底栏都要渲染),鉴权同 DownloadPackage:非 owner 仅 published。
+func (h *MiniProgramHandler) GetIcon(c *gin.Context) {
+	userID := c.GetString("userID")
+	if c.GetString("role") == "agent" {
+		if ownerID := c.GetString("ownerID"); ownerID != "" {
+			userID = ownerID
+		}
+	}
+	mp, err := h.repo.GetByID(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if mp == nil {
+		Err(c, http.StatusNotFound, "not_found", "小程序不存在")
+		return
+	}
+	if mp.OwnerID != userID && mp.Status != "published" {
+		Err(c, http.StatusForbidden, "forbidden", "无权访问")
+		return
+	}
+	var m model.MiniprogramManifest
+	_ = json.Unmarshal(mp.ManifestJSON, &m)
+	if m.Icon == "" {
+		Err(c, http.StatusNotFound, "not_found", "该小程序无图标")
+		return
+	}
+	iconKey := "mp-icon/" + mp.Appid + "/" + strconv.Itoa(mp.Version) + strings.ToLower(path.Ext(m.Icon))
+	reader, err := h.storage.Read(iconKey)
+	if err != nil {
+		Err(c, http.StatusNotFound, "not_found", "图标不存在")
+		return
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	ct := miniprogram.SniffImageCT(data)
+	if ct == "" {
+		Err(c, http.StatusNotFound, "not_found", "图标不存在")
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Data(http.StatusOK, ct, data)
 }
 
 // Delete DELETE /api/mini-programs/:id:owner 删自己的 private,其余一律 409。

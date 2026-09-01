@@ -124,6 +124,7 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 	s.r.GET("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.List(c) })
 	s.r.GET("/api/mini-programs/signing-key", func(c *gin.Context) { auth(c); e.h.GetSigningKey(c) })
 	s.r.GET("/api/mini-programs/:id/package", func(c *gin.Context) { auth(c); e.h.DownloadPackage(c) })
+	s.r.GET("/api/mini-programs/:id/icon", func(c *gin.Context) { auth(c); e.h.GetIcon(c) })
 	s.r.DELETE("/api/mini-programs/:id", func(c *gin.Context) { auth(c); e.h.Delete(c) })
 	s.r.PUT("/api/mini-programs/:id/status", func(c *gin.Context) { auth(c); e.h.UpdateStatus(c) })
 	return s
@@ -505,5 +506,120 @@ func TestMiniProgramHandler_Disable_KeepsSignature(t *testing.T) {
 	}
 	if err := miniprogram.Verify(key.PublicKey, data, after.Signature); err != nil {
 		t.Errorf("disable 后签名仍应可验: %v", err)
+	}
+}
+
+// testPngBytes 与 miniprogram/validate_test.go 保持同步(合法 8x8 PNG 头尾齐全)。
+var testPngBytes = []byte{
+	0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+	'I', 'H', 'D', 'R', 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0xC3, 0x0F, 0x9A, 0x62,
+}
+
+// buildTestZipWithIcon 构造带 icon.png 的测试包(manifest.icon 指向包内路径)。
+func buildTestZipWithIcon(t *testing.T, appid string, version int, iconBytes []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	files := map[string][]byte{
+		"manifest.json": []byte(fmt.Sprintf(`{"appid":%q,"name":"图标包","version":%d,"entry":"index.html","icon":"icon.png"}`, appid, version)),
+		"index.html":    []byte("<html><body>hello</body></html>"),
+		"icon.png":      iconBytes,
+	}
+	for name, content := range files {
+		fw, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := fw.Write(content); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestMiniProgramHandler_Icon_UploadDownload(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mpu")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	w := s.do(mpUploadReq(t, buildTestZipWithIcon(t, appid, 1, testPngBytes)))
+	data := AssertOk(t, w, http.StatusCreated)
+	id, _ := data["id"].(string)
+	if id == "" {
+		t.Fatalf("upload 响应缺 id: %s", w.Body.String())
+	}
+
+	// 列表 icon 字段应为相对 URL(带版本快照参数)
+	items := AssertOkList(t, s.do(httptest.NewRequest("GET", "/api/mini-programs", nil)), http.StatusOK)
+	var gotURL string
+	for _, it := range items {
+		m := it.(map[string]any)
+		if m["appid"] == appid {
+			gotURL, _ = m["icon"].(string)
+		}
+	}
+	if want := "/api/mini-programs/" + id + "/icon?v=1"; gotURL != want {
+		t.Fatalf("列表 icon 应为 %q, got %q", want, gotURL)
+	}
+
+	// icon 端点:200 + Content-Type + 字节一致
+	w = s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/icon", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("icon 端点应 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("Content-Type 应 image/png, got %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=86400" {
+		t.Fatalf("Cache-Control 应 public, max-age=86400, got %q", cc)
+	}
+	if !bytes.Equal(w.Body.Bytes(), testPngBytes) {
+		t.Fatalf("icon 字节应与包内一致")
+	}
+}
+
+func TestMiniProgramHandler_Icon_无icon包404(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mpn")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+	w := s.do(mpUploadReq(t, buildTestZip(t, appid, 1)))
+	data := AssertOk(t, w, http.StatusCreated)
+	id, _ := data["id"].(string)
+
+	if code := s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/icon", nil)).Code; code != http.StatusNotFound {
+		t.Fatalf("无 icon 包 icon 端点应 404, got %d", code)
+	}
+	// 列表 icon 字段应为空串
+	items := AssertOkList(t, s.do(httptest.NewRequest("GET", "/api/mini-programs", nil)), http.StatusOK)
+	for _, it := range items {
+		m := it.(map[string]any)
+		if m["appid"] == appid && m["icon"] != "" {
+			t.Fatalf("无 icon 包列表 icon 应空串, got %q", m["icon"])
+		}
+	}
+}
+
+func TestMiniProgramHandler_Icon_他人private包403(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner := e.user(t, "mpo")
+	other := e.user(t, "mpp")
+	s.as(owner.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+	w := s.do(mpUploadReq(t, buildTestZipWithIcon(t, appid, 1, testPngBytes)))
+	data := AssertOk(t, w, http.StatusCreated)
+	id, _ := data["id"].(string)
+
+	s.as(other.ID, "user")
+	if code := s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/icon", nil)).Code; code != http.StatusForbidden {
+		t.Fatalf("他人 private icon 应 403, got %d", code)
 	}
 }

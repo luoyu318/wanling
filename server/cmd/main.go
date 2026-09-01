@@ -386,6 +386,7 @@ func main() {
 	{
 		mpAuth.POST("/api/mini-programs", miniProgramHandler.Upload)
 		mpAuth.GET("/api/mini-programs/:id/package", miniProgramHandler.DownloadPackage)
+		mpAuth.GET("/api/mini-programs/:id/icon", miniProgramHandler.GetIcon)
 	}
 
 	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序 publish/disable 审核等。
