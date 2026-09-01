@@ -47,20 +47,28 @@ class _PickerGrid extends ConsumerWidget {
               padding: EdgeInsets.all(32),
               child: Center(child: Text('暂无会话')))
         else
-          Flexible(
-            child: GridView.count(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              crossAxisCount: 4,
-              childAspectRatio: 0.85,
-              children: [
-                for (final conv in convs)
-                  _PickerItem(
-                    key: ValueKey('pick-${conv.id}'),
-                    convId: conv.id,
-                    name: conv.displayName,
-                    avatarUrl: conv.displayAvatarUrl,
-                  ),
-              ],
+          // 少会话收缩贴内容,多会话限高内滚
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.55,
+            ),
+            child: SingleChildScrollView(
+              child: GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                crossAxisCount: 4,
+                childAspectRatio: 0.85,
+                children: [
+                  for (final conv in convs)
+                    _PickerItem(
+                      key: ValueKey('pick-${conv.id}'),
+                      convId: conv.id,
+                      name: conv.displayName,
+                      avatarUrl: conv.displayAvatarUrl,
+                    ),
+                ],
+              ),
             ),
           ),
       ],
