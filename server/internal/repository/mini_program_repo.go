@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/wanling/server/internal/model"
 )
@@ -94,6 +95,46 @@ func (r *MiniProgramRepo) ListVisibleTo(ctx context.Context, userID string) ([]*
 		return nil, fmt.Errorf("mini_program rows: %w", err)
 	}
 	return result, nil
+}
+
+// AdminMiniProgram admin 视角列表项:小程序 + updated_at/owner username(JOIN users)。
+// UpdatedAt 为 repo 层视图字段(model.MiniProgram 不承载时间列)。
+type AdminMiniProgram struct {
+	*model.MiniProgram
+	UpdatedAt     time.Time
+	OwnerUsername string
+}
+
+// ListAll admin 审核全量列表:三状态全含,updated_at 倒序。
+func (r *MiniProgramRepo) ListAll(ctx context.Context) ([]AdminMiniProgram, error) {
+	const q = `SELECT m.id, m.appid, m.owner_id, m.name, m.version, m.manifest, m.package_file_id,
+		m.sha256, m.size, m.status, m.signature, m.updated_at, u.username
+		FROM mini_programs m JOIN users u ON u.id = m.owner_id
+		ORDER BY m.updated_at DESC`
+	rows, err := r.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("mini_program list_all: %w", err)
+	}
+	defer rows.Close()
+	out := []AdminMiniProgram{}
+	for rows.Next() {
+		var it AdminMiniProgram
+		mp := &model.MiniProgram{}
+		it.MiniProgram = mp
+		// signature NULL=未签,经 NullString 中转为空串
+		var sig sql.NullString
+		if err := rows.Scan(&mp.ID, &mp.Appid, &mp.OwnerID, &mp.Name, &mp.Version,
+			&mp.ManifestJSON, &mp.PackageFileID, &mp.SHA256, &mp.Size, &mp.Status, &sig,
+			&it.UpdatedAt, &it.OwnerUsername); err != nil {
+			return nil, fmt.Errorf("mini_program list_all scan: %w", err)
+		}
+		mp.Signature = sig.String
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mini_program list_all rows: %w", err)
+	}
+	return out, nil
 }
 
 // ReplaceVersionParams 同 appid 换版本的更新集。

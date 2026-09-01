@@ -389,9 +389,12 @@ func main() {
 		mpAuth.GET("/api/mini-programs/:id/icon", miniProgramHandler.GetIcon)
 	}
 
-	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序 publish/disable 审核等。
+	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序审核(全量列表 + publish/disable)。
 	adminAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "admin"))
 	{
+		adminAuth.GET("/api/admin/mini-programs", miniProgramHandler.ListAdmin)
+		adminAuth.PUT("/api/admin/mini-programs/:id/status", miniProgramHandler.UpdateStatus)
+		// 兼容别名:SKILL.md 在用路径,过渡期保留(挂同一 handler)。
 		adminAuth.PUT("/api/mini-programs/:id/status", miniProgramHandler.UpdateStatus)
 	}
 

@@ -206,6 +206,66 @@ func TestMiniProgramRepo_UpdateSignature(t *testing.T) {
 	}
 }
 
+// TestMiniProgramRepo_ListAll_WithOwnerUsername admin 全量列表:三状态全含,
+// 带 owner username(JOIN users),updated_at 倒序。
+func TestMiniProgramRepo_ListAll_WithOwnerUsername(t *testing.T) {
+	db := SetupTestDB(t)
+	ur, fr := NewUserRepo(db), NewFileRepo(db)
+	repo := NewMiniProgramRepo(db)
+	owner, err := ur.Create(t.Context(), uniqueShortName(t, "mpla"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	f, err := fr.Create(t.Context(), CreateFileParams{
+		OwnerID: owner.ID, Filename: "la.zip", MimeType: "application/zip",
+		Size: 123, StoragePath: "mp/la.zip",
+	})
+	if err != nil {
+		t.Fatalf("Create file: %v", err)
+	}
+
+	// 造三个不同状态:Create 落 private,published/disabled 经 UpdateStatus 流转
+	mps := map[string]*model.MiniProgram{}
+	for _, st := range []string{"private", "published", "disabled"} {
+		mp := mpFixture(t, owner.ID, "mp-"+uuid.NewString()[:8], 1)
+		mp.PackageFileID = f.ID
+		if err := repo.Create(t.Context(), mp); err != nil {
+			t.Fatalf("Create %s: %v", st, err)
+		}
+		if st != "private" {
+			if err := repo.UpdateStatus(t.Context(), mp.ID, st); err != nil {
+				t.Fatalf("UpdateStatus %s: %v", st, err)
+			}
+		}
+		mps[st] = mp
+	}
+
+	got, err := repo.ListAll(t.Context())
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(got) < 3 {
+		t.Fatalf("应至少 3 条,实际 %d", len(got))
+	}
+	statusByID := map[string]string{}
+	for _, it := range got {
+		if it.OwnerUsername != owner.Username {
+			t.Fatalf("owner_username 应为 %q,实际 %q", owner.Username, it.OwnerUsername)
+		}
+		statusByID[it.ID] = it.Status
+	}
+	for _, st := range []string{"private", "published", "disabled"} {
+		if gotSt := statusByID[mps[st].ID]; gotSt != st {
+			t.Fatalf("记录 %s 状态应为 %s,实际 %q", mps[st].ID, st, gotSt)
+		}
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].UpdatedAt.Before(got[i].UpdatedAt) {
+			t.Fatalf("应 updated_at 倒序")
+		}
+	}
+}
+
 func TestMiniProgramRepo_DeletePrivate_OnlyOwnPrivate(t *testing.T) {
 	db := SetupTestDB(t)
 	ur, fr := NewUserRepo(db), NewFileRepo(db)

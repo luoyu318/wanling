@@ -127,6 +127,9 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 	s.r.GET("/api/mini-programs/:id/icon", func(c *gin.Context) { auth(c); e.h.GetIcon(c) })
 	s.r.DELETE("/api/mini-programs/:id", func(c *gin.Context) { auth(c); e.h.Delete(c) })
 	s.r.PUT("/api/mini-programs/:id/status", func(c *gin.Context) { auth(c); e.h.UpdateStatus(c) })
+	// admin 审核:全量列表 + status 新命名空间(与 main.go adminAuth 组对齐)
+	s.r.GET("/api/admin/mini-programs", func(c *gin.Context) { auth(c); e.h.ListAdmin(c) })
+	s.r.PUT("/api/admin/mini-programs/:id/status", func(c *gin.Context) { auth(c); e.h.UpdateStatus(c) })
 	return s
 }
 
@@ -660,5 +663,54 @@ func TestMiniProgramHandler_Icon_403不落icon对象(t *testing.T) {
 	}
 	if !bytes.Equal(wg.Body.Bytes(), testPngBytes) {
 		t.Fatalf("owner icon 应保持原图标字节,不得被攻击者 403 请求覆盖")
+	}
+}
+
+// TestMiniProgramHandler_AdminList_And_StatusDualPath 验证 admin 审核:
+//   - GET /api/admin/mini-programs:全量列表含 private,带 owner_username
+//   - status 新旧双路径同 handler:新路径 publish;旧路径 disable(兼容别名)
+func TestMiniProgramHandler_AdminList_And_StatusDualPath(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner := e.user(t, "mpma")
+	admin := e.user(t, "mpmb")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	s.as(owner.ID, "user")
+	id, _ := AssertOk(t, s.do(mpUploadReq(t, buildTestZip(t, appid, 1))), http.StatusCreated)["id"].(string)
+	if id == "" {
+		t.Fatalf("upload 响应缺 id")
+	}
+
+	// admin 全量列表:含 private + owner_username
+	s.as(admin.ID, "admin")
+	items := AssertOkList(t, s.do(httptest.NewRequest("GET", "/api/admin/mini-programs", nil)), http.StatusOK)
+	found := false
+	for _, it := range items {
+		m := it.(map[string]any)
+		if m["id"] == id {
+			found = true
+			if m["status"] != "private" {
+				t.Fatalf("admin 列表该记录应 private: %v", m)
+			}
+			if m["owner_username"] != owner.Username {
+				t.Fatalf("owner_username 应为 %q,实际 %v: %v", owner.Username, m["owner_username"], m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("admin 列表应含上传记录 %s: %v", id, items)
+	}
+
+	// status 双路径:新 /api/admin 路径 publish;旧路径 disable(兼容别名)
+	req := httptest.NewRequest("PUT", "/api/admin/mini-programs/"+id+"/status", strings.NewReader(`{"status":"published"}`))
+	req.Header.Set("Content-Type", "application/json")
+	if w := s.do(req); w.Code != http.StatusOK {
+		t.Fatalf("admin status publish 应 200: %d %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest("PUT", "/api/mini-programs/"+id+"/status", strings.NewReader(`{"status":"disabled"}`))
+	req.Header.Set("Content-Type", "application/json")
+	if w := s.do(req); w.Code != http.StatusOK {
+		t.Fatalf("legacy status disable 应 200: %d %s", w.Code, w.Body.String())
 	}
 }

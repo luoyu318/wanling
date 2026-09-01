@@ -53,6 +53,8 @@ type mpItem struct {
 	SHA256        string                   `json:"sha256"`
 	Size          int64                    `json:"size"`
 	Signature     string                   `json:"signature"`
+	// OwnerUsername 仅 admin 全量列表回填(普通 List 不填,omitempty 不下发)
+	OwnerUsername string `json:"owner_username,omitempty"`
 }
 
 func toMPItem(mp *model.MiniProgram) mpItem {
@@ -195,6 +197,22 @@ func (h *MiniProgramHandler) List(c *gin.Context) {
 	items := make([]mpItem, 0, len(list))
 	for _, mp := range list {
 		items = append(items, toMPItem(mp))
+	}
+	Ok(c, items)
+}
+
+// ListAdmin GET /api/admin/mini-programs:审核全量列表(三状态全含,带 owner username)。
+func (h *MiniProgramHandler) ListAdmin(c *gin.Context) {
+	list, err := h.repo.ListAll(c.Request.Context())
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "查询失败")
+		return
+	}
+	items := make([]mpItem, 0, len(list))
+	for _, it := range list {
+		item := toMPItem(it.MiniProgram)
+		item.OwnerUsername = it.OwnerUsername
+		items = append(items, item)
 	}
 	Ok(c, items)
 }
