@@ -81,4 +81,4 @@ mockups/
 release/
 
 # 示例小程序打包产物(verify 脚本运行时生成)
-scripts/examples/hello-demo.zip
+scripts/examples/*.zip
