@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
+	"github.com/wanling/server/internal/auth"
 	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
@@ -270,4 +274,78 @@ func TestHandleOpStream_UserRoleRejected(t *testing.T) {
 	wsh.handleOpStream(sender, data)
 
 	recvNoneStream(t, viewer, "viewer(role 拒绝)")
+}
+
+// TestServeHTTP_AdminTokenRegistersAsUser:ADMIN_USERNAMES 命中用户拿 admin token 连 WS,
+// 必须以 user 身份注册(clientKey("user", uid))。hub 分发(SendToUser/流式/busy)仅认
+// user 键,admin 原样注册会成为收不到任何广播的孤儿连接;归一口径与 HTTP
+// AuthMiddlewareWithStore 的 admin→user 一致(admin 兼作 user 能力)。
+func TestServeHTTP_AdminTokenRegistersAsUser(t *testing.T) {
+	h := hub.NewHub(nil, nil, nil, nil)
+	// 消费 Register/Unregister channel(生产由 hub.Run 消费;测试用同步注册替代,
+	// 跳过 presence/agent 状态广播副作用,与本测试断言无关)
+	go func() {
+		for c := range h.Register {
+			h.RegisterClient(c)
+		}
+	}()
+	go func() {
+		for range h.Unregister {
+		}
+	}()
+
+	const (
+		secret = "test-secret"
+		uid    = "admin-user-1"
+	)
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	srv := httptest.NewServer(wsh)
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	token, err := auth.GenerateToken(secret, uid, "admin", "", time.Hour, "", 0)
+	if err != nil {
+		t.Fatalf("签发 admin token: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 握手:Hello → Identify(admin token)
+	var hello model.WSMessage
+	if err := conn.ReadJSON(&hello); err != nil || hello.Op != model.OpHello {
+		t.Fatalf("期望 Hello(op=%d), 实际 op=%d err=%v", model.OpHello, hello.Op, err)
+	}
+	idData, _ := json.Marshal(map[string]string{"token": token})
+	if err := conn.WriteJSON(model.WSMessage{Op: model.OpIdentify, D: idData}); err != nil {
+		t.Fatalf("identify: %v", err)
+	}
+
+	// admin token 连接必须注册在 user 键下(eventually 等握手+注册完成)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := h.GetClient("user", uid); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("admin token 连接未注册为 user 键(将收不到任何广播的孤儿连接)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 端到端:SendToUser 广播必须真正到达该连接
+	if err := h.SendToUser(uid, &model.WSMessage{Op: model.OpDispatch, D: []byte(`{"probe":true}`)}); err != nil {
+		t.Fatalf("SendToUser: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var got model.WSMessage
+	if err := conn.ReadJSON(&got); err != nil {
+		t.Fatalf("user 键广播未到达连接: %v", err)
+	}
+	if got.Op != model.OpDispatch {
+		t.Fatalf("期望 op=%d(DISPATCH), 实际 %d", model.OpDispatch, got.Op)
+	}
 }
