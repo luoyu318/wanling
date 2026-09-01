@@ -1,16 +1,17 @@
 import 'dart:convert';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/theme/app_colors.dart';
 import 'message_content_renderer.dart';
 
-/// 小程序卡片渲染器（mini_program_card）：icon + 名称 + 打开入口。
-///
-/// 点击统一交容器页处理（自动安装/停用拦截），携带来源会话 conv 供
-/// getChatContext；params 非 null 时以 URL 编码 JSON 附在 launch query 上
-/// 透传给小程序（spec §8）。renderer 不做安装状态校验（M1 容器页已兜底）。
+/// 小程序分享卡(大图卡):hero icon + 底部标题栏,独立卡不包气泡。
+/// icon 为分享时刻快照(data.icon 相对 URL,?v= 版本参数);缺失/空 → 通用
+/// 图标色块 fallback(旧消息兼容)。点击统一交容器页(安装/停用拦截),
+/// conv 固定携带,params 非 null 时 URL 编码 JSON 附 launch 透传。
+/// renderer 不做安装状态校验(M1 容器页已兜底)。
 class MiniProgramCardRenderer implements MessageContentRenderer {
   const MiniProgramCardRenderer();
 
@@ -18,7 +19,7 @@ class MiniProgramCardRenderer implements MessageContentRenderer {
   bool get selectable => false;
 
   @override
-  bool get wrapInBubble => true;
+  bool get wrapInBubble => false;
 
   @override
   Widget build(
@@ -29,65 +30,88 @@ class MiniProgramCardRenderer implements MessageContentRenderer {
     final data = content['data'] as Map<String, dynamic>? ?? const {};
     final appid = data['appid'] as String? ?? '';
     final title = data['title'] as String? ?? '小程序';
+    final icon = data['icon'] as String? ?? '';
 
     // 脏数据降级：缺 appid 无法路由，渲染占位文案，不抛异常。
     if (appid.isEmpty) {
       return Text('[小程序卡片]',
-          style: TextStyle(color: rc.isDark
-              ? const Color(0xFFAAAAAA)
-              : AppColors.textSecondary));
+          style: TextStyle(
+              color:
+                  rc.isDark ? const Color(0xFFAAAAAA) : AppColors.textSecondary));
     }
 
-    // 跳转 URL：conv 固定携带；params 非 null 时追加 launch（URL 编码 JSON，
-    // 容器页转交给 H5 虚拟 origin 入口 query）。
     final params = data['params'];
     var target = '/mini-program/$appid?conv=${rc.convId}';
     if (params != null) {
       target += '&launch=${Uri.encodeComponent(jsonEncode(params))}';
     }
 
+    final iconUrl = icon.isEmpty ? null : '${rc.baseUrl}$icon';
     return InkWell(
       onTap: () => context.push(target),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(10),
+        width: 200,
         decoration: BoxDecoration(
-          // 深色：白卡底 → 26272D，边框 #E8E8E8 → 2E2F36（对齐 _TextPreviewCard 灰阶）
           color: rc.isDark ? const Color(0xFF26272D) : Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: rc.isDark ? const Color(0xFF2E2F36) : const Color(0xFFE8E8E8)),
+              color:
+                  rc.isDark ? const Color(0xFF2E2F36) : const Color(0xFFE8E8E8)),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(Icons.widgets_outlined, size: 28, color: AppColors.accentGreen),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              child: Center(
+                child: _MpCardIcon(
+                  url: iconUrl,
+                  title: title,
+                  size: 84,
+                  radius: 20,
+                  token: rc.token,
+                ),
+              ),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color:
+                  rc.isDark ? const Color(0xFF2E2F36) : const Color(0xFFF2F2F2),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 10, 10),
+              child: Row(
                 children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      // 深色灰阶反转：#111 → #EEEEEE
-                      color: rc.isDark ? const Color(0xFFEEEEEE) : null,
+                  if (iconUrl != null) ...[
+                    _MpCardIcon(
+                      url: iconUrl,
+                      title: title,
+                      size: 24,
+                      radius: 6,
+                      token: rc.token,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: rc.isDark ? const Color(0xFFEEEEEE) : null,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '小程序 · 点击打开',
-                    style: TextStyle(
-                      fontSize: 11,
-                      // 深色灰阶反转：#999 → #AAAAAA
-                      color: rc.isDark
-                          ? const Color(0xFFAAAAAA)
-                          : AppColors.textSecondary,
-                    ),
+                  Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: rc.isDark
+                        ? const Color(0xFFAAAAAA)
+                        : AppColors.textSecondary,
                   ),
                 ],
               ),
@@ -97,4 +121,54 @@ class MiniProgramCardRenderer implements MessageContentRenderer {
       ),
     );
   }
+}
+
+/// 卡片 icon:网络图(拼 baseUrl + Bearer headers,cacheKey 独立命名空间);
+/// url 空/加载失败 → 通用 widgets 图标色块(accentGreen 12% 底)。
+class _MpCardIcon extends StatelessWidget {
+  final String? url;
+  final String title;
+  final double size;
+  final double radius;
+  final String token;
+
+  const _MpCardIcon({
+    required this.url,
+    required this.title,
+    required this.size,
+    required this.radius,
+    required this.token,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (url == null) return _fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: CachedNetworkImage(
+        imageUrl: url!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        httpHeaders:
+            token.isEmpty ? null : {'Authorization': 'Bearer $token'},
+        cacheKey: 'mp-card_$url',
+        errorWidget: (_, __, ___) => _fallback,
+      ),
+    );
+  }
+
+  Widget get _fallback => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.accentGreen.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(radius),
+        ),
+        child: Icon(
+          Icons.widgets_outlined,
+          size: size * 0.42,
+          color: AppColors.accentGreen,
+        ),
+      );
 }

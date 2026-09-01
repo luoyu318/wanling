@@ -356,6 +356,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         'appid': info.appid,
         'title': (payload['title'] as String?) ?? info.name,
         'params': payload['params'],
+        'icon': info.icon,
       },
     });
     return {'message_id': result.messageId};
