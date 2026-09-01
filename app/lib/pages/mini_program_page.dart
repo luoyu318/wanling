@@ -557,9 +557,8 @@ class _CapsuleButton extends StatelessWidget {
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: fg.withValues(alpha: .07),
+        color: fg.withValues(alpha: .04),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: fg.withValues(alpha: .12)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -588,7 +587,7 @@ class _CapsuleButton extends StatelessWidget {
             customBorder: const StadiumBorder(),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Icon(Icons.radio_button_unchecked, size: 20, color: fg),
+              child: Icon(Icons.radio_button_checked, size: 20, color: fg),
             ),
           ),
         ],
