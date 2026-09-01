@@ -14,7 +14,7 @@ class MiniProgramInfo {
   final String sha256;
   final int size;
 
-  /// 发布包 ed25519 签名(base64,容器启动前验签用);旧 server 无此字段为 null。
+  /// 发布包 ed25519 签名(裸签名字节 hex 编码,容器启动前验签用);旧 server 无此字段为 null。
   final String? signature;
 
   const MiniProgramInfo({

@@ -42,7 +42,10 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       final token = await TokenVault.getAccessToken();
       if (token == null) throw StateError('未登录');
       final service = MiniProgramService(
-          baseUrl: ref.read(apiProvider).baseUrl, token: token);
+        baseUrl: ref.read(apiProvider).baseUrl,
+        token: token,
+        store: ref.read(localMessageStoreProvider).valueOrNull,
+      );
       await service.uploadPackage(path);
       ref.invalidate(miniProgramsProvider);
     } catch (e) {
@@ -142,7 +145,10 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       final token = await TokenVault.getAccessToken();
       if (token == null) throw StateError('未登录');
       final service = MiniProgramService(
-          baseUrl: ref.read(apiProvider).baseUrl, token: token);
+        baseUrl: ref.read(apiProvider).baseUrl,
+        token: token,
+        store: ref.read(localMessageStoreProvider).valueOrNull,
+      );
       await service.deleteRemote(mp.id);
       await service.removeLocal(mp.appid);
       await _clearMpPerms(mp.appid);

@@ -32,3 +32,4 @@ dependencies:
   markdown: ^7.3.1
   path: ^1.9.0
   archive: ^4.2.0
+  cryptography: ^2.9.0

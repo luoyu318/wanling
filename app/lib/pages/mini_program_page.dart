@@ -144,8 +144,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     try {
       final token = await TokenVault.getAccessToken();
       if (token == null) throw StateError('未登录');
-      final service =
-          MiniProgramService(baseUrl: ref.read(apiProvider).baseUrl, token: token);
+      final service = MiniProgramService(
+        baseUrl: ref.read(apiProvider).baseUrl,
+        token: token,
+        store: ref.read(localMessageStoreProvider).valueOrNull,
+      );
       var dir = await service.installedDir(info.appid, info.version);
       dir ??= await service.install(info);
       _pkgRoot = dir.path;
