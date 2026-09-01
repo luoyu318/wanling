@@ -23,7 +23,7 @@ description: 当用户要求「发图片、发张图、把图片发给我、在�
 
 ### 首选：调用 `wanling_send_image` tool（推荐）
 
-opencode 全局 plugin `~/.config/opencode/plugins/wanling-send-image.ts` 注册了 `wanling_send_image` 工具：
+opencode 全局 plugin `~/.config/opencode/plugins/wanling-send-image.ts` 注册了 `wanling_send_image` 工具（该文件随 skill 收录在本 skill 的 `opencode-plugins/` 下，由插件 `install.sh` 部署到上述路径；手动安装时需自行拷贝过去）：
 
 - 传入 `path`（本地图片绝对路径，可选 `alt` 说明文字），自动完成「换 JWT → 上传 → 进聚合卡/发独立图片消息」
 - **形态自动选择**：上传后先尝试经 sync 进程 control API（`control.json` 发现信息）进主会话活跃聚合卡；无活跃卡或通道不可用自动退回独立图片消息

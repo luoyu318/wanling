@@ -294,6 +294,7 @@ setup_shell_aliases() {
 setup_skills() {
     local skills_src="${SCRIPT_DIR}/skills"
     local skills_dst="${HOME}/.opencode/skills"
+    local plugins_dst="${HOME}/.config/opencode/plugins"
     if [[ ! -d "$skills_src" ]]; then
         return 0
     fi
@@ -305,6 +306,13 @@ setup_skills() {
         # 拷贝目录内容而非目录本身(目标已存在时 cp -rf src dst 会嵌套成 dst/src)
         mkdir -p "$skills_dst/$name"
         cp -a "$dir"/. "$skills_dst/$name"/
+        # skill 附带的 opencode 全局 plugin(opencode-plugins/ 子目录)部署到
+        # opencode 插件加载目录——tool 注册依赖它,缺失会让 SKILL.md 描述的能力失效
+        if [[ -d "$dir/opencode-plugins" ]]; then
+            mkdir -p "$plugins_dst"
+            cp -a "$dir"/opencode-plugins/. "$plugins_dst"/
+            ok "已部署 $name 的 opencode plugin 到 ${plugins_dst}"
+        fi
         synced=$((synced + 1))
     done
     ok "已同步 ${synced} 个 skill 到 ${skills_dst}"
