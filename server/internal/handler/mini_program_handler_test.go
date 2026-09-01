@@ -623,3 +623,42 @@ func TestMiniProgramHandler_Icon_他人private包403(t *testing.T) {
 		t.Fatalf("他人 private icon 应 403, got %d", code)
 	}
 }
+
+// TestMiniProgramHandler_Icon_403不落icon对象 验证 icon 落盘在 appid 归属判定之后:
+// 攻击者上传同 appid 同 version 的包被 403 拒绝,其 icon 字节不得覆盖 owner 已存对象,
+// owner 再取 icon 仍是自己的原图标字节(防钓鱼面:发布版图标被替换/预植孤儿对象)。
+func TestMiniProgramHandler_Icon_403不落icon对象(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner, attacker := e.user(t, "mpw"), e.user(t, "mpx")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	// 攻击者 icon 变体:改一个非魔数字节,保持合法 PNG(魔数前 8 字节不动)
+	attackerPng := append([]byte(nil), testPngBytes...)
+	attackerPng[len(attackerPng)-1] ^= 0xFF
+	if bytes.Equal(attackerPng, testPngBytes) {
+		t.Fatalf("攻击者 icon 字节必须与 owner 不同")
+	}
+
+	s.as(owner.ID, "user")
+	w := s.do(mpUploadReq(t, buildTestZipWithIcon(t, appid, 1, testPngBytes)))
+	data := AssertOk(t, w, http.StatusCreated)
+	id, _ := data["id"].(string)
+	if id == "" {
+		t.Fatalf("owner 上传响应缺 id: %s", w.Body.String())
+	}
+
+	// 攻击者同 appid 同 version 带 icon 包 → 403
+	s.as(attacker.ID, "user")
+	AssertErr(t, s.do(mpUploadReq(t, buildTestZipWithIcon(t, appid, 1, attackerPng))), http.StatusForbidden, "forbidden")
+
+	// owner 取 icon 仍是原图标字节(未被攻击者覆盖)
+	s.as(owner.ID, "user")
+	wg := s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/icon", nil))
+	if wg.Code != http.StatusOK {
+		t.Fatalf("owner icon 端点应 200, got %d: %s", wg.Code, wg.Body.String())
+	}
+	if !bytes.Equal(wg.Body.Bytes(), testPngBytes) {
+		t.Fatalf("owner icon 应保持原图标字节,不得被攻击者 403 请求覆盖")
+	}
+}

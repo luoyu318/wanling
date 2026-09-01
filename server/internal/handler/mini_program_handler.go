@@ -114,17 +114,8 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 		Err(c, http.StatusBadRequest, "invalid_package", err.Error())
 		return
 	}
-	// icon 快照按 appid+version 落存储(在 zip 之前,失败无副作用);
-	// SaveThumbnail 支持指定 storageName 覆盖写,key 各段来源受控(appid 正则/version int)无穿越。
-	if iconBytes != nil {
-		iconKey := "mp-icon/" + manifest.Appid + "/" + strconv.Itoa(manifest.Version) + strings.ToLower(path.Ext(manifest.Icon))
-		if err := h.storage.SaveThumbnail(iconKey, iconBytes); err != nil {
-			ErrMsg(c, http.StatusInternalServerError, "存储失败")
-			return
-		}
-	}
-
-	// appid 归属判定:他人占用 → 403;自己占用 → 换版本;否则新建
+	// appid 归属判定:他人占用 → 403;自己占用 → 换版本;否则新建。
+	// 必须先于任何落盘:否则攻击者可在 403 前覆盖/预植他人已发布版的 icon 对象。
 	existing, err := h.repo.GetByAppid(c.Request.Context(), manifest.Appid)
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
@@ -133,6 +124,16 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 	if existing != nil && existing.OwnerID != userID {
 		Err(c, http.StatusForbidden, "forbidden", "appid 已被占用")
 		return
+	}
+
+	// 归属授权通过后,icon 快照按 appid+version 落存储(zip 之前,失败无副作用);
+	// SaveThumbnail 支持指定 storageName 覆盖写,key 各段来源受控(appid 正则/version int)无穿越。
+	if iconBytes != nil {
+		iconKey := "mp-icon/" + manifest.Appid + "/" + strconv.Itoa(manifest.Version) + strings.ToLower(path.Ext(manifest.Icon))
+		if err := h.storage.SaveThumbnail(iconKey, iconBytes); err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "存储失败")
+			return
+		}
 	}
 
 	sum := sha256.Sum256(data)
