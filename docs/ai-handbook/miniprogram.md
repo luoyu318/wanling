@@ -88,11 +88,12 @@ private → published ⇄ disabled
 
 ```
 msg_type: "mini_program_card"
-data: { appid: string, title: string, params?: any }
+data: { appid: string, title: string, icon?: string, params?: any }
 ```
 
 - APP shareToChat 发出(title 缺省用小程序名);server 零改动(msg_type 为自由字符串)
-- 渲染:icon + title + 打开入口;缺 appid 脏数据降级占位,不抛异常
+- `data.icon`(可选):分享时刻的 icon 相对 URL 快照(`?v=` 版本参数,与列表 DTO `icon` 字段同值);消息不可变恒为分享时刻图标,缺失(旧消息/无 icon 包)渲染端走通用图标 fallback
+- 渲染:大图卡(hero icon 84dp + 底部标题栏,独立卡不包气泡);缺 appid 脏数据降级占位,不抛异常
 - 点击 → `/mini-program/<appid>?conv=<来源会话>[&launch=<URL 编码 JSON params>]`:conv 供 getChatContext 返 conversation_id,launch 透传入口 query(H5 URLSearchParams 自取,percent-encode 往返无损)
 
 ## 7. 包签名机制
