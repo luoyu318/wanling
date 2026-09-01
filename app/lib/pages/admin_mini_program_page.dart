@@ -2,6 +2,7 @@
 // 行内流转按钮(发布/下架/上架)→ showAppDialog 二次确认 → setMiniProgramStatus
 // → invalidate 刷新;403 无权限兜底,其他错误可重试。
 // 模板: templates/flutter-page.dart.tmpl(const+key/loading+error UI)。
+import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +13,14 @@ import 'package:wanling_core/services/api_response.dart';
 
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
+
+/// 解包网络层错误:ApiService 拦截器把 envelope error 包成 ApiException 塞进
+/// DioException.error 抛出(见 ApiService._wrapError),直接 `is ApiException`
+/// 判定对真实网络路径恒 false,必须先解包再判(参照 api_service.dart 同款模式)。
+ApiException? _asApiError(Object error) {
+  final err = error is DioException ? error.error : error;
+  return err is ApiException ? err : null;
+}
 
 class AdminMiniProgramPage extends ConsumerStatefulWidget {
   const AdminMiniProgramPage({super.key}); // const + key（审计 L2/S2）
@@ -146,16 +155,17 @@ class _MpList extends ConsumerWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('操作成功')));
-    } on ApiException catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text(e.statusCode == 403 ? '无权限操作' : '操作失败: ${e.message}')));
     } catch (e) {
       // fail fast 不吞异常:错误透传到 UI 反馈,由用户重试或反馈
+      // 拦截器把 ApiException 包在 DioException.error 里,先解包再分流
+      final api = _asApiError(e);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('操作失败: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(api == null
+              ? '操作失败: $e'
+              : api.statusCode == 403
+                  ? '无权限操作'
+                  : '操作失败: ${api.message}')));
     }
   }
 }
@@ -168,8 +178,9 @@ class _ErrorView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // 403 是权限问题,重试无意义,只提示;其他错误给重试入口
-    if (error is ApiException &&
-        (error as ApiException).statusCode == 403) {
+    // 拦截器把 ApiException 包在 DioException.error 里,先解包再判(见 _asApiError)
+    final api = _asApiError(error);
+    if (api != null && api.statusCode == 403) {
       return const Center(child: Text('无权限查看'));
     }
     return Center(
