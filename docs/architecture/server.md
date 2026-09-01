@@ -37,7 +37,7 @@ flowchart TB
 - `internal/auth/token_store.go` — Redis token store(refresh token rotation / jti 黑名单 / tokenver 版本号)。详见 [entry.md](./server/entry.md#authtoken_storego)
 
 ### HTTP Handler(15 个)
-- `internal/handler/` — HTTP Handler 集合,涵盖 auth/user/agent/conversation/approval/ws/send/message/file/pairing/mini_program + middleware/access_log。详见 [handlers.md](./server/handlers.md)
+- `internal/handler/` — HTTP Handler 集合,涵盖 auth/user/agent/conversation/approval/ws/send/message/file/pairing/mini_program + middleware/access_log;mini_program 含 admin 审核端点 `GET /api/admin/mini-programs` + `PUT /api/admin/mini-programs/:id/status`(旧路径 `PUT /api/mini-programs/:id/status` 保留兼容别名)。详见 [handlers.md](./server/handlers.md)
 
 ### 实时通道
 - `internal/hub/` — WS 连接管理器(SendToUser/Agent/Conv + 3 个审批广播 helper)。详见 [realtime.md](./server/realtime.md#hub)

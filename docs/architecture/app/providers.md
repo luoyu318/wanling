@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 19 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件)。
+状态管理 20 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core)。
 
 ## authProvider
 
@@ -53,6 +53,10 @@ Agent 状态聚合（`StateNotifier<Map<String, AgentStatus>>`，key=agentId）�
 ## miniProgramsProvider
 
 用户可见小程序列表（`FutureProvider<List<MiniProgramInfo>>`，wanling_core）。`GET /api/mini-programs` 返回 published 全量 + 自己的 private/disabled。非 autoDispose 登录周期内缓存；失败返空列表（列表页空态，不炸 UI）。上传/删除成功后 `invalidate` 刷新
+
+## adminMiniProgramsProvider
+
+admin 审核全量列表（`FutureProvider.autoDispose<List<AdminMiniProgramInfo>>`，wanling_core）。调 `GET /api/admin/mini-programs` 拉全量,进页拉取、操作后 invalidate。与 miniProgramsProvider 相反**失败向上抛不吞**:审核页需区分 403(无权限视图)与网络错误(重试入口)
 
 ## navOrderProvider
 

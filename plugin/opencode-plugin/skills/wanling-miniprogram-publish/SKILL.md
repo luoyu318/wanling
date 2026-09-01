@@ -75,4 +75,4 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 
 ## 六、上架公共库
 
-私有小程序仅 owner 可见。用户要求「让所有人都能用」时，告知：需要实例管理员在管理侧执行 publish（当前无自助入口，管理员可用 `PUT /api/mini-programs/:id/status {"status":"published"}`）。
+私有小程序仅 owner 可见。用户要求「让所有人都能用」时，告知：需要实例管理员在管理侧执行 publish（当前无自助入口，管理员可在 APP 侧栏「小程序审核」页操作，或 `PUT /api/admin/mini-programs/:id/status {"status":"published"}`）。
