@@ -551,14 +551,18 @@ class _CapsuleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = foregroundColor ?? Colors.black87;
-    // 胶囊整体跟随 fg 单色系(微信 navigationBarTextStyle 同思路):
-    // 深色 AppBar 配浅色 fg → 浅色胶囊;浅色 AppBar 配深色 fg → 深色胶囊
+    // 双样式(参照微信):浅色 AppBar(深色 fg)→白色实底+1px 边框;
+    // 其它颜色 AppBar(浅色 fg)→无边框+fg 0.6 不透明底;竖线两样式均保留
+    final lightFg = fg.computeLuminance() > 0.5;
     return Container(
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: fg.withValues(alpha: .04),
+        color: lightFg ? fg.withValues(alpha: .6) : Colors.white,
         borderRadius: BorderRadius.circular(16),
+        border: lightFg
+            ? null
+            : Border.all(color: Colors.black.withValues(alpha: .1), width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -581,7 +585,12 @@ class _CapsuleButton extends StatelessWidget {
               ),
             ),
           ),
-          Container(width: 1, height: 18, color: fg.withValues(alpha: .15)),
+          Container(
+              width: 1,
+              height: 18,
+              color: lightFg
+                  ? fg.withValues(alpha: .25)
+                  : Colors.black.withValues(alpha: .1)),
           InkWell(
             onTap: onClose,
             customBorder: const StadiumBorder(),
