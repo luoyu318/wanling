@@ -253,15 +253,10 @@ func main() {
 	r.Use(handler.BusinessAccessLog())
 
 	// 全局 JSON body 限制(防超大 JSON 请求体耗内存)。
-	// /api/upload 路由由 file_handler 自带的 MaxBytesReader 拦截(更大),跳过本中间件。
+	// multipart 上传路由(如 /api/upload、/api/mini-programs)由各 handler 自带的
+	// MaxBytesReader 拦截(更大),按 Content-Type 跳过本中间件。
 	// /ws 路由读取二进制帧,也跳过(由 ws_handler.SetReadLimit 64KB 兜底)。
-	maxJSONBody := cfg.Server.MaxJSONBodyBytes
-	r.Use(func(c *gin.Context) {
-		if c.Request.URL.Path != "/api/upload" && c.Request.URL.Path != "/ws" {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBody)
-		}
-		c.Next()
-	})
+	r.Use(middleware.JSONBodyLimit(cfg.Server.MaxJSONBodyBytes))
 
 	// CORS:fail-closed 默认。env CORS_ALLOWED_ORIGINS 未配 → 不放行任何跨域(仅同源可访问);
 	// 显式配 "*" 才放行所有。生产单域名建议显式列出。
