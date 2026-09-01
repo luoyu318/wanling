@@ -80,30 +80,41 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
           ),
         ],
       ),
-      body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('加载失败: $e')),
-        data: (list) {
-          if (list.isEmpty) {
-            return const Center(child: Text('暂无小程序'));
-          }
-          final published =
-              list.where((m) => m.status == 'published').toList();
-          final mine =
-              list.where((m) => m.status != 'published').toList();
-          return ListView(
-            children: [
-              if (published.isNotEmpty) ...[
-                const _SectionHeader(title: '公共库'),
-                ...published.map(_tile),
+      body: RefreshIndicator(
+        onRefresh: () async => ref.refresh(miniProgramsProvider.future),
+        child: async.when(
+          // 重进页面/下拉刷新时保旧数据,静默换新,不闪 loading
+          skipLoadingOnReload: true,
+          skipLoadingOnRefresh: true,
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('加载失败: $e')),
+          data: (list) {
+            if (list.isEmpty) {
+              return ListView(
+                children: const [
+                  SizedBox(height: 120),
+                  Center(child: Text('暂无小程序')),
+                ],
+              );
+            }
+            final published =
+                list.where((m) => m.status == 'published').toList();
+            final mine =
+                list.where((m) => m.status != 'published').toList();
+            return ListView(
+              children: [
+                if (published.isNotEmpty) ...[
+                  const _SectionHeader(title: '公共库'),
+                  ...published.map(_tile),
+                ],
+                if (mine.isNotEmpty) ...[
+                  const _SectionHeader(title: '我的'),
+                  ...mine.map(_tile),
+                ],
               ],
-              if (mine.isNotEmpty) ...[
-                const _SectionHeader(title: '我的'),
-                ...mine.map(_tile),
-              ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

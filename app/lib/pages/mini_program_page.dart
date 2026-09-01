@@ -187,7 +187,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         store: ref.read(localMessageStoreProvider).valueOrNull,
       );
       var dir = await service.installedDir(info.appid, info.version);
-      dir ??= await service.install(info);
+      if (dir == null) {
+        dir = await service.install(info);
+        // 新装/静默更新后刷新小程序数据,栈下列表页返回即见新版本
+        ref.invalidate(miniProgramsProvider);
+      }
       _pkgRoot = dir.path;
       _entryPath = p.join(_pkgRoot!, info.entry);
 

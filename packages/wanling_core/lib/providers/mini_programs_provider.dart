@@ -5,9 +5,11 @@ import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 
 /// 用户可见小程序(published 全量 + 自己的私有)。
-/// 非 autoDispose:登录周期内缓存;失败返空列表(列表页展示空态,不炸 UI)。
+/// autoDispose:无 watcher 即释放,重进列表页自动 refetch(新发布/换版本可见);
+/// 列表页 skipLoadingOnReload/Refresh 保旧数据,静默刷新不闪 loading。
+/// 失败返空列表(列表页展示空态,不炸 UI)。
 final miniProgramsProvider =
-    FutureProvider<List<MiniProgramInfo>>((ref) async {
+    FutureProvider.autoDispose<List<MiniProgramInfo>>((ref) async {
   try {
     return await ref.watch(apiProvider).getMiniPrograms();
   } catch (_) {
