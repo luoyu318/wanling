@@ -15,11 +15,12 @@ import (
 	"github.com/wanling/server/internal/model"
 )
 
-// allowedPermissions manifest.permissions 允许集(M2 起含 chat 类)。
+// allowedPermissions manifest.permissions 允许集(M2 起含 chat 类,M2.5 起 nav 跳转)。
 var allowedPermissions = map[string]struct{}{
 	"wanling.api":        {},
 	"wanling.chat.read":  {},
 	"wanling.chat.share": {},
+	"wanling.nav":        {},
 }
 
 const maxFiles = 2000

@@ -15,7 +15,7 @@ manifest.json 全字段:
 | version | int | 是 | 正整数,同 appid 单调递增;重传即换版本 |
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
 | icon | string | 否 | 图标相对路径 |
-| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share`,未知值拒绝 |
+| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`,未知值拒绝 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
 
 硬限制:
@@ -60,6 +60,7 @@ private → published ⇄ disabled
 | `wanling.request({path, method?, body?})` | wanling.api | path 仅允许 `/api/` 前缀;归一化(剥 query/fragment + URI 解码 + 消解 `.`/`..`/`%2e`)后仍须 `/api/` 前缀,防 `/api/../xxx` 绕过 |
 | `wanling.getChatContext()` | wanling.chat.read | 返回 `{conversation_id}`;仅从聊天卡片打开时有值,独立打开 null |
 | `wanling.shareToChat({title?, params?})` | wanling.chat.share | 弹会话选择器 → 以 `mini_program_card` 发消息;仅 published 可分享;用户取消 rejected `cancelled` |
+| `wanling.openPage({page, params?})` | wanling.nav | 跳宿主页面白名单:`home`(出栈回消息页)/`miniPrograms`(小程序列表)/`agentDetail`(params.agentId 必填且须 UUID);白名单外/非法参数 rejected |
 | `wanling.close()` | 无 | 关闭小程序页 |
 
 - envelope:原生返回 `{ok: true, data}` / `{ok: false, error}`,JS bootstrap 将 ok 转 resolve(data)/throw Error(error)
@@ -70,6 +71,7 @@ private → published ⇄ disabled
 
 - `wanling.api`:不涉及用户会话数据,manifest 声明即静默生效,无弹窗
 - `wanling.chat.*`(read/share):首次运行逐项弹授权对话框,拒绝 = 该项持续 reject;文案:read「读取当前会话 ID(用于关联你正在看的会话)」/ share「向你选择的好友/群聊分享小程序卡片」
+- `wanling.nav`:跳宿主页面白名单,首次运行弹授权对话框(跳转动作不涉及用户数据读取,但宿主导航属可感知行为需用户知情);拒绝 = 持续 reject
 - 授权按 appid 持久化本地 drift KVS(key `mp_perm:{ownerId}:{appid}`,JSON 能力集),增量合并幂等
 - 卸载小程序同步清 KVS 授权(重装即重新授权)+ 清本地包目录与 WebView storage
 

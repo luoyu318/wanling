@@ -245,4 +245,72 @@ void main() {
       expect((r['error'] as String), contains('share boom'));
     });
   });
+
+  group('openPage', () {
+    test('无 wanling.nav 权限 → 拒绝且不触达回调', () async {
+      var called = false;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async => null,
+        onOpenPage: (_) => called = true,
+      );
+      final r = await b.handle('wanlingOpenPage', [
+        {'page': 'home'}
+      ]);
+      expect((r as Map)['ok'], isFalse);
+      expect(called, isFalse);
+    });
+
+    test('白名单外页面 → 拒绝', () async {
+      var called = false;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.nav'},
+        proxy: (_, _, _) async => null,
+        onOpenPage: (_) => called = true,
+      );
+      final r = await b.handle('wanlingOpenPage', [
+        {'page': 'settings'}
+      ]);
+      expect((r as Map)['ok'], isFalse);
+      expect(called, isFalse);
+    });
+
+    test('agentDetail 非法 agentId → 拒绝', () async {
+      var called = false;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.nav'},
+        proxy: (_, _, _) async => null,
+        onOpenPage: (_) => called = true,
+      );
+      final r = await b.handle('wanlingOpenPage', [
+        {'page': 'agentDetail', 'params': {'agentId': '../../evil'}}
+      ]);
+      expect((r as Map)['ok'], isFalse);
+      expect(called, isFalse);
+    });
+
+    test('合法 agentDetail/home/miniPrograms → 透传 route 描述', () async {
+      Map<String, dynamic>? seen;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.nav'},
+        proxy: (_, _, _) async => null,
+        onOpenPage: (route) => seen = route,
+      );
+      final r1 = await b.handle('wanlingOpenPage', [
+        {'page': 'agentDetail', 'params': {'agentId': '38a7202f-131d-4067-b303-063a8a0b1429'}}
+      ]);
+      expect((r1 as Map)['ok'], isTrue);
+      expect(seen, {'route': 'agentDetail', 'agent_id': '38a7202f-131d-4067-b303-063a8a0b1429'});
+
+      final r2 = await b.handle('wanlingOpenPage', [
+        {'page': 'home'}
+      ]);
+      expect((r2 as Map)['data'], {'route': 'home'});
+
+      final r3 = await b.handle('wanlingOpenPage', [
+        {'page': 'miniPrograms'}
+      ]);
+      expect((r3 as Map)['data'], {'route': 'miniPrograms'});
+    });
+  });
 }

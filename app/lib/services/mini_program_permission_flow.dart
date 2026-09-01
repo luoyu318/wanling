@@ -1,15 +1,15 @@
 import 'package:app/services/mini_program_bridge.dart';
 
-/// 计算待弹窗的 chat 权限列表与最终生效集(纯函数,可测)。
+/// 计算待弹窗的需授权权限列表与最终生效集(纯函数,可测)。
 /// declared: manifest 声明;granted: KVS 已授权。
-/// pending 仅含未授权的 `wanling.chat.` 前缀权限(非 chat 权限不弹窗,
-/// 不涉及用户会话数据)。
+/// pending 仅含未授权的需授权权限(`wanling.chat.*` 涉及用户会话数据,
+/// `wanling.nav` 涉及宿主页面跳转;其余如 wanling.api 不弹窗)。
 ({List<String> pending, Set<String> effective}) resolvePermissionFlow({
   required Set<String> declared,
   required Set<String> granted,
 }) {
   final pending = declared
-      .where((p) => p.startsWith('wanling.chat.') && !granted.contains(p))
+      .where((p) => requiresConsent(p) && !granted.contains(p))
       .toList();
   return (pending: pending, effective: effectivePermissions(declared, granted));
 }

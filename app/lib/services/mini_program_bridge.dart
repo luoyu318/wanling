@@ -17,12 +17,16 @@ class MiniProgramBridge {
   /// 分享到会话;返回 null=用户取消。由容器页注入(bridge 不感知 KVS)。
   final Future<Object?> Function(Map<String, dynamic> payload)? onShare;
 
+  /// 跳转宿主页面(bridge 白名单校验后的 route 描述,容器页负责导航)。
+  final void Function(Map<String, dynamic> route)? onOpenPage;
+
   MiniProgramBridge({
     required this.permissions,
     required this.proxy,
     this.onClose,
     this.onChatContext,
     this.onShare,
+    this.onOpenPage,
   });
 
   Future<Object?> handle(String handlerName, List<dynamic> args) async {
@@ -70,6 +74,37 @@ class MiniProgramBridge {
           final shareData = await onShare!(payload);
           if (shareData == null) return {'ok': false, 'error': 'cancelled'};
           return {'ok': true, 'data': shareData};
+        case 'wanlingOpenPage':
+          if (!permissions.contains('wanling.nav')) {
+            return {'ok': false, 'error': 'permission denied: wanling.nav'};
+          }
+          final opts =
+              (args.isNotEmpty ? args.first : null) as Map<String, dynamic>? ??
+                  {};
+          final page = opts['page'] as String? ?? '';
+          final params =
+              (opts['params'] as Map?)?.cast<String, dynamic>() ?? const {};
+          switch (page) {
+            case 'home':
+              final route = {'route': 'home'};
+              onOpenPage?.call(route);
+              return {'ok': true, 'data': route};
+            case 'miniPrograms':
+              final route = {'route': 'miniPrograms'};
+              onOpenPage?.call(route);
+              return {'ok': true, 'data': route};
+            case 'agentDetail':
+              final agentId = params['agentId'] as String?;
+              if (agentId == null ||
+                  !_agentIdPattern.hasMatch(agentId)) {
+                return {'ok': false, 'error': 'agentId 需为合法 UUID'};
+              }
+              final route = {'route': 'agentDetail', 'agent_id': agentId};
+              onOpenPage?.call(route);
+              return {'ok': true, 'data': route};
+            default:
+              return {'ok': false, 'error': '未知页面: $page'};
+          }
         default:
           return {'ok': false, 'error': 'unknown method: $handlerName'};
       }
@@ -99,12 +134,22 @@ class MiniProgramBridge {
   }
 }
 
+/// openPage 白名单:agentDetail 的 agentId 参数校验(UUID,与 server 侧 id 类型一致)。
+final _agentIdPattern =
+    RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+
+/// 需用户弹窗授权的权限:chat 类(涉及用户会话数据)与 nav(涉及宿主页面跳转)。
+/// 其余(如 wanling.api)不涉及用户数据,声明即生效。
+bool requiresConsent(String perm) =>
+    perm.startsWith('wanling.chat.') || perm == 'wanling.nav';
+
 /// 有效权限 = manifest 声明集与用户授权集的交集规则:
-/// - 非 `wanling.chat.` 前缀权限(如 `wanling.api`)不涉及用户会话数据,直接生效
-/// - `wanling.chat.*` 权限须在容器页算好的 granted 授权集中才生效
+/// - 不需授权的权限(如 `wanling.api`)直接生效
+/// - 需授权权限(`wanling.chat.*` / `wanling.nav`)须在容器页算好的 granted
+///   授权集中才生效
 /// granted 中未 declared 的权限一律不生效(只收窄,不放大)。
 Set<String> effectivePermissions(Set<String> declared, Set<String> granted) {
   return declared
-      .where((p) => !p.startsWith('wanling.chat.') || granted.contains(p))
+      .where((p) => !requiresConsent(p) || granted.contains(p))
       .toSet();
 }

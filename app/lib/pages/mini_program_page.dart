@@ -57,6 +57,14 @@ window.wanling = {
           if (r && r.ok) return r.data;
           throw new Error((r && r.error) || 'shareToChat failed');
         });
+  },
+  openPage: function(opts) {
+    return window.flutter_inappwebview
+        .callHandler('wanlingOpenPage', opts || {})
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'openPage failed');
+        });
   }
 };
 """;
@@ -162,6 +170,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         onClose: () => context.pop(),
         onChatContext: () => widget.conversationId,
         onShare: (payload) => _shareToChat(info, payload),
+        onOpenPage: (route) => _openHostPage(route),
       );
       await _controller?.loadUrl(
         urlRequest: URLRequest(url: WebUri(_entryUrl(info).toString())),
@@ -196,6 +205,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   static const _permDesc = {
     'wanling.chat.read': '读取当前会话 ID（用于关联你正在看的会话）',
     'wanling.chat.share': '向你选择的好友/群聊分享小程序卡片',
+    'wanling.nav': '跳转到万灵 APP 内页面（小程序可拉起宿主页）',
   };
 
   /// 权限申请确认框。返回 true=允许;拒绝/点遮罩均视为拒绝。
@@ -247,6 +257,22 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
       },
     });
     return {'message_id': result.messageId};
+  }
+
+  /// openPage 消费:按 bridge 白名单校验后的 route 描述跳宿主页面。
+  /// 小程序页保留在栈上,宿主页返回键即回到小程序(导航栈天然支持)。
+  void _openHostPage(Map<String, dynamic> route) {
+    switch (route['route'] as String?) {
+      case 'home':
+        context.pop(); // 小程序页出栈,回到宿主主页(消息页)
+      case 'miniPrograms':
+        context.push('/mini-programs');
+      case 'agentDetail':
+        final agentId = route['agent_id'] as String?;
+        if (agentId != null && agentId.isNotEmpty) {
+          context.push('/agent/$agentId');
+        }
+    }
   }
 
   /// 文本响应(403 越界 / 404 缺失)。statusCode 需同时带 headers + reasonPhrase(平台约定)。
@@ -317,6 +343,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                 handlerName: 'wanlingShareToChat',
                 callback: (args) async =>
                     await _bridge?.handle('wanlingShareToChat', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingOpenPage',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingOpenPage', args),
               );
               unawaited(_start(info));
             },
