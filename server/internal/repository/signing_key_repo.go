@@ -2,12 +2,10 @@ package repository
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 
+	"github.com/wanling/server/internal/miniprogram"
 	"github.com/wanling/server/internal/model"
 )
 
@@ -46,7 +44,7 @@ func (r *SigningKeyRepo) Ensure(ctx context.Context) (*model.SigningKey, error) 
 		return k, nil
 	}
 
-	priv, pub, err := generateSigningKeypair()
+	priv, pub, err := miniprogram.GenerateKeypair()
 	if err != nil {
 		return nil, fmt.Errorf("signing key generate: %w", err)
 	}
@@ -65,14 +63,4 @@ func (r *SigningKeyRepo) Ensure(ctx context.Context) (*model.SigningKey, error) 
 		return nil, fmt.Errorf("signing key ensure: 插入后仍无密钥")
 	}
 	return k, nil
-}
-
-// generateSigningKeypair 生成 hex 编码密钥对。
-// TODO(M3-Task2): 替换为 miniprogram.GenerateKeypair
-func generateSigningKeypair() (privHex, pubHex string, err error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return "", "", fmt.Errorf("ed25519 generate: %w", err)
-	}
-	return hex.EncodeToString(priv), hex.EncodeToString(pub), nil
 }
