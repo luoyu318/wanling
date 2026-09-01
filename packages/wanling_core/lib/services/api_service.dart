@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:wanling_core/models/admin_mini_program_info.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/models/approval.dart';
@@ -613,6 +614,21 @@ class ApiService {
     return (res.data as List)
         .map((e) => MiniProgramInfo.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// admin 审核全量列表(server 端要求 admin 角色,否则 403)。
+  Future<List<AdminMiniProgramInfo>> getAdminMiniPrograms() async {
+    final res = await _dio.get('/api/admin/mini-programs');
+    final list = res.data as List<dynamic>;
+    return list
+        .map((e) => AdminMiniProgramInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// admin 小程序状态流转(published/disabled)。
+  Future<void> setMiniProgramStatus(String id, String status) async {
+    await _dio.put('/api/admin/mini-programs/$id/status',
+        data: {'status': status});
   }
 
   /// 小程序 JSBridge 代理:仅放行 /api/ 前缀,带登录态与 401 refresh 重试。
