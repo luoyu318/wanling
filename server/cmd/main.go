@@ -476,6 +476,12 @@ func main() {
 		log.Printf("[mini_program] 启动补签失败: %v", err)
 	}
 
+	// 启动种子:ADMIN_USERNAMES 命中账号升为 admin(DB 为准,幂等只升不降;
+	// 失败仅日志不阻断启动,与 BackfillSignatures 同策略)。
+	if err := userRepo.PromoteAdmins(context.Background(), cfg.Admin.Usernames); err != nil {
+		log.Printf("[admin] 启动种子 PromoteAdmins 失败: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
 		Handler:           r,
