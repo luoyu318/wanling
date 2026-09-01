@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/file_entry.dart';
 import 'pages/about_page.dart';
 import 'pages/add_friend_page.dart';
+import 'pages/admin_mini_program_page.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/agent_sessions_page.dart';
 import 'pages/change_password_page.dart';
@@ -390,6 +391,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/mini-programs',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const MiniProgramListPage(),
+          key: state.pageKey,
+        ),
+      ),
+      // admin 小程序审核:侧栏 admin 专属入口,server 端二次校验角色。
+      GoRoute(
+        path: '/admin/mini-programs',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const AdminMiniProgramPage(),
           key: state.pageKey,
         ),
       ),
