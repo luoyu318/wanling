@@ -229,11 +229,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	if err := h.tokenStore.DeleteRefresh(c.Request.Context(), req.RefreshToken); err != nil {
-		logpkg.FromCtx(c.Request.Context()).WarnContext(c.Request.Context(),
-			"rotation 删旧 refresh token 失败", "err", err)
-	}
-
+	// role 读取必须在 rotation（删旧 refresh）之前，fail-safe：若 DB 瞬时故障返回 500，
+	// 旧 refresh 尚未删除，客户端可凭原 refresh 重试；若先删后读，DB 故障时 refresh
+	// 已被 rotation 失效，客户端被锁死只能重新登录。
 	// role DB 为准:refresh 重读当前 role 签发,旧 refresh token 内的 role 不再信任。
 	// 改 env/DB 撤销 admin 后,下次刷新即生效,无需重新登录。
 	u, err := h.userRepo.GetByID(c.Request.Context(), data.UserID)
@@ -244,6 +242,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if u == nil {
 		Err(c, http.StatusUnauthorized, "invalid_refresh", "refresh token 无效或已过期")
 		return
+	}
+
+	if err := h.tokenStore.DeleteRefresh(c.Request.Context(), req.RefreshToken); err != nil {
+		logpkg.FromCtx(c.Request.Context()).WarnContext(c.Request.Context(),
+			"rotation 删旧 refresh token 失败", "err", err)
 	}
 
 	access, refresh, err := h.issueTokenPair(data.UserID, u.Role, "")
