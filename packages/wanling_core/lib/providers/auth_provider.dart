@@ -202,6 +202,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 修改当前用户密码。不需要旧密码（JWT 已验证身份）。
   /// 改密后 server 返新 token pair（旧 token 因 tokenver 自增已失效），
   /// 更新 api 实例 + 持久化到 TokenVault/prefs + 通知 bg-service。
+  /// role 用响应值更新（server DB 为准，admin 改密不降级）；
+  /// 响应缺 role（旧 server）时保留现值，防止把 admin 误降为 user。
   Future<void> changePassword(String newPassword) async {
     final result = await api.changePassword(newPassword);
     api.setToken(result.token);
@@ -210,8 +212,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _lastKnownRefreshToken = result.refreshToken;
     await _persistTokens(result.token, result.refreshToken);
     if (state.user != null) {
-      // copyWith 保留 role（改密不变更角色）
-      state = state.copyWith(token: result.token);
+      state = state.copyWith(
+        token: result.token,
+        // copyWith null=保留；空串（旧 server 无 role 字段）同样保留现值
+        role: result.role.isEmpty ? null : result.role,
+      );
     }
     notifyService('start', {
       'baseUrl': api.baseUrl,

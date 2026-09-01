@@ -860,9 +860,11 @@ class ApiService {
   }
 
   /// 修改当前登录用户的密码。不需要旧密码（JWT 已验证身份）。
-  /// 改密成功后 server 返新 token pair（旧 token 因 tokenver 自增已失效）。
-  /// 返回 (token, refreshToken) 供调用方持久化 + 更新 api 实例。
-  Future<({String token, String refreshToken})> changePassword(
+  /// 改密成功后 server 返新 token pair（旧 token 因 tokenver 自增已失效），
+  /// 响应顶层带 role（与 Login/Refresh 契约一致，DB 为准）。
+  /// 返回 (token, refreshToken, role) 供调用方持久化 + 更新 api 实例 + 同步角色。
+  /// 旧 server 不带 role 字段时 role 为空串，由调用方决定保留现值。
+  Future<({String token, String refreshToken, String role})> changePassword(
       String newPassword) async {
     final res = await _dio.put('/api/users/me/password', data: {
       'new_password': newPassword,
@@ -870,6 +872,7 @@ class ApiService {
     return (
       token: res.data['token'] as String,
       refreshToken: res.data['refresh_token'] as String,
+      role: (res.data['role'] as String?) ?? '',
     );
   }
 
