@@ -41,7 +41,8 @@ manifest.json:
 - **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回(default 形态)
 - **切页时设置 `document.title`**:宿主 AppBar 标题实时跟随,例如 `document.title = '订单详情'`
 - **多级页面用 hash/history 路由**(如 `location.hash='#detail'` + `hashchange`),系统返回键=回上一页;入口页再按返回=退出小程序。纯 div 切换不产生历史,返回键会直接退出小程序
-- 参考实现:`scripts/examples/miniprogram-showcase/index.html`(hash 路由 + document.title 同步)
+- **右上角胶囊为宿主固定提供**(更多/关闭,两形态均显示):自绘头部时右上角预留 `高 32dp、右边距 12dp` 的区域,避免内容被遮挡(微信小程序同款规范)
+- 参考实现:`scripts/examples/miniprogram-showcase/index.html`(hash 路由 + document.title 同步)、`scripts/examples/miniprogram-header/index.html`(custom 自绘搜索框头部)
 
 index.html 是一个纯静态页,需要宿主能力时调 `window.wanling`(完整示例见 `scripts/examples/miniprogram-hello/index.html`):
 

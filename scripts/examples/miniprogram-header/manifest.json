@@ -1,0 +1,10 @@
+{
+  "appid": "header-demo",
+  "name": "自绘头部示例",
+  "version": 1,
+  "entry": "index.html",
+  "icon": "",
+  "permissions": ["wanling.api"],
+  "navigationBar": {"style": "custom"},
+  "minHostVersion": "1.6.3"
+}

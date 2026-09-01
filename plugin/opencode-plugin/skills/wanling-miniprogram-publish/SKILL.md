@@ -42,9 +42,10 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 
 ## 二·五、页面与导航约定（强制，违反会被返回键退出）
 
-- **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回（navigationBar.style=default 时）
+- **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回（navigationBar.style=default 时）；需要品牌化头部（搜索框等）时用 `style:"custom"` 自绘，参考 `scripts/examples/miniprogram-header/`
 - **切页设置 `document.title`**：宿主 AppBar 标题实时跟随（如 `document.title='订单详情'`）
 - **多级页面用 hash/history 路由**（`location.hash='#detail'` + `hashchange`）：系统返回键=回上一页，入口页再按=退出小程序；纯 div 切换没有历史，返回键会直接退出小程序
+- **右上角胶囊由宿主固定提供**（更多/关闭）：自绘头部时右上角预留高 32dp、右边距 12dp 的区域，不要把可点内容放那里
 
 ## 三、发布流程
 

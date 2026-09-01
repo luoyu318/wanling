@@ -138,10 +138,20 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   /// document.title 同步(onTitleChanged),null=未收到回调时显示 manifest.name。
   String? _title;
 
+  /// WebView 是否有后退历史(hash/history 导航也计入)。
+  /// 驱动两处 UI:default 形态入口页隐藏返回键;系统返回键决定 goBack 还是退出。
+  bool _canGoBack = false;
+
   /// goBack 异步竞态防抖:一次系统返回事件只消费一次。
   bool _popping = false;
 
   String get _virtualHost => '${widget.appid}.mini.wanling.local';
+
+  /// 刷新 _canGoBack(onUpdateVisitedHistory 回调,含 hash 同文档导航)。
+  Future<void> _syncCanGoBack() async {
+    final can = await _controller?.canGoBack() ?? false;
+    if (mounted && can != _canGoBack) setState(() => _canGoBack = can);
+  }
 
   /// 系统返回键语义:WebView 内有历史 → 回小程序上一页(history 路由);
   /// 已在入口页 → 退出小程序回 APP。
@@ -157,6 +167,65 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
       if (mounted) context.pop();
     } finally {
       _popping = false;
+    }
+  }
+
+  /// 退出小程序(胶囊 ◉ / 更多菜单关项目):直接出栈,不消费 WebView 历史。
+  void _close() {
+    if (mounted) context.pop();
+  }
+
+  /// 胶囊「更多」菜单:刷新 / 分享到会话 / 关闭。
+  Future<void> _showMoreSheet(MiniProgramInfo info) async {
+    final canShare = info.permissions.contains('wanling.chat.share');
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh),
+              title: const Text('刷新'),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                _controller?.reload();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('分享到会话'),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                _shareFromCapsule(info, canShare);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('关闭小程序'),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                _close();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 胶囊入口的分享:与 bridge shareToChat 同规则(仅公开+已声明 share 权限)。
+  Future<void> _shareFromCapsule(MiniProgramInfo info, bool canShare) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (!canShare) {
+        throw StateError('该小程序未申请分享权限(wanling.chat.share)');
+      }
+      await _shareToChat(info, {'title': info.name});
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+          content: Text(
+              '$e'.replaceFirst(RegExp(r'^(Bad state|StateError): '), ''))));
     }
   }
 
@@ -327,13 +396,24 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     final nav = info?.navigationBar;
     final navBg = _parseColor(nav?.backgroundColor);
     final navFg = _parseColor(nav?.foregroundColor);
-    final appBar = (nav?.isCustom ?? false)
+    final capsule = _CapsuleButton(
+      foregroundColor: navFg,
+      onMore: () => _showMoreSheet(info!),
+      onClose: _close,
+    );
+    final isCustom = nav?.isCustom ?? false;
+    final appBar = isCustom
         ? null
         : AppBar(
             title: Text(_title ?? info?.name ?? '小程序'),
-            leading: BackButton(onPressed: _handleBack),
+            // 入口页(无历史)隐藏返回键,退出入口交给胶囊(微信语义)
+            automaticallyImplyLeading: false,
+            leading: _canGoBack ? BackButton(onPressed: _handleBack) : null,
+            centerTitle: true,
             backgroundColor: navBg,
             foregroundColor: navFg,
+            // info 未就绪(loading)时不放胶囊,防 _showMoreSheet 空引用
+            actions: [if (info != null) capsule],
           );
     return PopScope(
       canPop: false,
@@ -371,6 +451,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               ]),
               onTitleChanged: (controller, title) {
                 if (mounted) setState(() => _title = title);
+              },
+              onUpdateVisitedHistory: (controller, url, isMainFrame) {
+                // hash 同文档导航也会回调,驱动返回键显隐
+                unawaited(_syncCanGoBack());
               },
               onWebViewCreated: (controller) {
                 _controller = controller;
@@ -432,12 +516,82 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                 );
               },
             );
-            // custom 形态:无 AppBar 全屏,WebView 仍避让状态栏(小程序免处理 inset)
-            return nav?.isCustom ?? false
-                ? SafeArea(child: webView)
+            // custom 形态:无 AppBar 全屏,WebView 仍避让状态栏(小程序免处理 inset);
+            // 胶囊悬浮右上角(小程序自绘头部须预留,见协议文档)
+            return isCustom
+                ? SafeArea(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(child: webView),
+                        Positioned(top: 6, right: 12, child: capsule),
+                      ],
+                    ),
+                  )
                 : webView;
           },
         ),
+      ),
+    );
+  }
+}
+
+/// 右上角胶囊(微信语义):更多 ●●● | 关闭 ◉。
+/// default 形态驻留 AppBar actions;custom 形态悬浮 WebView 右上角。
+class _CapsuleButton extends StatelessWidget {
+  final VoidCallback onMore;
+  final VoidCallback onClose;
+  final Color? foregroundColor;
+
+  const _CapsuleButton({
+    required this.onMore,
+    required this.onClose,
+    this.foregroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = foregroundColor ?? Colors.black87;
+    // 胶囊整体跟随 fg 单色系(微信 navigationBarTextStyle 同思路):
+    // 深色 AppBar 配浅色 fg → 浅色胶囊;浅色 AppBar 配深色 fg → 深色胶囊
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      decoration: BoxDecoration(
+        color: fg.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: fg.withValues(alpha: .12)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: onMore,
+            customBorder: const StadiumBorder(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final d in const [4.0, 4.0, 4.0])
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                      child:
+                          CircleAvatar(radius: d / 2, backgroundColor: fg),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Container(width: 1, height: 18, color: fg.withValues(alpha: .15)),
+          InkWell(
+            onTap: onClose,
+            customBorder: const StadiumBorder(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Icon(Icons.radio_button_unchecked, size: 20, color: fg),
+            ),
+          ),
+        ],
       ),
     );
   }

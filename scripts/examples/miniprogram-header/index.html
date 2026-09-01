@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>特选好物购</title>
+<style>
+:root{--brand:#e02e24;--text:#222;--sub:#999}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:#fff;color:var(--text);font-size:15px;padding-bottom:40px}
+/* 胶囊占位:右上角宿主胶囊(高32,右边距12),自绘头部标题避开该区域 */
+.hero{display:flex;align-items:center;justify-content:center;height:52px;position:relative}
+.hero .cap{font-size:19px;font-weight:700;letter-spacing:1px}
+.search{margin:6px 16px 14px;background:#f4f5f7;border-radius:20px;padding:10px 16px;color:#aaa;font-size:14px;display:flex;align-items:center;gap:8px}
+.banner{margin:0 16px 16px;border-radius:12px;overflow:hidden;background:linear-gradient(120deg,#ffd9a0,#ff9d9d);height:150px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;font-weight:700;letter-spacing:2px;text-shadow:0 2px 8px rgba(0,0,0,.15)}
+.tabs{display:flex;gap:22px;padding:0 16px 10px;font-size:15px;color:var(--sub);overflow-x:auto;white-space:nowrap}
+.tabs b{color:var(--brand);position:relative;padding-bottom:6px}
+.tabs b:after{content:'';position:absolute;left:15%;right:15%;bottom:0;height:3px;border-radius:2px;background:var(--brand)}
+.goods{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:6px 16px}
+.card{border-radius:10px;overflow:hidden;border:1px solid #f2f2f2}
+.card .img{height:110px;display:flex;align-items:center;justify-content:center;font-size:34px;background:#f8f8f8}
+.card .info{padding:8px 10px}
+.card .info p{font-size:13px;color:#555;height:34px;overflow:hidden;margin-bottom:6px}
+.card .price{color:var(--brand);font-weight:700}
+.card .price i{font-style:normal;font-size:11px;color:#bbb;margin-left:6px;text-decoration:line-through}
+</style>
+</head>
+<body>
+<!-- 自绘头部:custom 形态下宿主 AppBar 已隐藏,标题/搜索框由页面自绘 -->
+<div class="hero"><span class="cap">特选好物购</span></div>
+<div class="search">🔍 请输入关键字搜索</div>
+<div class="banner">防晒用品 · 特惠日</div>
+<div class="tabs"><b>推荐</b><span>食品</span><span>百货</span><span>鞋包</span><span>电器</span></div>
+<div class="goods">
+  <div class="card"><div class="img">🧴</div><div class="info"><p>防晒喷雾 SPF50+ 清爽不黏腻</p><span class="price">¥29.9<i>¥59</i></span></div></div>
+  <div class="card"><div class="img">🧢</div><div class="info"><p>遮阳帽 大檐防紫外线</p><span class="price">¥19.9<i>¥39</i></span></div></div>
+  <div class="card"><div class="img">🕶️</div><div class="info"><p>偏光太阳镜 抗UV400</p><span class="price">¥49<i>¥99</i></span></div></div>
+  <div class="card"><div class="img">🥤</div><div class="info"><p>电解质水 0糖0卡 500ml×6</p><span class="price">¥12.9<i>¥24</i></span></div></div>
+</div>
+<script>
+document.title = '特选好物购';
+</script>
+</body>
+</html>

@@ -23,6 +23,8 @@ manifest.json 全字段:
 - **标题同步**:宿主 AppBar 标题跟随 `document.title`(WebView onTitleChanged),默认 fallback manifest.name;小程序切页时设置 `document.title` 即可,零协议
 - **返回键语义**:宿主拦截系统返回(含 AppBar 返回键)→ WebView `canGoBack()` 为真回上一页,否则退出小程序;因此多级页面导航须用 hash/history 路由(产生 history 条目),纯 div 切换会被返回键直接退出
 - **禁止自绘标题栏**:default 形态下标题/返回由宿主 AppBar 承担,小程序不再画 header
+- **右上角胶囊**(宿主固定提供,两形态均显示):`●●● 更多`(刷新/分享到会话/关闭)+ `◉ 关闭`;default 形态驻留 AppBar 右侧、入口页(无历史)隐藏返回键,custom 形态悬浮 WebView 右上角(SafeArea 下 6dp/右边距 12dp,高 32dp);**自绘头部时页面右上角须预留该区域**,避免内容被胶囊遮挡
+- **胶囊分享与 bridge 分享同规则**:仅 published + 声明 `wanling.chat.share` 可用,否则提示未申请权限
 
 硬限制:
 - 包大小:压缩后与解压后总大小均 ≤ 上限(默认 20MB,`MINIPROGRAM_MAX_ZIP_BYTES` 可配);请求体超限 413 `payload_too_large`
