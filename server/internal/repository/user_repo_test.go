@@ -115,6 +115,58 @@ func TestUserRepo_Update_EmptyStringClearsField(t *testing.T) {
 	}
 }
 
+// TestUserRole_DefaultAndScan:建号默认 user,GetByUsername/GetByID 均能读出。
+func TestUserRole_DefaultAndScan(t *testing.T) {
+	db := SetupTestDB(t)
+	r := NewUserRepo(db)
+	u, err := r.Create(t.Context(), uniqueShortName(t, "roler"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if u.Role != "user" {
+		t.Fatalf("新号应默认 user,实际 %q", u.Role)
+	}
+	got, err := r.GetByUsername(t.Context(), u.Username)
+	if err != nil || got == nil || got.Role != "user" {
+		t.Fatalf("GetByUsername role 读取失败: %v %+v", err, got)
+	}
+	got, err = r.GetByID(t.Context(), u.ID)
+	if err != nil || got == nil || got.Role != "user" {
+		t.Fatalf("GetByID role 读取失败: %v %+v", err, got)
+	}
+}
+
+// TestPromoteAdmins_IdempotentOnlyUpgrade:种子幂等;只升不降(env 移除不降级)。
+func TestPromoteAdmins_IdempotentOnlyUpgrade(t *testing.T) {
+	db := SetupTestDB(t)
+	r := NewUserRepo(db)
+	a, _ := r.Create(t.Context(), uniqueShortName(t, "admin_a"), "$2a$10$hash")
+	b, _ := r.Create(t.Context(), uniqueShortName(t, "plain_b"), "$2a$10$hash")
+
+	// 种子命中 a → admin;重复种子幂等
+	for i := 0; i < 2; i++ {
+		if err := r.PromoteAdmins(t.Context(), []string{a.Username}); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+	}
+	got, _ := r.GetByID(t.Context(), a.ID)
+	if got.Role != "admin" {
+		t.Fatalf("a 应为 admin,实际 %q", got.Role)
+	}
+	// 种子列表移除 a(只含 b)再跑 → a 不降级
+	if err := r.PromoteAdmins(t.Context(), []string{b.Username}); err != nil {
+		t.Fatalf("promote b: %v", err)
+	}
+	got, _ = r.GetByID(t.Context(), a.ID)
+	if got.Role != "admin" {
+		t.Fatalf("env 移除后 a 不应降级,实际 %q", got.Role)
+	}
+	got, _ = r.GetByID(t.Context(), b.ID)
+	if got.Role != "admin" {
+		t.Fatalf("b 应为 admin,实际 %q", got.Role)
+	}
+}
+
 // TestUserRepo_Update_AvatarEmptyStringIgnored 验证 avatar_url 传空串被忽略（不清空）。
 func TestUserRepo_Update_AvatarEmptyStringIgnored(t *testing.T) {
 	db := SetupTestDB(t)

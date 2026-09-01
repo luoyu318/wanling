@@ -31,9 +31,9 @@ func (r *UserRepo) Create(ctx context.Context, username, passwordHash string) (*
 	u := &model.User{}
 	err := r.queryRow(ctx,
 		`INSERT INTO users (username, password_hash) VALUES ($1, $2)
-		 RETURNING id, username, nickname, bio, avatar_url, created_at`,
+		 RETURNING id, username, nickname, bio, avatar_url, role, created_at`,
 		username, passwordHash,
-	).Scan(&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.Role, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -43,9 +43,9 @@ func (r *UserRepo) Create(ctx context.Context, username, passwordHash string) (*
 func (r *UserRepo) GetByUsername(ctx context.Context, username string) (*model.User, error) {
 	u := &model.User{}
 	err := r.queryRow(ctx,
-		`SELECT id, username, password_hash, nickname, bio, avatar_url, created_at FROM users WHERE username = $1`,
+		`SELECT id, username, password_hash, nickname, bio, avatar_url, role, created_at FROM users WHERE username = $1`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Nickname, &u.Bio, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Nickname, &u.Bio, &u.AvatarURL, &u.Role, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -55,9 +55,9 @@ func (r *UserRepo) GetByUsername(ctx context.Context, username string) (*model.U
 func (r *UserRepo) GetByID(ctx context.Context, id string) (*model.User, error) {
 	u := &model.User{}
 	err := r.queryRow(ctx,
-		`SELECT id, username, password_hash, nickname, bio, avatar_url, created_at FROM users WHERE id = $1`,
+		`SELECT id, username, password_hash, nickname, bio, avatar_url, role, created_at FROM users WHERE id = $1`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Nickname, &u.Bio, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Nickname, &u.Bio, &u.AvatarURL, &u.Role, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -119,9 +119,9 @@ func (r *UserRepo) Update(ctx context.Context, id string, p UpdateUserParams) (*
 	u := &model.User{}
 	query := "UPDATE users SET " + strings.Join(setClauses, ", ") +
 		" WHERE id = $" + strconv.Itoa(argIdx) +
-		" RETURNING id, username, nickname, bio, avatar_url, created_at"
+		" RETURNING id, username, nickname, bio, avatar_url, role, created_at"
 	err := r.queryRow(ctx, query, args...).Scan(
-		&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.CreatedAt)
+		&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.Role, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (r *UserRepo) Update(ctx context.Context, id string, p UpdateUserParams) (*
 // 管理工具 list-users 用。生产规模大时建议加分页，当前规模不需要。
 func (r *UserRepo) List(ctx context.Context) ([]*model.User, error) {
 	rows, err := r.query(ctx,
-		`SELECT id, username, nickname, bio, avatar_url, created_at FROM users ORDER BY created_at`,
+		`SELECT id, username, nickname, bio, avatar_url, role, created_at FROM users ORDER BY created_at`,
 	)
 	if err != nil {
 		return nil, err
@@ -141,12 +141,25 @@ func (r *UserRepo) List(ctx context.Context) ([]*model.User, error) {
 	var users []*model.User
 	for rows.Next() {
 		u := &model.User{}
-		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.Bio, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// PromoteAdmins 启动种子:ADMIN_USERNAMES 命中账号升为 admin。幂等;只升不降
+// (env 移除用户名不自动降级,撤销 admin 直接改 DB)。usernames 空时 no-op。
+func (r *UserRepo) PromoteAdmins(ctx context.Context, usernames []string) error {
+	if len(usernames) == 0 {
+		return nil
+	}
+	_, err := r.exec(ctx,
+		`UPDATE users SET role = 'admin' WHERE username = ANY($1)`,
+		usernames,
+	)
+	return err
 }
 
 // GetIDByUsername 反查 username → user_id(server 内部用,不暴露到 API)。
