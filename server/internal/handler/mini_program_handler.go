@@ -103,7 +103,7 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 		ErrMsg(c, http.StatusBadRequest, "读取上传内容失败")
 		return
 	}
-	manifest, err := miniprogram.ValidatePackage(data, h.maxZipBytes)
+	manifest, _, err := miniprogram.ValidatePackage(data, h.maxZipBytes)
 	if err != nil {
 		Err(c, http.StatusBadRequest, "invalid_package", err.Error())
 		return
