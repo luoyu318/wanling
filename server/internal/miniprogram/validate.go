@@ -27,6 +27,28 @@ const maxFiles = 2000
 
 var appidRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,31}$`)
 
+// colorRe navigationBar 颜色格式(#RRGGBB)。
+var colorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// validateNavigationBar 校验 manifest.navigationBar(可选声明,fail fast):
+// style ∈ {default,custom}、颜色 #RRGGBB;缺省 style 视为 default。
+func validateNavigationBar(nb *model.NavigationBarSpec) error {
+	if nb == nil {
+		return nil
+	}
+	switch nb.Style {
+	case "", "default", "custom":
+	default:
+		return fmt.Errorf("navigation_bar.style 需为 default/custom, got %q", nb.Style)
+	}
+	for field, v := range map[string]string{"backgroundColor": nb.BackgroundColor, "foregroundColor": nb.ForegroundColor} {
+		if v != "" && !colorRe.MatchString(v) {
+			return fmt.Errorf("navigation_bar.%s 需为 #RRGGBB, got %q", field, v)
+		}
+	}
+	return nil
+}
+
 // ValidatePackage 校验小程序 zip 包,返回解析后的 manifest。
 // 校验项:压缩/解压后总大小上限、manifest.json 根目录存在、必填字段、appid 格式、
 // version>0、entry 存在于包内、permissions 白名单、条目名无路径穿越、文件数上限。
@@ -104,6 +126,9 @@ func ValidatePackage(zipBytes []byte, maxBytes int64) (*model.MiniprogramManifes
 		if _, ok := allowedPermissions[p]; !ok {
 			return nil, fmt.Errorf("未知 permission: %s", p)
 		}
+	}
+	if err := validateNavigationBar(m.NavigationBar); err != nil {
+		return nil, err
 	}
 
 	// 第二遍:entry 存在性(manifest 解析前 entry 未知,与第一遍合并不了)。

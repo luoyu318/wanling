@@ -40,18 +40,19 @@ func NewMiniProgramHandler(repo *repository.MiniProgramRepo, signingKeyRepo *rep
 
 // mpItem 列表 DTO(扇出 manifest 字段,APP 免二次解析 jsonb)。
 type mpItem struct {
-	ID          string   `json:"id"`
-	Appid       string   `json:"appid"`
-	OwnerID     string   `json:"owner_id"`
-	Name        string   `json:"name"`
-	Version     int      `json:"version"`
-	Entry       string   `json:"entry"`
-	Icon        string   `json:"icon"`
-	Permissions []string `json:"permissions"`
-	Status      string   `json:"status"`
-	SHA256      string   `json:"sha256"`
-	Size        int64    `json:"size"`
-	Signature   string   `json:"signature"`
+	ID             string                   `json:"id"`
+	Appid          string                   `json:"appid"`
+	OwnerID        string                   `json:"owner_id"`
+	Name           string                   `json:"name"`
+	Version        int                      `json:"version"`
+	Entry          string                   `json:"entry"`
+	Icon           string                   `json:"icon"`
+	Permissions    []string                 `json:"permissions"`
+	NavigationBar  *model.NavigationBarSpec `json:"navigation_bar"`
+	Status         string                   `json:"status"`
+	SHA256         string                   `json:"sha256"`
+	Size           int64                    `json:"size"`
+	Signature      string                   `json:"signature"`
 }
 
 func toMPItem(mp *model.MiniProgram) mpItem {
@@ -64,7 +65,8 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 	}
 	return mpItem{ID: mp.ID, Appid: mp.Appid, OwnerID: mp.OwnerID, Name: mp.Name,
 		Version: mp.Version, Entry: entry, Icon: m.Icon, Permissions: m.Permissions,
-		Status: mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
+		NavigationBar: m.NavigationBar,
+		Status:        mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
 }
 
 // Upload POST /api/mini-programs:zip 上传 → 新建私有或同 owner 换版本。

@@ -87,6 +87,48 @@ func TestValidatePackage_PathTraversalEntry(t *testing.T) {
 	}
 }
 
+func TestValidatePackage_NavigationBar(t *testing.T) {
+	cases := []struct {
+		name      string
+		nb        string
+		wantErr   bool
+		wantStyle string
+	}{
+		{name: "缺省通过", nb: ""},
+		{name: "default 合法", nb: `,"navigationBar":{"style":"default"}`, wantStyle: "default"},
+		{name: "custom 合法", nb: `,"navigationBar":{"style":"custom"}`, wantStyle: "custom"},
+		{name: "颜色合法", nb: `,"navigationBar":{"style":"default","backgroundColor":"#1E6FFF","foregroundColor":"#FFFFFF"}`, wantStyle: "default"},
+		{name: "style 非法", nb: `,"navigationBar":{"style":"hide"}`, wantErr: true},
+		{name: "颜色非法", nb: `,"navigationBar":{"backgroundColor":"red"}`, wantErr: true},
+		{name: "颜色缺#非法", nb: `,"navigationBar":{"backgroundColor":"1E6FFF"}`, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := buildZip(t, map[string]string{
+				"manifest.json": `{"appid":"hello","name":"Hello","version":1,"entry":"index.html"` + tc.nb + `}`,
+				"index.html":    "<html></html>",
+			})
+			m, err := ValidatePackage(data, 20<<20)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("期望报错, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidatePackage: %v", err)
+			}
+			gotStyle := ""
+			if m.NavigationBar != nil {
+				gotStyle = m.NavigationBar.Style
+			}
+			if gotStyle != tc.wantStyle {
+				t.Errorf("style = %q, want %q", gotStyle, tc.wantStyle)
+			}
+		})
+	}
+}
+
 func TestValidatePackage_Oversize(t *testing.T) {
 	data := buildZip(t, map[string]string{"manifest.json": goodManifest, "index.html": strings.Repeat("a", 4096)})
 	if _, err := ValidatePackage(data, 1024); err == nil {

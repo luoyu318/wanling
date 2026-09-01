@@ -135,7 +135,36 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   bool _starting = false;
   String? _error;
 
+  /// document.title 同步(onTitleChanged),null=未收到回调时显示 manifest.name。
+  String? _title;
+
+  /// goBack 异步竞态防抖:一次系统返回事件只消费一次。
+  bool _popping = false;
+
   String get _virtualHost => '${widget.appid}.mini.wanling.local';
+
+  /// 系统返回键语义:WebView 内有历史 → 回小程序上一页(history 路由);
+  /// 已在入口页 → 退出小程序回 APP。
+  Future<void> _handleBack() async {
+    if (_popping) return;
+    _popping = true;
+    try {
+      final controller = _controller;
+      if (controller != null && await controller.canGoBack()) {
+        await controller.goBack();
+        return;
+      }
+      if (mounted) context.pop();
+    } finally {
+      _popping = false;
+    }
+  }
+
+  /// #RRGGBB → Color;非法值(null,server 已 fail fast,防御旧数据)回退主题色。
+  Color? _parseColor(String? hex) {
+    if (hex == null || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(hex)) return null;
+    return Color(int.parse('FF${hex.substring(1)}', radix: 16));
+  }
 
   MiniProgramInfo? _findInfo(List<MiniProgramInfo> list) {
     for (final m in list) {
@@ -291,98 +320,120 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   Widget build(BuildContext context) {
     final listAsync = ref.watch(miniProgramsProvider);
     final info = _findInfo(listAsync.valueOrNull ?? []);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(info?.name ?? '小程序'),
-        leading: BackButton(onPressed: () => context.pop()),
-      ),
-      body: listAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('加载失败: $e')),
-        data: (_) {
-          if (_error != null) {
-            return _ErrorView(message: _error!, onBack: () => context.pop());
-          }
-          if (info == null) {
-            return Center(child: Text('小程序 ${widget.appid} 不存在或已下架'));
-          }
-          if (info.status == 'disabled') {
-            return const Center(child: Text('该小程序已被管理员停用'));
-          }
-          return InAppWebView(
-            initialSettings: InAppWebViewSettings(
-              allowFileAccess: false,
-              allowFileAccessFromFileURLs: false,
-              allowUniversalAccessFromFileURLs: false,
-              useHybridComposition: true,
-            ),
-            initialUserScripts: UnmodifiableListView([
-              UserScript(
-                source: _jsBridgeBootstrap,
-                injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-              ),
-            ]),
-            onWebViewCreated: (controller) {
-              _controller = controller;
-              controller.addJavaScriptHandler(
-                handlerName: 'wanlingRequest',
-                callback: (args) async =>
-                    await _bridge?.handle('wanlingRequest', args),
-              );
-              controller.addJavaScriptHandler(
-                handlerName: 'wanlingClose',
-                callback: (args) async =>
-                    await _bridge?.handle('wanlingClose', args),
-              );
-              controller.addJavaScriptHandler(
-                handlerName: 'wanlingGetChatContext',
-                callback: (args) async =>
-                    await _bridge?.handle('wanlingGetChatContext', args),
-              );
-              controller.addJavaScriptHandler(
-                handlerName: 'wanlingShareToChat',
-                callback: (args) async =>
-                    await _bridge?.handle('wanlingShareToChat', args),
-              );
-              controller.addJavaScriptHandler(
-                handlerName: 'wanlingOpenPage',
-                callback: (args) async =>
-                    await _bridge?.handle('wanlingOpenPage', args),
-              );
-              unawaited(_start(info));
-            },
-            shouldOverrideUrlLoading: (controller, action) async {
-              // 只允许本小程序虚拟 origin 内导航,外链一律拦截
-              final uri = action.request.url;
-              if (uri != null && uri.host == _virtualHost) {
-                return NavigationActionPolicy.ALLOW;
-              }
-              return NavigationActionPolicy.CANCEL;
-            },
-            shouldInterceptRequest: (controller, request) async {
-              // 仅拦截本 appid 虚拟 origin,其余交给 WebView 原生处理
-              if (request.url.host != _virtualHost ||
-                  _pkgRoot == null ||
-                  _entryPath == null) {
-                return null;
-              }
-              final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
-              // 越出包根(zip-slip 第二层防护) → 403
-              if (filePath == null) {
-                return _plainResponse('forbidden', 403);
-              }
-              final file = File(filePath);
-              // isFile 同时覆盖存在性 + 非目录(命中目录/缺失 → 404)
-              if (!await FileSystemEntity.isFile(filePath)) {
-                return _plainResponse('not found', 404);
-              }
-              return WebResourceResponse(
-                contentType: _mimeOf(filePath),
-                data: await file.readAsBytes(),
-              );
-            },
+    final nav = info?.navigationBar;
+    final navBg = _parseColor(nav?.backgroundColor);
+    final navFg = _parseColor(nav?.foregroundColor);
+    final appBar = (nav?.isCustom ?? false)
+        ? null
+        : AppBar(
+            title: Text(_title ?? info?.name ?? '小程序'),
+            leading: BackButton(onPressed: _handleBack),
+            backgroundColor: navBg,
+            foregroundColor: navFg,
           );
-        },
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(_handleBack());
+      },
+      child: Scaffold(
+        appBar: appBar,
+        body: listAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('加载失败: $e')),
+          data: (_) {
+            if (_error != null) {
+              return _ErrorView(message: _error!, onBack: () => context.pop());
+            }
+            if (info == null) {
+              return Center(child: Text('小程序 ${widget.appid} 不存在或已下架'));
+            }
+            if (info.status == 'disabled') {
+              return const Center(child: Text('该小程序已被管理员停用'));
+            }
+            final webView = InAppWebView(
+              initialSettings: InAppWebViewSettings(
+                allowFileAccess: false,
+                allowFileAccessFromFileURLs: false,
+                allowUniversalAccessFromFileURLs: false,
+                useHybridComposition: true,
+              ),
+              initialUserScripts: UnmodifiableListView([
+                UserScript(
+                  source: _jsBridgeBootstrap,
+                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                ),
+              ]),
+              onTitleChanged: (controller, title) {
+                if (mounted) setState(() => _title = title);
+              },
+              onWebViewCreated: (controller) {
+                _controller = controller;
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingRequest',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingRequest', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingClose',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingClose', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingGetChatContext',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingGetChatContext', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingShareToChat',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingShareToChat', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingOpenPage',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingOpenPage', args),
+                );
+                unawaited(_start(info));
+              },
+              shouldOverrideUrlLoading: (controller, action) async {
+                // 只允许本小程序虚拟 origin 内导航,外链一律拦截
+                final uri = action.request.url;
+                if (uri != null && uri.host == _virtualHost) {
+                  return NavigationActionPolicy.ALLOW;
+                }
+                return NavigationActionPolicy.CANCEL;
+              },
+              shouldInterceptRequest: (controller, request) async {
+                // 仅拦截本 appid 虚拟 origin,其余交给 WebView 原生处理
+                if (request.url.host != _virtualHost ||
+                    _pkgRoot == null ||
+                    _entryPath == null) {
+                  return null;
+                }
+                final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
+                // 越出包根(zip-slip 第二层防护) → 403
+                if (filePath == null) {
+                  return _plainResponse('forbidden', 403);
+                }
+                final file = File(filePath);
+                // isFile 同时覆盖存在性 + 非目录(命中目录/缺失 → 404)
+                if (!await FileSystemEntity.isFile(filePath)) {
+                  return _plainResponse('not found', 404);
+                }
+                return WebResourceResponse(
+                  contentType: _mimeOf(filePath),
+                  data: await file.readAsBytes(),
+                );
+              },
+            );
+            // custom 形态:无 AppBar 全屏,WebView 仍避让状态栏(小程序免处理 inset)
+            return nav?.isCustom ?? false
+                ? SafeArea(child: webView)
+                : webView;
+          },
+        ),
       ),
     );
   }

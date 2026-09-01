@@ -32,8 +32,16 @@ manifest.json:
 
 - `appid`:匹配 `^[a-z0-9][a-z0-9-]{2,31}$`,全局唯一,先到先得(他人占用上传 403)
 - `version`:正整数,同 appid 重传即换版本
-- `permissions`:只能从 `wanling.api` / `wanling.chat.read` / `wanling.chat.share` 里选,未知值整个包被拒
+- `permissions`:只能从 `wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` 里选,未知值整个包被拒
 - `entry` 缺省 `index.html`,但无论写什么,该文件必须真实存在于包内
+- `navigationBar`(可选):`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`;default=宿主原生 AppBar(可配色),custom=全屏无标题栏
+
+## 页面与导航约定(容器托管,小程序免画标题栏)
+
+- **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回(default 形态)
+- **切页时设置 `document.title`**:宿主 AppBar 标题实时跟随,例如 `document.title = '订单详情'`
+- **多级页面用 hash/history 路由**(如 `location.hash='#detail'` + `hashchange`),系统返回键=回上一页;入口页再按返回=退出小程序。纯 div 切换不产生历史,返回键会直接退出小程序
+- 参考实现:`scripts/examples/miniprogram-showcase/index.html`(hash 路由 + document.title 同步)
 
 index.html 是一个纯静态页,需要宿主能力时调 `window.wanling`(完整示例见 `scripts/examples/miniprogram-hello/index.html`):
 

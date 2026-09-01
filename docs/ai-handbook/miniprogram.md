@@ -16,7 +16,13 @@ manifest.json 全字段:
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
 | icon | string | 否 | 图标相对路径 |
 | permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`,未知值拒绝 |
+| navigationBar | object | 否 | 导航栏声明:`{style, backgroundColor, foregroundColor}`;style ∈ `default`(缺省,宿主原生 AppBar)/`custom`(隐藏 AppBar 全屏,SafeArea 避让状态栏);颜色 `#RRGGBB`,非法值 400 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
+
+容器交互约定(APP 侧实现,小程序遵守):
+- **标题同步**:宿主 AppBar 标题跟随 `document.title`(WebView onTitleChanged),默认 fallback manifest.name;小程序切页时设置 `document.title` 即可,零协议
+- **返回键语义**:宿主拦截系统返回(含 AppBar 返回键)→ WebView `canGoBack()` 为真回上一页,否则退出小程序;因此多级页面导航须用 hash/history 路由(产生 history 条目),纯 div 切换会被返回键直接退出
+- **禁止自绘标题栏**:default 形态下标题/返回由宿主 AppBar 承担,小程序不再画 header
 
 硬限制:
 - 包大小:压缩后与解压后总大小均 ≤ 上限(默认 20MB,`MINIPROGRAM_MAX_ZIP_BYTES` 可配);请求体超限 413 `payload_too_large`

@@ -1,15 +1,24 @@
 package model
 
+// NavigationBarSpec 小程序导航栏声明(manifest.navigation_bar,可选)。
+// Style=default(缺省)宿主原生 AppBar 承担返回+标题;custom 宿主隐藏 AppBar 全屏。
+type NavigationBarSpec struct {
+	Style           string `json:"style"`
+	BackgroundColor string `json:"backgroundColor"`
+	ForegroundColor string `json:"foregroundColor"`
+}
+
 // MiniprogramManifest 小程序包内 manifest.json 的服务端视图。
 // 校验见 internal/miniprogram(sha256/entry 存在性),此处仅承载字段。
 type MiniprogramManifest struct {
-	Appid          string   `json:"appid"`
-	Name           string   `json:"name"`
-	Version        int      `json:"version"`
-	Entry          string   `json:"entry"`
-	Icon           string   `json:"icon"`
-	Permissions    []string `json:"permissions"`
-	MinHostVersion string   `json:"minHostVersion"`
+	Appid          string             `json:"appid"`
+	Name           string             `json:"name"`
+	Version        int                `json:"version"`
+	Entry          string             `json:"entry"`
+	Icon           string             `json:"icon"`
+	Permissions    []string           `json:"permissions"`
+	NavigationBar  *NavigationBarSpec `json:"navigationBar"`
+	MinHostVersion string             `json:"minHostVersion"`
 }
 
 // MiniProgram 小程序注册记录(两层模型:private/published/disabled)。

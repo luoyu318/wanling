@@ -25,6 +25,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 | entry | 否 | 入口 HTML，默认 `index.html`，必须真实存在于包内 |
 | icon | 否 | 图标相对路径 |
 | permissions | 否 | 白名单四选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，其他值会被拒 |
+| navigationBar | 否 | 导航栏声明：`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`；default=宿主原生 AppBar（可配色），custom=全屏无标题栏 |
 | minHostVersion | 否 | 宿主最低版本声明 |
 
 硬限制：包 ≤ 20MB、文件数 ≤ 2000、manifest ≤ 1MB、条目名禁止 `../`/绝对路径/反斜杠。
@@ -38,6 +39,12 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 - `wanling.close()` — 关闭小程序
 
 权限语义：`wanling.api` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
+
+## 二·五、页面与导航约定（强制，违反会被返回键退出）
+
+- **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回（navigationBar.style=default 时）
+- **切页设置 `document.title`**：宿主 AppBar 标题实时跟随（如 `document.title='订单详情'`）
+- **多级页面用 hash/history 路由**（`location.hash='#detail'` + `hashchange`）：系统返回键=回上一页，入口页再按=退出小程序；纯 div 切换没有历史，返回键会直接退出小程序
 
 ## 三、发布流程
 
