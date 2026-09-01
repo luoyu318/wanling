@@ -115,7 +115,7 @@ func main() {
 	capabilityRegistry := agent.NewCapabilityRegistry()
 	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, agentRegistry, slashCatalogRegistry, capabilityRegistry, modeRegistry, presetRegistry)
 
-	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL, cfg.Admin.Usernames)
+	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	agentTypeRepo := repository.NewAgentTypeRepo(db)
 	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo)
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)

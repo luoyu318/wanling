@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,26 +21,17 @@ const bcryptCost = 12
 
 // AuthHandler 认证处理器
 type AuthHandler struct {
-	userRepo       *repository.UserRepo
-	agentRepo      *repository.AgentRepo
-	jwtSecret      string
-	tokenStore     *auth.TokenStore
-	accessTTL      time.Duration
-	refreshTTL     time.Duration
-	adminUsernames []string // ADMIN_USERNAMES;Login/Register 命中则签发 admin
+	userRepo   *repository.UserRepo
+	agentRepo  *repository.AgentRepo
+	jwtSecret  string
+	tokenStore *auth.TokenStore
+	accessTTL  time.Duration
+	refreshTTL time.Duration
 }
 
 // NewAuthHandler 创建认证处理器
-func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration, adminUsernames []string) *AuthHandler {
-	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL, adminUsernames: adminUsernames}
-}
-
-// roleForUsername ADMIN_USERNAMES 命中则签发平台 admin(小程序 publish 审核等)。
-func roleForUsername(adminUsernames []string, username string) string {
-	if slices.Contains(adminUsernames, username) {
-		return "admin"
-	}
-	return "user"
+func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration) *AuthHandler {
+	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL}
 }
 
 // issueTokenPair 签发 access + refresh token。store 为 nil 时跳过 Redis 读写，仅签发 access。
@@ -105,14 +95,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	role := roleForUsername(h.adminUsernames, req.Username)
-	access, refresh, err := h.issueTokenPair(user.ID, role, "")
+	access, refresh, err := h.issueTokenPair(user.ID, user.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	OkCreated(c, gin.H{"user": user, "token": access, "refresh_token": refresh})
+	OkCreated(c, gin.H{"user": user, "token": access, "refresh_token": refresh, "role": user.Role})
 }
 
 // LoginRequest 登录请求
@@ -155,14 +144,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
-	role := roleForUsername(h.adminUsernames, user.Username)
-	access, refresh, err := h.issueTokenPair(user.ID, role, "")
+	access, refresh, err := h.issueTokenPair(user.ID, user.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	Ok(c, gin.H{"user": user, "token": access, "refresh_token": refresh})
+	Ok(c, gin.H{"user": user, "token": access, "refresh_token": refresh, "role": user.Role})
 }
 
 // AgentTokenRequest Agent token 换取请求
@@ -246,13 +234,25 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 			"rotation 删旧 refresh token 失败", "err", err)
 	}
 
-	access, refresh, err := h.issueTokenPair(data.UserID, data.Role, "")
+	// role DB 为准:refresh 重读当前 role 签发,旧 refresh token 内的 role 不再信任。
+	// 改 env/DB 撤销 admin 后,下次刷新即生效,无需重新登录。
+	u, err := h.userRepo.GetByID(c.Request.Context(), data.UserID)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if u == nil {
+		Err(c, http.StatusUnauthorized, "invalid_refresh", "refresh token 无效或已过期")
+		return
+	}
+
+	access, refresh, err := h.issueTokenPair(data.UserID, u.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	Ok(c, gin.H{"token": access, "refresh_token": refresh})
+	Ok(c, gin.H{"token": access, "refresh_token": refresh, "role": u.Role})
 }
 
 // LogoutRequest 登出请求（refresh_token 可选，传了则一并删除）
