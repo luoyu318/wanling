@@ -143,6 +143,21 @@ void main() {
       final decoded = jsonDecode(cached!) as Map<String, dynamic>;
       expect(decoded['id'], 'u1');
       expect(decoded['username'], 'alice');
+      // 普通 user 登录（result.role 缺省）→ isAdmin=false
+      expect(container.read(authProvider).isAdmin, false);
+    });
+
+    test('admin 登录 → isAdmin=true', () async {
+      SharedPreferences.setMockInitialValues({});
+      when(() => api.login('root', 'pw')).thenAnswer((_) async => LoginResult(
+            token: 't', refreshToken: 'r',
+            user: User(id: 'u1', username: 'root', createdAt: DateTime.parse('2026-06-13T00:00:00Z')),
+            role: 'admin',
+          ));
+      final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).login('root', 'pw');
+      expect(container.read(authProvider).isAdmin, true);
     });
 
     test('restoreSession 网络错 + 有 cached_user → state.user=cachedUser, token 保留', () async {

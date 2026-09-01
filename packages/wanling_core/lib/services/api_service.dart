@@ -30,8 +30,8 @@ class ApiService {
   void Function()? _onUnauthorized;
 
   /// refresh 成功后的回调,通知 auth_provider 持久化新 token pair。
-  /// 参数:(newAccessToken, newRefreshToken)。
-  void Function(String access, String refresh)? _onTokenRefreshed;
+  /// 参数:(newAccessToken, newRefreshToken, role)。
+  void Function(String access, String refresh, String role)? _onTokenRefreshed;
 
   /// 当前 refresh token,由 auth_provider 在 login/restoreSession 后注入。
   /// null = 未登录或仅 access token 模式(任何 401 都直接登出)。
@@ -61,7 +61,7 @@ class ApiService {
   }
 
   /// 注入 refresh 成功回调,auth_provider 用于持久化新 token pair。
-  void setOnTokenRefreshed(void Function(String access, String refresh) cb) {
+  void setOnTokenRefreshed(void Function(String access, String refresh, String role) cb) {
     _onTokenRefreshed = cb;
   }
 
@@ -199,9 +199,11 @@ class ApiService {
       );
       final newAccess = res.data['token'] as String;
       final newRefresh = res.data['refresh_token'] as String;
+      // refresh 响应顶层带 role(缺省 user,兼容旧 server)
+      final role = res.data['role'] as String? ?? 'user';
       _refreshToken = newRefresh;
       setToken(newAccess);
-      _onTokenRefreshed?.call(newAccess, newRefresh);
+      _onTokenRefreshed?.call(newAccess, newRefresh, role);
       return newAccess;
     } finally {
       _refreshInFlight = null;
