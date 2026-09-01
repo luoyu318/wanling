@@ -613,15 +613,6 @@ class ApiService {
         .toList();
   }
 
-  /// 小程序包验签公钥(server ed25519 签名密钥对的公钥,私钥永不出 server)。
-  /// 拦截器已剥 envelope,res.data 直接是 {public_key: "..."} 裸 payload;
-  /// public_key 缺失/非 String 时 cast 抛错(fail fast,验签前置条件不满足直接失败)。
-  Future<String> getSigningPublicKey() async {
-    final res = await _dio.get('/api/mini-programs/signing-key');
-    final data = res.data as Map<String, dynamic>;
-    return data['public_key'] as String;
-  }
-
   /// 小程序 JSBridge 代理:仅放行 /api/ 前缀,带登录态与 401 refresh 重试。
   /// token 留在原生层,JS 上下文永不接触。
   /// 拦截器已剥 envelope,返回值为裸 payload

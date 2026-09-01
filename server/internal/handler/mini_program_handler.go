@@ -283,8 +283,11 @@ func (h *MiniProgramHandler) UpdateStatus(c *gin.Context) {
 // signPackage 对 published 包做 ed25519 签名并落库(失败由调用方记日志,不阻断)。
 func (h *MiniProgramHandler) signPackage(ctx context.Context, mp *model.MiniProgram) error {
 	f, err := h.fileRepo.GetByID(ctx, mp.PackageFileID)
-	if err != nil || f == nil {
-		return fmt.Errorf("包文件缺失: %w", err)
+	if err != nil {
+		return fmt.Errorf("查包文件: %w", err)
+	}
+	if f == nil {
+		return fmt.Errorf("包文件缺失")
 	}
 	reader, err := h.storage.Read(f.StoragePath)
 	if err != nil {

@@ -146,7 +146,10 @@ class FakeLocalMessageStore implements LocalMessageStore {
   String? _mpSigningPubKey;
 
   @override
-  Future<String?> getMpSigningPubKey() async => _mpSigningPubKey;
+  Future<String?> getMpSigningPubKey() async {
+    _maybeThrow('getMpSigningPubKey');
+    return _mpSigningPubKey;
+  }
 
   @override
   Future<void> putMpSigningPubKey(String pubHex) async {
