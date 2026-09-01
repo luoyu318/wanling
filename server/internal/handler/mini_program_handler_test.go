@@ -3,7 +3,10 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/wanling/server/internal/miniprogram"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 	"github.com/wanling/server/internal/storage"
@@ -53,6 +57,9 @@ func mpUserName(tag string) string {
 type mpEnv struct {
 	h    *MiniProgramHandler
 	repo *repository.MiniProgramRepo
+	skr  *repository.SigningKeyRepo
+	fr   *repository.FileRepo
+	st   storage.Provider
 	ur   *repository.UserRepo
 }
 
@@ -62,11 +69,26 @@ func newMPEnv(t *testing.T) *mpEnv {
 	ur := repository.NewUserRepo(db)
 	fr := repository.NewFileRepo(db)
 	repo := repository.NewMiniProgramRepo(db)
+	skr := repository.NewSigningKeyRepo(db)
 	st, err := storage.NewLocalStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewLocalStorage: %v", err)
 	}
-	return &mpEnv{h: NewMiniProgramHandler(repo, fr, st, 20<<20), repo: repo, ur: ur}
+	return &mpEnv{h: NewMiniProgramHandler(repo, skr, fr, st, 20<<20), repo: repo, skr: skr, fr: fr, st: st, ur: ur}
+}
+
+// readPackage 经 fileRepo + storage 读包文件全部字节(验签断言用)。
+func (e *mpEnv) readPackage(ctx context.Context, packageFileID string) ([]byte, error) {
+	f, err := e.fr.GetByID(ctx, packageFileID)
+	if err != nil || f == nil {
+		return nil, fmt.Errorf("包文件缺失: %w", err)
+	}
+	r, err := e.st.Read(f.StoragePath)
+	if err != nil {
+		return nil, fmt.Errorf("读包失败: %w", err)
+	}
+	defer r.Close()
+	return io.ReadAll(r)
 }
 
 func (e *mpEnv) user(t *testing.T, tag string) *model.User {
@@ -100,6 +122,7 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 	}
 	s.r.POST("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.Upload(c) })
 	s.r.GET("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.List(c) })
+	s.r.GET("/api/mini-programs/signing-key", func(c *gin.Context) { auth(c); e.h.GetSigningKey(c) })
 	s.r.GET("/api/mini-programs/:id/package", func(c *gin.Context) { auth(c); e.h.DownloadPackage(c) })
 	s.r.DELETE("/api/mini-programs/:id", func(c *gin.Context) { auth(c); e.h.Delete(c) })
 	s.r.PUT("/api/mini-programs/:id/status", func(c *gin.Context) { auth(c); e.h.UpdateStatus(c) })
@@ -350,4 +373,137 @@ func TestMiniProgramHandler_Download_ByAgent_OthersPrivate_403(t *testing.T) {
 	s.asAgent("agent-"+uuid.NewString()[:8], u2.ID)
 	AssertErr(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/"+id+"/package", nil)),
 		http.StatusForbidden, "forbidden")
+}
+
+// mpPublish 上传 + 发布,返回小程序 ID(签名链路测试的公共前置)。
+func mpPublish(t *testing.T, e *mpEnv, s *mpSrv, appid string, zipBytes []byte) string {
+	t.Helper()
+	id, _ := AssertOk(t, s.do(mpUploadReq(t, zipBytes)), http.StatusCreated)["id"].(string)
+	if id == "" {
+		t.Fatalf("upload 响应缺 id")
+	}
+	if w := s.do(mpStatusReq(id, "published")); w.Code != http.StatusOK {
+		t.Fatalf("publish 应 200: %d %s", w.Code, w.Body.String())
+	}
+	return id
+}
+
+// TestMiniProgramHandler_Publish_SignsPackage 验证 M3:publish 后 signature 非空,
+// 列表 DTO 带签名,且签名可用公钥对包字节验签通过。
+func TestMiniProgramHandler_Publish_SignsPackage(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mu1")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+	zipBytes := buildTestZip(t, appid, 1)
+
+	id := mpPublish(t, e, s, appid, zipBytes)
+
+	mp, err := e.repo.GetByID(t.Context(), id)
+	if err != nil || mp == nil {
+		t.Fatalf("GetByID: err=%v mp=%v", err, mp)
+	}
+	if mp.Signature == "" {
+		t.Fatalf("publish 后 signature 应非空")
+	}
+
+	// 列表 DTO 带 signature
+	items := AssertOkList(t, s.do(httptest.NewRequest("GET", "/api/mini-programs", nil)), http.StatusOK)
+	found := false
+	for _, it := range items {
+		m := it.(map[string]any)
+		if m["appid"] == appid {
+			found = true
+			if sig, _ := m["signature"].(string); sig == "" {
+				t.Errorf("列表 DTO 应带 signature: %v", m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("列表应含已发布小程序 %s: %v", appid, items)
+	}
+
+	// 公钥对包字节验签:Verify 通过;tamper 后必须失败
+	key, err := e.skr.Ensure(t.Context())
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	data, err := e.readPackage(t.Context(), mp.PackageFileID)
+	if err != nil {
+		t.Fatalf("读包: %v", err)
+	}
+	if err := miniprogram.Verify(key.PublicKey, data, mp.Signature); err != nil {
+		t.Errorf("验签应通过: %v", err)
+	}
+	if err := miniprogram.Verify(key.PublicKey, append(data, 'x'), mp.Signature); err == nil {
+		t.Errorf("篡改字节后验签应失败")
+	}
+}
+
+// TestMiniProgramHandler_SigningKey_Endpoint 验证 GET /signing-key 返回
+// ok:true + public_key(hex 64 字符,ed25519 公钥 32 字节)。
+func TestMiniProgramHandler_SigningKey_Endpoint(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mu2")
+	s.as(u.ID, "user")
+
+	data := AssertOk(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/signing-key", nil)), http.StatusOK)
+	pub, _ := data["public_key"].(string)
+	if len(pub) != 64 {
+		t.Fatalf("public_key 应为 hex 64 字符,实际 %d: %q", len(pub), pub)
+	}
+	if _, err := hex.DecodeString(pub); err != nil {
+		t.Errorf("public_key 应为合法 hex: %v", err)
+	}
+
+	// 幂等:二次请求返回同一把公钥
+	data2 := AssertOk(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/signing-key", nil)), http.StatusOK)
+	if data2["public_key"] != pub {
+		t.Errorf("signing-key 应幂等: %v != %v", data2["public_key"], pub)
+	}
+}
+
+// TestMiniProgramHandler_Disable_KeepsSignature 验证 published→disabled
+// 状态流转不重签不擦除:signature 原样保留且仍可对包字节验签通过。
+func TestMiniProgramHandler_Disable_KeepsSignature(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mu3")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	id := mpPublish(t, e, s, appid, buildTestZip(t, appid, 1))
+	before, err := e.repo.GetByID(t.Context(), id)
+	if err != nil || before == nil || before.Signature == "" {
+		t.Fatalf("publish 后应已签名: err=%v mp=%v", err, before)
+	}
+
+	if w := s.do(mpStatusReq(id, "disabled")); w.Code != http.StatusOK {
+		t.Fatalf("disable 应 200: %d %s", w.Code, w.Body.String())
+	}
+	after, err := e.repo.GetByID(t.Context(), id)
+	if err != nil || after == nil {
+		t.Fatalf("GetByID: err=%v mp=%v", err, after)
+	}
+	if after.Status != "disabled" {
+		t.Errorf("状态应 disabled,实际 %s", after.Status)
+	}
+	if after.Signature != before.Signature {
+		t.Errorf("disable 不应动 signature: before=%q after=%q", before.Signature, after.Signature)
+	}
+
+	// 签名仍可对包字节验签(包字节未变)
+	key, err := e.skr.Ensure(t.Context())
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	data, err := e.readPackage(t.Context(), after.PackageFileID)
+	if err != nil {
+		t.Fatalf("读包: %v", err)
+	}
+	if err := miniprogram.Verify(key.PublicKey, data, after.Signature); err != nil {
+		t.Errorf("disable 后签名仍应可验: %v", err)
+	}
 }

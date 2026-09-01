@@ -129,7 +129,7 @@ func (r *MiniProgramRepo) UpdateStatus(ctx context.Context, id, status string) e
 }
 
 // UpdateSignature 写入包签名 hex(M3 publish 流程调用)。
-// signature 仅经此 UPDATE 写入,Create/ReplaceVersion 的 INSERT 不含该列。
+// Create INSERT 不含该列;ReplaceVersion 置 NULL 作废旧签。
 func (r *MiniProgramRepo) UpdateSignature(ctx context.Context, id, sigHex string) error {
 	const q = `UPDATE mini_programs SET signature=$2, updated_at=now() WHERE id=$1`
 	if _, err := r.exec(ctx, q, id, sigHex); err != nil {

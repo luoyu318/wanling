@@ -2,11 +2,14 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -24,14 +27,15 @@ import (
 // 上传=任意用户建私有或同 owner 换版本;publish/disable 与删除外的管理动作
 // 的鉴权由路由组中间件保证(handler 不自检 role)。
 type MiniProgramHandler struct {
-	repo        *repository.MiniProgramRepo
-	fileRepo    *repository.FileRepo
-	storage     storage.Provider
-	maxZipBytes int64
+	repo           *repository.MiniProgramRepo
+	signingKeyRepo *repository.SigningKeyRepo
+	fileRepo       *repository.FileRepo
+	storage        storage.Provider
+	maxZipBytes    int64
 }
 
-func NewMiniProgramHandler(repo *repository.MiniProgramRepo, fileRepo *repository.FileRepo, st storage.Provider, maxZipBytes int64) *MiniProgramHandler {
-	return &MiniProgramHandler{repo: repo, fileRepo: fileRepo, storage: st, maxZipBytes: maxZipBytes}
+func NewMiniProgramHandler(repo *repository.MiniProgramRepo, signingKeyRepo *repository.SigningKeyRepo, fileRepo *repository.FileRepo, st storage.Provider, maxZipBytes int64) *MiniProgramHandler {
+	return &MiniProgramHandler{repo: repo, signingKeyRepo: signingKeyRepo, fileRepo: fileRepo, storage: st, maxZipBytes: maxZipBytes}
 }
 
 // mpItem 列表 DTO(扇出 manifest 字段,APP 免二次解析 jsonb)。
@@ -47,6 +51,7 @@ type mpItem struct {
 	Status      string   `json:"status"`
 	SHA256      string   `json:"sha256"`
 	Size        int64    `json:"size"`
+	Signature   string   `json:"signature"`
 }
 
 func toMPItem(mp *model.MiniProgram) mpItem {
@@ -59,7 +64,7 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 	}
 	return mpItem{ID: mp.ID, Appid: mp.Appid, OwnerID: mp.OwnerID, Name: mp.Name,
 		Version: mp.Version, Entry: entry, Icon: m.Icon, Permissions: m.Permissions,
-		Status: mp.Status, SHA256: mp.SHA256, Size: mp.Size}
+		Status: mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
 }
 
 // Upload POST /api/mini-programs:zip 上传 → 新建私有或同 owner 换版本。
@@ -265,5 +270,79 @@ func (h *MiniProgramHandler) UpdateStatus(c *gin.Context) {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
+	// 流转到 published 时自动签名(兼容策略:签名失败不阻断 publish,
+	// signature 缺失 APP 端放行,由启动补签/下次流转兜底)。
+	if req.Status == "published" {
+		if err := h.signPackage(c.Request.Context(), mp); err != nil {
+			log.Printf("[mini_program] publish 签名失败 appid=%s: %v", mp.Appid, err)
+		}
+	}
 	Ok(c, gin.H{"id": mp.ID, "status": req.Status})
+}
+
+// signPackage 对 published 包做 ed25519 签名并落库(失败由调用方记日志,不阻断)。
+func (h *MiniProgramHandler) signPackage(ctx context.Context, mp *model.MiniProgram) error {
+	f, err := h.fileRepo.GetByID(ctx, mp.PackageFileID)
+	if err != nil || f == nil {
+		return fmt.Errorf("包文件缺失: %w", err)
+	}
+	reader, err := h.storage.Read(f.StoragePath)
+	if err != nil {
+		return fmt.Errorf("读包失败: %w", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return fmt.Errorf("读包字节: %w", err)
+	}
+	key, err := h.signingKeyRepo.Ensure(ctx)
+	if err != nil {
+		return fmt.Errorf("取签名密钥: %w", err)
+	}
+	sig, err := miniprogram.Sign(key.PrivateKey, data)
+	if err != nil {
+		return fmt.Errorf("签名: %w", err)
+	}
+	return h.repo.UpdateSignature(ctx, mp.ID, sig)
+}
+
+// BackfillSignatures 启动补签:历史 published 缺 signature 的包逐个补上。
+// ListPublishedMissingSignature 单次 LIMIT 256,循环消费直到返空;
+// 单包失败记日志继续,整轮零进展则终止(残留项留待下次启动重试)。
+func (h *MiniProgramHandler) BackfillSignatures(ctx context.Context) error {
+	if _, err := h.signingKeyRepo.Ensure(ctx); err != nil {
+		return fmt.Errorf("取签名密钥: %w", err)
+	}
+	for {
+		missing, err := h.repo.ListPublishedMissingSignature(ctx)
+		if err != nil {
+			return fmt.Errorf("查缺签列表: %w", err)
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		progress := false
+		for _, mp := range missing {
+			if err := h.signPackage(ctx, mp); err != nil {
+				log.Printf("[mini_program] 补签失败 appid=%s: %v", mp.Appid, err)
+				continue
+			}
+			progress = true
+			log.Printf("[mini_program] 补签完成 appid=%s", mp.Appid)
+		}
+		if !progress {
+			log.Printf("[mini_program] 本轮补签零进展,终止(残留 %d 个待下次启动重试)", len(missing))
+			return nil
+		}
+	}
+}
+
+// GetSigningKey GET /api/mini-programs/signing-key:下发公钥(私钥永不出 server)。
+func (h *MiniProgramHandler) GetSigningKey(c *gin.Context) {
+	key, err := h.signingKeyRepo.Ensure(c.Request.Context())
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	Ok(c, gin.H{"public_key": key.PublicKey})
 }

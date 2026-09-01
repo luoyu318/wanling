@@ -121,7 +121,8 @@ func main() {
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
 	miniProgramRepo := repository.NewMiniProgramRepo(db)
-	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes)
+	signingKeyRepo := repository.NewSigningKeyRepo(db)
+	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
@@ -379,8 +380,9 @@ func main() {
 		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
 		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
 		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
-		// 小程序容器(两层模型):列表/owner 删除(上传与包下载在 mpAuth)。
+		// 小程序容器(两层模型):列表/owner 删除/公钥下发(上传与包下载在 mpAuth)。
 		userAuth.GET("/api/mini-programs", miniProgramHandler.List)
+		userAuth.GET("/api/mini-programs/signing-key", miniProgramHandler.GetSigningKey)
 		userAuth.DELETE("/api/mini-programs/:id", miniProgramHandler.Delete)
 	}
 
@@ -472,6 +474,12 @@ func main() {
 	// 优雅关闭：SIGTERM/SIGINT 时先停止 accept 新连接，
 	// 等活跃请求（含 WS）写完再关 DB pool，避免 kill 丢消息。
 	// 用 http.Server 替代 r.Run()，拿到 Shutdown 的控制权。
+
+	// 启动补签:历史 published 包缺 signature 的补上(幂等;失败仅日志不阻断启动)。
+	if err := miniProgramHandler.BackfillSignatures(context.Background()); err != nil {
+		log.Printf("[mini_program] 启动补签失败: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
 		Handler:           r,
