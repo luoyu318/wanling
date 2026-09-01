@@ -120,7 +120,7 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 
 ## mini_program_service.dart
 
-小程序本地包管理（wanling_core，`MiniProgramService({baseUrl, token})`）。`install(mp)`：下载 `GET /api/mini-programs/:id/package`（带登录态）→ `verifySha256`（static 纯函数，不匹配抛 StateError fail-fast 严禁跳过安装）→ `extractPackage`（static，条目名安全校验 + `isWithin` 越界防护）→ 解压到 `documents/miniprograms/<appid>/<version>/` .tmp 原子换目录 + 清理旧版本。`installedDir` 本地已装版本查询；`uploadPackage`/`deleteRemote`/`removeLocal` 上传/远端删除/本地卸载（含 WebView storage）
+小程序本地包管理（wanling_core，`MiniProgramService({baseUrl, token, store?, dio?})`，store 为可选 KVS 缓存注入、dio 为测试注入）。`install(mp)`：下载 `GET /api/mini-programs/:id/package`（带登录态）→ `verifySha256`（static 纯函数，不匹配抛 StateError fail-fast 严禁跳过安装）→ **ed25519 验签**（`_verifySignature`：签名存在必验、缺失放行过渡记日志；`verifyEd25519` static 纯函数 hex/长度异常一律返 false 不抛——验签失败是安全决策；公钥走 `fetchSigningPublicKey` 缓存链：KVS 命中直接用 → 未命中拉 signing-key 端点并写缓存 → 首验失败且有缓存绕缓存强制重拉再验一次（公钥轮换自愈）→ 两次失败抛「签名验证失败」拒装）→ `extractPackage`（static，条目名安全校验 + `isWithin` 越界防护）→ 解压到 `documents/miniprograms/<appid>/<version>/` .tmp 原子换目录 + 清理旧版本。`installedDir` 本地已装版本查询；`uploadPackage`/`deleteRemote`/`removeLocal` 上传/远端删除/本地卸载（含 WebView storage）
 
 ## mini_program_bridge.dart
 
