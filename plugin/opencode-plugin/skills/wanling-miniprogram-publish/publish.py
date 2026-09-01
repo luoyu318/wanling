@@ -39,6 +39,8 @@ def load_config():
     secret_key = cfg.get("secretKey") or ""
     if not agent_id or not secret_key:
         sys.exit("[mp-publish] config.json 缺少 agentId/secretKey")
+    # 可视性:打印生效 server 与 config 来源(不含密钥),多实例时便于发现打错目标
+    print(f"[mp-publish] server: {server_url} (config: {cfg_file})")
     return server_url, agent_id, secret_key
 
 
