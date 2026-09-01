@@ -197,7 +197,8 @@ install_deps() {
     info "安装 npm 依赖..."
     cd "$PLUGIN_DIR"
     local npm_log
-    if npm_log=$(npm install 2>&1); then
+    # --include=dev:全局 omit=dev 时缺省装不上 tsc(与 ensure_sdk_dist 同因,显式带上)
+    if npm_log=$(npm install --include=dev 2>&1); then
         ok "npm 依赖已就绪"
     else
         die "npm install 失败:${npm_log:+ $npm_log}"
@@ -220,7 +221,8 @@ build_code() {
 setup_systemd() {
     local service_file="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
     local opencode_bin
-    opencode_bin=$(which opencode 2>/dev/null)
+    # || true 防 set -e 静默退出,让下面的 die 能输出提示
+    opencode_bin=$(command -v opencode 2>/dev/null || true)
     if [[ -z "$opencode_bin" ]]; then
         die "未在 PATH 中找到 opencode 二进制。请先安装 opencode，再重跑本脚本。"
     fi
@@ -284,6 +286,28 @@ setup_shell_aliases() {
     else
         ok "快捷命令已安装到 ${bin_dir}(ocwl / ocwl-restart / ocwl-logs)"
     fi
+}
+
+# ─── Skills 同步 ───────────────────────────────────────────────────────────
+# 仓库 skills/ 下的 skill 落盘到 ~/.opencode/skills/,随插件安装/更新保持同步
+# (opencode serve 启动时扫描,ensure_service 的重启会让新 skill 生效)
+setup_skills() {
+    local skills_src="${SCRIPT_DIR}/skills"
+    local skills_dst="${HOME}/.opencode/skills"
+    if [[ ! -d "$skills_src" ]]; then
+        return 0
+    fi
+    mkdir -p "$skills_dst"
+    local synced=0
+    for dir in "$skills_src"/*/; do
+        local name
+        name="$(basename "$dir")"
+        # 拷贝目录内容而非目录本身(目标已存在时 cp -rf src dst 会嵌套成 dst/src)
+        mkdir -p "$skills_dst/$name"
+        cp -a "$dir"/. "$skills_dst/$name"/
+        synced=$((synced + 1))
+    done
+    ok "已同步 ${synced} 个 skill 到 ${skills_dst}"
 }
 
 # ─── 服务启动 ───────────────────────────────────────────────────────────────
@@ -518,6 +542,7 @@ print(d.get('owner_user_id',''))
     build_code
     setup_systemd
     setup_shell_aliases
+    setup_skills
     ensure_service
 
     print_summary "安装完成"
@@ -561,6 +586,7 @@ do_install() {
     fi
     setup_systemd
     setup_shell_aliases
+    setup_skills
     ensure_service
 
     print_summary "安装完成"
@@ -588,6 +614,7 @@ do_update() {
     fi
     setup_systemd
     setup_shell_aliases
+    setup_skills
 
     if systemctl --user is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
         systemctl --user restart "${SERVICE_NAME}"
