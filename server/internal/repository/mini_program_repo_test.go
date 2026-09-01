@@ -143,6 +143,69 @@ func TestMiniProgramRepo_ReplaceVersion_ResetsToPrivate(t *testing.T) {
 	}
 }
 
+func TestMiniProgramRepo_UpdateSignature(t *testing.T) {
+	db := SetupTestDB(t)
+	ur, fr := NewUserRepo(db), NewFileRepo(db)
+	repo := NewMiniProgramRepo(db)
+	ownerID, fileID := mkMPDeps(t, ur, fr, "s")
+	priv := mpFixture(t, ownerID, "mp-"+uuid.NewString()[:8], 1)
+	priv.PackageFileID = fileID
+	pub := mpFixture(t, ownerID, "mp-"+uuid.NewString()[:8], 1)
+	pub.PackageFileID = fileID
+	for _, mp := range []*model.MiniProgram{priv, pub} {
+		if err := repo.Create(t.Context(), mp); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	if err := repo.UpdateStatus(t.Context(), pub.ID, "published"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	// 未签时:Signature 空串;published 未签在 missing 列表;private 不在
+	got, err := repo.GetByID(t.Context(), pub.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID: %v %v", got, err)
+	}
+	if got.Signature != "" {
+		t.Errorf("未签时 Signature 应为空,实际 %q", got.Signature)
+	}
+	missing, err := repo.ListPublishedMissingSignature(t.Context())
+	if err != nil {
+		t.Fatalf("ListPublishedMissingSignature: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, m := range missing {
+		ids[m.ID] = true
+	}
+	if !ids[pub.ID] {
+		t.Errorf("published 未签应在 missing 列表: %v", ids)
+	}
+	if ids[priv.ID] {
+		t.Errorf("private 不应在 missing 列表: %v", ids)
+	}
+
+	// 签名后:Signature 回读一致;签后不在 missing 列表
+	if err := repo.UpdateSignature(t.Context(), pub.ID, "deadbeef"); err != nil {
+		t.Fatalf("UpdateSignature: %v", err)
+	}
+	got, err = repo.GetByID(t.Context(), pub.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID 签后: %v %v", got, err)
+	}
+	if got.Signature != "deadbeef" {
+		t.Errorf("签后 Signature 应为 deadbeef,实际 %q", got.Signature)
+	}
+	missing, err = repo.ListPublishedMissingSignature(t.Context())
+	if err != nil {
+		t.Fatalf("ListPublishedMissingSignature 签后: %v", err)
+	}
+	for _, m := range missing {
+		if m.ID == pub.ID {
+			t.Errorf("published 签后不应在 missing 列表")
+		}
+	}
+}
+
 func TestMiniProgramRepo_DeletePrivate_OnlyOwnPrivate(t *testing.T) {
 	db := SetupTestDB(t)
 	ur, fr := NewUserRepo(db), NewFileRepo(db)

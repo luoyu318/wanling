@@ -24,4 +24,11 @@ type MiniProgram struct {
 	SHA256        string
 	Size          int64
 	Status        string
+	Signature     string // 包签名 hex;空串=未签(DB NULL 中转)
+}
+
+// SigningKey 小程序包签名密钥对(server 单行表,私钥永不下发)。
+type SigningKey struct {
+	PrivateKey string // hex
+	PublicKey  string // hex
 }

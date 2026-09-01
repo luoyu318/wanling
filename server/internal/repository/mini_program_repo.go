@@ -17,14 +17,17 @@ func NewMiniProgramRepo(db *sql.DB) *MiniProgramRepo {
 	return &MiniProgramRepo{queryExecutor: queryExecutor{db: db}}
 }
 
-const mpColumns = `id, appid, owner_id, name, version, manifest, package_file_id, sha256, size, status`
+const mpColumns = `id, appid, owner_id, name, version, manifest, package_file_id, sha256, size, status, signature`
 
 func scanMiniProgram(row *sql.Row) (*model.MiniProgram, error) {
 	var e model.MiniProgram
+	// signature NULL=未签,经 NullString 中转为空串
+	var sig sql.NullString
 	if err := row.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
-		&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status); err != nil {
+		&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
 		return nil, err
 	}
+	e.Signature = sig.String
 	return &e, nil
 }
 
@@ -79,10 +82,12 @@ func (r *MiniProgramRepo) ListVisibleTo(ctx context.Context, userID string) ([]*
 	result := []*model.MiniProgram{}
 	for rows.Next() {
 		var e model.MiniProgram
+		var sig sql.NullString
 		if err := rows.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
-			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status); err != nil {
+			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
 			return nil, fmt.Errorf("mini_program scan: %w", err)
 		}
+		e.Signature = sig.String
 		result = append(result, &e)
 	}
 	if err := rows.Err(); err != nil {
@@ -102,9 +107,10 @@ type ReplaceVersionParams struct {
 }
 
 // ReplaceVersion 同 owner 重传:覆盖版本信息并重置回 private(重新走 publish)。
+// 包字节已变,旧签名作废,清空 signature 待重新签。
 func (r *MiniProgramRepo) ReplaceVersion(ctx context.Context, id string, p ReplaceVersionParams) error {
 	const q = `UPDATE mini_programs SET name=$2, version=$3, manifest=$4,
-		package_file_id=$5, sha256=$6, size=$7, status='private', updated_at=now()
+		package_file_id=$5, sha256=$6, size=$7, status='private', signature=NULL, updated_at=now()
 		WHERE id=$1`
 	if _, err := r.exec(ctx, q, id, p.Name, p.Version, p.ManifestJSON,
 		p.PackageFileID, p.SHA256, p.Size); err != nil {
@@ -120,6 +126,44 @@ func (r *MiniProgramRepo) UpdateStatus(ctx context.Context, id, status string) e
 		return fmt.Errorf("mini_program status: %w", err)
 	}
 	return nil
+}
+
+// UpdateSignature 写入包签名 hex(M3 publish 流程调用)。
+// signature 仅经此 UPDATE 写入,Create/ReplaceVersion 的 INSERT 不含该列。
+func (r *MiniProgramRepo) UpdateSignature(ctx context.Context, id, sigHex string) error {
+	const q = `UPDATE mini_programs SET signature=$2, updated_at=now() WHERE id=$1`
+	if _, err := r.exec(ctx, q, id, sigHex); err != nil {
+		return fmt.Errorf("mini_program update_signature: %w", err)
+	}
+	return nil
+}
+
+// ListPublishedMissingSignature 列出待签名的 published 包(signature IS NULL),
+// 供发布流程/存量补签遍历。
+func (r *MiniProgramRepo) ListPublishedMissingSignature(ctx context.Context) ([]*model.MiniProgram, error) {
+	const q = `SELECT ` + mpColumns + ` FROM mini_programs
+		WHERE status = 'published' AND signature IS NULL
+		ORDER BY updated_at DESC LIMIT 256`
+	rows, err := r.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("mini_program list_missing_signature: %w", err)
+	}
+	defer rows.Close()
+	result := []*model.MiniProgram{}
+	for rows.Next() {
+		var e model.MiniProgram
+		var sig sql.NullString
+		if err := rows.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
+			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
+			return nil, fmt.Errorf("mini_program scan: %w", err)
+		}
+		e.Signature = sig.String
+		result = append(result, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mini_program rows: %w", err)
+	}
+	return result, nil
 }
 
 // DeletePrivate 仅删 owner 自己的 private 记录,返回删除行数(0=条件不满足)。
