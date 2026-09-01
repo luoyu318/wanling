@@ -106,6 +106,30 @@ void main() {
     expect(list.first.appid, 'a');
   });
 
+  test('getSigningPublicKey 拦截器剥 envelope 后按裸 payload 解析 public_key', () async {
+    // mock 返回服务端原始 envelope;必须在拦截器剥离后的 res.data(Map)上解析,
+    // 若再解一次 envelope(data['data'])会抛 TypeError。
+    api.dio.httpClientAdapter = MockHttpClientAdapter(
+      200,
+      {
+        'ok': true,
+        'data': {'public_key': 'aabbccdd'},
+      },
+    );
+    expect(await api.getSigningPublicKey(), 'aabbccdd');
+  });
+
+  test('getSigningPublicKey public_key 缺失 fail fast 抛错', () async {
+    api.dio.httpClientAdapter = MockHttpClientAdapter(
+      200,
+      {
+        'ok': true,
+        'data': {'unexpected': 'x'},
+      },
+    );
+    expect(() => api.getSigningPublicKey(), throwsA(isA<TypeError>()));
+  });
+
   test('ok=false 缺 error 字段兜底 internal_error', () async {
     api.dio.httpClientAdapter = MockHttpClientAdapter(
       200,

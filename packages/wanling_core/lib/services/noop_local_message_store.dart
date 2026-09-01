@@ -55,6 +55,12 @@ class NoopLocalMessageStore implements LocalMessageStore {
   Future<void> setGlobalLastSeq(int seq) async {}
 
   @override
+  Future<String?> getMpSigningPubKey() async => null;
+
+  @override
+  Future<void> putMpSigningPubKey(String pubHex) async {}
+
+  @override
   Future<void> clearConversation(String conversationId) async {}
 
   @override

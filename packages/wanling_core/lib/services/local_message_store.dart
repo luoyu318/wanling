@@ -586,6 +586,33 @@ extension LocalMessageStoreImpl on LocalMessageDatabase {
     }
   }
 
+  /// KVS:mp_signing_pubkey 全局 key(无 owner 维度)→ 验签公钥 hex 原文。
+  /// 缓存是增强功能,读写失败只 debugPrint 不抛;未缓存返 null。
+  /// 注:LocalMessageDatabase 不 implements 抽象接口(经 adapter 桥接),
+  /// 此处不加 @override(与 mp_perm 同理)。
+  Future<void> putMpSigningPubKey(String pubHex) async {
+    try {
+      await into(kvs).insertOnConflictUpdate(KvsCompanion(
+        key: const Value('mp_signing_pubkey'),
+        value: Value(pubHex),
+      ));
+    } catch (e) {
+      debugPrint('[mp_signing] putMpSigningPubKey fail: $e');
+    }
+  }
+
+  Future<String?> getMpSigningPubKey() async {
+    try {
+      final row = await (select(kvs)
+            ..where((t) => t.key.equals('mp_signing_pubkey')))
+          .getSingleOrNull();
+      return row?.value;
+    } catch (e) {
+      debugPrint('[mp_signing] getMpSigningPubKey fail: $e');
+      return null;
+    }
+  }
+
   /// 清空指定会话的所有消息 + 元数据(退出会话 / 注销场景)。
   /// 用 transaction 包裹,任一失败回滚,避免留中间态。
   Future<void> clearConversation(String conversationId) async {

@@ -142,6 +142,18 @@ class FakeLocalMessageStore implements LocalMessageStore {
     _globalLastSeq = seq;
   }
 
+  /// mp_signing_pubkey 全局 key(无 owner 维度)
+  String? _mpSigningPubKey;
+
+  @override
+  Future<String?> getMpSigningPubKey() async => _mpSigningPubKey;
+
+  @override
+  Future<void> putMpSigningPubKey(String pubHex) async {
+    _maybeThrow('putMpSigningPubKey');
+    _mpSigningPubKey = pubHex;
+  }
+
   @override
   Future<void> clearConversation(String conversationId) async {
     _buckets.remove(conversationId);
@@ -153,6 +165,7 @@ class FakeLocalMessageStore implements LocalMessageStore {
     _globalLastSeq = null;
     _drafts.clear();
     _mpPerms.clear();
+    _mpSigningPubKey = null;
   }
 
   // === 列表缓存 + conv_meta ===

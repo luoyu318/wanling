@@ -593,6 +593,26 @@ test('done 聚合卡即使 elements 空也写库', () async {
       expect(await db.getMpPerms('u1', 'hello'), <String>{});
     });
   });
+
+  group('mp_signing_pubkey(Kvs 全局 key,无 owner 维度,小程序签名公钥缓存)', () {
+    test('put + get 往返,初始为 null', () async {
+      expect(await db.getMpSigningPubKey(), isNull);
+      await db.putMpSigningPubKey('aabbccdd');
+      expect(await db.getMpSigningPubKey(), 'aabbccdd');
+    });
+
+    test('同 key 覆盖写(密钥轮换场景)', () async {
+      await db.putMpSigningPubKey('old-key');
+      await db.putMpSigningPubKey('new-key');
+      expect(await db.getMpSigningPubKey(), 'new-key');
+    });
+
+    test('clearAll 清空公钥缓存(注销场景)', () async {
+      await db.putMpSigningPubKey('aabbccdd');
+      await db.clearAll();
+      expect(await db.getMpSigningPubKey(), isNull);
+    });
+  });
 }
 
 ChatMessage _mkMsg(String id, String convId, {required DateTime createdAt}) {

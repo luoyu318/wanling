@@ -92,6 +92,13 @@ class _DriftStoreAdapter implements LocalMessageStore {
   Future<void> setGlobalLastSeq(int seq) => db.setGlobalLastSeq(seq);
 
   @override
+  Future<String?> getMpSigningPubKey() => db.getMpSigningPubKey();
+
+  @override
+  Future<void> putMpSigningPubKey(String pubHex) =>
+      db.putMpSigningPubKey(pubHex);
+
+  @override
   Future<void> clearConversation(String conversationId) =>
       db.clearConversation(conversationId);
 

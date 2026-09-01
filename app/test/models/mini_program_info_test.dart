@@ -15,6 +15,7 @@ void main() {
       'status': 'published',
       'sha256': 'abc',
       'size': 1024,
+      'signature': 'c2lnbmF0dXJl',
     });
     expect(m.appid, 'hello-demo');
     expect(m.version, 3);
@@ -22,6 +23,7 @@ void main() {
     expect(m.permissions, ['wanling.api', 'wanling.chat.share']);
     expect(m.status, 'published');
     expect(m.size, 1024);
+    expect(m.signature, 'c2lnbmF0dXJl');
   });
 
   test('fromJson 缺省兜底(entry 默认 index.html,icon 空)', () {
@@ -38,5 +40,6 @@ void main() {
     expect(m.entry, 'index.html');
     expect(m.icon, '');
     expect(m.permissions, isEmpty);
+    expect(m.signature, isNull); // 旧 server 无 signature 字段
   });
 }

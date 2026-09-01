@@ -14,6 +14,9 @@ class MiniProgramInfo {
   final String sha256;
   final int size;
 
+  /// 发布包 ed25519 签名(base64,容器启动前验签用);旧 server 无此字段为 null。
+  final String? signature;
+
   const MiniProgramInfo({
     required this.id,
     required this.appid,
@@ -26,6 +29,7 @@ class MiniProgramInfo {
     required this.status,
     required this.sha256,
     required this.size,
+    this.signature,
   });
 
   factory MiniProgramInfo.fromJson(Map<String, dynamic> json) => MiniProgramInfo(
@@ -41,5 +45,6 @@ class MiniProgramInfo {
         status: json['status'] as String,
         sha256: json['sha256'] as String,
         size: json['size'] as int,
+        signature: json['signature'] as String?,
       );
 }
