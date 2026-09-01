@@ -551,18 +551,19 @@ class _CapsuleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = foregroundColor ?? Colors.black87;
-    // 双样式(参照微信):浅色 AppBar(深色 fg)→白色实底+1px 边框;
-    // 其它颜色 AppBar(浅色 fg)→无边框+fg 0.6 不透明底;竖线两样式均保留
+    // 双样式(参照微信实拍):深色 fg(白色 AppBar)→白色实底+1px 边框+深色前景;
+    // 浅色 fg(彩色 AppBar,如红/蓝)→白色 0.6 不透明底+无边框+黑色前景(白点在浅底上不可读)
     final lightFg = fg.computeLuminance() > 0.5;
+    final contentColor = lightFg ? Colors.black87 : fg;
     return Container(
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: lightFg ? fg.withValues(alpha: .6) : Colors.white,
+        color: lightFg ? Colors.white : Colors.white.withValues(alpha: .6),
         borderRadius: BorderRadius.circular(16),
         border: lightFg
-            ? null
-            : Border.all(color: Colors.black.withValues(alpha: .1), width: 1),
+            ? Border.all(color: Colors.black.withValues(alpha: .1), width: 1)
+            : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -578,8 +579,8 @@ class _CapsuleButton extends StatelessWidget {
                   for (final d in const [4.0, 4.0, 4.0])
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                      child:
-                          CircleAvatar(radius: d / 2, backgroundColor: fg),
+                      child: CircleAvatar(
+                          radius: d / 2, backgroundColor: contentColor),
                     ),
                 ],
               ),
@@ -588,15 +589,14 @@ class _CapsuleButton extends StatelessWidget {
           Container(
               width: 1,
               height: 18,
-              color: lightFg
-                  ? fg.withValues(alpha: .25)
-                  : Colors.black.withValues(alpha: .1)),
+              color: contentColor.withValues(alpha: .15)),
           InkWell(
             onTap: onClose,
             customBorder: const StadiumBorder(),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Icon(Icons.radio_button_checked, size: 20, color: fg),
+              child:
+                  Icon(Icons.radio_button_checked, size: 20, color: contentColor),
             ),
           ),
         ],
