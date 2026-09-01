@@ -76,4 +76,9 @@ class MiniProgramInfo {
         size: json['size'] as int,
         signature: json['signature'] as String?,
       );
+
+  /// 列表/底栏 icon 完整 URL;icon 为空返回 ''(调用方走 Avatar 首字 fallback)。
+  /// server mpItem.Icon 即相对 URL(?v=版本 快照参数),此处只拼 baseUrl。
+  String iconUrlFor(String baseUrl) =>
+      icon.isEmpty ? '' : '$baseUrl$icon';
 }

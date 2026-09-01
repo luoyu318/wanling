@@ -33,3 +33,7 @@ dependencies:
   path: ^1.9.0
   archive: ^4.2.0
   cryptography: ^2.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
