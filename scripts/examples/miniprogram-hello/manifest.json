@@ -1,9 +1,9 @@
 {
   "appid": "hello-demo",
   "name": "Hello 示例",
-  "version": 1,
+  "version": 2,
   "entry": "index.html",
   "icon": "",
-  "permissions": ["wanling.api"],
+  "permissions": ["wanling.api", "wanling.chat.read", "wanling.chat.share"],
   "minHostVersion": "1.6.3"
 }
