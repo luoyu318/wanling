@@ -4,6 +4,7 @@
 // 模板: templates/flutter-page.dart.tmpl(const+key/loading+error UI)。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 
@@ -13,6 +14,7 @@ import 'package:wanling_core/providers/local_message_store_provider.dart'
     show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/providers/nav_order_provider.dart';
+import 'package:wanling_core/services/api_response.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 import 'package:wanling_core/theme/app_colors.dart';
@@ -123,7 +125,23 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
           skipLoadingOnReload: true,
           skipLoadingOnRefresh: true,
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('加载失败: $e')),
+          error: (e, _) {
+            // 鉴权失败被 provider 上抛(不伪装空数据),解包后给友好文案;下拉可重试
+            final err = e is DioException ? e.error : e;
+            final authErr = err is ApiException &&
+                (err.statusCode == 401 || err.statusCode == 403);
+            return ListView(
+              children: [
+                const SizedBox(height: 120),
+                Center(
+                  child: Text(
+                    authErr ? '登录状态已失效，请重新登录后使用' : '加载失败，下拉重试',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ),
+              ],
+            );
+          },
           data: (list) {
             if (list.isEmpty) {
               return ListView(
