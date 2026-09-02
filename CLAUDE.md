@@ -16,6 +16,7 @@
 - 服务端测试: `cd server && go test ./...`（用 testcontainers 起 PG 容器,需 docker）
 - APP: `cd app && flutter run -d <device-id> --flavor dev`（`adb devices` 看 device-id）
 - APP 测试: `cd app && flutter test`
+- 本地开发配置：docs/local/
 - **Harness 工程命令**:
   - `make help` — 列出所有目标
   - `make install-tools` — 一键装齐 lint/scan 工具（首次必跑）
