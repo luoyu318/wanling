@@ -33,7 +33,7 @@ const profile = await wanling.getProfile();
 
 `wanling.request` 不允许调用真实身份端点与管理端点：
 
-- `/api/users/me`（返回全局 user_id）
+- `/api/users/me`（返回全局账号 id）
 - `/api/admin` 前缀的管理端点
 
 命中即拒绝，错误信息：`-32091 身份信息请使用 wanlingGetProfile`。
@@ -42,4 +42,4 @@ const profile = await wanling.getProfile();
 
 ## 宿主资源直引
 
-包内页面可直接用相对路径引用宿主资源，例如 `<img src="/api/..." />`：宿主会带登录态将其代理回源（GET），当前用户可见的宿主图片资源可直接显示，无需经 bridge——典型用法是展示 `wanling.getProfile()` 返回的 `avatarUrl`。
+包内页面可直接用相对路径引用宿主资源，例如 `<img src="/api/..." />`：宿主会带登录态将其代理回源（GET），当前用户可见的宿主图片资源可直接显示，无需经 bridge——典型用法是展示 `wanling.getProfile()` 返回的 `avatarUrl`。注意该代理仅用于拉取资源：登录凭证不进入页面 JS 环境，宿主数据一律经 `window.wanling` 获取。
