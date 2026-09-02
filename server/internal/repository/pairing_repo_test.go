@@ -83,7 +83,7 @@ func TestPairingRepo_MarkCompleted_SelectExisting(t *testing.T) {
 	ticket, _ := repo.Create(t.Context(), "test-ticket-id-003", "")
 	_ = repo.MarkScanned(t.Context(), ticket.ID, user.ID)
 
-	err := repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "new-secret-from-reset")
+	err := repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "new-secret-from-reset", string(model.PairingActionBind))
 	if err != nil {
 		t.Fatalf("MarkCompleted: %v", err)
 	}
@@ -98,6 +98,10 @@ func TestPairingRepo_MarkCompleted_SelectExisting(t *testing.T) {
 	if got.SecretKey == nil || *got.SecretKey != "new-secret-from-reset" {
 		t.Fatalf("SecretKey = %v, want new-secret-from-reset", got.SecretKey)
 	}
+	// bind 动作应落库回读
+	if got.Action != model.PairingActionBind {
+		t.Fatalf("Action = %q, want bind", got.Action)
+	}
 }
 
 func TestPairingRepo_ClearSecretKey_BurnAfterReading(t *testing.T) {
@@ -110,7 +114,7 @@ func TestPairingRepo_ClearSecretKey_BurnAfterReading(t *testing.T) {
 	agent, _ := arepo.Create(t.Context(), user.ID, "BurnAgent", "orig-secret", "")
 	ticket, _ := repo.Create(t.Context(), "test-ticket-id-004", "")
 	_ = repo.MarkScanned(t.Context(), ticket.ID, user.ID)
-	_ = repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "secret-to-burn")
+	_ = repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "secret-to-burn", string(model.PairingActionBind))
 
 	err := repo.ClearSecretKey(t.Context(), ticket.ID)
 	if err != nil {

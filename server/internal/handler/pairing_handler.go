@@ -9,21 +9,26 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/auth"
 	logpkg "github.com/wanling/server/internal/log"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
 
+// maxSubKeysPerAgent 单个 agent 未吊销子密钥上限，超出后 authorize 模式拒绝（409 subkey_limit）。
+const maxSubKeysPerAgent = 10
+
 // PairingHandler 扫码配对处理器。
 // 三方握手：hermes 终端（凭 ticket_id）↔ 万灵 server ↔ 万灵 app（凭 user JWT）。
 type PairingHandler struct {
-	repo      *repository.PairingRepo
-	agentRepo *repository.AgentRepo
-	convRepo  *repository.ConversationRepo
+	repo       *repository.PairingRepo
+	agentRepo  *repository.AgentRepo
+	convRepo   *repository.ConversationRepo
+	subKeyRepo *repository.AgentSubKeyRepo
 }
 
-func NewPairingHandler(repo *repository.PairingRepo, agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo) *PairingHandler {
-	return &PairingHandler{repo: repo, agentRepo: agentRepo, convRepo: convRepo}
+func NewPairingHandler(repo *repository.PairingRepo, agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, subKeyRepo *repository.AgentSubKeyRepo) *PairingHandler {
+	return &PairingHandler{repo: repo, agentRepo: agentRepo, convRepo: convRepo, subKeyRepo: subKeyRepo}
 }
 
 // generateTicketID 生成 256-bit hex ticket_id（32 字节 → 64 字符）。
@@ -95,6 +100,23 @@ func (h *PairingHandler) GetTicket(c *gin.Context) {
 
 	// completed 且有凭据：原子消费（UPDATE...RETURNING 读+清原子，消除竞态）
 	if ticket.Status == model.PairingStatusCompleted && ticket.SecretKey != nil && *ticket.SecretKey != "" {
+		// authorize 模式需返 agent_name：先查 agent（查失败 500，凭据保留不烧），
+		// 再原子消费凭据，避免"先消费后查名"在查询失败时把凭据烧掉。
+		var agentName string
+		if ticket.Action == model.PairingActionAuthorize {
+			if ticket.AgentID == nil {
+				// completed 必有 agent_id（complete 流程保证），nil 属数据不一致，fail fast
+				ErrMsg(c, http.StatusInternalServerError, "票据数据异常")
+				return
+			}
+			agent, err := h.agentRepo.GetByID(c.Request.Context(), *ticket.AgentID)
+			if err != nil || agent == nil {
+				ErrMsg(c, http.StatusInternalServerError, "查询 Agent 失败")
+				return
+			}
+			agentName = agent.Name
+		}
+
 		secretKey, agentID, userID, err := h.repo.ConsumeSecretKey(c.Request.Context(), id)
 		if err != nil {
 			ErrMsg(c, http.StatusInternalServerError, "消费凭据失败")
@@ -102,27 +124,38 @@ func (h *PairingHandler) GetTicket(c *gin.Context) {
 		}
 		if secretKey == "" {
 			// 已被其他消费者领走
-			resp := gin.H{"status": statusStr(model.PairingStatusCompleted)}
+			resp := gin.H{
+				"status": statusStr(model.PairingStatusCompleted),
+				"action": string(ticket.Action), // 统一 action 字段，消费方按它判定模式
+			}
 			if ticket.AgentID != nil {
 				resp["agent_id"] = *ticket.AgentID
 			}
 			Ok(c, resp)
 			return
 		}
-		Ok(c, gin.H{
+		resp := gin.H{
 			"status":        statusStr(model.PairingStatusCompleted),
+			"action":        string(ticket.Action), // bind/authorize 统一带,消费方判 action
 			"agent_id":      agentID,
 			"secret_key":    secretKey,
 			"owner_user_id": userID,
-			"owner_conv_id": h.lookupOwnerConvID(c, userID, agentID),
-		})
+		}
+		if ticket.Action == model.PairingActionAuthorize {
+			// authorize（子密钥授权）给技能侧标注 agent 名；conv 是 APP 侧概念,不返
+			resp["agent_name"] = agentName
+		} else {
+			resp["owner_conv_id"] = h.lookupOwnerConvID(c, userID, agentID)
+		}
+		Ok(c, resp)
 		return
 	}
 
-	// 其他状态：只返 status（completed 已领的也带 agent_id 便于 hermes 日志）
+	// 其他状态：只返 status（completed 已领的也带 agent_id + action 便于 hermes 日志）
 	resp := gin.H{"status": statusStr(ticket.Status)}
 	if ticket.Status == model.PairingStatusCompleted && ticket.AgentID != nil {
 		resp["agent_id"] = *ticket.AgentID
+		resp["action"] = string(ticket.Action)
 	}
 	Ok(c, resp)
 }
@@ -183,15 +216,20 @@ func (h *PairingHandler) ScanTicket(c *gin.Context) {
 }
 
 // CompleteTicketRequest complete 请求。二选一：agent_id（选已有）或 new_agent_name（新建）。
+// action 缺省=bind（现状接管语义）；authorize=给已有 agent 发子密钥授权（不重置主密钥）。
 type CompleteTicketRequest struct {
 	AgentID      string `json:"agent_id"`
 	NewAgentName string `json:"new_agent_name"`
+	Action       string `json:"action"` // ""|"bind"|"authorize"
+	Note         string `json:"note"`   // authorize 子密钥备注,缺省「技能授权」
 }
 
 // CompleteTicket POST /api/pair/tickets/:id/complete（user JWT）
 // app 选/建 agent 后调用。校验 ticket 是 scanned 且 user 匹配。
-//   - {agent_id}：校验 owner，重置 secret_key，ticket 落 completed
-//   - {new_agent_name}：创建新 agent（owner=JWT user），ticket 落 completed
+//   - {agent_id}（bind，缺省）：校验 owner，重置 secret_key，ticket 落 completed
+//   - {new_agent_name}（bind，缺省）：创建新 agent（owner=JWT user），ticket 落 completed
+//   - {agent_id, action:"authorize"}：校验 owner + 子密钥上限，发 wlsk_ 子密钥，
+//     ticket 落 completed（不重置主密钥、不动 agent.Type、不建 conv）
 //
 // 凭据通过 GET /tickets/:id 领取（领完即焚），complete 响应不含 secret_key。
 func (h *PairingHandler) CompleteTicket(c *gin.Context) {
@@ -222,9 +260,53 @@ func (h *PairingHandler) CompleteTicket(c *gin.Context) {
 		return
 	}
 
-	var agentID, secretKey, agentName string
+	var agentID, secretKey, agentName, action string
 
 	switch {
+	case req.Action == "authorize":
+		// authorize：只能给已有 agent 发子密钥。带 new_agent_name+authorize → 400
+		// （新建即授权是接管语义的混淆，明确拒绝）。
+		if req.AgentID == "" {
+			Err(c, http.StatusBadRequest, "bad_request", "authorize 模式必须提供 agent_id")
+			return
+		}
+		agent, err := h.agentRepo.GetByID(c.Request.Context(), req.AgentID)
+		if err != nil || agent == nil {
+			Err(c, http.StatusNotFound, "not_found", "Agent 不存在")
+			return
+		}
+		if agent.OwnerID != userID {
+			Err(c, http.StatusForbidden, "forbidden", "无权操作该 Agent")
+			return
+		}
+		// 未吊销子密钥达上限 → 拒绝（防子密钥无限增殖）
+		count, err := h.subKeyRepo.CountActive(c.Request.Context(), agent.ID)
+		if err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "查询子密钥失败")
+			return
+		}
+		if count >= maxSubKeysPerAgent {
+			Err(c, http.StatusConflict, "subkey_limit", "子密钥数量已达上限")
+			return
+		}
+		subKey, err := generateTicketID() // 复用 256-bit hex 生成
+		if err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "生成子密钥失败")
+			return
+		}
+		note := req.Note
+		if note == "" {
+			note = "技能授权"
+		}
+		if _, err := h.subKeyRepo.Create(c.Request.Context(), agent.ID, note, auth.SubKeyPrefix+subKey); err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "创建子密钥失败")
+			return
+		}
+		agentID = agent.ID
+		agentName = agent.Name
+		secretKey = auth.SubKeyPrefix + subKey // 子密钥作为 ticket 凭据待技能侧领取
+		action = string(model.PairingActionAuthorize)
+
 	case req.AgentID != "":
 		// 选已有：校验 owner
 		agent, err := h.agentRepo.GetByID(c.Request.Context(), req.AgentID)
@@ -254,6 +336,7 @@ func (h *PairingHandler) CompleteTicket(c *gin.Context) {
 		agentID = agent.ID
 		agentName = agent.Name
 		secretKey = newKey
+		action = string(model.PairingActionBind)
 
 	case req.NewAgentName != "":
 		// 新建:用 ticket.Type 透传 agent 类型(opencode 等),默认空串=普通 agent。
@@ -280,14 +363,15 @@ func (h *PairingHandler) CompleteTicket(c *gin.Context) {
 		agentID = agent.ID
 		agentName = agent.Name
 		secretKey = newKey
+		action = string(model.PairingActionBind)
 
 	default:
 		Err(c, http.StatusBadRequest, "bad_request", "必须提供 agent_id 或 new_agent_name")
 		return
 	}
 
-	// ticket 落 completed + 凭据（待 hermes 领）
-	if err := h.repo.MarkCompleted(c.Request.Context(), id, agentID, secretKey); err != nil {
+	// ticket 落 completed + 凭据（待 hermes/技能侧领）
+	if err := h.repo.MarkCompleted(c.Request.Context(), id, agentID, secretKey, action); err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "完成配对失败")
 		return
 	}

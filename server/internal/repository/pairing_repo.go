@@ -24,7 +24,7 @@ func scanTicket(s interface{ Scan(...any) error }) (*model.PairingTicket, error)
 	var userID, agentID, secretKey sql.NullString
 	var scannedAt, completedAt sql.NullTime
 	err := s.Scan(
-		&t.ID, &t.Status, &userID, &agentID, &secretKey, &t.Type,
+		&t.ID, &t.Status, &userID, &agentID, &secretKey, &t.Type, &t.Action,
 		&t.CreatedAt, &scannedAt, &completedAt,
 	)
 	if err != nil {
@@ -48,7 +48,7 @@ func scanTicket(s interface{ Scan(...any) error }) (*model.PairingTicket, error)
 	return t, nil
 }
 
-const ticketSelectCols = `id, status, user_id, agent_id, secret_key, type, created_at, scanned_at, completed_at`
+const ticketSelectCols = `id, status, user_id, agent_id, secret_key, type, action, created_at, scanned_at, completed_at`
 
 // Create 插入一张 pending 票据。agentType 是 hermes 声明的 agent 类型标签
 // (默认空串=普通 agent,opencode=OpenCode agent),CompleteTicket 读它建 agent。
@@ -86,11 +86,12 @@ func (r *PairingRepo) MarkScanned(ctx context.Context, id, userID string) error 
 	return err
 }
 
-// MarkCompleted 标记完成。写入 agent_id + secret_key + completed_at。
-func (r *PairingRepo) MarkCompleted(ctx context.Context, id, agentID, secretKey string) error {
+// MarkCompleted 标记完成。写入 agent_id + secret_key + action + completed_at。
+// action 是完成动作：bind=接管(重置主密钥) / authorize=授权(发子密钥)。
+func (r *PairingRepo) MarkCompleted(ctx context.Context, id, agentID, secretKey, action string) error {
 	_, err := r.exec(ctx,
-		`UPDATE pairing_tickets SET status = 'completed', agent_id = $1, secret_key = $2, completed_at = NOW() WHERE id = $3`,
-		agentID, secretKey, id,
+		`UPDATE pairing_tickets SET status = 'completed', agent_id = $1, secret_key = $2, action = $3, completed_at = NOW() WHERE id = $4`,
+		agentID, secretKey, action, id,
 	)
 	return err
 }

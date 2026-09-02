@@ -137,7 +137,7 @@ func main() {
 
 	sendHandler := handler.NewSendHandler(processor)
 
-	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo, convRepo)
+	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo, convRepo, agentSubKeyRepo)
 
 	approvalRepo := repository.NewApprovalRepo(db)
 	approvalSvc := approval.NewService(approvalRepo, h, approvalRepo)
