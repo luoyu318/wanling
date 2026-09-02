@@ -55,12 +55,13 @@ func mpUserName(tag string) string {
 
 // mpEnv 小程序 handler 测试环境(独立测试库 + 本地临时存储)。
 type mpEnv struct {
-	h    *MiniProgramHandler
-	repo *repository.MiniProgramRepo
-	skr  *repository.SigningKeyRepo
-	fr   *repository.FileRepo
-	st   storage.Provider
-	ur   *repository.UserRepo
+	h          *MiniProgramHandler
+	repo       *repository.MiniProgramRepo
+	skr        *repository.SigningKeyRepo
+	fr         *repository.FileRepo
+	st         storage.Provider
+	ur         *repository.UserRepo
+	openidRepo *repository.MiniProgramOpenidRepo
 }
 
 func newMPEnv(t *testing.T) *mpEnv {
@@ -70,11 +71,12 @@ func newMPEnv(t *testing.T) *mpEnv {
 	fr := repository.NewFileRepo(db)
 	repo := repository.NewMiniProgramRepo(db)
 	skr := repository.NewSigningKeyRepo(db)
+	openidRepo := repository.NewMiniProgramOpenidRepo(db)
 	st, err := storage.NewLocalStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewLocalStorage: %v", err)
 	}
-	return &mpEnv{h: NewMiniProgramHandler(repo, skr, fr, st, 20<<20), repo: repo, skr: skr, fr: fr, st: st, ur: ur}
+	return &mpEnv{h: NewMiniProgramHandler(repo, skr, fr, st, 20<<20, openidRepo), repo: repo, skr: skr, fr: fr, st: st, ur: ur, openidRepo: openidRepo}
 }
 
 // readPackage 经 fileRepo + storage 读包文件全部字节(验签断言用)。
@@ -123,6 +125,7 @@ func (e *mpEnv) newSrv(t *testing.T) *mpSrv {
 	s.r.POST("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.Upload(c) })
 	s.r.GET("/api/mini-programs", func(c *gin.Context) { auth(c); e.h.List(c) })
 	s.r.GET("/api/mini-programs/signing-key", func(c *gin.Context) { auth(c); e.h.GetSigningKey(c) })
+	s.r.GET("/api/mini-programs/openid", func(c *gin.Context) { auth(c); e.h.GetOpenid(c) })
 	s.r.GET("/api/mini-programs/:id/package", func(c *gin.Context) { auth(c); e.h.DownloadPackage(c) })
 	s.r.GET("/api/mini-programs/:id/icon", func(c *gin.Context) { auth(c); e.h.GetIcon(c) })
 	s.r.DELETE("/api/mini-programs/:id", func(c *gin.Context) { auth(c); e.h.Delete(c) })
@@ -713,4 +716,50 @@ func TestMiniProgramHandler_AdminList_And_StatusDualPath(t *testing.T) {
 	if w := s.do(req); w.Code != http.StatusOK {
 		t.Fatalf("legacy status disable 应 200: %d %s", w.Code, w.Body.String())
 	}
+}
+
+// TestMiniProgramHandler_Openid_成功且幂等稳定 验证 GET /openid:
+// 已存在的 appid 返回 200,同一用户两次调用返回同一 openid(真库幂等稳定)。
+func TestMiniProgramHandler_Openid_成功且幂等稳定(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mpo1")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	// 照既有 fixture 上传播种 mini_programs(package_file_id FK 需真实文件行)
+	if w := s.do(mpUploadReq(t, buildTestZip(t, appid, 1))); w.Code != http.StatusCreated {
+		t.Fatalf("上传种子小程序应 201: %d %s", w.Code, w.Body.String())
+	}
+
+	wg := s.do(httptest.NewRequest("GET", "/api/mini-programs/openid?appid="+appid, nil))
+	data := AssertOk(t, wg, http.StatusOK)
+	openid1, _ := data["openid"].(string)
+	if openid1 == "" {
+		t.Fatalf("openid 应非空: %s", wg.Body.String())
+	}
+	data2 := AssertOk(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/openid?appid="+appid, nil)), http.StatusOK)
+	openid2, _ := data2["openid"].(string)
+	if openid1 != openid2 {
+		t.Errorf("两次调用应返回同一 openid: %q != %q", openid1, openid2)
+	}
+}
+
+// TestMiniProgramHandler_Openid_缺appid400 验证缺 appid 参数 fail fast → 400。
+func TestMiniProgramHandler_Openid_缺appid400(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mpo2")
+	s.as(u.ID, "user")
+	AssertErr(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/openid", nil)), http.StatusBadRequest, "bad_request")
+}
+
+// TestMiniProgramHandler_Openid_不存在appid404 验证不存在的 appid → 404 防枚举。
+func TestMiniProgramHandler_Openid_不存在appid404(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mpo3")
+	s.as(u.ID, "user")
+	AssertErr(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/openid?appid=mp-nope", nil)),
+		http.StatusNotFound, "not_found")
 }

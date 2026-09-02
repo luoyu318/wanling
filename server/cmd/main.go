@@ -122,7 +122,8 @@ func main() {
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
 	miniProgramRepo := repository.NewMiniProgramRepo(db)
 	signingKeyRepo := repository.NewSigningKeyRepo(db)
-	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes)
+	miniProgramOpenidRepo := repository.NewMiniProgramOpenidRepo(db)
+	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes, miniProgramOpenidRepo)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
@@ -378,6 +379,7 @@ func main() {
 		// 小程序容器(两层模型):列表/owner 删除/公钥下发(上传与包下载在 mpAuth)。
 		userAuth.GET("/api/mini-programs", miniProgramHandler.List)
 		userAuth.GET("/api/mini-programs/signing-key", miniProgramHandler.GetSigningKey)
+		userAuth.GET("/api/mini-programs/openid", miniProgramHandler.GetOpenid)
 		userAuth.DELETE("/api/mini-programs/:id", miniProgramHandler.Delete)
 	}
 

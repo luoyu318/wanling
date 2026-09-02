@@ -32,10 +32,11 @@ type MiniProgramHandler struct {
 	fileRepo       *repository.FileRepo
 	storage        storage.Provider
 	maxZipBytes    int64
+	openidRepo     *repository.MiniProgramOpenidRepo
 }
 
-func NewMiniProgramHandler(repo *repository.MiniProgramRepo, signingKeyRepo *repository.SigningKeyRepo, fileRepo *repository.FileRepo, st storage.Provider, maxZipBytes int64) *MiniProgramHandler {
-	return &MiniProgramHandler{repo: repo, signingKeyRepo: signingKeyRepo, fileRepo: fileRepo, storage: st, maxZipBytes: maxZipBytes}
+func NewMiniProgramHandler(repo *repository.MiniProgramRepo, signingKeyRepo *repository.SigningKeyRepo, fileRepo *repository.FileRepo, st storage.Provider, maxZipBytes int64, openidRepo *repository.MiniProgramOpenidRepo) *MiniProgramHandler {
+	return &MiniProgramHandler{repo: repo, signingKeyRepo: signingKeyRepo, fileRepo: fileRepo, storage: st, maxZipBytes: maxZipBytes, openidRepo: openidRepo}
 }
 
 // mpItem 列表 DTO(扇出 manifest 字段,APP 免二次解析 jsonb)。
@@ -434,4 +435,27 @@ func (h *MiniProgramHandler) GetSigningKey(c *gin.Context) {
 		return
 	}
 	Ok(c, gin.H{"public_key": key.PublicKey})
+}
+
+// GetOpenid GET /api/mini-programs/openid?appid=xxx:
+// 返回当前用户对该小程序的匿名标识(惰性生成,永久稳定,跨小程序不可关联)。
+func (h *MiniProgramHandler) GetOpenid(c *gin.Context) {
+	appid := c.Query("appid")
+	if appid == "" {
+		Err(c, http.StatusBadRequest, "bad_request", "appid 必填")
+		return
+	}
+	if mp, err := h.repo.GetByAppid(c.Request.Context(), appid); err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	} else if mp == nil {
+		Err(c, http.StatusNotFound, "not_found", "小程序不存在")
+		return
+	}
+	openid, err := h.openidRepo.GetOrCreateOpenid(c.Request.Context(), c.GetString("userID"), appid)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	Ok(c, gin.H{"openid": openid})
 }
