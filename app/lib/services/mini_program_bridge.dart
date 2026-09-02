@@ -79,11 +79,23 @@ class MiniProgramBridge {
           // 折叠尾斜杠后再判定:dio 默认跟随重定向,Gin 对带尾斜杠变体返 301
           // → 无尾斜杠路径,Authorization 随行,精确匹配会被绕过。
           // 根路径 / 不折叠成空串。
-          final foldedPath = pathOnly.replaceAll(RegExp(r'/+$'), '');
+          // 折叠前先百分号解码归一:dio 原样发送 %2F,Go URL.Path 解码为 '/',
+          // Gin 对带尾斜杠变体返 301,Authorization 随行,精确匹配被绕过;
+          // 顺序必须先解码再折叠,否则 /api/users/me%2F 折叠正则不命中。
+          // 非法编码(如 %zz)Uri.decodeComponent 抛 FormatException,fail-safe
+          // 用原值继续判定(畸形路径交由 server 404/400 兜底,不让 bridge 崩)。
+          String decodedPath;
+          try {
+            decodedPath = Uri.decodeComponent(pathOnly);
+          } on FormatException {
+            decodedPath = pathOnly;
+          }
+          final foldedPath = decodedPath.replaceAll(RegExp(r'/+$'), '');
           final checkPath = foldedPath.isEmpty ? '/' : foldedPath;
           if (checkPath == '/api/me' ||
               checkPath == '/api/users/me' ||
               checkPath == '/api/mini-programs/openid' ||
+              checkPath == '/api/admin' ||
               checkPath.startsWith('/api/admin/')) {
             return {
               'ok': false,

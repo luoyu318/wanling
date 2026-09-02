@@ -196,6 +196,61 @@ void main() {
     expect(called, isFalse);
   });
 
+  test('/api/admin/ 自身折叠后前缀失配 → 补精确分支仍拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/admin/', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(called, isFalse);
+  });
+
+  test('/api/admin// 双尾斜杠变体 → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/admin//', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(called, isFalse);
+  });
+
+  test('/api/users/me%2F 编码斜杠变体 → 解码归一后拒绝且不触达 proxy(防 Go 解码 301 绕过)', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me%2F', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
   test('/api/mini-programs/openid 直调自传 appid → 拒绝且不触达 proxy', () async {
     var called = false;
     final b = MiniProgramBridge(
