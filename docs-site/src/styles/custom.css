@@ -1,1 +1,40 @@
-/* 站点级微调；Starlight 默认主题（含明暗切换/搜索/TOC）不做覆盖 */
+/* 站点级微调：对齐主流文档站的紧凑观感，不改动 Starlight 主题结构 */
+
+/* 标题锚点：仅悬停/聚焦时显示，避免版面噪音 */
+.sl-markdown-content .sl-anchor-link {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.sl-markdown-content h1:hover .sl-anchor-link,
+.sl-markdown-content h2:hover .sl-anchor-link,
+.sl-markdown-content h3:hover .sl-anchor-link,
+.sl-markdown-content h4:hover .sl-anchor-link,
+.sl-markdown-content *:focus-within > .sl-anchor-link,
+.sl-markdown-content .sl-anchor-link:focus-visible {
+  opacity: 1;
+}
+
+/* 标题字号收敛：正文 h2/h3 与页首 h1 拉开层级 */
+.sl-markdown-content h2 {
+  font-size: 1.35rem;
+  border-bottom: 1px solid var(--sl-color-gray-5);
+  padding-bottom: 0.4em;
+}
+.sl-markdown-content h3 {
+  font-size: 1.12rem;
+}
+
+/* 表格：紧凑行距 + 等宽字号，信息密度对齐主流文档站 */
+.sl-markdown-content table {
+  font-size: 0.875rem;
+  display: table;
+  width: 100%;
+}
+.sl-markdown-content th,
+.sl-markdown-content td {
+  padding: 0.5rem 0.75rem;
+}
+.sl-markdown-content td code,
+.sl-markdown-content th code {
+  white-space: nowrap;
+}

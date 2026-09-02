@@ -7,6 +7,7 @@ export default defineConfig({
     starlight({
       title: '万灵小程序',
       description: '万灵小程序开发文档：包格式、JSBridge、权限、发布全流程',
+      logo: { src: './src/assets/logo.png' },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/luoyu318/wanling' },
       ],
