@@ -1,55 +1,369 @@
-/* 站点级微调：对齐主流文档站的紧凑观感，不改动 Starlight 主题结构 */
+/* ============================================================
+   全站主题：移植自 opencode web 文档站 styles/custom.css
+   （Starlight 变量 + 布局覆盖，dark 走 data-theme 切换）
+   ============================================================ */
 
-/* ===== 配色：dark 主题对齐暖黑两阶色板（参照主流文档站变量映射） ===== */
+/* ===== 亮色变量 ===== */
+:root {
+  --sl-color-bg: hsl(0, 20%, 99%);
+  --sl-color-gray-5: hsl(0, 1%, 85%);
+  --sl-nav-gap: 40px;
+  --sl-color-text: hsl(0, 1%, 39%);
+  --sl-border-color: hsl(0, 1%, 85%);
+  --sl-color-hairline-shade: hsl(0, 1%, 85%);
+  --sl-color-bg-surface: var(--sl-color-bg-nav);
+  --sl-color-divider: var(--sl-color-gray-5);
+
+  --color-background: hsl(0, 20%, 99%);
+  --color-background-weak: hsl(0, 8%, 97%);
+  --color-background-strong: hsl(0, 5%, 12%);
+  --color-text: hsl(0, 1%, 39%);
+  --color-text-weak: hsl(0, 1%, 60%);
+  --color-text-weaker: hsl(0, 3%, 88%);
+  --color-text-strong: hsl(0, 5%, 12%);
+  --color-border: hsl(30, 2%, 81%);
+  --color-border-weak: hsl(0, 1%, 85%);
+  --color-icon: hsl(0, 1%, 55%);
+}
+
+/* ===== 暗色变量（opencode 原值） ===== */
 [data-theme='dark'] {
-  --sl-color-bg: hsl(0, 9%, 7%);            /* 全局底色：暖黑 */
-  --sl-color-bg-nav: hsl(0, 9%, 7%);        /* 顶栏与底色一体 */
-  --sl-color-bg-sidebar: hsl(0, 9%, 7%);    /* 侧栏与底色一体 */
-  --sl-color-bg-surface: hsl(0, 0%, 12%);   /* 卡片/悬浮面 */
-  --sl-color-bg-inline-code: hsl(0, 0%, 12%);
-  /* gray-1..4 为文字用亮阶刻度，保持 Starlight dark 默认，勿覆写成暗值 */
-  --sl-color-gray-5: hsl(0, 4%, 23%);       /* border/divider：极淡暖灰 */
-  --sl-color-gray-6: hsl(0, 0%, 12%);       /* 发丝线/嵌套面 */
-  --sl-color-text: hsl(0, 4%, 74%);         /* 正文：哑光灰，不用亮白 */
-  --sl-color-white: hsl(0, 0%, 93%);        /* 标题：柔白 */
-  --sl-color-accent: hsl(224, 100%, 60%);
-  --sl-color-accent-high: hsl(224, 100%, 85%);
-  --sl-color-accent-low: hsl(224, 54%, 20%);
-  --sl-color-border: hsl(0, 4%, 23%);
-  --sl-color-divider: hsl(0, 4%, 23%);
+  --sl-color-bg: hsl(0, 9%, 7%);
+  --sl-color-gray-5: hsl(0, 4%, 23%);
+  --sl-color-text: hsl(0, 4%, 71%);
+  --sl-border-color: hsl(0, 4%, 23%);
+  --sl-color-hairline-shade: hsl(0, 4%, 23%);
+  --sl-color-white: hsl(0, 15%, 94%); /* Starlight dark 标题色 → text-strong */
+  --sl-color-bg-nav: hsl(0, 9%, 7%);
+  --sl-color-bg-sidebar: hsl(0, 9%, 7%);
+  --sl-color-bg-surface: var(--sl-color-bg-nav);
+  --sl-color-divider: var(--sl-color-gray-5);
+
+  --color-background: hsl(0, 9%, 7%);
+  --color-background-weak: hsl(0, 6%, 10%);
+  --color-background-strong: hsl(0, 15%, 94%);
+  --color-text: hsl(0, 4%, 71%);
+  --color-text-weak: hsl(0, 2%, 49%);
+  --color-text-weaker: hsl(0, 3%, 28%);
+  --color-text-strong: hsl(0, 15%, 94%);
+  --color-border: hsl(0, 3%, 28%);
+  --color-border-weak: hsl(0, 4%, 23%);
+  --color-icon: hsl(10, 3%, 43%);
 }
 
-/* ===== 字体大小：整体收敛一档，行高紧凑 ===== */
-.sl-markdown-content {
-  font-size: 0.9375rem;
-  line-height: 1.7;
-}
-main h1 {
-  font-size: 1.6rem;
-}
-.sl-markdown-content h2 {
-  font-size: 1.2rem;
-  margin-top: 2.4em;
-}
-.sl-markdown-content h3 {
-  font-size: 1.05rem;
-  margin-top: 1.8em;
-}
-.sl-markdown-content code {
-  font-size: 0.8125rem;
+/* ===== 基础：14px 正文密度 + 哑光文字 ===== */
+body {
+  color: var(--color-text) !important;
+  font-size: 14px !important;
 }
 
-/* ===== 分割线：标题不加边框，靠留白分节（与主流文档站一致） ===== */
-.sl-markdown-content h2 {
-  border-bottom: none;
-  padding-bottom: 0;
+a {
+  color: var(--color-text-strong) !important;
 }
 
-/* ===== 标题锚点：仅悬停/聚焦时显示，避免版面噪音 ===== */
+strong {
+  font-weight: 500 !important;
+}
+
+/* 全站去列表符号（对齐 opencode 极简版面） */
+ul,
+ol {
+  list-style: none !important;
+  padding: 0 !important;
+}
+
+/* ===== 标题：26/22/18/16px，500 字重，strong 色 ===== */
+h1 {
+  font-size: 26px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  color: var(--color-text-strong) !important;
+}
+
+h2 {
+  font-size: 22px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  color: var(--color-text-strong) !important;
+}
+
+h3 {
+  font-size: 18px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  color: var(--color-text-strong) !important;
+}
+
+h4 {
+  font-size: 16px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  color: var(--color-text-strong) !important;
+}
+
+h1 a,
+h2 a,
+h3 a,
+h4 a,
+h5 a,
+h6 a {
+  color: var(--color-text-strong) !important;
+}
+
+/* ===== 布局：顶栏一体 + 侧栏右缘发丝线 + 右 TOC 无分割 ===== */
+body > .page > header {
+  background: var(--color-background) !important;
+  padding: 24px !important;
+  border-bottom: 1px solid var(--color-border-weak) !important;
+}
+
+body > .page > header a.site-title img {
+  height: 2rem !important;
+}
+
+.sidebar-pane {
+  border-inline-end: 1px solid var(--color-border-weak) !important;
+}
+
+.right-sidebar {
+  border-inline-start: none !important;
+}
+
+.right-sidebar-panel {
+  padding: 24px 0 !important;
+  color: var(--color-text-weaker);
+}
+
+.sidebar-content {
+  padding: 24px 0 !important;
+}
+
+.sl-container {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.content-panel {
+  padding: 2rem 3rem !important;
+}
+
+@media (max-width: 768px) {
+  .content-panel {
+    padding: 1rem 1.5rem !important;
+  }
+}
+
+body > .page > .main-frame .main-pane > main > .content-panel + .content-panel {
+  border-top: none !important;
+}
+
+.page-description {
+  color: var(--color-text) !important;
+}
+
+/* ===== 侧栏：静音链接 + 左缘指示的当前页 ===== */
+nav.sidebar .sl-container ul li a {
+  padding: 4px 24px !important;
+  width: 100% !important;
+  color: var(--color-text-weaker);
+  opacity: 50%;
+  border-radius: 0;
+}
+
+nav.sidebar .sl-container ul li a:hover {
+  background: var(--color-background-weak) !important;
+}
+
+.top-level li a {
+  border-radius: 0;
+  width: 100%;
+  padding: 4px 24px !important;
+}
+
+.top-level li a:hover {
+  background: var(--color-background-weak) !important;
+}
+
+a[aria-current='page'] {
+  border-left: 2px solid var(--color-background-strong);
+  background: var(--color-background-weak) !important;
+  font-weight: 600 !important;
+}
+
+ul.top-level a[aria-current='page'] > span {
+  color: var(--color-text-strong) !important;
+}
+
+#starlight__sidebar > div > sl-sidebar-state-persist > ul > li > details > summary {
+  padding: 0 24px !important;
+  margin-top: 20px !important;
+}
+
+#starlight__sidebar > div > sl-sidebar-state-persist > ul > li > details > summary:hover {
+  background: var(--color-background-weak);
+}
+
+#starlight__sidebar > div > sl-sidebar-state-persist > ul > li > details > summary span {
+  color: var(--color-text-strong) !important;
+  font-weight: 600 !important;
+}
+
+nav.sidebar ul.top-level > li > details > summary .group-label > span {
+  margin-top: 24px !important;
+  color: var(--color-text-strong) !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+}
+
+nav.sidebar summary svg.caret {
+  color: var(--color-icon) !important;
+}
+
+/* ===== 右侧 TOC：弱化 + 无分割 ===== */
+.right-sidebar-panel nav,
+.right-sidebar-panel h2,
+.right-sidebar-panel ul,
+.right-sidebar-panel li,
+.right-sidebar-panel a {
+  display: block;
+  width: 100%;
+}
+
+nav.sidebar .sl-container ul li ul li,
+div.right-sidebar .sl-container ul li ul li {
+  padding: 4px 12px 0 12px !important;
+}
+
+nav.sidebar .sl-container ul li a[aria-current='true'],
+div.right-sidebar .sl-container ul li a[aria-current='true'] {
+  color: var(--color-text-strong) !important;
+  opacity: 100%;
+}
+
+h2#starlight__on-this-page {
+  font-size: 14px !important;
+  color: var(--color-text-strong) !important;
+  margin: 0 !important;
+  font-weight: 400 !important;
+  padding: 0 24px 12px 24px;
+}
+
+#starlight__on-this-page ul {
+  color: var(--color-text-strong) !important;
+  font-size: 16px !important;
+}
+
+/* ===== 搜索按钮：描边胶囊 ===== */
+body > .page > header button[data-open-modal] {
+  gap: 12px !important;
+  background: var(--color-background-weak);
+  border: 1px solid var(--color-border-weak) !important;
+  padding: 6px 12px !important;
+  border-radius: 4px;
+}
+
+body > .page > header button[data-open-modal] > kbd {
+  position: relative;
+  display: flex;
+  gap: 4px;
+}
+
+body > .page > header button[data-open-modal] > kbd > kbd {
+  color: var(--color-icon) !important;
+  font-size: 15px;
+}
+
+site-search > button {
+  text-transform: none !important;
+}
+
+site-search > button span {
+  text-decoration: none !important;
+}
+
+site-search > button > kbd {
+  font-size: 14px !important;
+}
+
+/* ===== 顶栏图标组 ===== */
+.right-group {
+  gap: 40px !important;
+}
+
+.social-icons {
+  gap: 24px !important;
+}
+
+.social-icons a svg {
+  height: 18px !important;
+  width: 18px !important;
+  color: var(--color-text-weak) !important;
+}
+
+.social-icons a svg:hover {
+  color: var(--color-text-strong) !important;
+}
+
+/* ===== 提示框（aside）横向布局 ===== */
+.starlight-aside {
+  display: flex;
+  gap: 16px;
+  align-items: start;
+}
+
+.starlight-aside .starlight-aside__content {
+  margin-top: 0;
+}
+
+.starlight-aside__title {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+@media (max-width: 768px) {
+  .starlight-aside {
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+
+/* ===== 代码块：弱背景 + 无阴影 + dark 用 shiki dark 色值 ===== */
+.expressive-code {
+  margin: 0.75rem 0 3rem 0 !important;
+  border-radius: 6px;
+}
+
+.expressive-code figure {
+  background: var(--color-background-weak) !important;
+}
+
+.expressive-code .frame {
+  box-shadow: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .shiki,
+  .shiki span {
+    color: var(--shiki-dark) !important;
+    background-color: var(--shiki-dark-bg) !important;
+    font-style: var(--shiki-dark-font-style) !important;
+    font-weight: var(--shiki-dark-font-weight) !important;
+    text-decoration: var(--shiki-dark-text-decoration) !important;
+  }
+}
+
+/* ===== 分割线：hr 用发丝色 ===== */
+.sl-markdown-content hr {
+  border-bottom: 1px solid var(--color-border-weak) !important;
+}
+
+/* ===== 标题锚点：仅悬停/聚焦时显示 ===== */
 .sl-markdown-content .sl-anchor-link {
   opacity: 0;
   transition: opacity 0.15s ease;
 }
+
 .sl-markdown-content h1:hover .sl-anchor-link,
 .sl-markdown-content h2:hover .sl-anchor-link,
 .sl-markdown-content h3:hover .sl-anchor-link,
@@ -59,16 +373,17 @@ main h1 {
   opacity: 1;
 }
 
-/* ===== 表格：紧凑行距 + 等宽字号，信息密度对齐主流文档站 ===== */
+/* ===== 表格：紧凑（字体随正文 14px） ===== */
 .sl-markdown-content table {
-  font-size: 0.875rem;
   display: table;
   width: 100%;
 }
+
 .sl-markdown-content th,
 .sl-markdown-content td {
   padding: 0.5rem 0.75rem;
 }
+
 .sl-markdown-content td code,
 .sl-markdown-content th code {
   white-space: nowrap;

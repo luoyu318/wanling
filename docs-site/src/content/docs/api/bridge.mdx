@@ -6,7 +6,7 @@ description: window.wanling 全部 API 参考
 
 小程序页面由宿主注入全局对象 `window.wanling`，页面加载后即可直接调用，无需任何引入。
 
-## 概述
+## 调用约定
 
 调用约定（envelope）：原生层返回 `{ok:true, data}` / `{ok:false, error}`，宿主引导脚本将其转为 JS 语义——成功 `resolve(data)`，失败 `throw Error(error)`。
 
