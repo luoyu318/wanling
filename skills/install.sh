@@ -147,6 +147,11 @@ qr.print_ascii(invert=True)
 # WANLING_CONFIG_FILE 显式指定 → WANLING_CONFIG_DIR → opencode 插件配置(存在则用)
 # → 技能 setup 配置(存在则用);第一个存在的文件生效。命中打印路径,未命中返回非零。
 detect_credential() {
+    # 宿主进程 env 三元组（hermes 等宿主 agent 注入,身份随宿主）优先于文件探测
+    if [[ -n "${WANLING_SERVER_URL:-}" && -n "${WANLING_AGENT_ID:-}" && -n "${WANLING_SECRET_KEY:-}" ]]; then
+        printf '%s' "env:宿主 agent 身份"
+        return 0
+    fi
     local candidates=()
     if [[ -n "${WANLING_CONFIG_FILE:-}" ]]; then
         candidates=("${WANLING_CONFIG_FILE}")

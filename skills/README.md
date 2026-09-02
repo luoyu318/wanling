@@ -107,4 +107,6 @@ agent 无需克隆仓库，直接执行上方「手动安装」命令即可；�
 1. 填 server URL——`--server=URL` 参数或交互输入，默认 `http://localhost:18008`；
 2. 万灵 APP 扫码 → 选已有 Agent → 点「授权技能使用」，子密钥（`wlsk_` 前缀）自动写入配置文件（权限 600，无明文回显），终端轮询到凭据即完成。
 
-技能凭据独立落 `~/.config/wanling-skills/config.json`（`--config-dir` 可覆盖），与 opencode 插件凭据（`~/.config/opencode-wanling/`）互不干扰：`--setup` 的写路径只认 `--config-dir` 或默认目录（忽略 `WANLING_CONFIG_DIR` env，防止运行环境注入误写插件目录）；`publish.py` / `upload.py` 读路径按上节探测顺序自动命中。子密钥不影响 agent 主密钥与现有绑定，可随时在 APP「我的 → Agent → 授权密钥」单独吊销。协议细节见 [agent-subkeys.md](../docs/ai-handbook/agent-subkeys.md)。
+技能凭据独立落 `~/.config/wanling-skills/config.json`（`--config-dir` 可覆盖），与 opencode 插件凭据（`~/.config/opencode-wanling/`）互不干扰：`--setup` 的写路径只认 `--config-dir` 或默认目录（忽略 `WANLING_CONFIG_DIR` env，防止运行环境注入误写插件目录）；`publish.py` / `upload.py` 读路径按上节探测顺序自动命中。
+
+**凭据语义（多 agent 机器）**：宿主 agent 内跑技能 = **宿主自己的身份**（hermes 的 `WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY` env 三元组优先；opencode 走插件注入的 `WANLING_CONFIG_DIR`），每个 agent 独立互不共享；子密钥 fallback 只服务「无宿主 env 的外来平台」（如 Claude Code）。子密钥不影响 agent 主密钥与现有绑定，可随时在 APP「我的 → Agent → 授权密钥」单独吊销。协议细节见 [agent-subkeys.md](../docs/ai-handbook/agent-subkeys.md)。
