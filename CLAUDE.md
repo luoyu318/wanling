@@ -21,6 +21,7 @@
   - `make help` — 列出所有目标
   - `make install-tools` — 一键装齐 lint/scan 工具（首次必跑）
   - `make install-hooks` — 配置 git hooks（clone 后必跑一次）
+  - `skills/install.sh all` — 安装 agent 技能到 ~/.opencode/skills/（可选；agent 可自助安装，步骤见 skills/README.md「Agent 自助安装」）
   - `make lint` — 三端 lint
   - `make typecheck` — 三端类型检查
   - `make test` — 三端测试（Go -race + Flutter + vitest）
