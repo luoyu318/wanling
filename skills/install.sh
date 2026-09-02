@@ -13,7 +13,9 @@
 #   --setup           扫码授权技能凭据(APP 扫码选 Agent「授权技能使用」→ server 发子密钥);
 #                     单跑 = 只授权不装技能;带技能名 = 先装再授权
 #   --server=URL      万灵 server 地址(--setup 用;未传则交互输入,默认 http://localhost:18008)
-#   --config-dir=PATH 凭据配置目录(--setup 用;默认 ~/.config/wanling-skills,env WANLING_CONFIG_DIR 次之)
+#   --config-dir=PATH 凭据配置目录(--setup 用;默认 ~/.config/wanling-skills;
+#                     setup 写路径刻意忽略 env WANLING_CONFIG_DIR,防运行环境注入 env 覆盖插件配置)
+#   --force           --setup 允许向插件专用目录(opencode-wanling[-prod])写凭据(默认拒绝)
 #   --remote          强制远程模式(默认按 SCRIPT_DIR 自动判定)
 #   -h                帮助;技能名缺省 = 全部(--setup 单跑时除外)
 #
@@ -70,6 +72,8 @@ GEN_MANIFEST=false
 SETUP_MODE=false
 SETUP_SERVER=""
 SETUP_CONFIG_DIR=""
+SETUP_FORCE=false
+SETUP_TMP_RESP=""   # --setup 的 server 响应临时文件(mktemp 创建,EXIT trap 清理;须全局,trap 在函数返回后才触发)
 REQUEST=()
 
 while [[ $# -gt 0 ]]; do
@@ -80,7 +84,10 @@ while [[ $# -gt 0 ]]; do
         --gen-manifest) GEN_MANIFEST=true; shift ;;
         --setup) SETUP_MODE=true; shift ;;
         --server=*) SETUP_SERVER="${1#*=}"; shift ;;
+        --server) SETUP_SERVER="$2"; shift 2 ;;
         --config-dir=*) SETUP_CONFIG_DIR="${1#*=}"; shift ;;
+        --config-dir) SETUP_CONFIG_DIR="$2"; shift 2 ;;
+        --force) SETUP_FORCE=true; shift ;;
         --remote) FORCE_REMOTE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         -*) die "未知选项: $1(-h 看帮助)" ;;
@@ -190,26 +197,46 @@ do_setup() {
     fi
     SETUP_SERVER="${SETUP_SERVER%/}"
 
-    # 配置目录:CLI --config-dir > env WANLING_CONFIG_DIR > 默认(与 load_config 探测呼应)
+    # 配置目录(写路径):只认 CLI --config-dir,未传则默认 ~/.config/wanling-skills。
+    # 刻意忽略 env WANLING_CONFIG_DIR——setup 的运行环境可能被注入该 env(如在插件会话里
+    # 执行安装器),写路径若跟随 env 会把技能凭据覆盖进插件配置目录;
+    # 读路径(publish.py/upload.py 的 load_config 探测)仍保持 env 优先,不受此影响。
     if [[ -z "$SETUP_CONFIG_DIR" ]]; then
-        SETUP_CONFIG_DIR="${WANLING_CONFIG_DIR:-${HOME}/.config/wanling-skills}"
+        SETUP_CONFIG_DIR="${HOME}/.config/wanling-skills"
     fi
     local config_file="${SETUP_CONFIG_DIR}/config.json"
+
+    # 护栏:插件专用目录是插件主凭据所在,写技能凭据进去会覆盖/污染,默认拒绝;--force 显式放行
+    local cfg_base
+    cfg_base="$(basename "$SETUP_CONFIG_DIR")"
+    if [[ "$cfg_base" == "opencode-wanling" || "$cfg_base" == "opencode-wanling-prod" ]]; then
+        if [[ "$SETUP_FORCE" == true ]]; then
+            echo -e "${RED}[FORCE]${NC} 警告: ${SETUP_CONFIG_DIR} 是插件专用配置目录,继续写入可能覆盖插件主凭据!" >&2
+        else
+            die "拒绝向插件专用目录写入技能凭据: ${SETUP_CONFIG_DIR}
+(opencode-wanling / opencode-wanling-prod 是插件主配置,覆盖会破坏插件凭据)
+请用 --config-dir=PATH 指定独立目录(默认 ~/.config/wanling-skills);确有需要可加 --force"
+        fi
+    fi
 
     info "=== 扫码授权技能凭据（用万灵 APP 扫码,选 Agent → 「授权技能使用」）==="
 
     # 1. 创建配对票据(空 body)
     info "连接 ${SETUP_SERVER} 生成配对码..."
     local http_code resp ticket_id
-    http_code=$(curl -s -o /tmp/.wl_skill_setup.$$ -w '%{http_code}' -X POST \
-        "${SETUP_SERVER}/api/pair/tickets" -H "Content-Type: application/json" -d '{}')
+    # 响应临时文件:mktemp(0600 且名称不可预测;轮询 completed 时含 secret_key),退出统一清理
+    SETUP_TMP_RESP="$(mktemp)" || die "创建临时响应文件失败"
+    trap 'rm -f "$SETUP_TMP_RESP"' EXIT
+    # set -e 下 curl 连接失败会使整条赋值语句非零、脚本静默终止(000 分支沦为死代码),
+    # 用 || http_code=000 兜底,把连接失败导入 000 分支给用户明确报错
+    http_code=$(curl -s -o "$SETUP_TMP_RESP" -w '%{http_code}' -X POST \
+        "${SETUP_SERVER}/api/pair/tickets" -H "Content-Type: application/json" -d '{}') || http_code=000
     case "$http_code" in
         2*) ;;
         000) die "无法连接 ${SETUP_SERVER}(检查 URL / server 是否运行)" ;;
-        *)   die "server 返回错误 ${http_code}: $(cat /tmp/.wl_skill_setup.$$)" ;;
+        *)   die "server 返回错误 ${http_code}: $(cat "$SETUP_TMP_RESP")" ;;
     esac
-    resp=$(cat /tmp/.wl_skill_setup.$$)
-    rm -f /tmp/.wl_skill_setup.$$
+    resp=$(cat "$SETUP_TMP_RESP")
     ticket_id=$(json_field "$resp" ticket_id)
     [[ -n "$ticket_id" ]] || die "解析配对票据失败: $(echo "$resp" | head -c 200)"
 
@@ -233,15 +260,14 @@ do_setup() {
         if (( elapsed > 300 )); then
             die "授权超时(票据 5 分钟过期),请重新运行 --setup"
         fi
-        http_code=$(curl -s -o /tmp/.wl_skill_poll.$$ -w '%{http_code}' \
-            "${SETUP_SERVER}/api/pair/tickets/${ticket_id}")
+        http_code=$(curl -s -o "$SETUP_TMP_RESP" -w '%{http_code}' \
+            "${SETUP_SERVER}/api/pair/tickets/${ticket_id}") || http_code=000
         case "$http_code" in
             2*) ;;
             000) die "轮询失败:无法连接 server" ;;
             *)   die "轮询失败:server 返回错误 ${http_code}" ;;
         esac
-        resp=$(cat /tmp/.wl_skill_poll.$$)
-        rm -f /tmp/.wl_skill_poll.$$
+        resp=$(cat "$SETUP_TMP_RESP")
         status=$(json_field "$resp" status)
 
         if [[ "$status" == "completed" ]]; then
@@ -273,9 +299,11 @@ do_setup() {
 
     # 4. 写 config(0600 创建即生效,不留明文窗口;最小集与 opencode-wanling config 同构)
     mkdir -p "$SETUP_CONFIG_DIR"
-    python3 - "$config_file" "$SETUP_SERVER" "$agent_id" "$secret_key" <<'PYEOF'
+    # secret_key 经环境变量传入,避免出现在 /proc/<pid>/cmdline(同机其他用户可读)
+    WL_SETUP_SECRET="$secret_key" python3 - "$config_file" "$SETUP_SERVER" "$agent_id" <<'PYEOF'
 import json, os, sys
-path, server, agent_id, secret = sys.argv[1:5]
+path, server, agent_id = sys.argv[1:4]
+secret = os.environ["WL_SETUP_SECRET"]
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     json.dump({"serverUrl": server, "agentId": agent_id, "secretKey": secret}, f, indent=2)
