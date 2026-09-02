@@ -5,7 +5,8 @@
   python3 publish.py <小程序目录 | 已打包的 .zip>
 
 流程:
-  1. 从 $WANLING_CONFIG_DIR/config.json 读取凭证（serverUrl/agentId/secretKey，只读不打印）
+  1. 按探测顺序读取凭据 config.json（serverUrl/agentId/secretKey，只读不打印）:
+     WANLING_CONFIG_FILE → WANLING_CONFIG_DIR → ~/.config/opencode-wanling → ~/.config/wanling-skills
   2. 传入目录则先本地自检（manifest 必填/格式/白名单/navigationBar/icon 魔数/entry 存在，与 server validate.go 同规则）再打 zip（根目录须含 manifest.json）
   3. POST /api/agents/:id/token 换 agent JWT
   4. POST /api/mini-programs（multipart 字段名 file，仅 .zip）——agent 身份上传，owner 自动归属其服务的用户
@@ -74,11 +75,28 @@ def validate_icon(m, src_dir):
         sys.exit("[mp-publish] icon 内容非图片（魔数不识别）")
 
 
+def config_candidates():
+    """凭据探测顺序(与 install.sh 装后检测同序):第一个存在的文件生效。
+    WANLING_CONFIG_FILE 显式指定(唯一候选,不存在即报错) → 否则依次:
+    WANLING_CONFIG_DIR → opencode 插件配置(存在则用) → 技能 setup 配置(存在则用)。"""
+    if os.environ.get("WANLING_CONFIG_FILE"):
+        return [os.environ["WANLING_CONFIG_FILE"]]
+    candidates = []
+    if os.environ.get("WANLING_CONFIG_DIR"):
+        candidates.append(os.path.join(os.environ["WANLING_CONFIG_DIR"], "config.json"))
+    candidates.append(os.path.expanduser("~/.config/opencode-wanling/config.json"))
+    candidates.append(os.path.expanduser("~/.config/wanling-skills/config.json"))
+    return candidates
+
+
 def load_config():
-    cfg_dir = os.environ.get("WANLING_CONFIG_DIR") or os.path.expanduser("~/.config/opencode-wanling")
-    cfg_file = os.environ.get("WANLING_CONFIG_FILE") or os.path.join(cfg_dir, "config.json")
-    if not os.path.isfile(cfg_file):
-        sys.exit(f"[mp-publish] config 不存在: {cfg_file}")
+    candidates = config_candidates()
+    cfg_file = next((p for p in candidates if os.path.isfile(p)), "")
+    if not cfg_file:
+        sys.exit(
+            "[mp-publish] 未找到凭据配置,已探测:\n  " + "\n  ".join(candidates)
+            + "\n[mp-publish] 运行 skills/install.sh --setup 用 APP 扫码完成授权"
+        )
     with open(cfg_file, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     # 环境变量优先（与 plugin config.ts 惯例一致），便于指向本地 server 测试

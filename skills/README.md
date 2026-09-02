@@ -42,6 +42,27 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 
 安装器逐文件从 Gitee raw 下载（失败自动落 GitHub 镜像），对照 `manifest.sha256` 校验后原子替换目标目录。仓库内开发者可 `cd skills && ./install.sh`（本地模式，cp 直装）。`README.md` 与 `manifest.sha256` 不进技能安装目录。
 
+## 扫码授权技能凭据（推荐）
+
+技能的发布/发图需要 agent 凭据。除复用 opencode 插件配置外，可用 APP 扫码授权发放**子密钥**（不动 agent 主密钥，随时可在 APP「我的 → Agent → 授权密钥」吊销）：
+
+```bash
+bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --setup
+# 可选: --server=URL 指定服务器(默认 http://localhost:18008);
+#       --config-dir=PATH 指定配置目录(默认 ~/.config/wanling-skills,env WANLING_CONFIG_DIR 次之)
+```
+
+流程：终端打印二维码 → 万灵 APP 扫一扫 → 选已有 Agent → 点「授权技能使用」→ 凭据自动写入 config.json（权限 600，不含明文回显）。
+
+`publish.py` / `upload.py` 按以下顺序探测凭据（第一个存在的文件生效）：
+
+1. `$WANLING_CONFIG_FILE`（显式指定）
+2. `$WANLING_CONFIG_DIR/config.json`
+3. `~/.config/opencode-wanling/config.json`（opencode 插件，存在则用）
+4. `~/.config/wanling-skills/config.json`（技能 setup）
+
+全都不存在时报错列出探测路径并提示运行 `--setup`。`--setup` 可与安装共存：带技能名运行先装技能再授权（如 `./install.sh --setup wanling-miniprogram-publish`）。
+
 ## 旧目录迁移
 
 安装器检查以下位置的**真实副本**（软链不算），发现即默认停止，不静默覆盖：
