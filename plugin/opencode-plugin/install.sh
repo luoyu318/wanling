@@ -105,6 +105,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 # ─── 查找插件目录 ──────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$SCRIPT_DIR"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ─── 前置检查 ─────────────────────────────────────────────────────────────
 check_node() {
@@ -288,34 +289,30 @@ setup_shell_aliases() {
     fi
 }
 
-# ─── Skills 同步 ───────────────────────────────────────────────────────────
-# 仓库 skills/ 下的 skill 落盘到 ~/.opencode/skills/,随插件安装/更新保持同步
-# (opencode serve 启动时扫描,ensure_service 的重启会让新 skill 生效)
-setup_skills() {
-    local skills_src="${SCRIPT_DIR}/skills"
+# ─── Skills 提示(技能已独立到仓库根 skills/,插件不再自动同步) ─────────────
+# 对比仓库技能与落盘副本,有缺失/差异仅提示,由用户按需运行 skills/install.sh。
+check_skills_hint() {
+    local skills_src="${REPO_ROOT}/skills"
     local skills_dst="${HOME}/.opencode/skills"
-    local plugins_dst="${HOME}/.config/opencode/plugins"
-    if [[ ! -d "$skills_src" ]]; then
-        return 0
-    fi
-    mkdir -p "$skills_dst"
-    local synced=0
-    for dir in "$skills_src"/*/; do
-        local name
+    [[ -d "$skills_src" ]] || return 0
+    local pending=()
+    local dir name state
+    for dir in "$skills_src"/wanling-*/; do
+        [[ -d "$dir" ]] || continue
         name="$(basename "$dir")"
-        # 拷贝目录内容而非目录本身(目标已存在时 cp -rf src dst 会嵌套成 dst/src)
-        mkdir -p "$skills_dst/$name"
-        cp -a "$dir"/. "$skills_dst/$name"/
-        # skill 附带的 opencode 全局 plugin(opencode-plugins/ 子目录)部署到
-        # opencode 插件加载目录——tool 注册依赖它,缺失会让 SKILL.md 描述的能力失效
-        if [[ -d "$dir/opencode-plugins" ]]; then
-            mkdir -p "$plugins_dst"
-            cp -a "$dir"/opencode-plugins/. "$plugins_dst"/
-            ok "已部署 $name 的 opencode plugin 到 ${plugins_dst}"
+        if [[ ! -d "$skills_dst/$name" ]]; then
+            state="(未安装)"
+        elif ! diff -rq "$dir" "$skills_dst/$name" >/dev/null 2>&1; then
+            state="(有新版)"
+        else
+            continue
         fi
-        synced=$((synced + 1))
+        pending+=("${name}${state}")
     done
-    ok "已同步 ${synced} 个 skill 到 ${skills_dst}"
+    if ((${#pending[@]})); then
+        warn "检测到 agent 技能待同步: ${pending[*]}"
+        warn "技能已与插件解耦,按需运行: ${REPO_ROOT}/skills/install.sh all"
+    fi
 }
 
 # ─── 服务启动 ───────────────────────────────────────────────────────────────
@@ -550,7 +547,7 @@ print(d.get('owner_user_id',''))
     build_code
     setup_systemd
     setup_shell_aliases
-    setup_skills
+    check_skills_hint
     ensure_service
 
     print_summary "安装完成"
@@ -594,7 +591,7 @@ do_install() {
     fi
     setup_systemd
     setup_shell_aliases
-    setup_skills
+    check_skills_hint
     ensure_service
 
     print_summary "安装完成"
@@ -622,7 +619,7 @@ do_update() {
     fi
     setup_systemd
     setup_shell_aliases
-    setup_skills
+    check_skills_hint
 
     if systemctl --user is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
         systemctl --user restart "${SERVICE_NAME}"
@@ -649,10 +646,13 @@ do_config() {
 }
 
 # ─── 入口 ──────────────────────────────────────────────────────────────────
-case "$MODE" in
-    install) do_install ;;
-    pair)    do_pair ;;
-    update)  do_update ;;
-    config)  do_config ;;
-    *)       die "未知模式: $MODE" ;;
-esac
+# 仅直接执行时进入模式分发;source(如测试 check_skills_hint)不触发任何安装动作
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "$MODE" in
+        install) do_install ;;
+        pair)    do_pair ;;
+        update)  do_update ;;
+        config)  do_config ;;
+        *)       die "未知模式: $MODE" ;;
+    esac
+fi
