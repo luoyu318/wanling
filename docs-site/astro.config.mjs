@@ -29,6 +29,14 @@ export default defineConfig({
             'guides/publishing',
           ],
         },
+        {
+          label: 'API 参考',
+          items: ['api/bridge', 'api/limits'],
+        },
+        {
+          label: '示例',
+          items: ['examples'],
+        },
       ],
       customCss: ['./src/styles/custom.css'],
     }),

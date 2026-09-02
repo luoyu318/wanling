@@ -1,0 +1,48 @@
+---
+title: 示例
+description: 官方示例小程序索引
+---
+
+# 示例
+
+官方示例均托管在主仓库 `scripts/examples/` 目录下，clone 后取对应目录即可：
+
+```bash
+git clone https://gitee.com/luoyu318/wanling.git
+```
+
+## hello-demo — 三按钮最小演示
+
+- **目录**：`scripts/examples/miniprogram-hello/`（appid `hello-demo`）
+- **一句话**：三个按钮分别演示 `wanling.request` / `wanling.getChatContext` / `wanling.shareToChat`，是[快速开始](./quickstart/)的主线示例
+- **演示的 API**：
+  - `wanling.request`——GET `/api/agent-types` 读取真实数据
+  - `wanling.getChatContext`——区分卡片打开与独立打开
+  - `wanling.shareToChat`——分享卡片到所选会话
+- **源码**：[gitee.com/luoyu318/wanling · scripts/examples/miniprogram-hello](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-hello)
+
+## showcase — 功能全景演示
+
+- **目录**：`scripts/examples/miniprogram-showcase/`（appid `showcase`）
+- **一句话**：hash 路由多页应用，`document.title` 同步宿主标题栏，JSBridge 主要 API 全覆盖，另有控件展示页可作 UI 素材库
+- **演示的 API**：
+  - `wanling.request`——单发、`Promise.all` 并发计时、GET `/api/agents` 拉取列表
+  - `wanling.getChatContext` / `wanling.shareToChat`——聊天打通
+  - `wanling.openPage`——`miniPrograms` / `home` 跳转、`agentDetail` 带参跳转、白名单外页面被拒演示
+  - `wanling.getProfile`——调用式授权获取身份
+- **容器适配要点**：hash 路由产生历史条目（返回键可回上一页）、切页设置 `document.title`；头像经相对路径 `<img src>` 由宿主代理直引；`fetch('./manifest.json')` 同源读取本地包自报版本
+- **源码**：[gitee.com/luoyu318/wanling · scripts/examples/miniprogram-showcase](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-showcase)
+
+## header — custom 形态自绘头部
+
+- **目录**：`scripts/examples/miniprogram-header/`（appid `header-demo`）
+- **一句话**：`navigationBar.style = custom` 形态下自绘头部（标题 + 搜索框），右上角预留宿主胶囊区（高 32dp、右边距 12dp）
+- **演示的 API**：不调用 JSBridge，专注 custom 形态的容器适配；页面内设置 `document.title`
+- **源码**：[gitee.com/luoyu318/wanling · scripts/examples/miniprogram-header](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-header)
+
+## 容器适配约定
+
+示例中体现的两条容器约定，所有小程序都建议遵循，详见[页面与导航](./guides/navigation/)：
+
+- 不要自绘标题栏与返回按钮（default 形态），切页时设置 `document.title`
+- 多级页面用 hash / history 路由，纯 div 切换会被返回键直接退出

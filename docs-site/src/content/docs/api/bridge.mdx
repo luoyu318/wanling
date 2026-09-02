@@ -1,0 +1,127 @@
+---
+title: JSBridge
+description: window.wanling 全部 API 参考
+---
+
+# JSBridge
+
+小程序页面由宿主注入全局对象 `window.wanling`，页面加载后即可直接调用，无需任何引入。
+
+## 概述
+
+调用约定（envelope）：原生层返回 `{ok:true, data}` / `{ok:false, error}`，宿主引导脚本将其转为 JS 语义——成功 `resolve(data)`，失败 `throw Error(error)`。
+
+错误信息恒为字符串，`e.message` 直接可读、无需判型：
+
+- **语义性拒绝**：格式为 `-<code> <message>`（code 原值已带负号），如 `-32091 身份信息请使用 wanlingGetProfile`，可按前缀分流
+- **传输异常**：为原生错误描述，如 `permission denied: wanling.api`
+
+权限不足时统一 fail fast：`permission denied: <perm>`，不静默降级。权限符号与授权流程见[权限与授权](../guides/permissions/)，错误处理的完整说明见[调试与常见错误](../guides/debugging/)。
+
+| API | 权限 | 行为 |
+| --- | --- | --- |
+| `wanling.request` | `wanling.api` | 以登录态代理调用平台 `/api/` 接口 |
+| `wanling.getProfile` | 无（调用式授权） | 获取当前用户在小程序内的身份 |
+| `wanling.getChatContext` | `wanling.chat.read` | 读取来源会话 ID |
+| `wanling.shareToChat` | `wanling.chat.share` | 分享小程序卡片到所选会话 |
+| `wanling.openPage` | `wanling.nav` | 跳转白名单内的宿主页面 |
+| `wanling.close` | 无 | 关闭小程序页 |
+
+## wanling.request(\{ path, method?, body? \})
+
+以登录态代理请求平台 REST 接口，登录凭证不进入 JS 环境。
+
+- **权限**：`wanling.api`（manifest 声明即生效，无弹窗）
+- **参数**：
+  - `path`（string，必填）：平台 API 路径，仅允许 `/api/` 前缀。路径会先归一化（剥 query/fragment、URI 解码、消解 `.` 与 `..`），归一化后仍须落在 `/api/` 前缀内——`/api/../xxx`、`%2e` 等穿越一律被拒
+  - `method`（string，可选）：HTTP 方法
+  - `body`（object，可选）：请求体
+- **返回**：resolve 为服务端 JSON 响应体
+- **401 处理**：登录态过期时由宿主自动续期并重试，对页面透明，无需自行处理
+- **错误**：路径不合法 throw `仅允许 /api/ 前缀路径` 或 `路径归一化后越出 /api/ 白名单`；命中身份端点收紧规则 throw `-32091 身份信息请使用 wanlingGetProfile`（详见[身份与用户](../guides/identity/)）；业务失败直接 throw，错误信息含服务端明细
+
+```js
+// 万灵 API 代理(需 wanling.api;path 仅允许 /api/ 前缀),失败 throw Error
+const types = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+```
+
+## wanling.getProfile()
+
+获取当前用户身份。调用式授权：首次调用弹出「身份信息授权」对话框，拒绝不落痕（下次调用重新弹窗），允许后不再弹窗。
+
+- **权限**：不占 manifest 声明（调用式授权，见[权限与授权](../guides/permissions/)）
+- **参数**：无。appid 由宿主容器注入，JS 不可传参——无法伪造他人小程序的身份请求
+- **返回**：`{openid, nickname, avatarUrl}`；openid 的语义与使用铁律见[身份与用户](../guides/identity/)
+- **错误**：用户拒绝授权时 reject，可捕获后引导重试；openid 端点失败时直接返回错误，不静默、不缓存失败结果
+
+```js
+const profile = await wanling.getProfile();
+// profile: { openid, nickname, avatarUrl }
+```
+
+## wanling.getChatContext()
+
+读取当前会话上下文。
+
+- **权限**：`wanling.chat.read`
+- **参数**：无
+- **返回**：从聊天卡片打开时 resolve `{conversation_id}`；独立打开（非卡片入口）resolve `null`
+- **错误**：权限不足 throw `permission denied: wanling.chat.read`
+
+```js
+// 会话上下文(需 wanling.chat.read):从聊天卡片打开返回 {conversation_id},独立打开 null
+const ctx = await wanling.getChatContext();
+```
+
+## wanling.shareToChat(\{ title?, params? \})
+
+弹出会话选择器，将小程序卡片发到用户选择的会话。
+
+- **权限**：`wanling.chat.share`
+- **前置条件**：小程序处于 published 状态，私有小程序会收到「仅公开小程序可分享到会话」（发布流程见[发布上架](../guides/publishing/)）
+- **参数**：
+  - `title`（string，可选）：卡片标题，缺省用小程序名称
+  - `params`（object，可选）：任意 JSON，原样透传给卡片点击方
+- **返回**：resolve，携带新消息的 `message_id`
+- **错误**：用户取消选择 throw `'cancelled'`
+
+```js
+// 分享卡片到会话(需 wanling.chat.share;仅 published 小程序可用),用户取消 throw 'cancelled'
+const r = await wanling.shareToChat({ title: '标题', params: { any: 'json' } });
+```
+
+## wanling.openPage(\{ page, params? \})
+
+跳转到白名单内的宿主原生页面，跳转后按系统返回键可回到小程序。
+
+- **权限**：`wanling.nav`
+- **参数**：
+  - `page`（string，必填）：目标页面，白名单三选一：
+    - `home`：出栈回宿主消息页
+    - `miniPrograms`：小程序列表
+    - `agentDetail`：Agent 详情页
+  - `params`（object，可选）：`page` 为 `agentDetail` 时必填 `params.agentId`，且须为合法 UUID
+- **返回**：跳转成功即 resolve
+- **错误**：白名单外的页面或非法参数 rejected；权限不足 throw `permission denied: wanling.nav`
+
+```js
+// 跳转小程序列表
+await wanling.openPage({ page: 'miniPrograms' });
+
+// 跳转 Agent 详情页（agentId 取自 wanling.request 拉取的 agent 列表）
+await wanling.openPage({ page: 'agentDetail', params: { agentId: agents[0].id } });
+```
+
+## wanling.close()
+
+关闭当前小程序页，返回宿主。
+
+- **权限**：无
+- **参数**：无
+
+```js
+// 关闭小程序页
+wanling.close();
+```
+
+容器对页面能力与 API 路径的更多约束见[限制与白名单](./limits/)。
