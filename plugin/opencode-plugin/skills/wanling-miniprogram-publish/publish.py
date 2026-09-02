@@ -6,7 +6,7 @@
 
 流程:
   1. 从 $WANLING_CONFIG_DIR/config.json 读取凭证（serverUrl/agentId/secretKey，只读不打印）
-  2. 传入目录则先本地自检（manifest 必填/格式/白名单/entry 存在）再打 zip（根目录须含 manifest.json）
+  2. 传入目录则先本地自检（manifest 必填/格式/白名单/navigationBar/icon 魔数/entry 存在，与 server validate.go 同规则）再打 zip（根目录须含 manifest.json）
   3. POST /api/agents/:id/token 换 agent JWT
   4. POST /api/mini-programs（multipart 字段名 file，仅 .zip）——agent 身份上传，owner 自动归属其服务的用户
 
@@ -24,6 +24,54 @@ MAX_ZIP_BYTES = 20 * 1024 * 1024
 MAX_FILES = 2000
 ALLOWED_PERMISSIONS = {"wanling.api", "wanling.chat.read", "wanling.chat.share", "wanling.nav"}
 APPID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,31}$")
+# 以下与 server validate.go 对齐
+ICON_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_ICON_BYTES = 256 << 10
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def sniff_image_ct(b):
+    """按魔数嗅探图片类型（镜像 server SniffImageCT）；非图片返回空串。"""
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def validate_navigation_bar(nb):
+    """镜像 server validateNavigationBar：style 枚举、颜色 #RRGGBB（可空）。"""
+    if nb is None:
+        return
+    if not isinstance(nb, dict):
+        sys.exit("[mp-publish] navigationBar 需为对象")
+    style = nb.get("style", "")
+    if style not in ("", "default", "custom"):
+        sys.exit(f"[mp-publish] navigation_bar.style 需为 default/custom, got {style!r}")
+    for field in ("backgroundColor", "foregroundColor"):
+        v = nb.get(field) or ""
+        if v and not COLOR_RE.match(v):
+            sys.exit(f"[mp-publish] navigation_bar.{field} 需为 #RRGGBB, got {v!r}")
+
+
+def validate_icon(m, src_dir):
+    """镜像 server icon 校验：声明了就必须是白名单扩展名/真实存在/≤256KB/魔数为图片。"""
+    icon = m.get("icon") or ""
+    if not icon:
+        return
+    if os.path.splitext(icon)[1].lower() not in ICON_EXTS:
+        sys.exit(f"[mp-publish] icon 扩展名需为 png/jpg/jpeg/webp, got {icon!r}")
+    ipath = os.path.join(src_dir, icon)
+    if not os.path.isfile(ipath):
+        sys.exit(f"[mp-publish] icon {icon} 不在目录内")
+    with open(ipath, "rb") as f:
+        data = f.read()
+    if len(data) > MAX_ICON_BYTES:
+        sys.exit(f"[mp-publish] icon 超 256KB 上限（{len(data)} 字节）")
+    if not sniff_image_ct(data):
+        sys.exit("[mp-publish] icon 内容非图片（魔数不识别）")
 
 
 def load_config():
@@ -82,6 +130,8 @@ def local_check(src_dir):
     for p in m.get("permissions") or []:
         if p not in ALLOWED_PERMISSIONS:
             sys.exit(f"[mp-publish] 未知 permission: {p}（白名单: {sorted(ALLOWED_PERMISSIONS)}）")
+    validate_navigation_bar(m.get("navigationBar"))
+    validate_icon(m, src_dir)
     zip_path = os.path.join("/tmp", f"mp_publish_{appid}.zip")
     count = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

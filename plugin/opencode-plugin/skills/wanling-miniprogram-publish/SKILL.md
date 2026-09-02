@@ -23,7 +23,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 | name | 是 | 显示名 |
 | version | 是 | 正整数；**同 appid 重传必须递增**（重传=换版本且状态重置回私有） |
 | entry | 否 | 入口 HTML，默认 `index.html`，必须真实存在于包内 |
-| icon | 否 | 图标相对路径 |
+| icon | 否 | 包内相对路径；扩展名 png/jpg/jpeg/webp、≤256KB、内容须为真实图片（魔数校验） |
 | permissions | 否 | 白名单四选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，其他值会被拒 |
 | navigationBar | 否 | 导航栏声明：`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`；default=宿主原生 AppBar（可配色），custom=全屏无标题栏 |
 | minHostVersion | 否 | 宿主最低版本声明 |
@@ -32,7 +32,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 
 ## 二、可用的宿主 JSBridge（页面内调用）
 
-- `wanling.request({path, method, body})` — 调万灵 API（仅 `/api/` 前缀，`/api/users/me` 与 `/api/admin/*` 收紧不可调），带用户登录态，返回业务 data
+- `wanling.request({path, method, body})` — 调万灵 API（仅 `/api/` 前缀，`/api/users/me`、`/api/me` 与 `/api/admin/*` 收紧不可调），带用户登录态，返回业务 data
 - `wanling.getProfile()` — 获取当前用户身份 `{openid, nickname, avatarUrl}`（调用式授权：首次弹授权窗，拒绝可重试）。openid 为本小程序内专属匿名标识，不同小程序互不相同，永久稳定——做用户标识一律用它，不要依赖全局账号 id
 - `wanling.getChatContext()` — 返回 `{conversation_id}`（仅从聊天卡片打开时有值）
 - `wanling.shareToChat({title, params})` — 弹会话选择器分享卡片（仅公开小程序可分享）
@@ -40,6 +40,8 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 - `wanling.close()` — 关闭小程序
 
 权限语义：`wanling.api` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权，profile 为调用式授权（调 getProfile 时弹）。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
+
+错误契约：bridge 返回的 error 恒为字符串（JS 侧 `catch (e)` 后 `e.message` 直接可读，无需判型）。语义性拒绝格式为 `-<code> <message>`，可按前缀分流：`-32091 身份信息请使用 wanlingGetProfile`（request 打到身份端点）/ `-32090 用户未授权`（getProfile 被拒）；权限拒绝为 `permission denied: <perm>`（如 `permission denied: wanling.api`）。
 
 存储与资源：
 - **localStorage 按账号隔离**：同设备多账号打开同一小程序，storage 互不可见（同账号共享）；宿主升级可能重置旧 storage，勿作为唯一持久化依赖
