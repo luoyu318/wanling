@@ -1,7 +1,7 @@
 # 万灵 Harness — 三端统一入口
 # 用法见 CLAUDE.md，或 make help
 
-.PHONY: help install-tools install-hooks lint typecheck test secscan check custom-checks lint-sdk test-sdk dev build clean
+.PHONY: help install-tools install-hooks lint typecheck test secscan check custom-checks lint-sdk test-sdk dev build clean docs-dev docs-build
 
 help: ## 显示所有目标
 	@awk 'BEGIN {FS = ":.*##"; printf "\n万灵 Harness 目标:\n\n"} \
@@ -105,6 +105,12 @@ dev: ## 启动三端
 
 build: ## 构建三端
 	@echo "⚠️  build 目标后续填充"
+
+docs-dev: ## 文档站本地开发预览（localhost:4321/docs/）
+	cd docs-site && npm run dev
+
+docs-build: ## 构建文档站静态产物到 docs-site/dist/
+	cd docs-site && npm run build
 
 clean: ## 清理
 	@echo "⚠️  clean 目标后续填充"

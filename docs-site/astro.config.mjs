@@ -1,0 +1,24 @@
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+
+export default defineConfig({
+  base: '/docs',
+  integrations: [
+    starlight({
+      title: '万灵小程序',
+      description: '万灵小程序开发文档：包格式、JSBridge、权限、发布全流程',
+      social: [
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/luoyu318/wanling' },
+      ],
+      locales: { root: { label: '简体中文', lang: 'zh-CN' } },
+      defaultLocale: 'root',
+      sidebar: [
+        {
+          label: '入门',
+          items: [''],
+        },
+      ],
+      customCss: ['./src/styles/custom.css'],
+    }),
+  ],
+});
