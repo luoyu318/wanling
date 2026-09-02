@@ -46,12 +46,15 @@ class MiniProgramBridge {
             return {'ok': false, 'error': '路径归一化后越出 /api/ 白名单'};
           }
           // 收紧身份/管理端点(归一路径部分精确/前缀匹配,query 不参与判定):
-          // /api/me 拿全局 user_id,小程序应走 per-app 的 wanlingGetProfile;
-          // /api/admin/* 是宿主管理面,不在小程序信任边界内。
+          // /api/users/me 是 server 真实身份端点,拿全局 user_id,小程序应走
+          // per-app 的 wanlingGetProfile;/api/me 为防御性拦截(server 当前无此
+          // 路由,防未来新增别名漏拦);/api/admin/* 是宿主管理面,不在小程序信任边界内。
           final qIdx = normalized.indexOf('?');
           final pathOnly =
               qIdx >= 0 ? normalized.substring(0, qIdx) : normalized;
-          if (pathOnly == '/api/me' || pathOnly.startsWith('/api/admin/')) {
+          if (pathOnly == '/api/me' ||
+              pathOnly == '/api/users/me' ||
+              pathOnly.startsWith('/api/admin/')) {
             return {
               'ok': false,
               'error': {

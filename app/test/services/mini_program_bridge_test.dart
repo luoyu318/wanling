@@ -85,6 +85,43 @@ void main() {
     expect(called, isFalse);
   });
 
+  test('/api/users/me 真实身份端点精确命中 → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
+  test('/api/users/me 带 query 变体 → 同样拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me?x=1', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(called, isFalse);
+  });
+
   test('/api/me 带 query 变体 → 同样拒绝且不触达 proxy', () async {
     var called = false;
     final b = MiniProgramBridge(
