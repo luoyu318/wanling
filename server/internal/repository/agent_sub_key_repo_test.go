@@ -327,3 +327,54 @@ func TestAgentSubKeyRepo_ListByAgent(t *testing.T) {
 		t.Fatalf("无密钥 agent 应空列表,实际 %d 条", len(none))
 	}
 }
+
+// TestAgentSubKeyRepo_AgentDeleteCascade 守护 FK 级联语义(migration 018):
+// agent_sub_keys.agent_id → agents(id) ON DELETE CASCADE。016 原为 NO ACTION,
+// AgentRepo.Delete 硬删 agent 会触发 FK 违规并阻断 users→agents 级联链。
+// 本测试断言:硬删 agent 不报错,且 ListByAgent 返回空、GetByKey 不再命中——
+// 行随级联物理删除,而非逻辑过滤。
+func TestAgentSubKeyRepo_AgentDeleteCascade(t *testing.T) {
+	db := SetupTestDB(t)
+	ur := NewUserRepo(db)
+	ar := NewAgentRepo(db)
+	repo := NewAgentSubKeyRepo(db)
+
+	u, err := ur.Create(t.Context(), uniqueShortName(t, "ask6"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	a, err := ar.Create(t.Context(), u.ID, "agent-cascade", "secret-cascade", "")
+	if err != nil {
+		t.Fatalf("Create agent: %v", err)
+	}
+	sk, err := repo.Create(t.Context(), a.ID, "cascade", "wlsk_cascade_1")
+	if err != nil {
+		t.Fatalf("Create sub key: %v", err)
+	}
+	if sk.ID == "" {
+		t.Fatal("Create sub key 应返回 id")
+	}
+
+	// 硬删 agent:ON DELETE CASCADE 下应成功,而非 FK 违规报错
+	if err := ar.Delete(t.Context(), a.ID); err != nil {
+		t.Fatalf("硬删发过子密钥的 agent 不应报 FK 违规(migration 018 级联): %v", err)
+	}
+
+	// ListByAgent 返回空:子密钥行已随级联物理删除
+	list, err := repo.ListByAgent(t.Context(), a.ID)
+	if err != nil {
+		t.Fatalf("ListByAgent after agent delete: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("agent 删除后子密钥应级联物理删除,实际残留 %d 条: %+v", len(list), list)
+	}
+
+	// GetByKey 不再命中:物理删除,非仅吊销(吊销场景 GetByKey 仍返回记录)
+	got, err := repo.GetByKey(t.Context(), "wlsk_cascade_1")
+	if err != nil {
+		t.Fatalf("GetByKey after agent delete: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("agent 删除后凭据不应再命中(行已级联删除): %+v", got)
+	}
+}

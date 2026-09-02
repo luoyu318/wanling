@@ -15,15 +15,17 @@
 
 前缀约定:server `auth.SubKeyPrefix = "wlsk_"` 为唯一事实源;主密钥是纯 hex,不可能撞 `wlsk_` 前缀。技能侧文档/脚本写死该前缀仅做校验,不做路由。
 
-## 数据模型(migration 016 + 017)
+## 数据模型(migration 016 + 017 + 018)
 
 ```sql
-agent_sub_keys(id UUID PK 应用侧生成, agent_id FK→agents, name TEXT DEFAULT '',
+agent_sub_keys(id UUID PK 应用侧生成, agent_id FK→agents ON DELETE CASCADE,
+               name TEXT DEFAULT '',
                secret_key TEXT UNIQUE, created_at, last_used_at, revoked_at)
 ```
 
 - `secret_key` 明文存储,对齐主密钥先例(哈希化属另一特性)
 - `last_used_at`:每次子密钥成功换 token 更新(fail-soft,失败仅日志)
+- `agent_id` FK **ON DELETE CASCADE**(018):agent 删除时子密钥行随级联物理删除;鉴权对悬空凭据的 401 防御为纵深兜底
 - `pairing_tickets` 加 `action TEXT NOT NULL DEFAULT 'bind'` 列;**017** 把 `pairing_tickets.secret_key` 从 VARCHAR(64) 扩为 TEXT(bind 64 hex 卡满,authorize 凭据 69 字符超长必须 TEXT)
 
 ## 端点

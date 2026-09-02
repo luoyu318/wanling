@@ -36,6 +36,7 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 - `015_mini_program_openids.sql` — 小程序 openid 身份体系:`mini_program_openids` 表((user_id, appid) PK → openid 默认 gen_random_uuid(),UNIQUE(openid)),(用户×appid) 惰性生成永久稳定标识,跨小程序不可关联。协议见 [miniprogram.md](./miniprogram.md)
 - `016_agent_sub_keys.sql` — agent 子密钥授权:`agent_sub_keys` 表(id/agent_id/secret_key UNIQUE/last_used_at/revoked_at,详见 [agent-subkeys.md](./agent-subkeys.md))+ `pairing_tickets` 加 `action TEXT NOT NULL DEFAULT 'bind'` 列(扫码配对 bind/authorize 双模式)。
 - `017_pairing_ticket_secret_key_text.sql` — `pairing_tickets.secret_key` VARCHAR(64)→TEXT:authorize 模式票据凭据是子密钥(`wlsk_`+64hex=69 字符),原列超长报错。
+- `018_agent_sub_keys_fk_cascade.sql` — `agent_sub_keys.agent_id` 外键改 `ON DELETE CASCADE`:016 默认 NO ACTION,硬删发过子密钥的 agent 会 FK 违规并阻断 users 级联链;agent 删除时子密钥行随删。
 
 新 migration 文件命名:`NNN_<feature>.sql`(NNN 递增,如 `005_add_xxx.sql`),不要修改 001_init.sql(会让已部署实例无法重跑 init)。
 
