@@ -9,7 +9,7 @@ description: 容器对页面能力与 API 路径的约束
 
 ## API 路径白名单
 
-小程序可访问的宿主能力只有一层：`/api/` 前缀的平台 REST 接口，且必须经 `wanling.request` 代理调用（API 签名见 [JSBridge 参考](./bridge/)）。页面直接 `fetch` 虚拟域内的 `/api/` 路径不携带登录态，宿主数据一律走 `wanling.request`。
+小程序可访问的宿主能力只有一层：`/api/` 前缀的平台 REST 接口，且必须经 `wanling.request` 代理调用（API 签名见 [JSBridge 参考](./bridge/)）。登录凭证不进入页面 JS 环境，宿主数据一律经 `wanling.request` 获取。
 
 以下路径被宿主收紧，命中即拒绝：
 
