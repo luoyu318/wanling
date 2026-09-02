@@ -9,7 +9,7 @@ description: 容器对页面能力与 API 路径的约束
 
 ## API 路径白名单
 
-小程序可访问的宿主能力只有一层：`/api/` 前缀的平台 REST 接口，且必须经 `wanling.request` 代理调用（API 签名见 [JSBridge 参考](./bridge/)）。登录凭证不进入页面 JS 环境，宿主数据一律经 `wanling.request` 获取。
+小程序可访问的宿主能力只有一层：`/api/` 前缀的平台 REST 接口，且必须经 `wanling.request` 代理调用（API 签名见 [JSBridge 参考](/docs/api/bridge/)）。登录凭证不进入页面 JS 环境，宿主数据一律经 `wanling.request` 获取。
 
 以下路径被宿主收紧，命中即拒绝：
 
@@ -17,7 +17,7 @@ description: 容器对页面能力与 API 路径的约束
 - `/api/me`（防御性拦截）
 - `/api/admin` 前缀的管理端点
 
-拒绝错误：`-32091 身份信息请使用 wanlingGetProfile`。该收紧是宿主侧行为，对存量小程序立即生效、无需改包；迁移指引：身份获取一律改用 `wanling.getProfile()`。语义详见[身份与用户](../guides/identity/)。
+拒绝错误：`-32091 身份信息请使用 wanlingGetProfile`。该收紧是宿主侧行为，对存量小程序立即生效、无需改包；迁移指引：身份获取一律改用 `wanling.getProfile()`。语义详见[身份与用户](/docs/guides/identity/)。
 
 ## 宿主资源直引
 
@@ -27,7 +27,7 @@ description: 容器对页面能力与 API 路径的约束
 
 ## 导航拦截
 
-页面内导航试图跳离虚拟 origin（外链、跳转其他站点）一律被拦截。需要跳转宿主页面时使用 `wanling.openPage`（白名单与参数见 [JSBridge 参考](./bridge/)）。
+页面内导航试图跳离虚拟 origin（外链、跳转其他站点）一律被拦截。需要跳转宿主页面时使用 `wanling.openPage`（白名单与参数见 [JSBridge 参考](/docs/api/bridge/)）。
 
 ## 包体限制
 
@@ -36,4 +36,4 @@ description: 容器对页面能力与 API 路径的约束
 - `manifest.json` ≤1MB
 - 包内条目名含 `../`、绝对路径或反斜杠的一律拒绝（防路径穿越）
 
-完整包格式与上传校验规则见[包格式规范](../guides/manifest/)。
+完整包格式与上传校验规则见[包格式规范](/docs/guides/manifest/)。

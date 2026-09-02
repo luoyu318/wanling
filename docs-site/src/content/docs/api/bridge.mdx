@@ -16,7 +16,7 @@ description: window.wanling 全部 API 参考
 - **语义性拒绝**：格式为 `-<code> <message>`（code 原值已带负号），如 `-32091 身份信息请使用 wanlingGetProfile`，可按前缀分流
 - **传输异常**：为原生错误描述，如 `permission denied: wanling.api`
 
-权限不足时统一 fail fast：`permission denied: <perm>`，不静默降级。权限符号与授权流程见[权限与授权](../guides/permissions/)，错误处理的完整说明见[调试与常见错误](../guides/debugging/)。
+权限不足时统一 fail fast：`permission denied: <perm>`，不静默降级。权限符号与授权流程见[权限与授权](/docs/guides/permissions/)，错误处理的完整说明见[调试与常见错误](/docs/guides/debugging/)。
 
 | API | 权限 | 行为 |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ description: window.wanling 全部 API 参考
   - `body`（object，可选）：请求体
 - **返回**：resolve 为服务端 JSON 响应体
 - **401 处理**：登录态过期时由宿主自动续期并重试，对页面透明，无需自行处理
-- **错误**：路径不合法 throw `仅允许 /api/ 前缀路径` 或 `路径归一化后越出 /api/ 白名单`；命中身份端点收紧规则 throw `-32091 身份信息请使用 wanlingGetProfile`（详见[身份与用户](../guides/identity/)）；业务失败直接 throw，错误信息含服务端明细
+- **错误**：路径不合法 throw `仅允许 /api/ 前缀路径` 或 `路径归一化后越出 /api/ 白名单`；命中身份端点收紧规则 throw `-32091 身份信息请使用 wanlingGetProfile`（详见[身份与用户](/docs/guides/identity/)）；业务失败直接 throw，错误信息含服务端明细
 
 ```js
 // 万灵 API 代理(需 wanling.api;path 仅允许 /api/ 前缀),失败 throw Error
@@ -49,9 +49,9 @@ const types = await wanling.request({ path: '/api/agent-types', method: 'GET' })
 
 获取当前用户身份。调用式授权：首次调用弹出「身份信息授权」对话框，拒绝不落痕（下次调用重新弹窗），允许后不再弹窗。
 
-- **权限**：不占 manifest 声明（调用式授权，见[权限与授权](../guides/permissions/)）
+- **权限**：不占 manifest 声明（调用式授权，见[权限与授权](/docs/guides/permissions/)）
 - **参数**：无。appid 由宿主容器注入，JS 不可传参——无法伪造他人小程序的身份请求
-- **返回**：`{openid, nickname, avatarUrl}`；openid 的语义与使用铁律见[身份与用户](../guides/identity/)
+- **返回**：`{openid, nickname, avatarUrl}`；openid 的语义与使用铁律见[身份与用户](/docs/guides/identity/)
 - **错误**：用户拒绝授权时 reject，可捕获后引导重试；openid 端点失败时直接返回错误，不静默、不缓存失败结果
 
 ```js
@@ -78,7 +78,7 @@ const ctx = await wanling.getChatContext();
 弹出会话选择器，将小程序卡片发到用户选择的会话。
 
 - **权限**：`wanling.chat.share`
-- **前置条件**：小程序处于 published 状态，私有小程序会收到「仅公开小程序可分享到会话」（发布流程见[发布上架](../guides/publishing/)）
+- **前置条件**：小程序处于 published 状态，私有小程序会收到「仅公开小程序可分享到会话」（发布流程见[发布上架](/docs/guides/publishing/)）
 - **参数**：
   - `title`（string，可选）：卡片标题，缺省用小程序名称
   - `params`（object，可选）：任意 JSON，原样透传给卡片点击方
@@ -124,4 +124,4 @@ await wanling.openPage({ page: 'agentDetail', params: { agentId: agents[0].id } 
 wanling.close();
 ```
 
-容器对页面能力与 API 路径的更多约束见[限制与白名单](./limits/)。
+容器对页面能力与 API 路径的更多约束见[限制与白名单](/docs/api/limits/)。
