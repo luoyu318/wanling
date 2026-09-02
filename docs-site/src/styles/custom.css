@@ -1,6 +1,51 @@
 /* 站点级微调：对齐主流文档站的紧凑观感，不改动 Starlight 主题结构 */
 
-/* 标题锚点：仅悬停/聚焦时显示，避免版面噪音 */
+/* ===== 配色：dark 主题对齐暖黑两阶色板（参照主流文档站变量映射） ===== */
+[data-theme='dark'] {
+  --sl-color-bg: hsl(0, 9%, 7%);            /* 全局底色：暖黑 */
+  --sl-color-bg-nav: hsl(0, 9%, 7%);        /* 顶栏与底色一体 */
+  --sl-color-bg-sidebar: hsl(0, 9%, 7%);    /* 侧栏与底色一体 */
+  --sl-color-bg-surface: hsl(0, 0%, 12%);   /* 卡片/悬浮面 */
+  --sl-color-bg-inline-code: hsl(0, 0%, 12%);
+  /* gray-1..4 为文字用亮阶刻度，保持 Starlight dark 默认，勿覆写成暗值 */
+  --sl-color-gray-5: hsl(0, 4%, 23%);       /* border/divider：极淡暖灰 */
+  --sl-color-gray-6: hsl(0, 0%, 12%);       /* 发丝线/嵌套面 */
+  --sl-color-text: hsl(0, 4%, 74%);         /* 正文：哑光灰，不用亮白 */
+  --sl-color-white: hsl(0, 0%, 93%);        /* 标题：柔白 */
+  --sl-color-accent: hsl(224, 100%, 60%);
+  --sl-color-accent-high: hsl(224, 100%, 85%);
+  --sl-color-accent-low: hsl(224, 54%, 20%);
+  --sl-color-border: hsl(0, 4%, 23%);
+  --sl-color-divider: hsl(0, 4%, 23%);
+}
+
+/* ===== 字体大小：整体收敛一档，行高紧凑 ===== */
+.sl-markdown-content {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+main h1 {
+  font-size: 1.6rem;
+}
+.sl-markdown-content h2 {
+  font-size: 1.2rem;
+  margin-top: 2.4em;
+}
+.sl-markdown-content h3 {
+  font-size: 1.05rem;
+  margin-top: 1.8em;
+}
+.sl-markdown-content code {
+  font-size: 0.8125rem;
+}
+
+/* ===== 分割线：标题不加边框，靠留白分节（与主流文档站一致） ===== */
+.sl-markdown-content h2 {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* ===== 标题锚点：仅悬停/聚焦时显示，避免版面噪音 ===== */
 .sl-markdown-content .sl-anchor-link {
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -14,17 +59,7 @@
   opacity: 1;
 }
 
-/* 标题字号收敛：正文 h2/h3 与页首 h1 拉开层级 */
-.sl-markdown-content h2 {
-  font-size: 1.35rem;
-  border-bottom: 1px solid var(--sl-color-gray-5);
-  padding-bottom: 0.4em;
-}
-.sl-markdown-content h3 {
-  font-size: 1.12rem;
-}
-
-/* 表格：紧凑行距 + 等宽字号，信息密度对齐主流文档站 */
+/* ===== 表格：紧凑行距 + 等宽字号，信息密度对齐主流文档站 ===== */
 .sl-markdown-content table {
   font-size: 0.875rem;
   display: table;
