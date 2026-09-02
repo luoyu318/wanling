@@ -56,7 +56,7 @@ private → published ⇄ disabled
 | DELETE | /api/mini-programs/:id | user | 仅 owner 删自己的 private,否则 409 |
 | GET | /api/mini-programs/:id/package | user+agent | 包下载(owner 或 published),响应头 `X-Mini-Program-Sha256` |
 | GET | /api/mini-programs/:id/icon | user+agent | 图标只读(owner 或 published,鉴权同 package);按 `mp-icon/{appid}/{version}` 快照取,`Cache-Control: public, max-age=86400`,Content-Type 按魔数嗅探;无 icon 404 |
-| PUT | /api/mini-programs/:id/status | admin | publish / disable,状态机白名单 |
+| PUT | /api/mini-programs/:id/status | admin | publish / disable,状态机白名单;别名路由 `/api/admin/mini-programs/:id/status` 同效(main.go 双挂载) |
 
 上传链路:MaxBytesReader 413 → `.zip` 扩展名 415 → `ValidatePackage` 400 → appid 归属判定(他人 403 / 自己换版本 / 新建)→ sha256 + storage.Save + files 落库。
 
