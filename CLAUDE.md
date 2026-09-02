@@ -39,6 +39,7 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 
 - APP 动态底栏 tab（消息/万灵固定 + pinned agent）,server 仅做转发+管理,不含 Agent 适配层
 - agent 类型(hermes/opencode/dsh…)由 server 注册表统一下发(`agent_type_registry`,011):拓扑 multi_session 驱动路由,新类型 INSERT 一行即接入、APP 零发版
+- skills/:agent 技能资产(小程序发布/发图等),独立安装(`skills/install.sh`),不随 plugin 分发
 - 详细架构按目录分:
   - **改 Go 代码 → 读 [server/CLAUDE.md](./server/CLAUDE.md)**（路由 / Handler / Repo / migration 列表 / WS 协议 / 认证 / 测试规约）
   - **改 Flutter 代码 → 读 [app/CLAUDE.md](./app/CLAUDE.md)**（router / providers / pages / widgets / models / 测试规约）
@@ -53,6 +54,7 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 | 新增 / 改 server 路由或 Handler | server/CLAUDE.md |
 | 新增 / 改 Flutter page / provider / widget | app/CLAUDE.md |
 | 新增 / 改插件 install 模式 / adapter 协议 | plugin/CLAUDE.md |
+| 新增 / 改 skills/ 技能 | skills/README.md + 对应 SKILL.md |
 | 新增 / 改 SDK 协议或方法 | sdk/CLAUDE.md + docs/architecture/sdk.md |
 | 新增 migration | server/CLAUDE.md + docs/ai-handbook/migrations.md（被 server/CLAUDE.md @import） |
 | 跨子系统协议变更（WS opcode / 聚合卡 / 审批卡片 / 扫码配对） | docs/ai-handbook/<对应>.md（物理单文件,各子 CLAUDE.md @import 引用同一份） |
