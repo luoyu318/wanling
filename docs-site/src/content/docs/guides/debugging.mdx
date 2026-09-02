@@ -1,0 +1,62 @@
+---
+title: 调试与常见错误
+description: 页内调试方案与错误对照表
+---
+
+# 调试与常见错误
+
+## 调试方案
+
+小程序暂无远程调试，推荐在页面内接 vConsole 类日志面板输出 `console.log`——页内日志是最省事的调试方式（官方示例 hello-demo 用 `<pre id="out">` 直接展示调用结果，同一思路）。
+
+JSBridge 的错误以 rejected promise 的 `Error(message)` 抛出，用 `try/catch` 捕获后展示即可，`e.message` 直接可读：
+
+```js
+try {
+  const r = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+  console.log(r);
+} catch (e) {
+  console.log(e.message); // 直接可读的错误描述
+}
+```
+
+上传 / 运行失败的返回信息包含具体明细，先看返回内容，再对照下表排查。
+
+## 错误消费契约
+
+`window.wanling` 各 API 的错误信息恒为字符串，无需判型：
+
+- **语义性拒绝**：格式为 `-<code> <message>`（code 原值已带负号），例如 `-32090 用户未授权`。可按 `-<code>` 前缀分流处理
+- **传输异常**：为原生错误描述，例如 `permission denied: wanling.api` 或网络异常信息
+
+宿主将错误包装为 `Error` 对象抛出，`e.message` 即为上述内容，可直接展示或记录：
+
+```js
+try {
+  await wanling.shareToChat({ title: '标题' });
+} catch (e) {
+  if (e.message.startsWith('-')) {
+    // 语义性拒绝：按 <code> 前缀分流处理
+  } else {
+    // 传输异常：网络问题或未授权等原生错误描述
+  }
+}
+```
+
+## 错误对照表
+
+| 错误 | 出处 | 原因与处理 |
+| --- | --- | --- |
+| `invalid_package`（400） | 上传 | 包结构 / manifest 校验失败，message 含明细：非法 zip / 缺少 manifest.json / manifest.json 过大 / appid 需匹配正则 / name 必填 / version 需为正整数 / 未知 permission / entry 不在包内 / 非法包内路径 / 文件数超 2000 / 解压后总大小超上限 |
+| `payload_too_large`（413） | 上传 | 包超大小上限（默认 20MB） |
+| `unsupported_media_type`（415） | 上传 | 文件扩展名非 `.zip` |
+| `forbidden`：appid 已被占用（403） | 上传 | appid 归他人所有，换一个 appid |
+| `permission denied: wanling.api` | 运行时 | manifest 未声明，或声明集与授权集交集为空 |
+| `permission denied: wanling.chat.read / wanling.chat.share` | 运行时 | 首启弹窗被拒绝；卸载重装可重新授权 |
+| `仅公开小程序可分享到会话` | 运行时 | `shareToChat` 要求 published，先请管理员发布 |
+| `仅允许 /api/ 前缀路径` / `路径归一化后越出 /api/ 白名单` | 运行时 | `request` 的 path 不合法，或试图 `..` / `%2e` 穿越 |
+| `sha256 不匹配: 期望 ... 实际 ...` | 安装时 | 下载损坏或服务端数据不一致；重试下载，仍失败重传包 |
+| `签名验证失败` | 安装时 | 包字节被篡改或公钥已轮换；APP 会先自动重拉公钥再验一次，仍失败则拒装 |
+| `非法 zip` / `缺少 manifest.json` | 上传 | 打包层级错误：manifest.json 必须在 zip 根目录，不要把外层文件夹一起压进去 |
+
+其中「仅公开小程序可分享到会话」的解决方法是将小程序发布为 published 状态，完整流程见[发布上架](./publishing/)。

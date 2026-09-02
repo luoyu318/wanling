@@ -25,6 +25,8 @@ export default defineConfig({
             'guides/permissions',
             'guides/identity',
             'guides/storage',
+            'guides/debugging',
+            'guides/publishing',
           ],
         },
       ],

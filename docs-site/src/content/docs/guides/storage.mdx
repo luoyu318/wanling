@@ -25,7 +25,7 @@ description: storage 隔离矩阵、静默更新与版本重传语义
 
 - `version` 单调递增；同 appid 重传要求 owner 一致，重传即换版本（整包覆盖：新包字节 + 新 manifest）
 - 换版本重传后，小程序状态重置为 **private** 且签名清空：已发布（published）的小程序改包后需管理员重新发布
-- 重新发布前，`shareToChat` 与公共库均不可用
+- 重新发布前，`shareToChat` 与公共库均不可用，发布流程详见[发布上架](./publishing/)
 
 ## 数据重置场景
 
