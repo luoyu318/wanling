@@ -1573,6 +1573,24 @@ class WanlingAdapter(BasePlatformAdapter):
         """
         return await asyncio.to_thread(self._download_file_sync, file_id)
 
+    def _card_absorbs_media(self, chat_id: str, key: str) -> bool:
+        """聚合卡模式是否应吸收（跳过）上游媒体接口的独立气泡。
+
+        双模式区分的媒体面守卫：hermes 上游 extract_images → send_image(_file)
+        通道与 adapter.send() 文本路径完全独立——聚合模式下回复正文里的图片
+        引用已由 consumer 改写进卡元素，媒体通道再发就是重复气泡。两个条件
+        任一命中即吸收：
+        - key（路径/URL）已在改写 memo 中（consumer 已把它嵌进卡元素）
+        - 该 conv 聚合卡活跃或 60s 内刚收尾（覆盖卡 finish 与上游媒体调用的
+          竞序；聚合模式下正文引用必经 consumer 改写，媒体通道只可能是重复源）
+        气泡模式（开关关/无卡）两条件均不命中 → 独立气泡照发，行为不变。
+        """
+        if key and key in getattr(self, "_image_upload_memo", {}):
+            return True
+        if not _aggregate_card._aggregate_enabled():
+            return False
+        return _aggregate_card.card_mode_recent(chat_id)
+
     async def send_image(
         self,
         chat_id: str,
@@ -1587,8 +1605,14 @@ class WanlingAdapter(BasePlatformAdapter):
           1. 解析 image_url：本地路径直接用；http(s):// 调 cache_image_from_url 下载
           2. 调 _send_image_path 上传 + 发 image 消息
 
+        聚合卡模式：正文里的图片引用已由 consumer 改写进卡元素，这里吸收
+        （跳过独立气泡），防止同一张图「卡内一份 + 卡外气泡一份」双发。
+
         降级：路径解析失败或上传失败时走 send() 发文本，保证对话不中断。
         """
+        if self._card_absorbs_media(chat_id, image_url):
+            logger.debug("Wanling.send_image: 聚合卡已吸收该图，跳过独立气泡 — %s", image_url)
+            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
         # 1. 解析路径：本地文件优先，http(s) 走 hermes 缓存工具下载。
         # cache_image_from_url 是 async 函数，直接 await（to_thread 传 async 函数无效）。
         local_path: Optional[str] = None
@@ -1622,7 +1646,13 @@ class WanlingAdapter(BasePlatformAdapter):
 
         hermes 上游用 file:// URL 调图片发送时，base.py 会自动剥前缀改调本方法
         而不是 send_image，所以必须 override 它才能正确处理 LLM 工具生成的本地图片。
+
+        聚合卡模式：本地路径已在改写 memo（consumer 已嵌进卡元素）或该 conv
+        卡模式活跃 → 吸收跳过独立气泡，防同图双发。
         """
+        if self._card_absorbs_media(chat_id, image_path):
+            logger.debug("Wanling.send_image_file: 聚合卡已吸收该图，跳过独立气泡 — %s", image_path)
+            return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
         if not image_path or not os.path.isfile(image_path):
             degraded = caption or f"[图片] {image_path}"
             logger.warning("Wanling.send_image_file: missing file, degrade — %s", degraded[:60])
@@ -2328,6 +2358,86 @@ if __name__ == "__main__":
         _check(
             "https://attacker.example/track.png" in out and "/api/files/" not in out,
             "远程图下载失败 → 原 URL 保留",
+        )
+
+        # 用例 C8：媒体吸收守卫——图片已在改写 memo（consumer 已进卡）→ 独立气泡跳过
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"png")
+            local_absorb = f.name
+        try:
+            calls_absorb = {"n": 0}
+
+            def _count_upload2(_p):
+                calls_absorb["n"] += 1
+                return "fidAbsorb"
+
+            ad = _make_adapter(_count_upload2)
+            # consumer 侧先改写（图进卡,memo 登记）
+            await ad._rewrite_images_for_card(f"![]({local_absorb})")
+            # 上游 extract_images 通道随后到达 → 应被吸收,不再重复上传/发气泡
+            r = await ad.send_image_file("conv-1", local_absorb)
+            _check(
+                r.success and calls_absorb["n"] == 1,
+                "memo 命中 → send_image_file 被聚合卡吸收(不再重复上传)",
+            )
+        finally:
+            os.unlink(local_absorb)
+
+        # 用例 C9：聚合卡活跃 → send_image(URL) 被吸收(不下载不上传)
+        orig_active = _aggregate_card.get_active_by_conv
+        orig_enabled = _aggregate_card._aggregate_enabled
+        try:
+            _aggregate_card.get_active_by_conv = lambda conv: object()  # type: ignore[assignment]
+            _aggregate_card._aggregate_enabled = lambda: True  # type: ignore[assignment]
+            downloads = {"n": 0}
+
+            def _spy_download(url):
+                downloads["n"] += 1
+                return "/tmp/spy.jpg"
+
+            with _patch_download(_spy_download):
+                r = await _make_adapter(lambda p: "fid").send_image(
+                    "conv-1", "https://example.com/a.png"
+                )
+            _check(
+                r.success and downloads["n"] == 0,
+                "聚合卡活跃 → send_image 被吸收(不下载不上传)",
+            )
+        finally:
+            _aggregate_card.get_active_by_conv = orig_active  # type: ignore[assignment]
+            _aggregate_card._aggregate_enabled = orig_enabled  # type: ignore[assignment]
+
+        # 用例 C10：气泡模式（聚合关）→ 媒体通道照发独立气泡,行为不变
+        orig_enabled2 = _aggregate_card._aggregate_enabled
+        try:
+            _aggregate_card._aggregate_enabled = lambda: False  # type: ignore[assignment]
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                f.write(b"png")
+                local_bubble = f.name
+            captured_ws = []
+
+            class _FakeWS:
+                async def send(self, raw):
+                    captured_ws.append(raw)
+
+            ad2 = _make_adapter(lambda p: "fidBubble")
+            ad2._ws = _FakeWS()
+            await ad2.send_image_file("conv-1", local_bubble)
+            _check(
+                len(captured_ws) == 1 and b'"msg_type": "image"' in captured_ws[0].encode()
+                or len(captured_ws) == 1 and '"msg_type": "image"' in captured_ws[0],
+                "气泡模式 → send_image_file 照发独立 image 气泡",
+            )
+        finally:
+            os.unlink(local_bubble)
+            _aggregate_card._aggregate_enabled = orig_enabled2  # type: ignore[assignment]
+
+        # 用例 C11：card_mode_recent——hook 标记后 60s 窗口内为 True
+        _aggregate_card.mark_conv_text_taken("conv-recent")
+        _check(
+            _aggregate_card.card_mode_recent("conv-recent") is True
+            and _aggregate_card.card_mode_recent("conv-unknown") is False,
+            "card_mode_recent: 最近接管标记命中,未知 conv 不命中",
         )
 
         # ── send()/edit_message() 流式直发路径（REST 建消息 + PATCH 原地更新） ──
