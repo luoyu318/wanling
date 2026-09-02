@@ -38,6 +38,7 @@ import logging
 import os
 import random
 import re
+import tempfile
 import threading
 import time
 import urllib.error
@@ -216,6 +217,9 @@ class WanlingAdapter(BasePlatformAdapter):
         # 编辑时回填防引用块丢失。值为 None 表示虚拟 id（正文被聚合卡接管，
         # 续帧路由进聚合卡 markdown 元素而非 PATCH）。容量上限防长连泄漏。
         self._edit_meta: Dict[str, Optional[Dict[str, Any]]] = {}
+        # 聚合卡图片改写 memo：本地路径/远程 URL → file_id（interim 快照去重，
+        # 避免同一张图重复上传）。容量上限见 _IMAGE_MEMO_CAP，防长连泄漏。
+        self._image_upload_memo: Dict[str, str] = {}
         # Resume：本连接最后收到的 dispatch seq（来自服务端 WSMessage.s）。
         # 重连时若 >0 发 OpResume 让服务端补发断线期间的消息，避免丢消息。
         # 注意：seq 是 per-client 的，必须记录本 adapter 实例自己收到的最后值。
@@ -1061,8 +1065,8 @@ class WanlingAdapter(BasePlatformAdapter):
         #    （_strip_and_send_local_images，处理 hermes 不识别本地路径的盲区）
         # 2. 远程图片 URL（![alt](https://...)）→ 下载上传 + 替换为内部 /api/files/
         #    URL（_rewrite_remote_images，处理 hermes extract_images 漏掉无扩展名 URL 的逃逸）
-        content = await self._strip_and_send_local_images(chat_id, content)
-        content = await self._rewrite_remote_images(content)
+        # 聚合卡模式的图片处理在 consumer 侧（_rewrite_images_for_card，图进卡元素），
+        # 不走此处的独立气泡路径——两行已下移到 take_conv_text/interim 分支之后。
 
         # 上传 + 发送图片后可能只剩空白（LLM 整段都在描述图片），跳过 markdown 发送
         if not content.strip():
@@ -1104,6 +1108,11 @@ class WanlingAdapter(BasePlatformAdapter):
             virtual = uuid.uuid4().hex[:12]
             self._remember_edit_meta(virtual, None)
             return SendResult(success=True, message_id=virtual)
+
+        # 气泡路径图片处理（聚合卡接管/interim 分支已在上方 return，不会走到这）：
+        # 本地路径 → 独立 image 气泡（msg_type=image）；远程 URL → 改写内嵌。
+        content = await self._strip_and_send_local_images(chat_id, content)
+        content = await self._rewrite_remote_images(content)
 
         # reply_to 由 hermes 上游 _reply_anchor_for_event 自动填 = 触发本次回复的
         # user 消息 id(对齐飞书 / Telegram 等 18 平台的「回复锚点」语义)。注入到
@@ -1199,6 +1208,13 @@ class WanlingAdapter(BasePlatformAdapter):
     # 否定后顾排除 : 防 https:// 被误匹配（: 后第一个 /）。
     _LOCAL_IMAGE_RE = re.compile(
         r"(?<![\w/:])(?P<path>/[\w./\-]+\.(?:jpg|jpeg|png|gif|webp|bmp))",
+        re.IGNORECASE,
+    )
+
+    # markdown 包裹的本地图片 ![alt](/path.png)——聚合卡改写需先于裸路径处理，
+    # 替换时保留 markdown 结构（只换括号内路径），避免二次包裹。
+    _LOCAL_MD_IMAGE_RE = re.compile(
+        r"!\[(?P<alt>[^\]]*)\]\((?P<path>/[\w./\-]+\.(?:jpg|jpeg|png|gif|webp|bmp))\)",
         re.IGNORECASE,
     )
 
@@ -1298,6 +1314,87 @@ class WanlingAdapter(BasePlatformAdapter):
                 f"![{alt}](/api/files/{file_id})",
             )
 
+        return content
+
+    # 聚合卡改写的上传 memo 容量上限（key=本地路径或远程 URL → file_id），
+    # 溢出清空。对齐 _edit_meta 的防长连泄漏策略。
+    _IMAGE_MEMO_CAP = 64
+
+    async def _rewrite_images_for_card(self, content: str) -> str:
+        """聚合卡模式图片改写：本地路径与远程图统一替换为 /api/files/ 内部链接。
+
+        与气泡路径（_strip_and_send_local_images / _rewrite_remote_images）的
+        区别——双模式区分的核心：不发独立 image 气泡、不从正文删除路径，而是
+        就地替换成 markdown 图，图文一体进卡（APP 卡内 markdown 元素已支持
+        /api/files/ 渲染 + 点击放大）。由聚合卡 consumer（_dispatch_event）对
+        markdown / markdown_update 事件调用，在 consumer 侧做的原因：上传耗时
+        只拖慢本卡 PATCH，不阻塞 WS 心跳与 agent worker 线程。
+
+        memo 去重：interim 流式快照会重复携带同一路径，memo 保证只上传一次。
+        失败降级：文件不存在/下载/上传失败 → 原文保留（卡里看到路径/外链兜底，
+        不静默吞），与气泡路径的失败语义一致。
+        """
+        if not content:
+            return content
+        # 自检用 __new__ 构造（跳过 __init__），memo 惰性初始化兜底
+        memo = getattr(self, "_image_upload_memo", None)
+        if memo is None:
+            memo = {}
+            self._image_upload_memo = memo
+
+        async def _resolve(key: str, local_path: Optional[str], url: Optional[str]) -> Optional[str]:
+            """memo 查询 + 上传（本地直接传；远程先 cache_image_from_url 下载）。"""
+            if key in memo:
+                return memo[key]
+            if local_path is not None:
+                file_id = await self._upload_file(local_path)
+            else:
+                try:
+                    # cache_image_from_url 是 async：直接 await（to_thread 传
+                    # async 函数只会拿到未 await 的协程对象，下载不会发生）。
+                    cached = await cache_image_from_url(url)
+                except Exception as e:
+                    logger.warning(
+                        "Wanling.card rewrite: download remote image failed, keep URL — %s (%s)",
+                        url, e,
+                    )
+                    return None
+                file_id = await self._upload_file(cached)
+            if file_id:
+                if len(memo) >= self._IMAGE_MEMO_CAP:
+                    memo.clear()
+                memo[key] = file_id
+            return file_id
+
+        # 1) markdown 包裹的本地图 ![alt](/path) → ![alt](/api/files/{fid})
+        #    （先于裸路径处理，只换括号内路径，保 markdown 结构）
+        for m in list(self._LOCAL_MD_IMAGE_RE.finditer(content)):
+            path = m.group("path")
+            if not os.path.isfile(path):
+                continue
+            file_id = await _resolve(path, path, None)
+            if file_id:
+                content = content.replace(
+                    m.group(0), f"![{m.group('alt')}](/api/files/{file_id})"
+                )
+        # 2) 裸本地路径 → ![basename](/api/files/{fid})
+        for m in list(self._LOCAL_IMAGE_RE.finditer(content)):
+            path = m.group("path")
+            if not os.path.isfile(path):
+                continue
+            file_id = await _resolve(path, path, None)
+            if file_id:
+                content = content.replace(
+                    path, f"![{os.path.basename(path)}](/api/files/{file_id})"
+                )
+        # 3) 远程图 ![alt](http...) → 下载转存 → ![alt](/api/files/{fid})
+        for m in list(self._REMOTE_IMAGE_RE.finditer(content)):
+            url = m.group("url")
+            file_id = await _resolve(url, None, url)
+            if file_id:
+                content = content.replace(
+                    m.group(0), f"![{m.group('alt')}](/api/files/{file_id})"
+                )
         return content
 
     @staticmethod
@@ -2136,6 +2233,101 @@ if __name__ == "__main__":
         _check(
             "/api/files/id_a" in out and "/api/files/id_b" in out,
             "多张图串行处理各自替换",
+        )
+
+        # ── 聚合卡模式图片改写（_rewrite_images_for_card：图进卡元素，双模式区分） ──
+        print("== _rewrite_images_for_card 自检 ==")
+
+        # 用例 C1：markdown 包裹的本地图 → /api/files/（alt 保留）
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"png-bytes")
+            local_md = f.name
+        try:
+            out = await _make_adapter(lambda p: "fidA")._rewrite_images_for_card(
+                f"![图表]({local_md})"
+            )
+            _check(out == f"![图表](/api/files/fidA)", "markdown 本地图改写且 alt 保留")
+        finally:
+            os.unlink(local_md)
+
+        # 用例 C2：裸本地路径 → ![basename](/api/files/fid)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(b"jpg-bytes")
+            local_bare = f.name
+        try:
+            out = await _make_adapter(lambda p: "fidB")._rewrite_images_for_card(
+                f"结果见 {local_bare} 以上"
+            )
+            base = os.path.basename(local_bare)
+            _check(
+                f"![{base}](/api/files/fidB)" in out and local_bare not in out,
+                "裸本地路径改写为 markdown 图并移出正文",
+            )
+        finally:
+            os.unlink(local_bare)
+
+        # 用例 C3：本地图 + 远程图混合，各自替换
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"png")
+            local_mix = f.name
+        try:
+            seq_mix = iter(["fid1", "fid2"])
+            with _patch_download(lambda url: "/tmp/mix-cache.jpg"):
+                out = await _make_adapter(lambda p: next(seq_mix))._rewrite_images_for_card(
+                    f"![]({local_mix}) 然后 ![](https://picsum.photos/300/200)"
+                )
+            _check(
+                "/api/files/fid1" in out and "/api/files/fid2" in out
+                and "picsum.photos" not in out and local_mix not in out,
+                "本地图与远程图混合各自改写",
+            )
+        finally:
+            os.unlink(local_mix)
+
+        # 用例 C4：文件不存在 → 原文保留（幻觉路径不静默吞）
+        out = await _make_adapter(lambda p: "fidX")._rewrite_images_for_card(
+            "见 /nonexistent/ghost.png"
+        )
+        _check("/nonexistent/ghost.png" in out and "/api/files/" not in out, "文件不存在 → 原文保留")
+
+        # 用例 C5：上传失败 → 原文保留
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"png")
+            local_fail = f.name
+        try:
+            out = await _make_adapter(lambda p: None)._rewrite_images_for_card(local_fail)
+            _check(local_fail in out and "/api/files/" not in out, "上传失败 → 原文保留")
+        finally:
+            os.unlink(local_fail)
+
+        # 用例 C6：memo 去重——同一 adapter 重复改写同一路径只上传一次
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"png")
+            local_memo = f.name
+        try:
+            calls = {"n": 0}
+
+            def _counting_upload(_p):
+                calls["n"] += 1
+                return "fidMemo"
+
+            ad = _make_adapter(_counting_upload)
+            await ad._rewrite_images_for_card(f"![]({local_memo})")
+            await ad._rewrite_images_for_card(f"![]({local_memo}) 第二次快照")
+            _check(calls["n"] == 1, "memo 去重：同路径重复改写只上传一次")
+        finally:
+            os.unlink(local_memo)
+
+        # 用例 C7：远程图下载失败 → 原 URL 保留
+        def _boom(_u):
+            raise RuntimeError("mock download failure")
+        with _patch_download(_boom):
+            out = await _make_adapter(lambda p: "fid")._rewrite_images_for_card(
+                "![](https://attacker.example/track.png)"
+            )
+        _check(
+            "https://attacker.example/track.png" in out and "/api/files/" not in out,
+            "远程图下载失败 → 原 URL 保留",
         )
 
         # ── send()/edit_message() 流式直发路径（REST 建消息 + PATCH 原地更新） ──

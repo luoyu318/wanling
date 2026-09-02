@@ -638,6 +638,20 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any]) -> None:
         return
     kind = event.get("kind")
 
+    # 聚合卡模式图片改写（双模式区分的核心）：本地图/远程图统一替换为
+    # /api/files/ markdown，图文一体进卡元素；气泡模式的独立 image 气泡路径
+    # 在 adapter.send()，两者互不干扰。改写放 consumer 侧（asyncio task）——
+    # 上传耗时只拖慢本卡 PATCH，不阻塞 WS 心跳与 agent worker 线程。
+    # 改写内部失败降级保留原文；此处兜底防改写器抛异常拖垮事件分发。
+    if kind in ("markdown", "markdown_update"):
+        text = event.get("text") or ""
+        rewriter = getattr(adapter, "_rewrite_images_for_card", None)
+        if rewriter is not None and text:
+            try:
+                event = {**event, "text": await rewriter(text)}
+            except Exception:
+                logger.warning("Wanling aggregate 图片改写失败,保留原文", exc_info=True)
+
     # 断卡（interrupt）：Agent 执行中用户发新消息 → 结束当前聚合卡段落。
     # 按 conv_id 定位活跃 session，running 工具标 error 后 finish(interrupt)
     # 收尾当前卡，重置 session（下个回合 pre_llm_call 开新卡）。
