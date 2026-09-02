@@ -62,7 +62,7 @@ private → published ⇄ disabled
 
 ## 4. JSBridge(window.wanling)
 
-**核心安全决策:token 不进 JS。** JS 调 API 经原生代理注入 Bearer(401 走宿主既有 refresh 重试)。容器页每小程序独立虚拟 origin `https://<appid>.<user_id>.mini.wanling.local`(host 含账号段,`virtualHostFor(appid, uid)`),静态文件由 shouldInterceptRequest 从本地包目录读取(zip-slip 第二层防护,解压时第一层);外链导航一律拦截。
+**核心安全决策:token 不进 JS。** JS 调 API 经原生代理注入 Bearer(401 走宿主既有 refresh 重试)。容器页每小程序独立虚拟 origin `https://<appid>.<user_id>.mini.wanling.local`(host 含账号段,`virtualHostFor(appid, uid)`),静态文件由 shouldInterceptRequest 从本地包目录读取(zip-slip 第二层防护,解压时第一层),`/api/` 路径经宿主 ApiService 带登录态代理回源(包内相对路径引用的头像等宿主资源可显示);外链导航一律拦截。
 
 **虚拟 origin 账号段(多账号 storage 隔离)**:WebView 的 localStorage/IndexedDB/Cache 按 origin 存储,host 加入账号段后每账号独立 origin。隔离矩阵:同账号同 appid 共享,跨账号或跨 appid 均隔离。升级语义:宿主升级(旧版 origin 不含账号段)后 origin 变更,存量小程序旧 storage 不可达,等同数据重置。
 
@@ -79,7 +79,7 @@ private → published ⇄ disabled
 - 权限 fail fast:未声明/未授权直接 reject `permission denied: <perm>`,不静默降级
 - 有效权限 = manifest 声明 ∩ 用户已授权(只收窄,不放大)
 - **身份端点收紧**(宿主行为,存量包立即生效无需改包):`wanling.request` 归一化后命中 `/api/users/me`(真实身份端点,返回全局 user_id)/`/api/me`(防御性拦截,server 当前无此路由,防未来别名漏拦;精确匹配)或 `/api/admin/`(前缀)→ 拒绝,错误 `{code: -32091, message: '身份信息请使用 wanlingGetProfile'}`;迁移指引:身份获取改用 `wanling.getProfile()`
-- **JS 错误消费契约**:语义性拒绝(用户未授权 -32090 / 端点收紧或不支持 -32091)envelope error 为 jsonrpc 对象 `{code, message}`,传输异常(网络/原生异常)为 String;宿主 bootstrap 统一 `throw new Error(error)`,对象形态经 String 转换后 `e.message` 显示 `[object Object]`(已知限制),JS 侧按 `e.message === '[object Object]'` 判型为语义性拒绝
+- **JS 错误消费契约**:envelope error 恒为 String(宿主 handle 出口统一规范化,JS 无需判型),格式:语义性拒绝为 `-<code> <message>`(code 原值已带负号,如 `-32090 用户未授权`/`-32091 身份信息请使用 wanlingGetProfile`,JS 可按前缀分流),传输异常为原生错误描述(如 `permission denied: wanling.api`/网络异常信息);宿主 bootstrap `throw new Error(error)` 后 `e.message` 直接可读
 
 ## 5. 权限模型(双轨)
 

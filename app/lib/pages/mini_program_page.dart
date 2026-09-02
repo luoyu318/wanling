@@ -1,6 +1,7 @@
 // 小程序 WebView 容器页。
-// origin 隔离:每小程序独立虚拟域名 https://<appid>.mini.wanling.local,
-// 静态文件由 shouldInterceptRequest 从本地包目录读取;token 不进 JS,
+// origin 隔离:每小程序独立虚拟域名 https://<appid>.<user_id>.mini.wanling.local
+// (host 含账号段,隔离多账号 storage),静态文件由 shouldInterceptRequest 从
+// 本地包目录读取,/api/ 路径经宿主带登录态代理;token 不进 JS,
 // JS 侧经 window.wanling.request → JSBridge → ApiService.proxyRequest。
 // 模板: templates/flutter-page.dart.tmpl(controller 分离/const+key/loading+error UI)。
 import 'dart:async';
@@ -9,6 +10,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +25,7 @@ import 'package:wanling_core/providers/auth_provider.dart'
 import 'package:wanling_core/providers/local_message_store_provider.dart'
     show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
+import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 
@@ -104,6 +107,64 @@ String? resolveLocalFile(String pkgRoot, String requestPath) {
 /// (同设备多账号打开同一小程序,localStorage/IndexedDB 互不可见)。
 String virtualHostFor(String appid, String uid) =>
     '$appid.$uid.mini.wanling.local';
+
+/// 文本响应(403 越界 / 404 缺失 / 405 非 GET / 502 代理失败)。statusCode 需
+/// 同时带 headers + reasonPhrase(平台约定)。
+WebResourceResponse _plainTextResponse(
+    String text, int statusCode, String reasonPhrase) {
+  return WebResourceResponse(
+    contentType: 'text/plain',
+    contentEncoding: 'utf-8',
+    statusCode: statusCode,
+    reasonPhrase: reasonPhrase,
+    headers: const <String, String>{},
+    data: Uint8List.fromList(text.codeUnits),
+  );
+}
+
+/// 虚拟域 /api/ 资源代理(公开顶层函数便于单测):小程序内相对路径引用的宿主
+/// 资源(如身份卡头像 /api/files/...)解析到虚拟域,WebView 无原生站点可回源,
+/// 改由宿主 ApiService(同登录态)GET baseUrl + 归一化路径,把响应字节与
+/// Content-Type 包成 WebResourceResponse;上游失败 502,非 GET 405。
+/// 返回 null 表示非 /api/ 路径,交还本地包文件逻辑。
+/// 归一化仅防路径混淆(点段折叠):代理目标固定为 baseUrl + path,非开放代理,
+/// 归一化后越出 /api/ 即 403 拒绝(fail fast,对齐 bridge 路径白名单语义)。
+Future<WebResourceResponse?> proxyApiResource(
+  ApiService api,
+  Uri uri, {
+  String method = 'GET',
+}) async {
+  if (!uri.path.startsWith('/api/')) return null;
+  if (method != 'GET') {
+    return _plainTextResponse('method not allowed', 405, 'Method Not Allowed');
+  }
+  String normalized;
+  try {
+    normalized = Uri.parse(uri.path).normalizePath().path;
+  } on FormatException {
+    return _plainTextResponse('forbidden', 403, 'Forbidden');
+  }
+  if (!normalized.startsWith('/api/')) {
+    return _plainTextResponse('forbidden', 403, 'Forbidden');
+  }
+  try {
+    final res = await api.dio.get<List<int>>(
+      normalized,
+      queryParameters: uri.queryParameters.isEmpty
+          ? null
+          : Map<String, dynamic>.from(uri.queryParameters),
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return WebResourceResponse(
+      contentType:
+          res.headers.value(Headers.contentTypeHeader) ?? 'application/octet-stream',
+      data: Uint8List.fromList(res.data ?? const []),
+    );
+  } catch (_) {
+    // 对 WebView 必须返回响应而非抛异常;上游任何失败统一 502 网关错误
+    return _plainTextResponse('bad gateway', 502, 'Bad Gateway');
+  }
+}
 
 /// 扩展名 → MIME,未命中回退 octet-stream。
 String _mimeOf(String path) {
@@ -436,18 +497,6 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     }
   }
 
-  /// 文本响应(403 越界 / 404 缺失)。statusCode 需同时带 headers + reasonPhrase(平台约定)。
-  WebResourceResponse _plainResponse(String text, int statusCode) {
-    return WebResourceResponse(
-      contentType: 'text/plain',
-      contentEncoding: 'utf-8',
-      statusCode: statusCode,
-      reasonPhrase: statusCode == 404 ? 'Not Found' : 'Forbidden',
-      headers: const <String, String>{},
-      data: Uint8List.fromList(text.codeUnits),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final listAsync = ref.watch(miniProgramsProvider);
@@ -465,7 +514,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         ? null
         : AppBar(
             title: Text(_title ?? info?.name ?? '小程序'),
-            // 入口页(无历史)隐藏返回键,退出入口交给胶囊(微信语义)
+            // 入口页(无历史)隐藏返回键,退出入口交给胶囊(主流小程序平台语义)
             automaticallyImplyLeading: false,
             leading: _canGoBack ? BackButton(onPressed: _handleBack) : null,
             centerTitle: true,
@@ -564,15 +613,23 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                     _entryPath == null) {
                   return null;
                 }
+                // 虚拟域 /api/ 资源(头像等宿主资源相对路径引用)→ 宿主带登录态
+                // 代理回源,不经本地包文件;null 交还本地包文件逻辑
+                final proxied = await proxyApiResource(
+                  ref.read(apiProvider),
+                  request.url,
+                  method: request.method ?? 'GET',
+                );
+                if (proxied != null) return proxied;
                 final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
                 // 越出包根(zip-slip 第二层防护) → 403
                 if (filePath == null) {
-                  return _plainResponse('forbidden', 403);
+                  return _plainTextResponse('forbidden', 403, 'Forbidden');
                 }
                 final file = File(filePath);
                 // isFile 同时覆盖存在性 + 非目录(命中目录/缺失 → 404)
                 if (!await FileSystemEntity.isFile(filePath)) {
-                  return _plainResponse('not found', 404);
+                  return _plainTextResponse('not found', 404, 'Not Found');
                 }
                 return WebResourceResponse(
                   contentType: _mimeOf(filePath),
@@ -599,7 +656,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   }
 }
 
-/// 右上角胶囊(微信语义):更多 ●●● | 关闭 ◉。
+/// 右上角胶囊(主流小程序平台语义):更多 ●●● | 关闭 ◉。
 /// default 形态驻留 AppBar actions;custom 形态悬浮 WebView 右上角。
 class _CapsuleButton extends StatelessWidget {
   final VoidCallback onMore;
@@ -615,7 +672,7 @@ class _CapsuleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = foregroundColor ?? Colors.black87;
-    // 双样式(参照微信实拍):深色 fg(白色 AppBar)→白色实底+1px 边框+深色前景;
+    // 双样式(参照主流小程序平台实拍):深色 fg(白色 AppBar)→白色实底+1px 边框+深色前景;
     // 浅色 fg(彩色 AppBar,如红/蓝)→白色 0.6 不透明底+无边框+黑色前景(白点在浅底上不可读)
     final lightFg = fg.computeLuminance() > 0.5;
     final contentColor = lightFg ? Colors.black87 : fg;
@@ -623,7 +680,7 @@ class _CapsuleButton extends StatelessWidget {
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        // 透底程度对齐微信实拍(彩色 AppBar 上可见底色透出,粉白/浅蓝白)
+        // 透底程度对齐主流小程序平台实拍(彩色 AppBar 上可见底色透出,粉白/浅蓝白)
         color: lightFg ? Colors.white.withValues(alpha: .38) : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: lightFg

@@ -51,7 +51,20 @@ class MiniProgramBridge {
     this.requestProfilePermission,
   });
 
+  /// JSBridge 分发唯一出口:先经 [_dispatch] 跑各 case 原逻辑,回传 JS 前把
+  /// envelope 的 error 字段规范化为 String([normalizeBridgeError]),JS 侧
+  /// `new Error(r.error)` 永远拿到可读字符串,无需判型。
   Future<Object?> handle(String handlerName, List<dynamic> args) async {
+    final result = await _dispatch(handlerName, args);
+    if (result is Map && result['error'] != null) {
+      final normalized = Map<String, dynamic>.from(result);
+      normalized['error'] = normalizeBridgeError(normalized['error']);
+      return normalized;
+    }
+    return result;
+  }
+
+  Future<Object?> _dispatch(String handlerName, List<dynamic> args) async {
     try {
       switch (handlerName) {
         case 'wanlingRequest':
@@ -238,6 +251,29 @@ class MiniProgramBridge {
       return null;
     }
   }
+}
+
+/// handle 出口错误规范化(公开顶层函数便于单测):error 恒为 String。
+/// - 语义性拒绝对象 `{code, message}` → `"<code> <message>"`(code 原值已带负号,
+///   如 `-32090 用户未授权`,code 语义保留在字符串前缀,JS 侧可按前缀分流)
+/// - 带 code 无 message → `"<code>"`;仅 message → message
+/// - String 原样(如 `permission denied: ...`/传输异常描述)
+/// - 其余类型 toString 兜底,规范化路径自身不抛异常
+String normalizeBridgeError(dynamic error) {
+  if (error is String) return error;
+  if (error is Map) {
+    final code = error['code'];
+    final message = error['message'];
+    final sb = StringBuffer();
+    if (code != null) sb.write(code);
+    if (message is String && message.isNotEmpty) {
+      if (sb.isNotEmpty) sb.write(' ');
+      sb.write(message);
+    }
+    final text = sb.toString();
+    return text.isEmpty ? '未知错误' : text;
+  }
+  return error?.toString() ?? '未知错误';
 }
 
 /// openPage 白名单:agentDetail 的 agentId 参数校验(UUID,与 server 侧 id 类型一致)。

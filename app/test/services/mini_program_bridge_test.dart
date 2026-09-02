@@ -79,9 +79,7 @@ void main() {
       {'path': '/api/me', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
   });
 
@@ -98,9 +96,7 @@ void main() {
       {'path': '/api/users/me', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
   });
 
@@ -117,8 +113,7 @@ void main() {
       {'path': '/api/users/me?x=1', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
+    expect(r['error'], startsWith('-32091'));
     expect(called, isFalse);
   });
 
@@ -135,8 +130,7 @@ void main() {
       {'path': '/api/me?x=1', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
+    expect(r['error'], startsWith('-32091'));
     expect(called, isFalse);
   });
 
@@ -153,9 +147,7 @@ void main() {
       {'path': '/api/users/me/', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
   });
 
@@ -172,8 +164,7 @@ void main() {
       {'path': '/api/users/me//', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
+    expect(r['error'], startsWith('-32091'));
     expect(called, isFalse);
   });
 
@@ -190,9 +181,7 @@ void main() {
       {'path': '/api/admin/mini-programs', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
   });
 
@@ -209,8 +198,7 @@ void main() {
       {'path': '/api/admin/', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
+    expect(r['error'], startsWith('-32091'));
     expect(called, isFalse);
   });
 
@@ -227,8 +215,7 @@ void main() {
       {'path': '/api/admin//', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
+    expect(r['error'], startsWith('-32091'));
     expect(called, isFalse);
   });
 
@@ -245,10 +232,29 @@ void main() {
       {'path': '/api/users/me%2F', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
+  });
+
+  test('/api/users/me%252F 双编码 → 放行(两端单次解码语义对齐,双编码不构成拦截面)', () async {
+    var calls = 0;
+    String? seenPath;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (path, _, _) async {
+        calls++;
+        seenPath = path;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me%252F', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isTrue);
+    expect(calls, 1);
+    // 透传原路径:dio 原样发 %252F,Go URL.Path 单次解码后为字面 %2F 而非 '/',
+    // 无 301 绕过面;两侧解码次数对齐,拦截面只在单次编码变体
+    expect(seenPath, '/api/users/me%252F');
   });
 
   test('/api/mini-programs/openid 直调自传 appid → 拒绝且不触达 proxy', () async {
@@ -264,9 +270,7 @@ void main() {
       {'path': '/api/mini-programs/openid?appid=tracker', 'method': 'GET'}
     ]);
     expect((r as Map)['ok'], isFalse);
-    final err = r['error'] as Map;
-    expect(err['code'], -32091);
-    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(r['error'], '-32091 身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
   });
 
@@ -558,9 +562,7 @@ void main() {
       );
       final r = await b.handle('wanlingGetProfile', const []);
       expect((r as Map)['ok'], isFalse);
-      final err = r['error'] as Map;
-      expect(err['code'], -32090);
-      expect(err['message'], '用户未授权');
+      expect(r['error'], '-32090 用户未授权');
       expect(persisted, 0);
       expect(fetched, isFalse);
     });
@@ -576,7 +578,7 @@ void main() {
       );
       final r = await b.handle('wanlingGetProfile', const []);
       expect((r as Map)['ok'], isFalse);
-      expect((r['error'] as Map)['code'], -32090);
+      expect(r['error'], startsWith('-32090'));
     });
 
     test('未授权 → 允许 → KVS 落痕 + 返回 {openid,nickname,avatarUrl}', () async {
@@ -647,7 +649,7 @@ void main() {
       );
       final r = await b.handle('wanlingGetProfile', const []);
       expect((r as Map)['ok'], isFalse);
-      expect((r['error'] as Map)['code'], -32091);
+      expect(r['error'], startsWith('-32091'));
       expect(asked, 0);
       expect(fetched, isFalse);
     });
@@ -718,6 +720,33 @@ void main() {
         {'page': 'miniPrograms'}
       ]);
       expect((r3 as Map)['data'], {'route': 'miniPrograms'});
+    });
+  });
+
+  group('normalizeBridgeError(出口规范化,error 恒为 String)', () {
+    test('对象 {code, message} → "-<code> <message>"(code 语义保留在前缀)', () {
+      expect(normalizeBridgeError({
+        'code': -32090,
+        'message': '用户未授权',
+      }), '-32090 用户未授权');
+    });
+
+    test('String 原样透传(传输异常/权限拒绝描述)', () {
+      expect(normalizeBridgeError('permission denied: wanling.api'),
+          'permission denied: wanling.api');
+    });
+
+    test('带 code 无 message → "-<code>"', () {
+      expect(normalizeBridgeError({'code': -32091}), '-32091');
+    });
+
+    test('仅 message 无 code → message', () {
+      expect(normalizeBridgeError({'message': '仅消息'}), '仅消息');
+    });
+
+    test('空对象兜底为可读占位,不抛异常', () {
+      expect(normalizeBridgeError(const {}), '未知错误');
+      expect(normalizeBridgeError(null), '未知错误');
     });
   });
 }
