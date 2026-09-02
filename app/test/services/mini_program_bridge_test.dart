@@ -140,6 +140,43 @@ void main() {
     expect(called, isFalse);
   });
 
+  test('/api/users/me/ 尾斜杠变体 → 拒绝且不触达 proxy(防 301 跟随绕过)', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me/', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
+  test('/api/users/me// 双尾斜杠变体 → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/users/me//', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(called, isFalse);
+  });
+
   test('/api/admin/mini-programs 前缀命中 → 拒绝且不触达 proxy', () async {
     var called = false;
     final b = MiniProgramBridge(
@@ -157,6 +194,48 @@ void main() {
     expect(err['code'], -32091);
     expect(err['message'], '身份信息请使用 wanlingGetProfile');
     expect(called, isFalse);
+  });
+
+  test('/api/mini-programs/openid 直调自传 appid → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/mini-programs/openid?appid=tracker', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
+  test('/api/mini-programs/<id>/package 同前缀合法路径 → 放行不误伤', () async {
+    var calls = 0;
+    String? seenPath;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (path, _, _) async {
+        calls++;
+        seenPath = path;
+        return {'version': '1'};
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {
+        'path': '/api/mini-programs/c94a4aa1/package',
+        'method': 'GET'
+      }
+    ]);
+    expect((r as Map)['ok'], isTrue);
+    expect((r['data'] as Map)['version'], '1');
+    expect(calls, 1);
+    expect(seenPath, '/api/mini-programs/c94a4aa1/package');
   });
 
   test('普通路径 /api/conversations 放行照旧', () async {

@@ -70,13 +70,21 @@ class MiniProgramBridge {
           // 收紧身份/管理端点(归一路径部分精确/前缀匹配,query 不参与判定):
           // /api/users/me 是 server 真实身份端点,拿全局 user_id,小程序应走
           // per-app 的 wanlingGetProfile;/api/me 为防御性拦截(server 当前无此
-          // 路由,防未来新增别名漏拦);/api/admin/* 是宿主管理面,不在小程序信任边界内。
+          // 路由,防未来新增别名漏拦);/api/admin/* 是宿主管理面,不在小程序信任边界内;
+          // /api/mini-programs/openid 的 appid 必须由宿主持有注入,直调可自传
+          // appid 使多个小程序共谋用同一 tracker 跨包关联用户。
           final qIdx = normalized.indexOf('?');
           final pathOnly =
               qIdx >= 0 ? normalized.substring(0, qIdx) : normalized;
-          if (pathOnly == '/api/me' ||
-              pathOnly == '/api/users/me' ||
-              pathOnly.startsWith('/api/admin/')) {
+          // 折叠尾斜杠后再判定:dio 默认跟随重定向,Gin 对带尾斜杠变体返 301
+          // → 无尾斜杠路径,Authorization 随行,精确匹配会被绕过。
+          // 根路径 / 不折叠成空串。
+          final foldedPath = pathOnly.replaceAll(RegExp(r'/+$'), '');
+          final checkPath = foldedPath.isEmpty ? '/' : foldedPath;
+          if (checkPath == '/api/me' ||
+              checkPath == '/api/users/me' ||
+              checkPath == '/api/mini-programs/openid' ||
+              checkPath.startsWith('/api/admin/')) {
             return {
               'ok': false,
               'error': {
@@ -115,6 +123,9 @@ class MiniProgramBridge {
           }
           // openid 经宿主 proxy 通道(带登录态,token 不进 JS);端点失败走外层
           // catch 返错误,不静默、不缓存失败结果(下次授权痕命中后直接重试)。
+          // 注意:此处为 bridge 内部直调 proxy,不经 handle('wanlingRequest')
+          // 分发,故不受 wanlingRequest 对 openid 端点的拦截自锁;appid 由
+          // 宿主持有,JS 无法经此通道注入。
           final profileRes = await proxy(
             '/api/mini-programs/openid?appid=${Uri.encodeComponent(appid!)}',
             'GET',
