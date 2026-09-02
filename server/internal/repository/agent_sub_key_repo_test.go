@@ -245,9 +245,28 @@ func TestAgentSubKeyRepo_RevokeAllForAgent(t *testing.T) {
 		t.Fatalf("agent B 密钥不应被 A 的全吊波及: %+v", gotB)
 	}
 
-	// 空 agent(无密钥)全吊不报错
-	if err := repo.RevokeAllForAgent(t.Context(), agentB.ID); err != nil {
+	// 空 agent(无密钥)全吊不报错:用不存在的 agent(0 条密钥)验证
+	if err := repo.RevokeAllForAgent(t.Context(), uuid.NewString()); err != nil {
 		t.Fatalf("对无密钥 agent 全吊不应报错: %v", err)
+	}
+
+	// 有密钥的 agent B 全吊:报错为 nil,活跃归零,列表里 revoked_at 非空
+	if err := repo.RevokeAllForAgent(t.Context(), agentB.ID); err != nil {
+		t.Fatalf("对 agent B 全吊不应报错: %v", err)
+	}
+	nB, err := repo.CountActive(t.Context(), agentB.ID)
+	if err != nil {
+		t.Fatalf("CountActive agent b after revoke all: %v", err)
+	}
+	if nB != 0 {
+		t.Fatalf("agent B 全吊后活跃应 0,实际 %d", nB)
+	}
+	listB, err := repo.ListByAgent(t.Context(), agentB.ID)
+	if err != nil {
+		t.Fatalf("ListByAgent agent b after revoke all: %v", err)
+	}
+	if len(listB) != 1 || listB[0].RevokedAt == nil {
+		t.Fatalf("agent B 全吊后唯一密钥 revoked_at 应非空: %+v", listB)
 	}
 }
 
@@ -299,12 +318,7 @@ func TestAgentSubKeyRepo_ListByAgent(t *testing.T) {
 		t.Fatalf("列表应含凭据: %+v", list)
 	}
 
-	// 空列表:无密钥的 agent 返回空切片,不报错
-	empty, err := repo.ListByAgent(t.Context(), agentB.ID)
-	if err != nil {
-		t.Fatalf("ListByAgent empty agent: %v", err)
-	}
-	_ = empty // agent B 有 1 条,这里只验证不报错;真正的空列表用不存在的 agent 验证
+	// 空列表:不存在的 agent(0 条密钥)返回空切片,不报错
 	none, err := repo.ListByAgent(t.Context(), uuid.NewString())
 	if err != nil {
 		t.Fatalf("ListByAgent 无密钥 agent 不应报错: %v", err)
