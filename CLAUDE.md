@@ -55,7 +55,7 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 | 新增 / 改 server 路由或 Handler | server/CLAUDE.md |
 | 新增 / 改 Flutter page / provider / widget | app/CLAUDE.md |
 | 新增 / 改插件 install 模式 / adapter 协议 | plugin/CLAUDE.md |
-| 新增 / 改 skills/ 技能 | skills/README.md + 对应 SKILL.md |
+| 新增 / 改 skills/ 技能 | skills/README.md + 对应 SKILL.md（改文件后重生成 manifest.sha256） |
 | 新增 / 改 SDK 协议或方法 | sdk/CLAUDE.md + docs/architecture/sdk.md |
 | 新增 migration | server/CLAUDE.md + docs/ai-handbook/migrations.md（被 server/CLAUDE.md @import） |
 | 跨子系统协议变更（WS opcode / 聚合卡 / 审批卡片 / 扫码配对） | docs/ai-handbook/<对应>.md（物理单文件,各子 CLAUDE.md @import 引用同一份） |
