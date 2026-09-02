@@ -8,6 +8,7 @@ import 'pages/add_friend_page.dart';
 import 'pages/admin_mini_program_page.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/agent_sessions_page.dart';
+import 'pages/agent_sub_keys_page.dart';
 import 'pages/change_password_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/chat/file_browser_page.dart';
@@ -178,6 +179,18 @@ final routerProvider = Provider<GoRouter>((ref) {
           final agentId = state.pathParameters['agentId']!;
           return _cupertinoPage(
             child: AgentSessionsPage(agentId: agentId),
+            key: state.pageKey,
+          );
+        },
+      ),
+      // agent 授权密钥管理页(子密钥列表/吊销):Agent 详情页「授权密钥」进入。
+      // 静态段 'subkeys' 与 '/agent/:agentId/sessions' 同为 3 段,互不冲突。
+      GoRoute(
+        path: '/agent/:agentId/subkeys',
+        pageBuilder: (context, state) {
+          final agentId = state.pathParameters['agentId']!;
+          return _cupertinoPage(
+            child: AgentSubKeysPage(agentId: agentId),
             key: state.pageKey,
           );
         },
