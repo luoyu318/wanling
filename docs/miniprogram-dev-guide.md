@@ -8,5 +8,5 @@
 
 ## 内部专属（不对外）
 
-- agent token 直传：`POST /api/mini-programs`，handler 内 owner 换算（照 file_handler 先例）；SKILL 发布流程见 `plugin/opencode-plugin/skills/wanling-miniprogram-publish/`
+- agent token 直传：`POST /api/mini-programs`，handler 内 owner 换算（照 file_handler 先例）；SKILL 发布流程见 `skills/wanling-miniprogram-publish/`（独立安装，见 `skills/install.sh`）
 - 部署文档站：[docs-site/DEPLOY.md](../docs-site/DEPLOY.md)
