@@ -42,7 +42,7 @@ manifest.json:
 - **不要自绘标题栏/返回按钮**——宿主 AppBar 承担标题与返回(default 形态)
 - **切页时设置 `document.title`**:宿主 AppBar 标题实时跟随,例如 `document.title = '订单详情'`
 - **多级页面用 hash/history 路由**(如 `location.hash='#detail'` + `hashchange`),系统返回键=回上一页;入口页再按返回=退出小程序。纯 div 切换不产生历史,返回键会直接退出小程序
-- **右上角胶囊为宿主固定提供**(更多/关闭,两形态均显示):自绘头部时右上角预留 `高 32dp、右边距 12dp` 的区域,避免内容被遮挡(微信小程序同款规范)
+- **右上角胶囊为宿主固定提供**(更多/关闭,两形态均显示):自绘头部时右上角预留 `高 32dp、右边距 12dp` 的区域,避免内容被遮挡(主流小程序平台同款规范)
 - 参考实现:`scripts/examples/miniprogram-showcase/index.html`(hash 路由 + document.title 同步)、`scripts/examples/miniprogram-header/index.html`(custom 自绘搜索框头部)
 
 index.html 是一个纯静态页,需要宿主能力时调 `window.wanling`(完整示例见 `scripts/examples/miniprogram-hello/index.html`):
@@ -72,7 +72,7 @@ cd hello-demo && zip -r ../hello-demo.zip .
 ## 2. 全流程:上传 → 私有运行 → 授权 → 分享 → publish
 
 1. **上传**:APP「万灵」tab → 小程序列表 → 上传按钮 → 系统文件选择器选 zip。任意用户可上传,包落为 `private`(仅自己可见可运行)。Agent 也可用 agent token 直传 `POST /api/mini-programs`(owner 记到 agent 服务的真实用户)
-2. **私有运行**:列表「我上传的」分组点开即运行。页面运行在独立虚拟 origin `https://<appid>.mini.wanling.local`,登录 token 不进 JS,API 调用全部经 `wanling.request` 原生代理
+2. **私有运行**:列表「我上传的」分组点开即运行。页面运行在独立虚拟 origin `https://<appid>.<user_id>.mini.wanling.local`(host 含账号段),登录 token 不进 JS,API 调用全部经 `wanling.request` 原生代理。**storage 按账号隔离**:localStorage/IndexedDB 在同设备多账号间互不可见(同账号同小程序共享);宿主升级换 origin 后旧 storage 等同重置
 3. **权限弹窗**:首次运行时,`wanling.chat.read` / `wanling.chat.share` 逐项弹授权对话框(允许/拒绝;拒绝后对应 API 持续 reject)。`wanling.api` 不弹窗,manifest 声明即静默生效。授权结果本地持久化,**卸载小程序即重置**,重装重新授权
 4. **分享卡片**:页内调 `wanling.shareToChat({title, params})` → 弹会话选择器 → 以 `mini_program_card` 发到所选会话。**仅 published 状态可分享**,私有小程序会 reject「仅公开小程序可分享到会话」
 5. **admin publish**:管理员对该小程序执行 `PUT /api/mini-programs/:id/status` body `{"status":"published"}` → 进入公共库全员可见。publish 时 server 自动对包做 ed25519 签名
@@ -104,4 +104,4 @@ cd hello-demo && zip -r ../hello-demo.zip .
 - `version` 单调递增;同 appid 重传要求 owner 一致,整包覆盖(新包字节 + 新 manifest)
 - **静默更新**:APP 打开小程序时对比服务端 `version` 与本地已装版本,不一致自动下载替换(下载 → sha256 → 验签 → 解压 .tmp → 原子换目录),用户无感
 - 换版本重传后状态重置为 `private` 且签名清空:已 published 的小程序改包后需管理员重新 publish(重新签名后公共可见);重 publish 前 shareToChat 与公共库均不可用
-- 宿主能力白名单只有一层:`/api/` 前缀 REST(经 `wanling.request`);页面自身可直接 fetch 外部网络(容器只拦截虚拟 origin 的静态资源请求),但登录凭证永不进 JS,宿主数据一律走 `window.wanling`
+- 宿主能力白名单只有一层:`/api/` 前缀 REST(经 `wanling.request`);页面自身可直接 fetch 外部网络(容器只拦截虚拟 origin 的静态资源请求),但登录凭证永不进 JS,宿主数据一律走 `window.wanling`。**宿主资源直引**:虚拟域内 `<img src="/api/...">` 等相对路径由宿主带登录态代理回源(GET),包内页面可直接引用当前用户可见的宿主图片资源(如头像),无需经 bridge

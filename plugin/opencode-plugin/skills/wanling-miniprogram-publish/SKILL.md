@@ -32,13 +32,18 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 
 ## 二、可用的宿主 JSBridge（页面内调用）
 
-- `wanling.request({path, method, body})` — 调万灵 API（仅 `/api/` 前缀），带用户登录态，返回业务 data
+- `wanling.request({path, method, body})` — 调万灵 API（仅 `/api/` 前缀，`/api/users/me` 与 `/api/admin/*` 收紧不可调），带用户登录态，返回业务 data
+- `wanling.getProfile()` — 获取当前用户身份 `{openid, nickname, avatarUrl}`（调用式授权：首次弹授权窗，拒绝可重试）。openid 为本小程序内专属匿名标识，不同小程序互不相同，永久稳定——做用户标识一律用它，不要依赖全局账号 id
 - `wanling.getChatContext()` — 返回 `{conversation_id}`（仅从聊天卡片打开时有值）
 - `wanling.shareToChat({title, params})` — 弹会话选择器分享卡片（仅公开小程序可分享）
 - `wanling.openPage({page, params})` — 跳宿主页面白名单：`home` / `miniPrograms` / `agentDetail`（params.agentId 须 UUID）
 - `wanling.close()` — 关闭小程序
 
-权限语义：`wanling.api` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
+权限语义：`wanling.api` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权，profile 为调用式授权（调 getProfile 时弹）。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
+
+存储与资源：
+- **localStorage 按账号隔离**：同设备多账号打开同一小程序，storage 互不可见（同账号共享）；宿主升级可能重置旧 storage，勿作为唯一持久化依赖
+- **宿主资源直引**：`<img src="/api/...">` 等相对路径由宿主带登录态代理回源（GET），可直接引用当前用户可见的宿主图片资源（如 getProfile 返回的 avatarUrl）
 
 ## 二·五、页面与导航约定（强制，违反会被返回键退出）
 
