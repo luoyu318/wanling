@@ -78,7 +78,7 @@ private → published ⇄ disabled
 - envelope:原生返回 `{ok: true, data}` / `{ok: false, error}`,JS bootstrap 将 ok 转 resolve(data)/throw Error(error)
 - 权限 fail fast:未声明/未授权直接 reject `permission denied: <perm>`,不静默降级
 - 有效权限 = manifest 声明 ∩ 用户已授权(只收窄,不放大)
-- **身份端点收紧**(宿主行为,存量包立即生效无需改包):`wanling.request` 归一化后命中 `/api/users/me`(真实身份端点,返回全局 user_id)/`/api/me`(防御性拦截,server 当前无此路由,防未来别名漏拦;精确匹配)或 `/api/admin/`(前缀)→ 拒绝,错误 `{code: -32091, message: '身份信息请使用 wanlingGetProfile'}`;迁移指引:身份获取改用 `wanling.getProfile()`
+- **身份端点收紧**(宿主行为,存量包立即生效无需改包):`wanling.request` 归一化后命中 `/api/users/me`(真实身份端点,返回全局 user_id)/`/api/me`(防御性拦截,server 当前无此路由,防未来别名漏拦;精确匹配)或 `/api/admin`(前缀+精确)→ 拒绝,错误 `-32091 身份信息请使用 wanlingGetProfile`;迁移指引:身份获取改用 `wanling.getProfile()`
 - **JS 错误消费契约**:envelope error 恒为 String(宿主 handle 出口统一规范化,JS 无需判型),格式:语义性拒绝为 `-<code> <message>`(code 原值已带负号,如 `-32090 用户未授权`/`-32091 身份信息请使用 wanlingGetProfile`,JS 可按前缀分流),传输异常为原生错误描述(如 `permission denied: wanling.api`/网络异常信息);宿主 bootstrap `throw new Error(error)` 后 `e.message` 直接可读
 
 ## 5. 权限模型(双轨)
