@@ -19,7 +19,13 @@ export default defineConfig({
         },
         {
           label: '指南',
-          items: ['guides/manifest', 'guides/navigation'],
+          items: [
+            'guides/manifest',
+            'guides/navigation',
+            'guides/permissions',
+            'guides/identity',
+            'guides/storage',
+          ],
         },
       ],
       customCss: ['./src/styles/custom.css'],

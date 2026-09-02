@@ -1,0 +1,45 @@
+---
+title: 身份与用户
+description: getProfile、openid 语义与宿主资源直引
+---
+
+# 身份与用户
+
+## 获取用户身份
+
+调用 `wanling.getProfile()` 获取当前用户身份（调用式授权，授权流程见[权限与授权](./permissions/)）：
+
+```js
+const profile = await wanling.getProfile();
+// profile: { openid, nickname, avatarUrl }
+```
+
+- `openid`：当前用户在你的小程序下的唯一标识，语义见下节
+- `nickname` / `avatarUrl`：昵称与头像，取自用户登录态快照
+
+当前小程序的 appid 由宿主容器注入，JS 不可传参指定——这保证了你拿到的身份信息一定对应你自己的小程序，无法伪造他人 appid。
+
+## openid 语义
+
+三条铁律：
+
+1. **per-(用户 × 小程序) 唯一**：同一用户在不同小程序下的 openid 不同，小程序之间**不可凭 openid 关联同一用户**
+2. **永久稳定**：openid 一经生成不变，卸载重装小程序也不会改变
+3. **匿名性来自 per-app 隔离**：平台不提供跨小程序的统一用户身份
+
+因此，**做用户标识一律使用 openid，不要依赖全局账号 id**——你的小程序拿不到全局账号 id，依赖它的设计也无法成立。
+
+## 身份端点收紧
+
+`wanling.request` 不允许调用真实身份端点与管理端点：
+
+- `/api/users/me`（返回全局 user_id）
+- `/api/admin` 前缀的管理端点
+
+命中即拒绝，错误信息：`-32091 身份信息请使用 wanlingGetProfile`。
+
+这是宿主侧行为，**对存量小程序立即生效、无需改包**。迁移指引：身份获取一律改用 `wanling.getProfile()`。
+
+## 宿主资源直引
+
+包内页面可直接用相对路径引用宿主资源，例如 `<img src="/api/..." />`：宿主会带登录态将其代理回源（GET），当前用户可见的宿主图片资源可直接显示，无需经 bridge——典型用法是展示 `wanling.getProfile()` 返回的 `avatarUrl`。
