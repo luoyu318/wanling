@@ -5,6 +5,8 @@ class User {
   final String? bio;
   final String? avatarUrl;
   final DateTime createdAt;
+  /// 账号角色（user / admin）。旧 server 无此字段时缺省 user。
+  final String role;
 
   User({
     required this.id,
@@ -13,6 +15,7 @@ class User {
     this.bio,
     this.avatarUrl,
     required this.createdAt,
+    this.role = 'user',
   });
 
   /// 展示名：昵称非空用昵称，否则回退账号 username。
@@ -26,6 +29,7 @@ class User {
         bio: json['bio'],
         avatarUrl: json['avatar_url'],
         createdAt: DateTime.parse(json['created_at']),
+        role: json['role'] as String? ?? 'user',
       );
 
   /// copyWith 用 clearXxx bool 区分"不动"和"清空"：
@@ -45,6 +49,8 @@ class User {
         bio: clearBio ? null : (bio ?? this.bio),
         avatarUrl: avatarUrl ?? this.avatarUrl,
         createdAt: createdAt,
+        // role 不随资料编辑变更,copyWith 无 role 参数,仅透传保留
+        role: role,
       );
 
   Map<String, dynamic> toJson() => {
@@ -54,5 +60,6 @@ class User {
         'bio': bio,
         'avatar_url': avatarUrl,
         'created_at': createdAt.toIso8601String(),
+        'role': role,
       };
 }

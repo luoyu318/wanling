@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:wanling_core/models/admin_mini_program_info.dart';
 import 'package:wanling_core/models/agent.dart';
 import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/models/approval.dart';
@@ -9,6 +10,7 @@ import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/friendship.dart';
 import 'package:wanling_core/models/login_result.dart';
 import 'package:wanling_core/models/message.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/models/pairing.dart';
 import 'package:wanling_core/models/register_result.dart';
 import 'package:wanling_core/models/slash_command.dart';
@@ -29,8 +31,8 @@ class ApiService {
   void Function()? _onUnauthorized;
 
   /// refresh 成功后的回调,通知 auth_provider 持久化新 token pair。
-  /// 参数:(newAccessToken, newRefreshToken)。
-  void Function(String access, String refresh)? _onTokenRefreshed;
+  /// 参数:(newAccessToken, newRefreshToken, role)。
+  void Function(String access, String refresh, String role)? _onTokenRefreshed;
 
   /// 当前 refresh token,由 auth_provider 在 login/restoreSession 后注入。
   /// null = 未登录或仅 access token 模式(任何 401 都直接登出)。
@@ -60,7 +62,7 @@ class ApiService {
   }
 
   /// 注入 refresh 成功回调,auth_provider 用于持久化新 token pair。
-  void setOnTokenRefreshed(void Function(String access, String refresh) cb) {
+  void setOnTokenRefreshed(void Function(String access, String refresh, String role) cb) {
     _onTokenRefreshed = cb;
   }
 
@@ -198,9 +200,11 @@ class ApiService {
       );
       final newAccess = res.data['token'] as String;
       final newRefresh = res.data['refresh_token'] as String;
+      // refresh 响应顶层带 role(缺省 user,兼容旧 server)
+      final role = res.data['role'] as String? ?? 'user';
       _refreshToken = newRefresh;
       setToken(newAccess);
-      _onTokenRefreshed?.call(newAccess, newRefresh);
+      _onTokenRefreshed?.call(newAccess, newRefresh, role);
       return newAccess;
     } finally {
       _refreshInFlight = null;
@@ -603,6 +607,50 @@ class ApiService {
         .toList();
   }
 
+  /// 用户可见小程序列表(published 全量 + 自己的私有)。
+  /// 拦截器剥 {ok:true,data:[...]} 后 res.data 直接是 list。
+  Future<List<MiniProgramInfo>> getMiniPrograms() async {
+    final res = await _dio.get('/api/mini-programs');
+    return (res.data as List)
+        .map((e) => MiniProgramInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// admin 审核全量列表(server 端要求 admin 角色,否则 403)。
+  Future<List<AdminMiniProgramInfo>> getAdminMiniPrograms() async {
+    final res = await _dio.get('/api/admin/mini-programs');
+    final list = res.data as List<dynamic>;
+    return list
+        .map((e) => AdminMiniProgramInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// admin 小程序状态流转(published/disabled)。
+  Future<void> setMiniProgramStatus(String id, String status) async {
+    await _dio.put('/api/admin/mini-programs/$id/status',
+        data: {'status': status});
+  }
+
+  /// 小程序 JSBridge 代理:仅放行 /api/ 前缀,带登录态与 401 refresh 重试。
+  /// token 留在原生层,JS 上下文永不接触。
+  /// 拦截器已剥 envelope,返回值为裸 payload
+  /// (JS 侧 `wanling.request` 拿到的即 REST data 字段内容)。
+  Future<dynamic> proxyRequest(
+    String path, {
+    String method = 'GET',
+    Object? body,
+  }) async {
+    if (!path.startsWith('/api/')) {
+      throw ArgumentError('仅允许 /api/ 前缀路径: $path');
+    }
+    final res = await _dio.request<dynamic>(
+      path,
+      data: body,
+      options: Options(method: method),
+    );
+    return res.data;
+  }
+
   /// 游标分页拉取历史消息。
   /// [before] 为指定时间戳（RFC3339），返回 created_at < before 的消息。
   /// 不传 before 时返回最新 limit 条。
@@ -812,9 +860,11 @@ class ApiService {
   }
 
   /// 修改当前登录用户的密码。不需要旧密码（JWT 已验证身份）。
-  /// 改密成功后 server 返新 token pair（旧 token 因 tokenver 自增已失效）。
-  /// 返回 (token, refreshToken) 供调用方持久化 + 更新 api 实例。
-  Future<({String token, String refreshToken})> changePassword(
+  /// 改密成功后 server 返新 token pair（旧 token 因 tokenver 自增已失效），
+  /// 响应顶层带 role（与 Login/Refresh 契约一致，DB 为准）。
+  /// 返回 (token, refreshToken, role) 供调用方持久化 + 更新 api 实例 + 同步角色。
+  /// 旧 server 不带 role 字段时 role 为空串，由调用方决定保留现值。
+  Future<({String token, String refreshToken, String role})> changePassword(
       String newPassword) async {
     final res = await _dio.put('/api/users/me/password', data: {
       'new_password': newPassword,
@@ -822,6 +872,7 @@ class ApiService {
     return (
       token: res.data['token'] as String,
       refreshToken: res.data['refresh_token'] as String,
+      role: (res.data['role'] as String?) ?? '',
     );
   }
 

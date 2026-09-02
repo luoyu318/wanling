@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/conversation_provider.dart'
     show convByIdProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
+import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/avatar.dart';
 import '../widgets/unread_badge.dart';
@@ -111,7 +114,7 @@ class _NavEditPageState extends ConsumerState<NavEditPage> {
   }
 }
 
-/// 槽位显示名:固定项文案 / 会话 displayName / agent 名,缺数据回退原始 id。
+/// 槽位显示名:固定项文案 / 会话 displayName / 小程序名 / agent 名,缺数据回退原始 id。
 String _slotName(WidgetRef ref, String tabId) {
   if (tabId == kNavTabMsg) return kNavTabMsgLabel;
   if (tabId == kNavTabWanling) return kNavTabWanlingLabel;
@@ -119,10 +122,18 @@ String _slotName(WidgetRef ref, String tabId) {
   if (convId != null) {
     return ref.watch(convByIdProvider(convId))?.displayName ?? tabId;
   }
+  final appid = navMpAppidOf(tabId);
+  if (appid != null) {
+    final list = ref.watch(miniProgramsProvider).valueOrNull;
+    for (final m in list ?? const <MiniProgramInfo>[]) {
+      if (m.appid == appid) return m.name;
+    }
+    return appid;
+  }
   return ref.watch(agentByIdProvider(tabId))?.name ?? tabId;
 }
 
-/// 槽位内容:固定项图标方块 / 「更多」图标方块 / agent 大圆角方形头像。
+/// 槽位内容:固定项图标方块 / 「更多」图标方块 / agent·会话·小程序大圆角方形头像。
 /// 减号仅在显式传入 onUnpin 时出现(固定项无减号,不可移除)。
 class _SlotBox extends ConsumerWidget {
   const _SlotBox({
@@ -162,12 +173,26 @@ class _SlotBox extends ConsumerWidget {
       );
     } else {
       final convId = navConvIdOf(tabId);
+      final mpAppid = navMpAppidOf(tabId);
       final String? avatarUrl;
       final int unread;
       if (convId != null) {
         final conv = ref.watch(convByIdProvider(convId));
         avatarUrl = conv?.displayAvatarUrl;
         unread = conv?.unreadCount ?? 0;
+      } else if (mpAppid != null) {
+        // 小程序:icon 拼 baseUrl,无未读角标(icon 空走 Avatar 首字 fallback)。
+        final list = ref.watch(miniProgramsProvider).valueOrNull;
+        MiniProgramInfo? mp;
+        for (final m in list ?? const <MiniProgramInfo>[]) {
+          if (m.appid == mpAppid) {
+            mp = m;
+            break;
+          }
+        }
+        final url = mp?.iconUrlFor(ref.watch(apiProvider).baseUrl);
+        avatarUrl = (url == null || url.isEmpty) ? null : url;
+        unread = 0;
       } else {
         avatarUrl = ref.watch(agentByIdProvider(tabId))?.avatarUrl;
         unread = ref.watch(agentTabUnreadProvider(tabId));

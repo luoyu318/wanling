@@ -9,15 +9,27 @@ import (
 )
 
 type Config struct {
-	Server  ServerConfig
-	DB      DBConfig
-	Redis   RedisConfig
-	JWT     JWTConfig
-	Storage StorageConfig
-	CORS    CORSConfig
-	WS      WSConfig
-	Hub     HubConfig
-	Message MessageConfig
+	Server      ServerConfig
+	DB          DBConfig
+	Redis       RedisConfig
+	JWT         JWTConfig
+	Storage     StorageConfig
+	CORS        CORSConfig
+	WS          WSConfig
+	Hub         HubConfig
+	Message     MessageConfig
+	Admin       AdminConfig
+	MiniProgram MiniProgramConfig
+}
+
+// AdminConfig 平台管理员(自部署语义:管理员=部署者)。
+type AdminConfig struct {
+	Usernames []string // ADMIN_USERNAMES,登录命中签发 role=admin
+}
+
+// MiniProgramConfig 小程序容器配置。
+type MiniProgramConfig struct {
+	MaxZipBytes int64 // 单包上限(字节),上传用 MaxBytesReader 拦截
 }
 
 type ServerConfig struct {
@@ -132,6 +144,12 @@ func Load() (*Config, error) {
 		Message: MessageConfig{
 			MaxBatchDelete: getEnvInt("MSG_MAX_BATCH_DELETE", 100),
 			RecallWindow:   getEnvDuration("MSG_RECALL_WINDOW", 5*time.Minute),
+		},
+		Admin: AdminConfig{
+			Usernames: parseCSV(getEnv("ADMIN_USERNAMES", "")),
+		},
+		MiniProgram: MiniProgramConfig{
+			MaxZipBytes: getEnvInt64("MINIPROGRAM_MAX_ZIP_BYTES", 20<<20),
 		},
 	}, nil
 }

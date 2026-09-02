@@ -133,6 +133,24 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 onTap: () => context.push('/change-password'),
               ),
               SettingsTile(
+                icon: Icons.widgets_outlined,
+                iconColor: AppColors.accentGreen,
+                label: '小程序',
+                showDivider: false,
+                showChevron: false,
+                onTap: () => context.push('/mini-programs'),
+              ),
+              // admin 专属:小程序审核入口(select 只订阅 isAdmin,避免整 state 重建)
+              if (ref.watch(authProvider.select((s) => s.isAdmin)))
+                SettingsTile(
+                  icon: Icons.admin_panel_settings_outlined,
+                  iconColor: const Color(0xFFB3560E),
+                  label: '小程序审核',
+                  showDivider: false,
+                  showChevron: false,
+                  onTap: () => context.push('/admin/mini-programs'),
+                ),
+              SettingsTile(
                 icon: Icons.info,
                 iconColor: const Color(0xFF7A5AF8),
                 label: '关于',

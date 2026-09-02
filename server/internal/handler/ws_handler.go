@@ -124,7 +124,14 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := hub.NewClient(connCtx, claims.Subject, claims.Role, conn)
+	// admin 兼作 user(与 HTTP AuthMiddlewareWithStore 的归一口径一致):
+	// hub 分发(SendToUser/流式/busy)仅认 user/agent 两键,admin 原样注册
+	// 会成为收不到任何广播的孤儿连接。放行侧无角色白名单,归一不影响连接。
+	wsRole := claims.Role
+	if wsRole == "admin" {
+		wsRole = "user"
+	}
+	client := hub.NewClient(connCtx, claims.Subject, wsRole, conn)
 	h.hub.Register <- client
 
 	go h.writePump(client)

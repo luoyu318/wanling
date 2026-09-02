@@ -11,8 +11,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wanling/server/internal/auth"
+	"github.com/wanling/server/internal/repository"
 )
 
 // TestValidatePasswordStrength 仅测函数本身(handler 集成测试需 mock repo,跳过)。
@@ -57,7 +59,8 @@ func newAuthTestStore(t *testing.T) *auth.TokenStore {
 }
 
 // newAuthHandlerWithStore 构造带 Redis store 的 AuthHandler。
-// userRepo/agentRepo 传 nil：Refresh/Logout 路径不碰 DB（只读/写 Redis）。
+// userRepo/agentRepo 传 nil：仅适用于不触发 Refresh DB 重读的路径（Logout、无效 token 拒绝等）。
+// 需要 userRepo 的用例（Refresh happy path / role 重算）须自建真库 repo。
 func newAuthHandlerWithStore(t *testing.T) *AuthHandler {
 	t.Helper()
 	return NewAuthHandler(nil, nil, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL)
@@ -78,16 +81,23 @@ func doRefreshRequest(t *testing.T, h *AuthHandler, body string) *httptest.Respo
 }
 
 // TestRefresh_HappyPath 验证完整 rotation 流程：
-//   - 用 CreateRefresh 预置一个有效 refresh token（ver=0）；
-//   - POST /api/auth/refresh 携带该 token → 期望 200 + 返回新 token pair；
+//   - 真库建用户（role=user），用 CreateRefresh 预置有效 refresh token（ver=0）；
+//   - POST /api/auth/refresh 携带该 token → 期望 200 + 返回新 token pair + 顶层 role；
 //   - 旧 refresh token 应被删除（GetRefresh 返 nil）。
 func TestRefresh_HappyPath(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	user, err := urepo.Create(t.Context(), shortName(t, "ref_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(urepo, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 	ctx := context.Background()
 
 	const oldRefresh = "old-refresh-abc"
-	if err := store.CreateRefresh(ctx, oldRefresh, "user-happy", "user", 0, authRefreshTTL); err != nil {
+	if err := store.CreateRefresh(ctx, oldRefresh, user.ID, "user", 0, authRefreshTTL); err != nil {
 		t.Fatalf("CreateRefresh: %v", err)
 	}
 
@@ -99,6 +109,10 @@ func TestRefresh_HappyPath(t *testing.T) {
 	newRefresh, _ := data["refresh_token"].(string)
 	if newAccess == "" || newRefresh == "" {
 		t.Fatalf("响应缺少 token/refresh_token: %v", data)
+	}
+	// 顶层 role 与 DB 用户一致
+	if data["role"] != "user" {
+		t.Fatalf("响应顶层 role 应为 user: %v", data["role"])
 	}
 	if newRefresh == oldRefresh {
 		t.Fatal("refresh token 未 rotation：新旧相同")
@@ -118,7 +132,7 @@ func TestRefresh_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRefresh(new): %v", err)
 	}
-	if newData == nil || newData.UserID != "user-happy" {
+	if newData == nil || newData.UserID != user.ID {
 		t.Fatalf("新 refresh token 缺失或数据错误: %+v", newData)
 	}
 
@@ -127,8 +141,47 @@ func TestRefresh_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToken(new access): %v", err)
 	}
-	if claims.Subject != "user-happy" {
+	if claims.Subject != user.ID {
 		t.Fatalf("新 access token subject 错误: %s", claims.Subject)
+	}
+}
+
+// TestRefresh_RoleFromDBNotToken 验证 role 以 DB 为准：
+// 旧 refresh token 内 role=admin（历史签发），但 DB 用户 role=user（已被撤销）→
+// 刷新后响应 role=user，且新 access token claims.Role=user，证明 data.Role 被弃用。
+func TestRefresh_RoleFromDBNotToken(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	user, err := urepo.Create(t.Context(), shortName(t, "demote_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+
+	store := newAuthTestStore(t)
+	h := NewAuthHandler(urepo, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	ctx := context.Background()
+
+	// 构造历史 refresh token：data.Role="admin"，与 DB 当前 role=user 不符
+	const staleRefresh = "stale-admin-refresh"
+	if err := store.CreateRefresh(ctx, staleRefresh, user.ID, "admin", 0, authRefreshTTL); err != nil {
+		t.Fatalf("CreateRefresh: %v", err)
+	}
+
+	body := `{"refresh_token":"` + staleRefresh + `"}`
+	w := doRefreshRequest(t, h, body)
+
+	data := AssertOk(t, w, http.StatusOK)
+	if data["role"] != "user" {
+		t.Fatalf("刷新后 role 应以 DB 为准(user),实际: %v", data["role"])
+	}
+
+	newAccess, _ := data["token"].(string)
+	claims, err := auth.ParseToken(authTestSecret, newAccess)
+	if err != nil {
+		t.Fatalf("ParseToken(new access): %v", err)
+	}
+	if claims.Role != "user" {
+		t.Fatalf("新 access token claims.Role 应为 user,实际: %s", claims.Role)
 	}
 }
 
@@ -199,6 +252,20 @@ func doLogoutRequest(t *testing.T, h *AuthHandler, store *auth.TokenStore, claim
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// doAuthRequest 构造 POST /api/auth/<path>（register/login）请求。
+func doAuthRequest(t *testing.T, path string, hf gin.HandlerFunc, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/auth/"+path, hf)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/"+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -301,4 +368,45 @@ func TestLogout_BlacklistedTokenRejectedByMiddleware(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	AssertErr(t, w, http.StatusUnauthorized, "token_revoked")
+}
+
+// --- Login / Register 响应顶层 role 测试 ---
+
+// TestLogin_ResponseTopLevelRole 验证登录响应顶层带 role，口径与 DB 一致（非 admin 账号 → user）。
+func TestLogin_ResponseTopLevelRole(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	h := NewAuthHandler(urepo, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+
+	username := shortName(t, "login_")
+	hash, err := bcrypt.GenerateFromPassword([]byte("Str0ng!Pass"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("bcrypt hash: %v", err)
+	}
+	if _, err := urepo.Create(t.Context(), username, string(hash)); err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+
+	body := `{"username":"` + username + `","password":"Str0ng!Pass"}`
+	w := doAuthRequest(t, "login", h.Login, body)
+
+	data := AssertOk(t, w, http.StatusOK)
+	if data["role"] != "user" {
+		t.Fatalf("登录响应顶层 role 应为 user,实际: %v", data["role"])
+	}
+}
+
+// TestRegister_ResponseTopLevelRole 验证注册响应顶层带 role（新用户默认 user）。
+func TestRegister_ResponseTopLevelRole(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	h := NewAuthHandler(urepo, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+
+	body := `{"username":"` + shortName(t, "reg_") + `","password":"Str0ng!Pass"}`
+	w := doAuthRequest(t, "register", h.Register, body)
+
+	data := AssertOk(t, w, http.StatusCreated)
+	if data["role"] != "user" {
+		t.Fatalf("注册响应顶层 role 应为 user,实际: %v", data["role"])
+	}
 }

@@ -1,0 +1,52 @@
+---
+title: 页面与导航
+description: 容器托管的标题栏、返回键与胶囊区约定
+---
+
+
+小程序页面运行在宿主 WebView 容器内，标题栏、返回键与右上角胶囊区均由宿主托管。遵循本页约定可以避免最常见的三类容器适配问题。
+
+## 不要自绘标题栏
+
+default 形态（`navigationBar.style` 缺省值）下，页面标题与返回按钮由宿主原生标题栏承担，小程序内不要再画自己的 header 与返回按钮。
+
+页面标题通过 `document.title` 同步：宿主标题栏实时跟随 `document.title`，切页时设置即可，零协议成本：
+
+```html
+<script>
+  document.title = '订单详情';
+</script>
+```
+
+未设置时默认显示 manifest 的 `name`。`navigationBar` 的完整声明见包格式规范的 [manifest.json 全字段](/docs/guides/manifest/)。
+
+## 返回键语义
+
+宿主会拦截系统返回（包括标题栏返回键）：WebView 可回退（`canGoBack()` 为真）则回退到上一页，否则退出小程序。
+
+因此**多级页面必须使用 hash / history 路由**，让每次页面切换产生一条浏览器历史：
+
+```html
+<script>
+  // 进入详情页：产生历史条目，返回键可回到上一页
+  location.hash = '#detail';
+
+  // 监听 hash 变化，渲染对应页面
+  window.addEventListener('hashchange', () => {
+    /* 按 location.hash 渲染 */
+  });
+</script>
+```
+
+如果只用纯 div 切换显隐（不产生历史条目），用户按返回键会直接退出小程序。
+
+## 右上角胶囊区
+
+宿主在右上角固定提供胶囊按钮（更多 / 关闭），两种 navigationBar 形态下均显示，小程序无法移除。
+
+使用 custom 形态自绘头部时，页面右上角必须预留 **高 32dp、右边距 12dp** 的区域，避免内容被胶囊遮挡。
+
+## 参考实现
+
+- hash 路由 + `document.title` 同步：[showcase 源码](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-showcase)（仓库内相对路径 `scripts/examples/miniprogram-showcase/`）
+- custom 形态自绘搜索框头部：[header 源码](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-header)（仓库内相对路径 `scripts/examples/miniprogram-header/`）

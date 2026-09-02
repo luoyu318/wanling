@@ -58,9 +58,9 @@ void main() {
     test('401 + refresh 成功 → 用新 token 重试原请求, 不触发 onUnauthorized', () async {
       final api = ApiService(baseUrl: 'http://test');
       api.setRefreshToken('rt-old');
-      final refreshedTokens = <(String, String)>[];
-      api.setOnTokenRefreshed((access, refresh) {
-        refreshedTokens.add((access, refresh));
+      final refreshedTokens = <(String, String, String)>[];
+      api.setOnTokenRefreshed((access, refresh, role) {
+        refreshedTokens.add((access, refresh, role));
       });
       var unauthorized = false;
       api.setOnUnauthorized(() => unauthorized = true);
@@ -85,6 +85,8 @@ void main() {
       expect(refreshedTokens.length, 1);
       expect(refreshedTokens.first.$1, 'access-new');
       expect(refreshedTokens.first.$2, 'rt-new');
+      // refresh 响应无 role 字段 → 回调缺省 'user'
+      expect(refreshedTokens.first.$3, 'user');
 
       // 验证 refresh 请求 body 携带原 refresh token
       final refreshReq = (api.dio.httpClientAdapter as SequenceByPathAdapter)

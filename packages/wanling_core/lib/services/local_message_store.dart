@@ -549,6 +549,70 @@ extension LocalMessageStoreImpl on LocalMessageDatabase {
     }
   }
 
+  /// KVS:mp_perm 命名空间 {ownerId}:{appid} → json(List<String> 授权能力集)。
+  /// 授权是增强功能,读写失败只 debugPrint 不抛(不阻塞小程序主流程)。
+  /// 注:LocalMessageDatabase 不 implements 抽象接口(经 adapter 桥接),
+  /// 此处不加 @override(draft 上的 @override 是遗留无效标注,analyze 有 warning)。
+  Future<void> putMpPerms(String ownerId, String appid, Set<String> perms) async {
+    try {
+      await into(kvs).insertOnConflictUpdate(KvsCompanion(
+        key: Value('mp_perm:$ownerId:$appid'),
+        value: Value(jsonEncode(perms.toList())),
+      ));
+    } catch (e) {
+      debugPrint('[mp_perm] putMpPerms fail: $e');
+    }
+  }
+
+  Future<Set<String>> getMpPerms(String ownerId, String appid) async {
+    try {
+      final row = await (select(kvs)
+            ..where((t) => t.key.equals('mp_perm:$ownerId:$appid')))
+          .getSingleOrNull();
+      if (row == null) return <String>{};
+      return Set<String>.from((jsonDecode(row.value) as List).cast<String>());
+    } catch (e) {
+      debugPrint('[mp_perm] getMpPerms fail: $e');
+      return <String>{};
+    }
+  }
+
+  Future<void> deleteMpPerms(String ownerId, String appid) async {
+    try {
+      await (delete(kvs)..where((t) => t.key.equals('mp_perm:$ownerId:$appid')))
+          .go();
+    } catch (e) {
+      debugPrint('[mp_perm] deleteMpPerms fail: $e');
+    }
+  }
+
+  /// KVS:mp_signing_pubkey 全局 key(无 owner 维度)→ 验签公钥 hex 原文。
+  /// 缓存是增强功能,读写失败只 debugPrint 不抛;未缓存返 null。
+  /// 注:LocalMessageDatabase 不 implements 抽象接口(经 adapter 桥接),
+  /// 此处不加 @override(与 mp_perm 同理)。
+  Future<void> putMpSigningPubKey(String pubHex) async {
+    try {
+      await into(kvs).insertOnConflictUpdate(KvsCompanion(
+        key: const Value('mp_signing_pubkey'),
+        value: Value(pubHex),
+      ));
+    } catch (e) {
+      debugPrint('[mp_signing] putMpSigningPubKey fail: $e');
+    }
+  }
+
+  Future<String?> getMpSigningPubKey() async {
+    try {
+      final row = await (select(kvs)
+            ..where((t) => t.key.equals('mp_signing_pubkey')))
+          .getSingleOrNull();
+      return row?.value;
+    } catch (e) {
+      debugPrint('[mp_signing] getMpSigningPubKey fail: $e');
+      return null;
+    }
+  }
+
   /// 清空指定会话的所有消息 + 元数据(退出会话 / 注销场景)。
   /// 用 transaction 包裹,任一失败回滚,避免留中间态。
   Future<void> clearConversation(String conversationId) async {

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hello 小程序</title>
+<style>body{font-family:sans-serif;padding:16px}button{display:block;margin:8px 0;padding:10px 16px}pre{background:#f4f4f4;padding:8px;white-space:pre-wrap}</style>
+</head>
+<body>
+<h3>万灵小程序容器 Hello v2</h3>
+<button onclick="loadTypes()">1. 调用 wanling.request</button>
+<button onclick="readCtx()">2. 读取会话上下文</button>
+<button onclick="shareCard()">3. 分享卡片到会话</button>
+<pre id="out">点击按钮验证 JSBridge…</pre>
+<script>
+const out = document.getElementById('out');
+function show(s) { out.textContent = typeof s === 'string' ? s : JSON.stringify(s, null, 2); }
+async function loadTypes() {
+  try {
+    const data = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+    show('agent-types 数量: ' + data.length);
+  } catch (e) { show('失败: ' + (e && e.message)); }
+}
+async function readCtx() {
+  try {
+    const ctx = await wanling.getChatContext();
+    show(ctx ? '来源会话: ' + ctx.conversation_id : '非卡片打开,无会话上下文');
+  } catch (e) { show('失败: ' + (e && e.message)); }
+}
+async function shareCard() {
+  try {
+    const r = await wanling.shareToChat({ title: 'Hello 示例', params: { from: 'hello-demo-v2' } });
+    show('已分享, message_id: ' + r.message_id);
+  } catch (e) { show('失败: ' + (e && e.message)); }
+}
+</script>
+</body>
+</html>

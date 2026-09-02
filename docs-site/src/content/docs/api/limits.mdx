@@ -1,0 +1,30 @@
+---
+title: 限制与白名单
+description: 容器对页面能力与 API 路径的约束
+---
+
+
+小程序运行在宿主容器的独立虚拟 origin 中，页面对宿主能力的访问受本页约束。
+
+## API 路径白名单
+
+小程序可访问的宿主能力只有一层：`/api/` 前缀的平台 REST 接口，且必须经 `wanling.request` 代理调用（API 签名见 [JSBridge 参考](/docs/api/bridge/)）。登录凭证不进入页面 JS 环境，宿主数据一律经 `wanling.request` 获取。
+
+## 宿主资源直引
+
+虚拟域内的相对路径资源请求（如 `<img src="/api/..." />`）由宿主带登录态代理回源（GET）——当前用户可见的宿主图片资源（如头像）可在包内页面直接引用，无需经 bridge。典型用法是展示 `wanling.getProfile()` 返回的 `avatarUrl`。
+
+注意：仅静态资源请求被宿主拦截代理；页面用 `fetch` 访问外部网络不受限制，但登录凭证永不进入 JS 环境，宿主数据一律经 `window.wanling` 获取。
+
+## 导航拦截
+
+页面内导航试图跳离虚拟 origin（外链、跳转其他站点）一律被拦截。需要跳转宿主页面时使用 `wanling.openPage`（白名单与参数见 [JSBridge 参考](/docs/api/bridge/)）。
+
+## 包体限制
+
+- 压缩后与解压后总大小均 ≤20MB（默认上限），请求体超限返回 413 `payload_too_large`
+- 文件数 ≤2000
+- `manifest.json` ≤1MB
+- 包内条目名含 `../`、绝对路径或反斜杠的一律拒绝（防路径穿越）
+
+完整包格式与上传校验规则见[包格式规范](/docs/guides/manifest/)。

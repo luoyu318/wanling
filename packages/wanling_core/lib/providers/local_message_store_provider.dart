@@ -92,6 +92,13 @@ class _DriftStoreAdapter implements LocalMessageStore {
   Future<void> setGlobalLastSeq(int seq) => db.setGlobalLastSeq(seq);
 
   @override
+  Future<String?> getMpSigningPubKey() => db.getMpSigningPubKey();
+
+  @override
+  Future<void> putMpSigningPubKey(String pubHex) =>
+      db.putMpSigningPubKey(pubHex);
+
+  @override
   Future<void> clearConversation(String conversationId) =>
       db.clearConversation(conversationId);
 
@@ -158,6 +165,18 @@ class _DriftStoreAdapter implements LocalMessageStore {
   @override
   Future<void> deleteDraft(String ownerId, String convId) =>
       db.deleteDraft(ownerId, convId);
+
+  @override
+  Future<Set<String>> getMpPerms(String ownerId, String appid) =>
+      db.getMpPerms(ownerId, appid);
+
+  @override
+  Future<void> putMpPerms(String ownerId, String appid, Set<String> perms) =>
+      db.putMpPerms(ownerId, appid, perms);
+
+  @override
+  Future<void> deleteMpPerms(String ownerId, String appid) =>
+      db.deleteMpPerms(ownerId, appid);
 
   @override
   Future<void> clearLists(String ownerId) => db.clearLists(ownerId);

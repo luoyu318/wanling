@@ -23,6 +23,20 @@ void main() {
     });
   });
 
+  group('MsgType.miniProgramCard', () {
+    test('value 是 mini_program_card', () {
+      expect(MsgType.miniProgramCard.value, 'mini_program_card');
+    });
+
+    test('fromString mini_program_card 返回枚举', () {
+      expect(MsgTypeX.fromString('mini_program_card'), MsgType.miniProgramCard);
+    });
+
+    test('round-trip: value → fromString 回到原值', () {
+      expect(MsgTypeX.fromString(MsgType.miniProgramCard.value), MsgType.miniProgramCard);
+    });
+  });
+
   group('MsgType.compactDivider', () {
     test('value 是 compact_divider', () {
       expect(MsgType.compactDivider.value, 'compact_divider');

@@ -14,6 +14,10 @@
 
 从环境变量加载配置，必填项（JWT_SECRET、DB_PASSWORD）缺失直接报错退出。JWTConfig 含 AccessTTL(默认 2h)/RefreshTTL(默认 30d)。
 
+## miniprogram
+
+小程序 zip 包结构校验（纯函数，无 IO 依赖）。`ValidatePackage(zipBytes, maxBytes)` fail-fast 逐项校验：包大小/解压后总大小上限（uint64 域累加防解压炸弹）、manifest.json 根目录存在且 ≤1MB、必填字段、appid 正则 `^[a-z0-9][a-z0-9-]{2,31}$`、version>0、entry 存在于包内、permissions 白名单（wanling.api / wanling.chat.read / wanling.chat.share，M2 起）、条目名无路径穿越（拒绝 `../`/绝对路径/盘符）、文件数上限 2000。
+
 ## presence
 
 基于 Redis 的在线状态服务。`Online`/`RefreshTTL` 都用 **幂等 `SET`**（带 ttl）而非 `EXPIRE`：`EXPIRE` 对已失效的 key 返回 0 且不重建，会导致 Redis 清空或 server 重启后（既有 WS 连接不会断开）存活连接的 presence key 永久丢失，agent 表现为「离线但能正常收发消息」；`SET` 幂等且能重建 key，**下一次心跳即自愈**（commit 766f192 修复）。无 Redis 时降级为内存 map（多实例部署不生效）。

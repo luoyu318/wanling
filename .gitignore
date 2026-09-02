@@ -10,7 +10,7 @@ docs/superpowers/
 docs/plans/
 docs/audit/
 docs/research/
-docs/files/
+docs/local/
 
 # === Python ===
 __pycache__/
@@ -79,3 +79,10 @@ server/backups/
 # Flutter mockup 临时产物
 mockups/
 release/
+
+# 示例小程序打包产物(verify 脚本运行时生成)
+scripts/examples/*.zip
+
+# === 文档站（docs-site）===
+# node_modules/ dist/ 已由上方全局条目覆盖，此处仅补 Starlight 专属缓存
+docs-site/.astro/

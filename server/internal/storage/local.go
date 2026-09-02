@@ -75,12 +75,14 @@ func (s *LocalStorage) Delete(path string) error {
 	return os.Remove(full)
 }
 
-// SaveThumbnail 按 storageName 把缩略图字节写入存储目录。
-//
-// storageName 由 handler 拼为 `{原fileID}_thumb.jpg`，落盘后与原图同目录。
-// 覆盖写（同名文件理论上不存在，缩略图只在上传时生成一次；万一重复也以最新为准）。
+// SaveThumbnail 按 storageName 把字节写入存储目录，支持嵌套子目录 key
+// （如 `mp-icon/{appid}/{version}.png`，自动创建父目录）。
+// 覆盖写（同名文件以最新为准）。
 func (s *LocalStorage) SaveThumbnail(storageName string, data []byte) error {
 	fullPath := filepath.Join(s.baseDir, storageName)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil { // #nosec G301 -- 审计确认：目录 0755 允许遍历，文件本身 0600 限制读取
+		return fmt.Errorf("创建存储目录失败: %w", err)
+	}
 	if err := os.WriteFile(fullPath, data, 0600); err != nil {
 		return fmt.Errorf("写入缩略图失败: %w", err)
 	}

@@ -1,6 +1,6 @@
 # APP Pages
 
-lib/pages/ 目录下的 25 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
+lib/pages/ 目录下的 29 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
 
 ## SplashPage
 
@@ -93,3 +93,15 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 ## SessionDiffFilePage
 
 **单文件 diff 全屏页**（路由 `/session-diff-file/:agentId/:convId`，idx 通过查询参数或状态传递）。展示某文件的完整 unified diff patch（`DiffPatchViewer` 语法高亮 +/- 行）。从 `sessionDiffProvider` 的文件列表按 idx 取单文件 patch。纯展示页
+
+## MiniProgramListPage
+
+**小程序列表页**（路由 `/mini-programs`，设置侧滑栏入口，见 sidebar_profile_panel）。数据源 `miniProgramsProvider`，按 status 分两组渲染：公共库（published）+ 我的（private/disabled，带删除按钮）。上传按钮 → file_picker 选 zip → `MiniProgramService.uploadPackage` 建私有 → invalidate 刷新。删除不可逆（远端 + 本地包 + WebView storage + **KVS `deleteMpPerms` 清授权**（M2，重装后重新弹权限申请））先弹确认框。点击条目 `context.push('/mini-program/${mp.appid}')` 进容器页
+
+## MiniProgramPage
+
+**小程序 WebView 容器页**（路由 `/mini-program/:appid`，M2 起可选 query `conv`（来源会话）与 `launch`（卡片 params，URL 编码 JSON））。origin 隔离：每小程序独立虚拟域名 `https://<appid>.<user_id>.mini.wanling.local`（host 含账号段，隔离多账号 storage）。启动流程：TokenVault 取 token → `MiniProgramService.installedDir` 命中即用 / 未装或版本旧则 `install`（下载 → sha256 校验 fail-fast → 解压到 `documents/miniprograms/<appid>/<version>/` 原子替换）→ **`_ensurePermissions` chat 权限授权流程**：KVS `getMpPerms` 读已授权集 → 未决 `wanling.chat.*` 逐个弹权限确认框（拒绝/点遮罩视为拒绝）→ `putMpPerms` 持久化增量 → `effectivePermissions(declared, granted)` 算有效权限集（非 chat 权限不弹窗直接生效）；拒绝项不进 granted，bridge 持续拒绝。`shouldInterceptRequest`：`/api/` 路径经 `proxyApiResource` 用宿主 ApiService 带登录态代理回源（仅 GET，非 GET 405 / 上游失败 502 / 点段归一化防路径混淆），其余从本地包读文件（`resolveLocalFile` 包根越界 403 / 缺失 404 + MIME 映射）；`shouldOverrideUrlLoading` 仅放行本 appid 虚拟 origin，外链一律拦截。JS 侧经注入的 `window.wanling.request/close/getChatContext/shareToChat` 四桥 → `MiniProgramBridge` 门禁（token 不进 JS，权限/`/api/` 路径白名单）→ `apiProvider.proxyRequest` 原生代理；**conv/launch 注入**：conv 经 `onChatContext` 回调供 getChatContext，launch 透传入口 URL query（H5 URLSearchParams 自取，不进 bridge）；**shareToChat** 校验仅 published 可分享 → 弹会话选择器 → `mini_program_card` 发消息。disabled 状态渲染「已被管理员停用」，appid 不存在/已下架返提示
+
+## AdminMiniProgramPage
+
+**小程序审核页**(admin 专属,路由 `/admin/mini-programs`,侧栏 isAdmin 显隐入口,server 端 adminAuth 二次校验)。数据源 `adminMiniProgramsProvider`(autoDispose,失败上抛:**错误视图先 `_asApiError` 解包拦截器包装的 ApiException 再判 403**,403 渲染「无权限查看」,其余错误给重试入口)。按 status 三 Tab 分组:待审(private)/已发布(published)/已下架(disabled),行内发布/下架/上架操作 `showAppDialog` 二次确认后调 `setMiniProgramStatus`(admin 新路径)流转 → invalidate 刷新(下拉/操作后 invalidate 保旧数据静默换新,不闪 loading);操作失败 403 提示「无权限操作」,其余 Snackbar 提示且不触发 invalidate

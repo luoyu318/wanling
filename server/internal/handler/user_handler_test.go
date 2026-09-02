@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/auth"
 	"github.com/wanling/server/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -183,6 +184,62 @@ func TestUserHandler_ChangePassword_Returns404OnMissingUser(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	AssertErr(t, w, http.StatusNotFound, "not_found")
+}
+
+// TestUserHandler_ChangePassword_AdminRoleFromDB 验证 role 以 DB 为准（admin 改密不降级）：
+//   - 响应顶层 role=admin（与 Login/Refresh 契约一致）；
+//   - 新 access token claims.Role=admin；
+//   - 新 refresh token 存的 role=admin（下次 Refresh 续签不摇摆）。
+func TestUserHandler_ChangePassword_AdminRoleFromDB(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	user, err := urepo.Create(t.Context(), shortName(t, "cpa_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// DB role 提为 admin（唯一 role 更新途径,幂等只升不降）
+	if err := urepo.PromoteAdmins(t.Context(), []string{user.Username}); err != nil {
+		t.Fatalf("PromoteAdmins: %v", err)
+	}
+
+	store := newAuthTestStore(t)
+	h := NewUserHandler(urepo, store, authTestSecret, authAccessTTL, authRefreshTTL)
+	r := gin.New()
+	r.PUT("/api/users/me/password", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.ChangePassword(c)
+	})
+
+	req := httptest.NewRequest("PUT", "/api/users/me/password",
+		strings.NewReader(`{"new_password":"newpw123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	data := AssertOk(t, w, http.StatusOK)
+	if data["role"] != "admin" {
+		t.Fatalf("响应顶层 role 应为 admin,实际: %v", data["role"])
+	}
+
+	// 新 access token claims.Role=admin
+	access, _ := data["token"].(string)
+	claims, err := auth.ParseToken(authTestSecret, access)
+	if err != nil {
+		t.Fatalf("ParseToken(new access): %v", err)
+	}
+	if claims.Role != "admin" {
+		t.Fatalf("新 access token claims.Role 应为 admin,实际: %s", claims.Role)
+	}
+
+	// 新 refresh token 存的 role=admin
+	refresh, _ := data["refresh_token"].(string)
+	rd, err := store.GetRefresh(t.Context(), refresh)
+	if err != nil {
+		t.Fatalf("GetRefresh: %v", err)
+	}
+	if rd == nil || rd.Role != "admin" {
+		t.Fatalf("新 refresh token 存的 role 应为 admin,实际: %+v", rd)
+	}
 }
 
 // TestUserHandler_UpdateMe_UpdatesNicknameAndReturnsUser 验证 PUT /api/users/me

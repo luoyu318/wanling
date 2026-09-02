@@ -35,7 +35,7 @@ flutter build apk --release --flavor prod  # 输出 build/app/outputs/flutter-ap
 ```
 lib/
 ├── main.dart                # async main + restoreSession + MaterialApp.router（固定 zh locale）
-├── router.dart              # GoRouter 平铺路由（22 条）+ _cupertinoPage 横向平移转场(200ms)；动态底栏由 HomePage 内嵌 NestedPageView 保活。pageBuilder 必传 `key: state.pageKey`（否则 pushReplacement 复用旧 State，initState 不触发）
+├── router.dart              # GoRouter 平铺路由（25 条）+ _cupertinoPage 横向平移转场(200ms)；动态底栏由 HomePage 内嵌 NestedPageView 保活。pageBuilder 必传 `key: state.pageKey`（否则 pushReplacement 复用旧 State，initState 不触发）
 ├── router_helpers.dart      # chatRoute() + startChatAndPush() 统一跳转
 ├── models/                  # User / Agent / Conversation / Message / WSMessage
 ├── services/

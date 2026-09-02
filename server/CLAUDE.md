@@ -23,10 +23,10 @@ go test ./internal/hub/...         # 运行指定包测试
 flowchart TB
     MAIN[cmd/main.go<br/>路由 + 组装]
     MW[middleware<br/>JWT + access log]
-    HANDLERS[handler/<br/>14 个 HTTP handler]
+    HANDLERS[handler/<br/>15 个 HTTP handler]
     HUB[hub<br/>WS 连接 + dispatch]
     PROC[message/processor<br/>事务 + dispatch]
-    REPO[repository/<br/>11 个 repo]
+    REPO[repository/<br/>12 个 repo]
     SVC[approval + pair<br/>状态机 + cleanup]
     STORAGE[storage + imaging]
     
@@ -46,6 +46,9 @@ flowchart TB
 统一 JWT，`role` 字段区分身份：
 - 用户：用户名密码登录获取 `{ sub: user_id, role: "user" }`
 - Agent：`agent_id + secret_key` 换取 `{ sub: agent_id, role: "agent", owner: user_id }`
+- 平台管理员：`ADMIN_USERNAMES` 启动种子（PromoteAdmins 幂等只升不降），`users.role` 列是事实源；登录/注册/刷新响应顶层带 `role`；Refresh 从 DB 重读 role（撤销 admin 下次刷新生效）
+- 撤销 admin：`psql -U agent -d wanling -h localhost -p 6333 -c "UPDATE users SET role='user' WHERE username='xxx'"`
+- admin 能力挂 `/api/admin/*` 命名空间（adminAuth 组）；HTTP/WS 链路均把 admin 归一为 user（admin 兼作 user 全部能力，与 agent 严格隔离）
 
 中间件 `handler.AuthMiddlewareWithStore` 根据 role 校验权限，把 `userID` / `role` 写入 gin.Context（`handler.AuthMiddleware` 仅是旧名兼容别名）。
 

@@ -59,6 +59,12 @@ func AuthMiddlewareWithStore(jwtSecret string, store *auth.TokenStore, allowedRo
 					matched = true
 					break
 				}
+				// admin 兼作 user(用户拍板方案 a):平台管理员可用 APP 全部用户能力,
+				// 仅 agent 角色保持严格隔离(admin 不能当 agent)。
+				if claims.Role == "admin" && role == "user" {
+					matched = true
+					break
+				}
 			}
 			if !matched {
 				Err(c, http.StatusForbidden, "forbidden", "无权限")
@@ -69,7 +75,14 @@ func AuthMiddlewareWithStore(jwtSecret string, store *auth.TokenStore, allowedRo
 
 		c.Set("claims", claims)
 		c.Set("userID", claims.Subject)
-		c.Set("role", claims.Role)
+		// admin 兼作 user(终审 I1 收尾):下游 handler 把 role 当 memberType 消费
+		// (participant 查询/三档放行等,值域 user/agent),admin 原样透出会全部 403。
+		// adminAuth 组的放行判定在上方用原始 claims.Role,此处归一不影响管理员能力。
+		if claims.Role == "admin" {
+			c.Set("role", "user")
+		} else {
+			c.Set("role", claims.Role)
+		}
 		if claims.Owner != "" {
 			c.Set("ownerID", claims.Owner)
 		}

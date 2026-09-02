@@ -55,6 +55,12 @@ class NoopLocalMessageStore implements LocalMessageStore {
   Future<void> setGlobalLastSeq(int seq) async {}
 
   @override
+  Future<String?> getMpSigningPubKey() async => null;
+
+  @override
+  Future<void> putMpSigningPubKey(String pubHex) async {}
+
+  @override
   Future<void> clearConversation(String conversationId) async {}
 
   @override
@@ -107,6 +113,15 @@ class NoopLocalMessageStore implements LocalMessageStore {
 
   @override
   Future<void> deleteDraft(String ownerId, String convId) async {}
+
+  @override
+  Future<Set<String>> getMpPerms(String ownerId, String appid) async => <String>{};
+
+  @override
+  Future<void> putMpPerms(String ownerId, String appid, Set<String> perms) async {}
+
+  @override
+  Future<void> deleteMpPerms(String ownerId, String appid) async {}
 
   @override
   Future<void> clearLists(String ownerId) async {}

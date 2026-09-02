@@ -1,0 +1,75 @@
+---
+title: 发布上架
+description: 从私有运行到公共库上架的完整流程
+---
+
+
+## 状态模型
+
+小程序有三种状态，状态机如下：
+
+```
+private → published ⇄ disabled
+```
+
+- **private**（私有）：上传后的初始状态，仅自己可见、可运行
+- **published**（已发布）：进入公共库，全员可见、可运行，可被分享到会话
+- **disabled**（已停用）：被管理员停用，APP 拒绝运行
+
+状态流转仅管理员可执行，非法流转会被拒绝。
+
+## 分享到会话
+
+页内调用 `wanling.shareToChat({ title, params })` 弹出会话选择器，将小程序卡片发到所选会话。**两个前置条件缺一不可**：
+
+- 小程序处于 **published** 状态
+- manifest 声明了 `wanling.chat.share` 且用户已授权
+
+宿主右上角胶囊菜单里的「分享到会话」遵循同样规则；不满足条件时功能不可用或提示未申请权限。
+
+卡片以 `mini_program_card` 消息发出，消息体结构：
+
+```
+msg_type: "mini_program_card"
+data: { appid, title, icon?, params? }
+```
+
+- `title` 缺省时使用小程序名称
+- `icon` 为分享时刻的图标快照，缺失时由接收端兜底渲染
+- `params` 为你传入的任意 JSON，原样透传给点击方
+
+**消息侧闭环**：收到卡片的好友点击卡片，冷启动小程序并自动携带来源会话与启动参数：
+
+```js
+// 来源会话（需 wanling.chat.read）：从聊天卡片打开时有值，独立打开为 null
+const ctx = await wanling.getChatContext();
+
+// 启动参数：从入口 URL query 用 URLSearchParams 自取
+const raw = new URLSearchParams(location.search).get('launch');
+const params = raw ? JSON.parse(raw) : undefined;
+```
+
+## 申请发布
+
+发布由管理员执行：对该小程序调用 `PUT /api/mini-programs/:id/status`，请求体：
+
+```json
+{ "status": "published" }
+```
+
+发布成功后小程序进入公共库，全员可见。
+
+**签名由平台自动完成**：发布时平台自动对包做 ed25519 签名，APP 安装时依次校验 sha256 与签名。整个过程开发者无需参与，唯一需要注意的是：**改包重传后旧签名作废**，小程序状态重置为 private，需管理员重新发布才能再次公开可用（版本重传语义详见[存储与更新](/docs/guides/storage/)）。
+
+## 常见问题
+
+**重传后不能分享了 / 从公共库消失了？**
+换版本重传后状态重置为 private 且签名清空，重新发布前 `shareToChat` 与公共库均不可用，需管理员重新发布。详见[存储与更新](/docs/guides/storage/)。
+
+**上传提示 appid 已被占用？**
+appid 全局唯一、先到先得，归他人所有时上传被拒，换一个 appid 即可。
+
+**想删除自己的小程序？**
+仅 owner 可删除自己的 private 状态小程序，已进入发布流程的小程序不支持自行删除。
+
+上传 / 运行中遇到其他报错，见[调试与常见错误](/docs/guides/debugging/)。
