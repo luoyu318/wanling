@@ -355,10 +355,12 @@ func TestServeHTTP_AdminTokenRegistersAsUser(t *testing.T) {
 // 子密钥仅限 HTTP API 使用,WS 长连接绑定独占主密钥(安全边界)。
 func TestServeHTTP_SubKeyTokenRejected(t *testing.T) {
 	h := hub.NewHub(nil, nil, nil, nil)
-	// 兜底消费 Register/Unregister(本场景预期不注册;若拦截失守,注册可达,
-	// 末尾断言会失败,channel 也不会阻塞泄漏 goroutine)
+	// 消费 Register/Unregister channel(生产由 hub.Run 消费;测试用同步注册替代,
+	// 跳过 presence/agent 状态广播副作用。本场景预期不注册;若拦截失守,identify
+	// 会经此真正注册进 hub,末尾 GetClient 断言即可捕获,channel 也不阻塞泄漏)
 	go func() {
-		for range h.Register {
+		for c := range h.Register {
+			h.RegisterClient(c)
 		}
 	}()
 	go func() {
