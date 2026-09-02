@@ -229,7 +229,8 @@ do_setup() {
     trap 'rm -f "$SETUP_TMP_RESP"' EXIT
     # set -e 下 curl 连接失败会使整条赋值语句非零、脚本静默终止(000 分支沦为死代码),
     # 用 || http_code=000 兜底,把连接失败导入 000 分支给用户明确报错
-    http_code=$(curl -s -o "$SETUP_TMP_RESP" -w '%{http_code}' -X POST \
+    # 超时:connect 5s / 总 15s,半开连接不再挂死
+    http_code=$(curl --connect-timeout 5 --max-time 15 -s -o "$SETUP_TMP_RESP" -w '%{http_code}' -X POST \
         "${SETUP_SERVER}/api/pair/tickets" -H "Content-Type: application/json" -d '{}') || http_code=000
     case "$http_code" in
         2*) ;;
@@ -260,7 +261,8 @@ do_setup() {
         if (( elapsed > 300 )); then
             die "授权超时(票据 5 分钟过期),请重新运行 --setup"
         fi
-        http_code=$(curl -s -o "$SETUP_TMP_RESP" -w '%{http_code}' \
+        # 超时:connect 5s / 总 15s,轮询遇到半开连接不再挂死
+        http_code=$(curl --connect-timeout 5 --max-time 15 -s -o "$SETUP_TMP_RESP" -w '%{http_code}' \
             "${SETUP_SERVER}/api/pair/tickets/${ticket_id}") || http_code=000
         case "$http_code" in
             2*) ;;
