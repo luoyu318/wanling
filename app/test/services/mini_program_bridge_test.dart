@@ -66,6 +66,98 @@ void main() {
     expect(seenPath, '/api/agent-types');
   });
 
+  test('/api/me 精确命中 → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/me', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
+  test('/api/me 带 query 变体 → 同样拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/me?x=1', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(called, isFalse);
+  });
+
+  test('/api/admin/mini-programs 前缀命中 → 拒绝且不触达 proxy', () async {
+    var called = false;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        called = true;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/admin/mini-programs', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isFalse);
+    final err = r['error'] as Map;
+    expect(err['code'], -32091);
+    expect(err['message'], '身份信息请使用 wanlingGetProfile');
+    expect(called, isFalse);
+  });
+
+  test('普通路径 /api/conversations 放行照旧', () async {
+    var calls = 0;
+    String? seenPath;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (path, _, _) async {
+        calls++;
+        seenPath = path;
+        return {'id': 'c1'};
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/conversations', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isTrue);
+    expect((r['data'] as Map)['id'], 'c1');
+    expect(calls, 1);
+    expect(seenPath, '/api/conversations');
+  });
+
+  test('/api/meX 精确匹配不误伤 → 放行', () async {
+    var calls = 0;
+    final b = MiniProgramBridge(
+      permissions: const {'wanling.api'},
+      proxy: (_, _, _) async {
+        calls++;
+        return null;
+      },
+    );
+    final r = await b.handle('wanlingRequest', [
+      {'path': '/api/meX', 'method': 'GET'}
+    ]);
+    expect((r as Map)['ok'], isTrue);
+    expect(calls, 1);
+  });
+
   test('合法调用透传 proxy 结果', () async {
     final b = MiniProgramBridge(
       permissions: const {'wanling.api'},

@@ -45,6 +45,21 @@ class MiniProgramBridge {
           if (normalized == null || !normalized.startsWith('/api/')) {
             return {'ok': false, 'error': '路径归一化后越出 /api/ 白名单'};
           }
+          // 收紧身份/管理端点(归一路径部分精确/前缀匹配,query 不参与判定):
+          // /api/me 拿全局 user_id,小程序应走 per-app 的 wanlingGetProfile;
+          // /api/admin/* 是宿主管理面,不在小程序信任边界内。
+          final qIdx = normalized.indexOf('?');
+          final pathOnly =
+              qIdx >= 0 ? normalized.substring(0, qIdx) : normalized;
+          if (pathOnly == '/api/me' || pathOnly.startsWith('/api/admin/')) {
+            return {
+              'ok': false,
+              'error': {
+                'code': -32091,
+                'message': '身份信息请使用 wanlingGetProfile',
+              },
+            };
+          }
           final method = opts?['method'] as String? ?? 'GET';
           final body = opts?['body'];
           final data = await proxy(normalized, method, body);
