@@ -100,6 +100,11 @@ String? resolveLocalFile(String pkgRoot, String requestPath) {
   return filePath;
 }
 
+/// 小程序虚拟 host:appid + 账号段,origin 级隔离多账号 storage
+/// (同设备多账号打开同一小程序,localStorage/IndexedDB 互不可见)。
+String virtualHostFor(String appid, String uid) =>
+    '$appid.$uid.mini.wanling.local';
+
 /// 扩展名 → MIME,未命中回退 octet-stream。
 String _mimeOf(String path) {
   const map = {
@@ -173,7 +178,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   /// goBack 异步竞态防抖:一次系统返回事件只消费一次。
   bool _popping = false;
 
-  String get _virtualHost => '${widget.appid}.mini.wanling.local';
+  /// 当前登录 user_id(_start 快照),进虚拟 host 账号段隔离多账号 storage。
+  String? _uid;
+
+  String get _virtualHost => virtualHostFor(widget.appid, _uid!);
 
   /// 刷新 _canGoBack(onUpdateVisitedHistory 回调,含 hash 同文档导航)。
   Future<void> _syncCanGoBack() async {
@@ -278,6 +286,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     try {
       final token = await TokenVault.getAccessToken();
       if (token == null) throw StateError('未登录');
+      // 账号段快照:虚拟 origin 含 uid,隔离多账号 storage。该页未登录不可达,fail fast。
+      final currentUid = ref.read(authProvider).user?.id;
+      if (currentUid == null) throw StateError('未登录');
+      _uid = currentUid;
       final service = MiniProgramService(
         baseUrl: ref.read(apiProvider).baseUrl,
         token: token,

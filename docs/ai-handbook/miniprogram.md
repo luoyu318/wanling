@@ -10,7 +10,7 @@ manifest.json 全字段:
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| appid | string | 是 | 全局唯一,正则 `^[a-z0-9][a-z0-9-]{2,31}$`;兼作 APP 虚拟 origin(`<appid>.mini.wanling.local`)与本地安装目录名 |
+| appid | string | 是 | 全局唯一,正则 `^[a-z0-9][a-z0-9-]{2,31}$`;兼作 APP 虚拟 origin(账号段,见下)与本地安装目录名 |
 | name | string | 是 | 显示名 |
 | version | int | 是 | 正整数,同 appid 单调递增;重传即换版本 |
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
@@ -62,7 +62,9 @@ private → published ⇄ disabled
 
 ## 4. JSBridge(window.wanling)
 
-**核心安全决策:token 不进 JS。** JS 调 API 经原生代理注入 Bearer(401 走宿主既有 refresh 重试)。容器页每小程序独立虚拟 origin `https://<appid>.mini.wanling.local`,静态文件由 shouldInterceptRequest 从本地包目录读取(zip-slip 第二层防护,解压时第一层);外链导航一律拦截。
+**核心安全决策:token 不进 JS。** JS 调 API 经原生代理注入 Bearer(401 走宿主既有 refresh 重试)。容器页每小程序独立虚拟 origin `https://<appid>.<user_id>.mini.wanling.local`(host 含账号段,`virtualHostFor(appid, uid)`),静态文件由 shouldInterceptRequest 从本地包目录读取(zip-slip 第二层防护,解压时第一层);外链导航一律拦截。
+
+**虚拟 origin 账号段(多账号 storage 隔离)**:WebView 的 localStorage/IndexedDB/Cache 按 origin 存储,host 加入账号段后每账号独立 origin。隔离矩阵:同账号同 appid 共享,跨账号或跨 appid 均隔离。升级语义:宿主升级(旧版 origin 不含账号段)后 origin 变更,存量小程序旧 storage 不可达,等同数据重置。
 
 | API | 权限 | 行为 |
 |---|---|---|
