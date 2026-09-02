@@ -70,19 +70,36 @@ private → published ⇄ disabled
 | `wanling.getChatContext()` | wanling.chat.read | 返回 `{conversation_id}`;仅从聊天卡片打开时有值,独立打开 null |
 | `wanling.shareToChat({title?, params?})` | wanling.chat.share | 弹会话选择器 → 以 `mini_program_card` 发消息;仅 published 可分享;用户取消 rejected `cancelled` |
 | `wanling.openPage({page, params?})` | wanling.nav | 跳宿主页面白名单:`home`(出栈回消息页)/`miniPrograms`(小程序列表)/`agentDetail`(params.agentId 必填且须 UUID);白名单外/非法参数 rejected |
+| `wanling.getProfile()` | 无(调用式授权) | 返回 `{openid, nickname, avatarUrl}`;授权键 `wanling.profile` 不进 manifest,首次调用弹授权对话框(拒绝不落痕,下次调用重弹),允许后 KVS 落痕;appid 由宿主注入,JS 不可传参 |
 | `wanling.close()` | 无 | 关闭小程序页 |
 
 - envelope:原生返回 `{ok: true, data}` / `{ok: false, error}`,JS bootstrap 将 ok 转 resolve(data)/throw Error(error)
 - 权限 fail fast:未声明/未授权直接 reject `permission denied: <perm>`,不静默降级
 - 有效权限 = manifest 声明 ∩ 用户已授权(只收窄,不放大)
+- **身份端点收紧**(宿主行为,存量包立即生效无需改包):`wanling.request` 归一化后命中 `/api/users/me`(真实身份端点,返回全局 user_id)/`/api/me`(防御性拦截,server 当前无此路由,防未来别名漏拦;精确匹配)或 `/api/admin/`(前缀)→ 拒绝,错误 `{code: -32091, message: '身份信息请使用 wanlingGetProfile'}`;迁移指引:身份获取改用 `wanling.getProfile()`
+- **JS 错误消费契约**:语义性拒绝(用户未授权 -32090 / 端点收紧或不支持 -32091)envelope error 为 jsonrpc 对象 `{code, message}`,传输异常(网络/原生异常)为 String;宿主 bootstrap 统一 `throw new Error(error)`,对象形态经 String 转换后 `e.message` 显示 `[object Object]`(已知限制),JS 侧按 `e.message === '[object Object]'` 判型为语义性拒绝
 
-## 5. 权限模型
+## 5. 权限模型(双轨)
 
+**声明式权限**(`manifest.permissions`,启动弹序列):
 - `wanling.api`:不涉及用户会话数据,manifest 声明即静默生效,无弹窗
 - `wanling.chat.*`(read/share):首次运行逐项弹授权对话框,拒绝 = 该项持续 reject;文案:read「读取当前会话 ID(用于关联你正在看的会话)」/ share「向你选择的好友/群聊分享小程序卡片」
 - `wanling.nav`:跳宿主页面白名单,首次运行弹授权对话框(跳转动作不涉及用户数据读取,但宿主导航属可感知行为需用户知情);拒绝 = 持续 reject
-- 授权按 appid 持久化本地 drift KVS(key `mp_perm:{ownerId}:{appid}`,JSON 能力集),增量合并幂等
+
+**调用式授权**(`wanling.profile`,不在声明体系):
+- 不进 manifest.permissions、不占启动弹序列;首次调 `wanling.getProfile()` 时弹授权对话框(「身份信息授权」/「将向该小程序提供你的昵称、头像与用户标识」)
+- 拒绝不落痕(无持久拒绝态,下次调用重弹,对齐声明式 M2 拒绝语义);允许后写 KVS 授权痕,后续调用直接返回
+- openid 端点失败时 bridge 返回错误,不静默、不缓存失败结果
+
+- 授权按 appid 持久化本地 drift KVS(key `mp_perm:{ownerId}:{appid}`,JSON 能力集),增量合并幂等;`wanling.profile` 复用同键存储
 - 卸载小程序同步清 KVS 授权(重装即重新授权)+ 清本地包目录与 WebView storage
+
+### openid 身份语义
+
+- `wanling.getProfile()` 返回的 openid 是 **per-(用户×小程序) 唯一标识**:同一用户在不同小程序(appid)下 openid 不同,小程序之间不可凭 openid 关联同一用户
+- **永久稳定**:server 端按 (user_id, appid) 二元组惰性生成随机 UUID,一经生成不变(卸载重装 openid 不变;匿名性来自 per-app 隔离而非可变性)
+- 存储:`mini_program_openids` 表(migration 015),`PRIMARY KEY (user_id, appid)` + `UNIQUE(openid)`;换取端点 `GET /api/mini-programs/openid?appid=xxx`(userAuth,小程序不存在 404 防枚举)
+- appid 由宿主容器注入 bridge,JS 不可传参,防伪造他人 appid 枚举;昵称头像取本地登录态快照,零额外往返
 
 ## 6. 消息卡片协议
 
@@ -109,7 +126,7 @@ data: { appid: string, title: string, icon?: string, params?: any }
 
 ## 组件清单
 
-- server:`internal/miniprogram`(validate.go 包校验 / signing.go ed25519 纯函数)、`handler/mini_program_handler.go`、`repository/mini_program_repo.go` + `signing_key_repo.go`、`migrations/012` / `013`
-- app:`pages/mini_program_page.dart`(WebView 容器)、`services/mini_program_bridge.dart` + `mini_program_permission_flow.dart`、`pages/mini_program_list_page.dart`(公共库/我的两个分组 + 上传/卸载)、`widgets/mini_program_conversation_picker.dart`
+- server:`internal/miniprogram`(validate.go 包校验 / signing.go ed25519 纯函数)、`handler/mini_program_handler.go`(含 openid 查询端点)、`repository/mini_program_repo.go` + `mini_program_openid_repo.go`(GetOrCreateOpenid) + `signing_key_repo.go`、`migrations/012` / `013` / `015`
+- app:`pages/mini_program_page.dart`(WebView 容器 + profile 授权弹窗)、`services/mini_program_bridge.dart`(wanlingGetProfile / 端点收紧) + `mini_program_permission_flow.dart`、`pages/mini_program_list_page.dart`(公共库/我的两个分组 + 上传/卸载)、`widgets/mini_program_conversation_picker.dart`
 - wanling_core:`services/mini_program_service.dart`(下载/sha256/验签/解压安装)、`rendering/mini_program_card_renderer.dart`、`providers/mini_programs_provider.dart`
 - 示例:`scripts/examples/miniprogram-hello/`(appid `hello-demo`)

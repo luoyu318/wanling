@@ -190,6 +190,12 @@ input[type=range]{width:100%;accent-color:var(--brand)}
 
 <!-- ============ 关于页 ============ -->
 <div class="page" id="p-about">
+  <div class="card">
+    <h3>身份（wanling.getProfile · 调用式授权）</h3>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">首次调用弹授权对话框，拒绝不落痕可重试；openid 为本程序内专属匿名标识，不同小程序互不相同</div>
+    <button class="btn" onclick="loadProfile()">获取我的身份</button>
+    <div id="profileBox"><pre class="out">未获取</pre></div>
+  </div>
   <div class="card"><h3>manifest（fetch 同源读取本地包）</h3><pre class="out" id="aboutOut">加载中…</pre></div>
   <div class="card"><h3>运行环境</h3>
     <div class="row"><label>UserAgent</label></div>
@@ -311,6 +317,36 @@ function renderStats(){
     data.map(d=>`<div class="stat"><b>${d[0]}</b><span>${d[1]}</span></div>`).join('');
 }
 function toggleTheme(){ document.body.classList.toggle('dark'); }
+
+/* ================= 身份（调用式授权） ================= */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function errMsg(e){
+  // 宿主 bootstrap 将错误对象转 Error 后 message 显示 [object Object](已知限制),
+  // 判型:命中即语义性拒绝(jsonrpc code -32090 用户未授权 / -32091 端点收紧)
+  if (e && e.message === '[object Object]') return '请求被拒绝（用户未授权或当前环境不支持）';
+  return (e && e.message) || String(e);
+}
+async function loadProfile(){
+  const box = document.getElementById('profileBox');
+  box.innerHTML = '<pre class="out">获取中…</pre>';
+  try {
+    const p = await wanling.getProfile();
+    const openid = esc((p.openid || '').slice(0, 8)) + '…';
+    const nick = esc(p.nickname || '未设置昵称');
+    const av = p.avatarUrl
+      ? `<img src="${esc(p.avatarUrl)}" style="width:38px;height:38px;border-radius:10px;object-fit:cover;flex:none" onerror="this.style.display='none'">`
+      : `<div class="avt" style="background:var(--brand)">${esc((p.nickname || '?').slice(0,1))}</div>`;
+    box.innerHTML = `<div class="list-item">${av}
+      <div style="flex:1;min-width:0"><b style="font-size:14px">${nick}</b>
+      <div style="font-size:12px;color:var(--sub)">openid（脱敏）: ${openid}</div></div></div>`;
+    toast('已获取身份');
+  } catch(e){
+    box.innerHTML = `<pre class="out">✗ ${esc(errMsg(e))}</pre>`;
+  }
+}
 
 /* ================= 关于 ================= */
 async function loadAbout(){
