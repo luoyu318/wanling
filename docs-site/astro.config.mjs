@@ -12,6 +12,12 @@ export default defineConfig({
       ],
       locales: { root: { label: '简体中文', lang: 'zh-CN' } },
       defaultLocale: 'root',
+      head: [
+        {
+          tag: 'link',
+          attrs: { rel: 'icon', href: '/docs/favicon.png' },
+        },
+      ],
       sidebar: [
         {
           label: '入门',
