@@ -392,7 +392,8 @@ class ApiService {
   }
 
   /// 扫码配对：选已有 agent（agentId）或新建（newAgentName）。
-  /// 二选一：agentId 非空走选已有（会重置 key），否则用 newAgentName 新建。
+  /// 二选一：agentId 非空走选已有（按 [action] 决定语义：bind 接管会重置 key /
+  /// authorize 发子密钥），否则用 newAgentName 新建。
   ///
   /// [action]：null/"bind"=接管绑定（重置主密钥）；"authorize"=发子密钥授权
   /// （不重置主密钥，须带 agentId）。详见 docs/ai-handbook/agent-subkeys.md。
