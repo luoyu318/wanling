@@ -861,3 +861,44 @@ func TestPairingHandler_CompleteTicket_BindBackwardCompat(t *testing.T) {
 		t.Fatalf("显式 bind ticket.Action = %q, want bind", got2.Action)
 	}
 }
+
+// TestPairingHandler_CompleteTicket_UnknownAction_BadRequest
+// 未知 action（如拼写变体 "authorise"）必须 400 fail fast，
+// 不允许静默降级为 bind（会重置主密钥把在用 agent 踢下线）。
+func TestPairingHandler_CompleteTicket_UnknownAction_BadRequest(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "unkact_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "UnknownActionAgent", "orig-secret", "")
+	ticket, _ := repo.Create(t.Context(), "unknown-action-001", "")
+
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/scan", nil))
+
+	// 未知 action 携带 agent_id → 400（静默降级 bind 会重置主密钥）
+	body := strings.NewReader(`{"agent_id":"` + agent.ID + `","action":"authorise"}`)
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+
+	// ticket 保持 scanned（未落 completed），可纠正 action 后重试
+	got, _ := repo.GetByID(t.Context(), ticket.ID)
+	if got.Status != model.PairingStatusScanned {
+		t.Fatalf("400 后 ticket status = %q, want scanned", got.Status)
+	}
+
+	// agent 主密钥未变（未触发 bind 重置）
+	after, _ := arepo.GetByID(t.Context(), agent.ID)
+	if after.SecretKey != "orig-secret" {
+		t.Fatalf("agent.secret_key = %q, want orig-secret(未知 action 不得重置主密钥)", after.SecretKey)
+	}
+}

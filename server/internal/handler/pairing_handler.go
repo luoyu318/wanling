@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -239,6 +240,17 @@ func (h *PairingHandler) CompleteTicket(c *gin.Context) {
 	var req CompleteTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Err(c, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	// action 白名单校验（fail fast）：未知 action（如拼写变体 "authorise"）若静默
+	// 降级为 bind，携带 agent_id 时会重置主密钥把在用 agent 踢下线，必须显式拒绝。
+	switch req.Action {
+	case "", string(model.PairingActionBind), string(model.PairingActionAuthorize):
+		// 合法：缺省 / bind / authorize
+	default:
+		Err(c, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("非法 action %q，合法值为空串(等同 bind)、\"bind\"、\"authorize\"", req.Action))
 		return
 	}
 
