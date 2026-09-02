@@ -8,7 +8,7 @@
 |--------|------|------|------|
 | 0 | Dispatch | S→C | 事件推送（MESSAGE_CREATE / MESSAGE_UPDATE / MESSAGE_DELETE / AGENT_ONLINE / AGENT_OFFLINE / TYPING_START / APPROVAL_DECIDED / APPROVAL_EXPIRED） |
 | 1 | Heartbeat | C→S | 心跳（仅 `{op:1}`，不再携带 seq；seq 由 Dispatch 自带，Resume 单独走 op=6） |
-| 2 | Identify | C→S | 鉴权（携带 JWT token）。**握手阶段强制只接受 Identify**，其余 opcode 必须在 Identify 之后 |
+| 2 | Identify | C→S | 鉴权（携带 JWT token）。**握手阶段强制只接受 Identify**，其余 opcode 必须在 Identify 之后。**子密钥 token（`key_kind=sub`）identify 即拒**：回裸 JSON 错误帧 `{"error":"sub_key_ws_forbidden"}`（非 WSMessage envelope,client 按裸帧识别）后关闭连接,不进 hub,详见 [agent-subkeys.md](./agent-subkeys.md) |
 | 3 | SetActiveConv | C→S | 上报当前正在看的会话（`{conv_id}`），供服务端判断要不要计未读。空 conv_id = 退出会话。仅 user 角色（agent 不计未读）。见「未读感知」节 |
 | 6 | Resume | C→S | 断线恢复，携带最后收到的序列号。**必须在 Identify 之后** |
 | 7 | Reconnect | S→C | 服务端要求重连 |

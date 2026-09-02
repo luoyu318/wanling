@@ -49,7 +49,7 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 ```bash
 bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --setup
 # 可选: --server=URL 指定服务器(默认 http://localhost:18008);
-#       --config-dir=PATH 指定配置目录(默认 ~/.config/wanling-skills,env WANLING_CONFIG_DIR 次之)
+#       --config-dir=PATH 指定配置目录(默认 ~/.config/wanling-skills)
 ```
 
 流程：终端打印二维码 → 万灵 APP 扫一扫 → 选已有 Agent → 点「授权技能使用」→ 凭据自动写入 config.json（权限 600，不含明文回显）。
@@ -99,3 +99,12 @@ rm -rf ~/.agents/skills/wanling-send-image ~/.opencode/skills/wanling-send-image
 ## Agent 自助安装（agent 可直接执行）
 
 agent 无需克隆仓库，直接执行上方「手动安装」命令即可；仓库内工作时 `cd skills && ./install.sh` 等价。安全约束：安装器仅向 `~/.agents/skills/` 与各 target 软链路径写入仓库内静态文件，逐文件 sha256 校验，无遥测、无用户数据删除；旧位置真实副本未确认前拒绝覆盖。
+
+## 凭据获取
+
+技能调用 server API 需要 agent 凭据。推荐走 `install.sh --setup` 两步完成（无需用户 token）：
+
+1. 填 server URL——`--server=URL` 参数或交互输入，默认 `http://localhost:18008`；
+2. 万灵 APP 扫码 → 选已有 Agent → 点「授权技能使用」，子密钥（`wlsk_` 前缀）自动写入配置文件（权限 600，无明文回显），终端轮询到凭据即完成。
+
+技能凭据独立落 `~/.config/wanling-skills/config.json`（`--config-dir` 可覆盖），与 opencode 插件凭据（`~/.config/opencode-wanling/`）互不干扰：`--setup` 的写路径只认 `--config-dir` 或默认目录（忽略 `WANLING_CONFIG_DIR` env，防止运行环境注入误写插件目录）；`publish.py` / `upload.py` 读路径按上节探测顺序自动命中。子密钥不影响 agent 主密钥与现有绑定，可随时在 APP「我的 → Agent → 授权密钥」单独吊销。协议细节见 [agent-subkeys.md](../docs/ai-handbook/agent-subkeys.md)。

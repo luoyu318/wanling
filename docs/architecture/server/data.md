@@ -1,6 +1,6 @@
 # Server 数据层
 
-internal/repository/ 12 个 repo(agent / agent_type / approval / conversation / delivery / file / friendship / message / mini_program / pairing / participant / user)+ internal/model/null_json.go 类型。
+internal/repository/ 15 个 repo(agent / agent_sub_key / agent_type / approval / conversation / delivery / file / friendship / message / mini_program / mini_program_openid / pairing / participant / signing_key / user)+ internal/model/null_json.go 类型。
 
 ## repository 总览
 
@@ -17,6 +17,10 @@ internal/repository/ 12 个 repo(agent / agent_type / approval / conversation / 
 ## AgentTypeRepo
 
 操作 `agent_type_registry` 表(011)。`ListAll`(全量,LIMIT 256 兜底;`GET /api/agent-types` 数据源 + List/聚合的批量查表)、`GetByType`(单查,未注册返 nil,nil 由调用方兜底 multi_session=false)。表极小不做内存缓存,直接读库。
+
+## AgentSubKeyRepo
+
+操作 `agent_sub_keys` 表(016)。`Create`(应用侧生成 id)、`GetByKey`(含已吊销也返回;not-found 返 nil,nil 跟随 AgentRepo 惯例)、`ListByAgent`(created_at DESC,全量含已吊销)、`CountActive`(未吊销计数,上限 10 判定用)、`TouchLastUsed`(子密钥换 token 时更新,handler 侧 fail-soft)、`Revoke` / `RevokeAllForAgent`(均 `WHERE revoked_at IS NULL`,幂等且不覆盖首次吊销时间;后者被 `agent_handler.ResetSecretKey` 级联调用,尽力清扫语义失败仅日志)。协议见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md)。
 
 ## MiniProgramRepo
 

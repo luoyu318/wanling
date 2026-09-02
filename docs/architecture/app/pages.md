@@ -1,6 +1,6 @@
 # APP Pages
 
-lib/pages/ 目录下的 29 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
+lib/pages/ 目录下的 31 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
 
 ## SplashPage
 
@@ -28,7 +28,11 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AgentDetailPage
 
-详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA。编辑资料对话框含类型下拉（普通/OpenCode），保存时 PUT type 字段
+详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA。编辑资料对话框含类型下拉（普通/OpenCode），保存时 PUT type 字段。SettingsGroup 含「授权密钥」入口（Icons.key_outlined,置于「重置密钥」前,轻量操作优先破坏性垫底）→ `subKeysRoute()` 跳 AgentSubKeysPage
+
+## AgentSubKeysPage
+
+**授权密钥管理页**（路由 `/agent/:agentId/subkeys`,与 `/agent/:agentId/sessions` 相邻注册）。顶部说明文案（「授权密钥仅供 REST 调用,不能建立长连接;重置主密钥将同时吊销全部授权密钥」）+ FutureBuilder 列表：名称/创建于/最后使用（`formatRelativeTime`,无记录「从未使用」）/状态「生效中·已吊销」,已吊销整行置灰无吊销按钮。吊销 `showAppDialog` 确认（「吊销后该密钥不能再换新 token,已签发 token 过期前仍有效」）→ `revokeSubKey` → snackbar + 重拉列表。数据源 wanling_core `listSubKeys`/`revokeSubKey`（协议见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md)）;`AgentSubKeyInfo` model 对 last_used_at/revoked_at **字段缺席与显式 null 均容忍**
 
 ## AgentSessionsPage
 
@@ -44,9 +48,9 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 **子 Agent 详情页**(v1.0.10)。从 ChatPage task 卡片点击跳转,路由 `/chat/subagent/:taskCardId?convId=:convId`(必须排在 `/chat/:convId` 之前,否则 GoRouter 把 'subagent' 当成 convId)。展示某 task 卡片下挂的全部子 agent 事件流(reasoning / tool_card / markdown 子树)。数据来源:HTTP `api.getSubagentMessages(convId, taskCardId)` 拉 root 子树 + WS 双订阅(MESSAGE_CREATE 按 root_msg_id 过滤追加 / MESSAGE_UPDATE 按 message_id 替换条目内容,同步 task 卡片 running→completed 终态)。MessageRenderContext 注入 convId/messageId 让嵌套 task 卡片跳转可用,空 convId/taskCardId 时 router 直接返错误页
 
-## ScanPairPage / PairSelectAgentPage
+## ScanPairPage / PairSelectAgentPage / PairAgentActionSheet
 
-扫码配对两件套（见「扫码配对」节），AgentListPage 右上角 `+` 拉起
+扫码配对两件套 + 三选弹窗（见「扫码配对」节），AgentListPage 右上角 `+` 拉起。选已有 agent 由 `pair_agent_action_sheet.dart` 弹**三选**：授权（发子密钥不碰主密钥,备注输入 placeholder「技能授权」,直接 `pairComplete(action:'authorize', note)`）/ 接管绑定（红字「重置主密钥,原绑定将失效」,保留既有二次确认,显式传 `action:'bind'`）/ 取消。sheet 独立文件（`showPairAgentActionSheet()` 返回 `(action, note)?` record）便于独立单测
 
 ## 好友 / 群组页面（UI 未开放，代码保留）
 

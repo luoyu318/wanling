@@ -34,6 +34,8 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 - `013_miniprogram_signature.sql` — 小程序包签名(M3):mini_programs 加 `signature TEXT`(NULL=未签,publish 时 ed25519 签名)+ `mp_signing_key` 单行表(密钥对,私钥永不出 server)。协议见 [miniprogram.md](./miniprogram.md)
 - `014_users_role.sql` — role 一等公民化:users 加 `role varchar(16)`(CHECK ∈ {user, admin},默认 user),DB 为准(env ADMIN_USERNAMES 启动种子)
 - `015_mini_program_openids.sql` — 小程序 openid 身份体系:`mini_program_openids` 表((user_id, appid) PK → openid 默认 gen_random_uuid(),UNIQUE(openid)),(用户×appid) 惰性生成永久稳定标识,跨小程序不可关联。协议见 [miniprogram.md](./miniprogram.md)
+- `016_agent_sub_keys.sql` — agent 子密钥授权:`agent_sub_keys` 表(id/agent_id/secret_key UNIQUE/last_used_at/revoked_at,详见 [agent-subkeys.md](./agent-subkeys.md))+ `pairing_tickets` 加 `action TEXT NOT NULL DEFAULT 'bind'` 列(扫码配对 bind/authorize 双模式)。
+- `017_pairing_ticket_secret_key_text.sql` — `pairing_tickets.secret_key` VARCHAR(64)→TEXT:authorize 模式票据凭据是子密钥(`wlsk_`+64hex=69 字符),原列超长报错。
 
 新 migration 文件命名:`NNN_<feature>.sql`(NNN 递增,如 `005_add_xxx.sql`),不要修改 001_init.sql(会让已部署实例无法重跑 init)。
 
@@ -52,8 +54,9 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 | files | 文件(owner_id/path/thumbnail_*) |
 | file_conv_links | 文件↔会话 N:N 授权(四档放行用) |
 | approvals | 审批卡片(initiator/decider 通用字段) |
-| pairing_tickets | 扫码配对票据(5min TTL,非业务表) |
+| pairing_tickets | 扫码配对票据(5min TTL,非业务表;action bind/authorize,016) |
 | agent_type_registry | agent type 注册表(type → multi_session/label/badge 配色,011) |
+| agent_sub_keys | agent 子密钥(wlsk_ 前缀,REST-only 授权,last_used_at/revoked_at,016) |
 | mini_programs | 小程序注册表(appid 唯一 → owner/版本/manifest/sha256/状态/signature,012/013) |
 | mp_signing_key | 小程序包签名密钥单行表(ed25519 私钥+公钥,013) |
 | mini_program_openids | 小程序 openid((user_id, appid) PK → 永久稳定 openid,015) |
@@ -71,6 +74,7 @@ go build -o /tmp/wanling-migrate ./cmd/migrate
 枚举字段在 DB 层强制(防 future 误写,fail-fast):
 
 - `agents.type` ∈ VARCHAR(32) DEFAULT ''（无 DB CHECK，业务层约束；空串=普通 agent，`opencode`=OpenCode agent）
+- `pairing_tickets.action` ∈ TEXT DEFAULT 'bind'（无 DB CHECK，业务层白名单 `bind`/`authorize`，未知值 400，016）
 - `conversations.type` ∈ {dm_user_agent, dm_user_user, group_user, group_mixed, agent_session}
 - `conversation_participants.role` ∈ {owner, admin, member}
 - `conversation_participants.member_type` ∈ {user, agent}
