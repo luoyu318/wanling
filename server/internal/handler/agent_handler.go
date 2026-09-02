@@ -33,10 +33,12 @@ type AgentHandler struct {
 	// agentTypeRepo agent type 注册表:List/Get/Update 响应按 type 填充
 	// multi_session(拓扑属性);GET /api/agent-types 数据源。
 	agentTypeRepo *repository.AgentTypeRepo
+	// subKeyRepo agent 子密钥数据层:RotateSecret 成功后级联吊销全部子密钥。
+	subKeyRepo *repository.AgentSubKeyRepo
 }
 
-func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry, modeReg *agent.ModeRegistry, presetReg *agent.PresetRegistry, agentTypeRepo *repository.AgentTypeRepo) *AgentHandler {
-	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg, modeRegistry: modeReg, presetRegistry: presetReg, agentTypeRepo: agentTypeRepo}
+func NewAgentHandler(agentRepo *repository.AgentRepo, convRepo *repository.ConversationRepo, p *presence.Presence, reg *agent.AgentRegistry, slashReg *agent.SlashCatalogRegistry, modeReg *agent.ModeRegistry, presetReg *agent.PresetRegistry, agentTypeRepo *repository.AgentTypeRepo, subKeyRepo *repository.AgentSubKeyRepo) *AgentHandler {
+	return &AgentHandler{agentRepo: agentRepo, convRepo: convRepo, presence: p, agentRegistry: reg, slashCatalogRegistry: slashReg, modeRegistry: modeReg, presetRegistry: presetReg, agentTypeRepo: agentTypeRepo, subKeyRepo: subKeyRepo}
 }
 
 // multiSessionFor 按 type 查注册表。未注册类型(含空串 legacy)兜底 false;
@@ -295,6 +297,13 @@ func (h *AgentHandler) RotateSecret(c *gin.Context) {
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "重置密钥失败")
 		return
+	}
+	// 级联吊销全部子密钥(尽力而为的清扫,失败仅记日志不回滚):
+	// 主密钥重置本身已是总闸(旧 WS 鉴权立即失效),子密钥吊销失败
+	// 不应让用户拿不到新主密钥;下次 rotate 会再次清扫。
+	if err := h.subKeyRepo.RevokeAllForAgent(c.Request.Context(), id); err != nil {
+		logpkg.FromCtx(c.Request.Context()).ErrorContext(c.Request.Context(), "rotate-secret 级联吊销子密钥失败",
+			"agent_id", id, "err", err)
 	}
 	Ok(c, gin.H{"secret_key": newKey})
 }

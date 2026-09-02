@@ -118,7 +118,9 @@ func main() {
 	agentSubKeyRepo := repository.NewAgentSubKeyRepo(db)
 	authHandler := handler.NewAuthHandler(userRepo, agentRepo, agentSubKeyRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	agentTypeRepo := repository.NewAgentTypeRepo(db)
-	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo)
+	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo, agentSubKeyRepo)
+	// 子密钥管理面:owner 查看/吊销 agent 子密钥(列表绝不返 secret_key)。
+	subKeyHandler := handler.NewAgentSubKeyHandler(agentRepo, agentSubKeyRepo)
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
 	miniProgramRepo := repository.NewMiniProgramRepo(db)
@@ -318,7 +320,12 @@ func main() {
 		userAuth.PUT("/api/agents/:id", agentHandler.Update)
 		userAuth.DELETE("/api/agents/:id", agentHandler.Delete)
 		// 重置密钥:owner 自助轮换,旧连接立即失效。新 key 仅本次响应下发。
+		// 成功后级联吊销该 agent 全部子密钥(尽力而为,失败仅日志)。
 		userAuth.POST("/api/agents/:id/rotate-secret", agentHandler.RotateSecret)
+		// 子密钥管理:列表(含已吊销,绝不返 secret_key)+ 单个吊销(幂等 200,
+		// 404 仅当 agent 不存在)。详见 docs/ai-handbook/agent-subkeys.md。
+		userAuth.GET("/api/agents/:id/subkeys", subKeyHandler.List)
+		userAuth.DELETE("/api/agents/:id/subkeys/:keyId", subKeyHandler.Revoke)
 		// 模型清单:plugin 通过 WS AGENT_MODELS 上报 → registry 缓存 → 本端点供 APP 读取(Task 3)。
 		// 空清单也返 200(plugin 离线 / server 重启 / opencode 未就绪 均合法)。
 		userAuth.GET("/api/agents/:id/models", agentHandler.Models)
