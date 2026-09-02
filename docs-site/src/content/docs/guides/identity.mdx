@@ -28,17 +28,6 @@ const profile = await wanling.getProfile();
 
 因此，**做用户标识一律使用 openid，不要依赖全局账号 id**——你的小程序拿不到全局账号 id，依赖它的设计也无法成立。
 
-## 身份端点收紧
-
-`wanling.request` 不允许调用真实身份端点与管理端点：
-
-- `/api/users/me`（返回全局账号 id）
-- `/api/admin` 前缀的管理端点
-
-命中即拒绝，错误信息：`-32091 身份信息请使用 wanlingGetProfile`。
-
-这是宿主侧行为，**对存量小程序立即生效、无需改包**。迁移指引：身份获取一律改用 `wanling.getProfile()`。
-
 ## 宿主资源直引
 
 包内页面可直接用相对路径引用宿主资源，例如 `<img src="/api/..." />`：宿主会带登录态将其代理回源（GET），当前用户可见的宿主图片资源可直接显示，无需经 bridge——典型用法是展示 `wanling.getProfile()` 返回的 `avatarUrl`。注意该代理仅用于拉取资源：登录凭证不进入页面 JS 环境，宿主数据一律经 `window.wanling` 获取。

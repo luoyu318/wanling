@@ -12,7 +12,7 @@ description: window.wanling 全部 API 参考
 
 错误信息恒为字符串，`e.message` 直接可读、无需判型：
 
-- **语义性拒绝**：格式为 `-<code> <message>`（code 原值已带负号），如 `-32091 身份信息请使用 wanlingGetProfile`，可按前缀分流
+- **语义性拒绝**：格式为 `-<code> <message>`（code 原值已带负号），如 `-32090 用户未授权`，可按前缀分流
 - **传输异常**：为原生错误描述，如 `permission denied: wanling.api`
 
 权限不足时统一 fail fast：`permission denied: <perm>`，不静默降级。权限符号与授权流程见[权限与授权](/docs/guides/permissions/)，错误处理的完整说明见[调试与常见错误](/docs/guides/debugging/)。
@@ -37,7 +37,7 @@ description: window.wanling 全部 API 参考
   - `body`（object，可选）：请求体
 - **返回**：resolve 为服务端 JSON 响应体
 - **401 处理**：登录态过期时由宿主自动续期并重试，对页面透明，无需自行处理
-- **错误**：路径不合法 throw `仅允许 /api/ 前缀路径` 或 `路径归一化后越出 /api/ 白名单`；命中身份端点收紧规则 throw `-32091 身份信息请使用 wanlingGetProfile`（详见[身份与用户](/docs/guides/identity/)）；业务失败直接 throw，错误信息含服务端明细
+- **错误**：路径不合法 throw `仅允许 /api/ 前缀路径` 或 `路径归一化后越出 /api/ 白名单`；业务失败直接 throw，错误信息含服务端明细
 
 ```js
 // 万灵 API 代理(需 wanling.api;path 仅允许 /api/ 前缀),失败 throw Error
