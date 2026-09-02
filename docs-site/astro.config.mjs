@@ -17,6 +17,10 @@ export default defineConfig({
           label: '入门',
           items: ['', 'quickstart'],
         },
+        {
+          label: '指南',
+          items: ['guides/manifest', 'guides/navigation'],
+        },
       ],
       customCss: ['./src/styles/custom.css'],
     }),
