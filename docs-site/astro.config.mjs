@@ -15,7 +15,7 @@ export default defineConfig({
       sidebar: [
         {
           label: '入门',
-          items: [''],
+          items: ['', 'quickstart'],
         },
       ],
       customCss: ['./src/styles/custom.css'],
