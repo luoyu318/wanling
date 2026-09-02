@@ -20,6 +20,22 @@ class MiniProgramBridge {
   /// 跳转宿主页面(bridge 白名单校验后的 route 描述,容器页负责导航)。
   final void Function(Map<String, dynamic> route)? onOpenPage;
 
+  /// —— wanlingGetProfile(调用式授权,不进 manifest 声明体系)宿主注入 ——
+  /// openid 按(当前用户×appid)在 server 惰性生成;appid 由宿主持有注入,
+  /// JS 不可传参,防枚举。null=宿主未接身份上下文,-32091 不适用。
+  final String? appid;
+
+  /// 展示资料快照(容器页取 AuthState.user;昵称头像在会话内本就可见)。
+  final String? nickname;
+  final String? avatarUrl;
+
+  /// KVS 'wanling.profile' 授权痕读/写,由容器页注入(bridge 不感知 KVS)。
+  final Future<bool> Function()? isProfileGranted;
+  final Future<void> Function()? persistProfileGrant;
+
+  /// profile 授权弹窗;null 视作拒绝(防御未接线场景)。
+  final Future<bool> Function()? requestProfilePermission;
+
   MiniProgramBridge({
     required this.permissions,
     required this.proxy,
@@ -27,6 +43,12 @@ class MiniProgramBridge {
     this.onChatContext,
     this.onShare,
     this.onOpenPage,
+    this.appid,
+    this.nickname,
+    this.avatarUrl,
+    this.isProfileGranted,
+    this.persistProfileGrant,
+    this.requestProfilePermission,
   });
 
   Future<Object?> handle(String handlerName, List<dynamic> args) async {
@@ -67,6 +89,49 @@ class MiniProgramBridge {
           final body = opts?['body'];
           final data = await proxy(normalized, method, body);
           return {'ok': true, 'data': data};
+        case 'wanlingGetProfile':
+          // 调用式授权:门禁只有 KVS 授权痕 + 运行时弹窗,无 manifest 权限。
+          // appid 缺失先于授权判定(fail fast,不让用户为不可交付的请求弹窗)。
+          if (appid == null || appid!.isEmpty) {
+            return {
+              'ok': false,
+              'error': {
+                'code': -32091,
+                'message': '当前环境不支持获取身份信息',
+              },
+            };
+          }
+          final profileGranted = await isProfileGranted?.call() ?? false;
+          if (!profileGranted) {
+            // null 回调视作拒绝;拒绝不落痕,下次调用重弹(对齐 M2 拒绝语义)
+            final allowed = await requestProfilePermission?.call() ?? false;
+            if (!allowed) {
+              return {
+                'ok': false,
+                'error': {'code': -32090, 'message': '用户未授权'},
+              };
+            }
+            await persistProfileGrant?.call();
+          }
+          // openid 经宿主 proxy 通道(带登录态,token 不进 JS);端点失败走外层
+          // catch 返错误,不静默、不缓存失败结果(下次授权痕命中后直接重试)。
+          final profileRes = await proxy(
+            '/api/mini-programs/openid?appid=${Uri.encodeComponent(appid!)}',
+            'GET',
+            null,
+          );
+          final openid = (profileRes as Map?)?['openid'] as String?;
+          if (openid == null || openid.isEmpty) {
+            throw StateError('openid 端点返回数据异常');
+          }
+          return {
+            'ok': true,
+            'data': {
+              'openid': openid,
+              'nickname': nickname,
+              'avatarUrl': avatarUrl,
+            },
+          };
         case 'wanlingClose':
           onClose?.call();
           return null;

@@ -18,7 +18,8 @@ import 'package:app/services/mini_program_bridge.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
-import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/auth_provider.dart'
+    show apiProvider, authProvider;
 import 'package:wanling_core/providers/local_message_store_provider.dart'
     show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
@@ -64,6 +65,14 @@ window.wanling = {
         .then(function(r) {
           if (r && r.ok) return r.data;
           throw new Error((r && r.error) || 'openPage failed');
+        });
+  },
+  getProfile: function() {
+    return window.flutter_inappwebview
+        .callHandler('wanlingGetProfile')
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'getProfile failed');
         });
   }
 };
@@ -111,6 +120,21 @@ String _mimeOf(String path) {
   return map[p.extension(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/// profile 授权弹窗(wanlingGetProfile 首次调用时经 bridge 回调触发,
+/// 调用式授权,不在 M2 启动弹序列)。返回 true=允许;拒绝/点遮罩均视为拒绝。
+Future<bool> showProfileConsentDialog(BuildContext context) async {
+  var allowed = false;
+  await showAppDialog(
+    context: context,
+    title: '身份信息授权',
+    content: const Text('将向该小程序提供你的昵称、头像与用户标识'),
+    confirmText: '允许',
+    cancelText: '拒绝',
+    onConfirm: () => allowed = true,
+  );
+  return allowed;
+}
+
 class MiniProgramPage extends ConsumerStatefulWidget {
   final String appid;
 
@@ -128,6 +152,10 @@ class MiniProgramPage extends ConsumerStatefulWidget {
 }
 
 class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
+  /// wanlingGetProfile 调用式授权的 KVS 授权痕键(复用 mp_perm 集合语义,
+  /// 随 deleteMpPerms 卸载清理)。
+  static const _profilePermKey = 'wanling.profile';
+
   InAppWebViewController? _controller;
   MiniProgramBridge? _bridge;
   String? _pkgRoot;
@@ -265,6 +293,9 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
       _entryPath = p.join(_pkgRoot!, info.entry);
 
       final effective = await _ensurePermissions(info);
+      final uid = await TokenVault.getUserId() ?? '';
+      final store = ref.read(localMessageStoreProvider).valueOrNull;
+      final user = ref.read(authProvider).user;
       _bridge = MiniProgramBridge(
         permissions: effective,
         proxy: (path, method, body) =>
@@ -273,6 +304,21 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         onChatContext: () => widget.conversationId,
         onShare: (payload) => _shareToChat(info, payload),
         onOpenPage: (route) => _openHostPage(route),
+        // wanlingGetProfile(调用式授权):appid 宿主注入防 JS 枚举,
+        // 昵称头像取当前登录用户快照,KVS 授权痕读写 + 弹窗均由容器页接线。
+        appid: info.appid,
+        nickname: user?.displayName,
+        avatarUrl: user?.avatarUrl,
+        isProfileGranted: () async =>
+            (await store?.getMpPerms(uid, info.appid) ?? <String>{})
+                .contains(_profilePermKey),
+        requestProfilePermission: () async =>
+            mounted && await showProfileConsentDialog(context),
+        persistProfileGrant: () async {
+          final granted =
+              await store?.getMpPerms(uid, info.appid) ?? <String>{};
+          await store?.putMpPerms(uid, info.appid, {...granted, _profilePermKey});
+        },
       );
       await _controller?.loadUrl(
         urlRequest: URLRequest(url: WebUri(_entryUrl(info).toString())),
@@ -483,6 +529,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                   handlerName: 'wanlingOpenPage',
                   callback: (args) async =>
                       await _bridge?.handle('wanlingOpenPage', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingGetProfile',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingGetProfile', args),
                 );
                 unawaited(_start(info));
               },

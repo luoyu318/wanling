@@ -375,6 +375,150 @@ void main() {
     });
   });
 
+  group('wanlingGetProfile', () {
+    test('KVS 已授权 → 直接返回数据,弹窗回调零调用', () async {
+      var asked = 0;
+      String? seenPath;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (path, _, _) async {
+          seenPath = path;
+          return {'openid': 'o-123'};
+        },
+        appid: 'com.demo.app',
+        nickname: '张三',
+        avatarUrl: 'https://a/x.png',
+        isProfileGranted: () async => true,
+        requestProfilePermission: () async {
+          asked++;
+          return true;
+        },
+        persistProfileGrant: () async {},
+      );
+      final r = await b.handle('wanlingGetProfile', const []);
+      expect((r as Map)['ok'], isTrue);
+      expect(r['data'], {
+        'openid': 'o-123',
+        'nickname': '张三',
+        'avatarUrl': 'https://a/x.png',
+      });
+      expect(asked, 0);
+      expect(seenPath, '/api/mini-programs/openid?appid=com.demo.app');
+    });
+
+    test('未授权 → 拒绝 → -32090 且 KVS 无痕、不触达 proxy', () async {
+      var persisted = 0;
+      var fetched = false;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async {
+          fetched = true;
+          return null;
+        },
+        appid: 'com.demo.app',
+        nickname: '张三',
+        avatarUrl: null,
+        isProfileGranted: () async => false,
+        requestProfilePermission: () async => false,
+        persistProfileGrant: () async => persisted++,
+      );
+      final r = await b.handle('wanlingGetProfile', const []);
+      expect((r as Map)['ok'], isFalse);
+      final err = r['error'] as Map;
+      expect(err['code'], -32090);
+      expect(err['message'], '用户未授权');
+      expect(persisted, 0);
+      expect(fetched, isFalse);
+    });
+
+    test('弹窗回调未注入(null) → 防御性视作拒绝 -32090', () async {
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async => null,
+        appid: 'com.demo.app',
+        nickname: '张三',
+        avatarUrl: null,
+        isProfileGranted: () async => false,
+      );
+      final r = await b.handle('wanlingGetProfile', const []);
+      expect((r as Map)['ok'], isFalse);
+      expect((r['error'] as Map)['code'], -32090);
+    });
+
+    test('未授权 → 允许 → KVS 落痕 + 返回 {openid,nickname,avatarUrl}', () async {
+      final kvs = <String>{};
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async => {'openid': 'o-123'},
+        appid: 'com.demo.app',
+        nickname: '张三',
+        avatarUrl: null,
+        isProfileGranted: () async => kvs.contains('wanling.profile'),
+        requestProfilePermission: () async => true,
+        persistProfileGrant: () async => kvs.add('wanling.profile'),
+      );
+      final r = await b.handle('wanlingGetProfile', const []);
+      expect((r as Map)['ok'], isTrue);
+      expect((r['data'] as Map)['openid'], 'o-123');
+      expect((r['data'] as Map)['nickname'], '张三');
+      expect(kvs, {'wanling.profile'});
+    });
+
+    test('openid 端点失败 → 错误不静默;失败不缓存,恢复后已授权直返', () async {
+      final kvs = <String>{};
+      var calls = 0;
+      var asked = 0;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async {
+          calls++;
+          if (calls == 1) throw Exception('openid endpoint boom');
+          return {'openid': 'o-123'};
+        },
+        appid: 'com.demo.app',
+        nickname: '张三',
+        avatarUrl: null,
+        isProfileGranted: () async => kvs.contains('wanling.profile'),
+        requestProfilePermission: () async {
+          asked++;
+          return true;
+        },
+        persistProfileGrant: () async => kvs.add('wanling.profile'),
+      );
+      final r1 = await b.handle('wanlingGetProfile', const []);
+      expect((r1 as Map)['ok'], isFalse);
+      expect((r1['error'] as String), contains('openid endpoint boom'));
+      final r2 = await b.handle('wanlingGetProfile', const []);
+      expect((r2 as Map)['ok'], isTrue);
+      expect((r2['data'] as Map)['openid'], 'o-123');
+      expect(asked, 1);
+    });
+
+    test('appid 未注入 → -32091 不适用,不弹窗不触达 proxy', () async {
+      var asked = 0;
+      var fetched = false;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async {
+          fetched = true;
+          return null;
+        },
+        nickname: '张三',
+        avatarUrl: null,
+        isProfileGranted: () async => false,
+        requestProfilePermission: () async {
+          asked++;
+          return true;
+        },
+      );
+      final r = await b.handle('wanlingGetProfile', const []);
+      expect((r as Map)['ok'], isFalse);
+      expect((r['error'] as Map)['code'], -32091);
+      expect(asked, 0);
+      expect(fetched, isFalse);
+    });
+  });
+
   group('openPage', () {
     test('无 wanling.nav 权限 → 拒绝且不触达回调', () async {
       var called = false;
