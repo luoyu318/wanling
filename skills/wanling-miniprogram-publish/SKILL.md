@@ -1,11 +1,11 @@
 ---
 name: wanling-miniprogram-publish
-description: 当用户要求「写一个小程序/做个小程序/发布小程序/把小程序传到服务器/小程序上线」或提到「wanling 小程序」的编写与发布时使用。覆盖万灵小程序包格式规范与 Agent 直传上传全流程（agent 在 opencode-plugin 环境下运行）。
+description: 当用户要求「写一个小程序/做个小程序/发布小程序/把小程序传到服务器/小程序上线」或提到「wanling 小程序」的编写与发布时使用；也适用于「发小程序卡片/把小程序发给我/把小程序发到会话」。覆盖万灵小程序包格式规范、Agent 直传上传与发卡到会话全流程（agent 在 opencode-plugin 环境下运行）。
 ---
 
 # 万灵小程序开发与发布
 
-帮用户开发并发布万灵小程序（WebView 容器，标准 H5 技术栈）。本 skill 让你完成「写包 → 自检 → 上传 → 汇报」全流程，用户无需手动操作。
+帮用户开发并发布万灵小程序（WebView 容器，标准 H5 技术栈）。本 skill 让你完成「写包 → 自检 → 上传 → 发卡 → 汇报」全流程，用户无需手动操作。
 
 ## 一、包格式规范（必须严格遵守，server 端 fail fast 校验）
 
@@ -63,6 +63,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
    ```
    脚本会先本地自检（与 server 同规则），通过后自动换 token 并上传，成功打印 server 返回的 `{id, appid, version}`。
 3. 向用户汇报：appid/version、当前为私有（仅用户自己可见）、如何查看（APP 侧滑栏 → 小程序 → 我的）
+4. 发布成功后可顺手把卡片发到当前会话（调 `wanling_send_miniprogram_card` tool，appid 用上一步输出），用户点卡片直接打开（见 七）
 
 ## 四、常见错误对照（脚本报错 → 处理）
 
@@ -74,12 +75,26 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 | `payload_too_large` | 包超 20MB，删减资源 |
 | `unsupported_media_type` | 只接受 .zip |
 
-## 五、安全规约（强制）
-
-- `publish.py` 凭据按探测顺序取用：宿主 env 三元组（`WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY`，hermes 等宿主 agent 进程注入，身份随宿主）→ `$WANLING_CONFIG_DIR/config.json` → `~/.config/opencode-wanling`（存在则用）→ `~/.config/wanling-skills`（存在则用，子密钥）；**禁止打印、记录或把 secretKey 写进任何文件、提交或回复内容**
-- 不要把 server 地址之外的实例内部信息写进小程序包
-- 小程序代码运行在用户设备 WebView 沙箱内，不要引导用户输入敏感凭证
-
 ## 六、上架公共库
 
 私有小程序仅 owner 可见。用户要求「让所有人都能用」时，告知：需要实例管理员在管理侧执行 publish（当前无自助入口，管理员可在 APP 侧栏「小程序审核」页操作，或 `PUT /api/admin/mini-programs/:id/status {"status":"published"}`）。
+
+## 七、发卡到会话（agent → 会话）
+
+把小程序以卡片消息（`mini_program_card`）发到当前会话，用户点卡片直接打开。两个场景同一 tool：
+
+| 场景 | 动作 |
+|---|---|
+| 发布后顺手发卡 | 调 `wanling_send_miniprogram_card(appid)`（appid 即 publish.py 刚输出的） |
+| 独立发卡（任意时刻指定 appid） | 同一 tool，appid 由用户提供 |
+
+- **首选 tool**：`wanling_send_miniprogram_card(appid, params?)`（opencode 全局 plugin `~/.config/opencode/plugins/wanling-send-miniprogram-card.ts` 注册，源码随 skill 收录在 `opencode-plugins/` 下）。卡片标题/图标自动按 appid 查询，无需提供；params 可选（JSON object 字符串，作为启动参数透传）
+- **备用脚本**（tool 不可用/会话未映射时）：`python3 <skill目录>/send_card.py <appid> [conv_id]`；conv_id 省略时从 `session-maps.json` 推断（多会话并发不可靠）；`--dry-run <appid>` 只查询不发，用于链路验证
+- 私有小程序发到主人会话可发可开（owner 可见，容器页兜底校验）；manifest 未配 icon 时照发，APP 端显示通用图标色块
+- 查不到 appid 时 tool/脚本报「未找到或不可见」：确认 appid 拼写，或小程序属他人且未上架（无法发卡）
+
+## 八、安全规约（强制）
+
+- `publish.py` / `send_card.py` 凭据按探测顺序取用：宿主 env 三元组（`WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY`，hermes 等宿主 agent 进程注入，身份随宿主）→ `$WANLING_CONFIG_DIR/config.json` → `~/.config/opencode-wanling`（存在则用）→ `~/.config/wanling-skills`（存在则用，子密钥）；**禁止打印、记录或把 secretKey 写进任何文件、提交或回复内容**
+- 不要把 server 地址之外的实例内部信息写进小程序包
+- 小程序代码运行在用户设备 WebView 沙箱内，不要引导用户输入敏感凭证
