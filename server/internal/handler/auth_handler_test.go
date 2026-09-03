@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wanling/server/internal/auth"
+	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
 
@@ -63,7 +66,7 @@ func newAuthTestStore(t *testing.T) *auth.TokenStore {
 // 需要 userRepo 的用例（Refresh happy path / role 重算）须自建真库 repo。
 func newAuthHandlerWithStore(t *testing.T) *AuthHandler {
 	t.Helper()
-	return NewAuthHandler(nil, nil, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL)
+	return NewAuthHandler(nil, nil, nil, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL)
 }
 
 // doRefreshRequest 构造 POST /api/auth/refresh 请求。
@@ -93,7 +96,7 @@ func TestRefresh_HappyPath(t *testing.T) {
 	}
 
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(urepo, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(urepo, nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 	ctx := context.Background()
 
 	const oldRefresh = "old-refresh-abc"
@@ -158,7 +161,7 @@ func TestRefresh_RoleFromDBNotToken(t *testing.T) {
 	}
 
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(urepo, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(urepo, nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 	ctx := context.Background()
 
 	// 构造历史 refresh token：data.Role="admin"，与 DB 当前 role=user 不符
@@ -188,7 +191,7 @@ func TestRefresh_RoleFromDBNotToken(t *testing.T) {
 // TestRefresh_StoreNil_503 验证 Redis 不可用（store=nil）时 refresh 返回 503。
 // refresh 体系强依赖 Redis（rotation + 黑名单），无 store 时直接拒绝。
 func TestRefresh_StoreNil_503(t *testing.T) {
-	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
 
 	body := `{"refresh_token":"whatever"}`
 	w := doRefreshRequest(t, h, body)
@@ -210,7 +213,7 @@ func TestRefresh_InvalidToken(t *testing.T) {
 // 场景：refresh token 绑定 ver=0，IncrTokenVersion 后 Redis 中 ver=1 → refresh 时版本不匹配 → 401。
 func TestRefresh_TokenVersionMismatch(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 	ctx := context.Background()
 
 	const oldRefresh = "ver-mismatch-refresh"
@@ -278,7 +281,7 @@ func doAuthRequest(t *testing.T, path string, hf gin.HandlerFunc, body string) *
 //   - 返回 200。
 func TestLogout_BlacklistAndDeleteRefresh(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 	ctx := context.Background()
 
 	const refreshToken = "logout-refresh"
@@ -322,7 +325,7 @@ func TestLogout_BlacklistAndDeleteRefresh(t *testing.T) {
 
 // TestLogout_NoStoreSkipsRedis 验证 store=nil 时 logout 不 panic、不碰 Redis，直接返 200。
 func TestLogout_NoStoreSkipsRedis(t *testing.T) {
-	h := NewAuthHandler(nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
 
 	access, err := auth.GenerateToken(authTestSecret, "user-nostore", "user", "", 2*time.Hour, "jti-nostore", 0)
 	if err != nil {
@@ -341,7 +344,7 @@ func TestLogout_NoStoreSkipsRedis(t *testing.T) {
 // logout 把 jti 拉黑后，再用同 token 过 AuthMiddlewareWithStore 应被拦截（401 token_revoked）。
 func TestLogout_BlacklistedTokenRejectedByMiddleware(t *testing.T) {
 	store := newAuthTestStore(t)
-	h := NewAuthHandler(nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(nil, nil, nil, authTestSecret, store, authAccessTTL, authRefreshTTL)
 
 	access, err := auth.GenerateToken(authTestSecret, "user-e2e", "user", "", 2*time.Hour, "jti-e2e", 0)
 	if err != nil {
@@ -376,7 +379,7 @@ func TestLogout_BlacklistedTokenRejectedByMiddleware(t *testing.T) {
 func TestLogin_ResponseTopLevelRole(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
-	h := NewAuthHandler(urepo, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(urepo, nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
 
 	username := shortName(t, "login_")
 	hash, err := bcrypt.GenerateFromPassword([]byte("Str0ng!Pass"), bcrypt.DefaultCost)
@@ -400,7 +403,7 @@ func TestLogin_ResponseTopLevelRole(t *testing.T) {
 func TestRegister_ResponseTopLevelRole(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	urepo := repository.NewUserRepo(db)
-	h := NewAuthHandler(urepo, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
+	h := NewAuthHandler(urepo, nil, nil, authTestSecret, nil, authAccessTTL, authRefreshTTL)
 
 	body := `{"username":"` + shortName(t, "reg_") + `","password":"Str0ng!Pass"}`
 	w := doAuthRequest(t, "register", h.Register, body)
@@ -408,5 +411,163 @@ func TestRegister_ResponseTopLevelRole(t *testing.T) {
 	data := AssertOk(t, w, http.StatusCreated)
 	if data["role"] != "user" {
 		t.Fatalf("注册响应顶层 role 应为 user,实际: %v", data["role"])
+	}
+}
+
+// --- AgentToken（子密钥前缀路由）测试 ---
+
+// newAgentTokenFixture 构造 AgentToken 场景的真库环境：
+// 返回 handler 与子密钥 repo,及预建的 agent（属主 user 一并创建）。
+// agentSecret 是 agent 主密钥,调用方按需用其换 token。
+func newAgentTokenFixture(t *testing.T, agentSecret string) (*AuthHandler, *repository.AgentSubKeyRepo, *model.Agent) {
+	t.Helper()
+	db := repository.SetupTestDB(t)
+	urepo := repository.NewUserRepo(db)
+	arepo := repository.NewAgentRepo(db)
+	skrepo := repository.NewAgentSubKeyRepo(db)
+
+	u, err := urepo.Create(t.Context(), shortName(t, "at_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	a, err := arepo.Create(t.Context(), u.ID, "agent-token-agent", agentSecret, "")
+	if err != nil {
+		t.Fatalf("Create agent: %v", err)
+	}
+	h := NewAuthHandler(nil, arepo, skrepo, authTestSecret, newAuthTestStore(t), authAccessTTL, authRefreshTTL)
+	return h, skrepo, a
+}
+
+// doAgentTokenRequest 构造 POST /api/agents/:id/token 请求。
+func doAgentTokenRequest(t *testing.T, h *AuthHandler, agentID, secretKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/agents/:id/token", h.AgentToken)
+
+	body, err := json.Marshal(map[string]string{"agent_id": agentID, "secret_key": secretKey})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/token", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestAgentToken_MasterKeyClaims 主密钥（无 wlsk_ 前缀）换 token:
+// claims 带 key_kind=master,key_id 为空。
+func TestAgentToken_MasterKeyClaims(t *testing.T) {
+	const masterSecret = "master-secret-key-hex"
+	h, _, a := newAgentTokenFixture(t, masterSecret)
+
+	w := doAgentTokenRequest(t, h, a.ID, masterSecret)
+	data := AssertOk(t, w, http.StatusOK)
+	token, _ := data["token"].(string)
+	if token == "" {
+		t.Fatalf("响应缺少 token: %v", data)
+	}
+
+	claims, err := auth.ParseToken(authTestSecret, token)
+	if err != nil {
+		t.Fatalf("ParseToken: %v", err)
+	}
+	if claims.Subject != a.ID || claims.Role != "agent" {
+		t.Fatalf("claims 身份错误: sub=%s role=%s", claims.Subject, claims.Role)
+	}
+	if claims.KeyKind != "master" {
+		t.Fatalf("主密钥 token key_kind 应为 master,实际 %q", claims.KeyKind)
+	}
+	if claims.KeyID != "" {
+		t.Fatalf("主密钥 token key_id 应为空,实际 %q", claims.KeyID)
+	}
+}
+
+// TestAgentToken_SubKeyClaimsAndTouchLastUsed 子密钥（wlsk_ 前缀）换 token:
+// claims 带 key_kind=sub + key_id=子密钥 ID,且 last_used_at 被 TouchLastUsed 写入。
+func TestAgentToken_SubKeyClaimsAndTouchLastUsed(t *testing.T) {
+	const masterSecret = "master-secret-key-hex"
+	h, skrepo, a := newAgentTokenFixture(t, masterSecret)
+	sk, err := skrepo.Create(t.Context(), a.ID, "CI 密钥", auth.SubKeyPrefix+"test_sub_key")
+	if err != nil {
+		t.Fatalf("Create sub key: %v", err)
+	}
+
+	w := doAgentTokenRequest(t, h, a.ID, sk.SecretKey)
+	data := AssertOk(t, w, http.StatusOK)
+	token, _ := data["token"].(string)
+	if token == "" {
+		t.Fatalf("响应缺少 token: %v", data)
+	}
+
+	claims, err := auth.ParseToken(authTestSecret, token)
+	if err != nil {
+		t.Fatalf("ParseToken: %v", err)
+	}
+	if claims.Subject != a.ID || claims.Role != "agent" {
+		t.Fatalf("claims 身份错误: sub=%s role=%s", claims.Subject, claims.Role)
+	}
+	if claims.KeyKind != "sub" {
+		t.Fatalf("子密钥 token key_kind 应为 sub,实际 %q", claims.KeyKind)
+	}
+	if claims.KeyID != sk.ID {
+		t.Fatalf("子密钥 token key_id 应为 %q,实际 %q", sk.ID, claims.KeyID)
+	}
+
+	// last_used_at 应被写入（fail-soft 不阻断,但正常路径必须落库）
+	got, err := skrepo.GetByKey(t.Context(), sk.SecretKey)
+	if err != nil {
+		t.Fatalf("GetByKey: %v", err)
+	}
+	if got == nil || got.LastUsedAt == nil {
+		t.Fatalf("last_used_at 应被写入,实际: %+v", got)
+	}
+}
+
+// TestAgentToken_RevokedSubKey401 已吊销子密钥换 token → 401。
+func TestAgentToken_RevokedSubKey401(t *testing.T) {
+	const masterSecret = "master-secret-key-hex"
+	h, skrepo, a := newAgentTokenFixture(t, masterSecret)
+	sk, err := skrepo.Create(t.Context(), a.ID, "已吊销密钥", auth.SubKeyPrefix+"revoked_key")
+	if err != nil {
+		t.Fatalf("Create sub key: %v", err)
+	}
+	if err := skrepo.Revoke(t.Context(), sk.ID); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	w := doAgentTokenRequest(t, h, a.ID, sk.SecretKey)
+
+	AssertErr(t, w, http.StatusUnauthorized, "unauthorized")
+}
+
+// TestAgentToken_FakeSubKey401 前缀是 wlsk_ 但凭据不存在的伪子密钥 → 401。
+func TestAgentToken_FakeSubKey401(t *testing.T) {
+	const masterSecret = "master-secret-key-hex"
+	h, _, a := newAgentTokenFixture(t, masterSecret)
+
+	w := doAgentTokenRequest(t, h, a.ID, auth.SubKeyPrefix+"nonexistent")
+
+	AssertErr(t, w, http.StatusUnauthorized, "unauthorized")
+}
+
+// TestAgentToken_LegacyTokenNoKeyKind 存量 token 由 GenerateToken 签发,
+// 无 key_kind/key_id 字段;解析后两字段为空串,消费方以 KeyKind=="" 判定为 master（向后兼容）。
+func TestAgentToken_LegacyTokenNoKeyKind(t *testing.T) {
+	legacy, err := auth.GenerateToken(authTestSecret, "agent-legacy", "agent", "owner-legacy", time.Hour, "jti-legacy", 0)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	claims, err := auth.ParseToken(authTestSecret, legacy)
+	if err != nil {
+		t.Fatalf("ParseToken: %v", err)
+	}
+	if claims.KeyKind != "" {
+		t.Fatalf("存量 token key_kind 应为空串（视为 master）,实际 %q", claims.KeyKind)
+	}
+	if claims.KeyID != "" {
+		t.Fatalf("存量 token key_id 应为空串,实际 %q", claims.KeyID)
 	}
 }

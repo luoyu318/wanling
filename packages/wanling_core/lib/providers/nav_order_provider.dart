@@ -11,11 +11,13 @@ import 'saved_logins_provider.dart' show sharedPrefsProvider;
 /// 底栏固定 tab 的保留 id(agent id 为 UUID,不会与之冲突)。
 const kNavTabMsg = 'msg';
 const kNavTabWanling = 'wanling';
-const kNavFixedIds = {kNavTabMsg, kNavTabWanling};
+const kNavTabMiniProgram = 'miniapps';
+const kNavFixedIds = {kNavTabMsg, kNavTabWanling, kNavTabMiniProgram};
 
 /// 固定项底栏文案(与 id 常量同源,消费方禁止再写字面量)。
 const kNavTabMsgLabel = '消息';
 const kNavTabWanlingLabel = '万灵';
+const kNavTabMiniProgramLabel = '小程序';
 
 /// 会话槽前缀:底栏序列中会话槽存 'conv:<convId>'(agent 为 UUID,不会冲突)。
 const kNavConvPrefix = 'conv:';
@@ -92,7 +94,10 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
     if (current != null) return (current, false);
     if (ownerId.isEmpty) return (const <String>[], false);
     final legacy = prefs.getStringList('nav_pins_$ownerId') ?? const <String>[];
-    return ([kNavTabMsg, kNavTabWanling, ...legacy], legacy.isNotEmpty);
+    return (
+      [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, ...legacy],
+      legacy.isNotEmpty
+    );
   }
 
   /// 不变式修复:去空/去重保序;固定项保证恰好一次(仅缺失才补,补位后固定项相邻)。
@@ -100,7 +105,9 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
   static List<String> _sanitize(List<String> raw) {
     final seen = <String>{};
     final out = <String>[];
-    var hasMsg = false, hasWanling = false;
+    var hasMsg = false,
+        hasWanling = false,
+        hasMiniProgram = false;
     for (final id in raw) {
       if (id.isEmpty || !seen.add(id)) continue;
       if (id == kNavTabMsg) {
@@ -109,15 +116,23 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
       } else if (id == kNavTabWanling) {
         if (hasWanling) continue;
         hasWanling = true;
+      } else if (id == kNavTabMiniProgram) {
+        if (hasMiniProgram) continue;
+        hasMiniProgram = true;
       }
       out.add(id);
     }
-    // 补位:wanling 缺失插到 msg 紧前(msg 亦缺时先占最前),msg 缺失补最前。
+    // 补位:wanling 缺失插到 msg 紧前(msg 亦缺时先占最前),msg 缺失补最前,
+    // miniapps 缺失插到 wanling 紧后(此时 wanling 必已补齐;length 仅为防御)。
     if (!hasWanling) {
       final msgIdx = out.indexOf(kNavTabMsg);
       out.insert(msgIdx == -1 ? 0 : msgIdx, kNavTabWanling);
     }
     if (!hasMsg) out.insert(0, kNavTabMsg);
+    if (!hasMiniProgram) {
+      final wIdx = out.indexOf(kNavTabWanling);
+      out.insert(wIdx == -1 ? out.length : wIdx + 1, kNavTabMiniProgram);
+    }
     return out;
   }
 

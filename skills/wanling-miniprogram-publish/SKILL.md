@@ -76,7 +76,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 
 ## 五、安全规约（强制）
 
-- `publish.py` 只读取 `$WANLING_CONFIG_DIR/config.json` 中的 serverUrl/agentId/secretKey 用于鉴权；**禁止打印、记录或把 secretKey 写进任何文件、提交或回复内容**
+- `publish.py` 凭据按探测顺序取用：宿主 env 三元组（`WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY`，hermes 等宿主 agent 进程注入，身份随宿主）→ `$WANLING_CONFIG_DIR/config.json` → `~/.config/opencode-wanling`（存在则用）→ `~/.config/wanling-skills`（存在则用，子密钥）；**禁止打印、记录或把 secretKey 写进任何文件、提交或回复内容**
 - 不要把 server 地址之外的实例内部信息写进小程序包
 - 小程序代码运行在用户设备 WebView 沙箱内，不要引导用户输入敏感凭证
 

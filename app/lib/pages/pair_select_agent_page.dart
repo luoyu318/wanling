@@ -6,10 +6,11 @@ import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/utils/snackbar.dart';
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
+import 'pair_agent_action_sheet.dart';
 
 /// 扫码后选择/新建 Agent 页。
 /// 顶部 AppBar ← 返回；列表显示当前 user 名下 agent（scan 接口返回）；
-/// 点击已有 agent 弹"重置密钥"确认；底部"+ 新建 Agent"弹输入框。
+/// 点击已有 agent 弹三选（授权技能使用/接管绑定/取消）；底部"+ 新建 Agent"弹输入框。
 class PairSelectAgentPage extends ConsumerStatefulWidget {
   final String ticketId;
   const PairSelectAgentPage({super.key, required this.ticketId});
@@ -34,8 +35,17 @@ class _PairSelectAgentPageState extends ConsumerState<PairSelectAgentPage> {
     await _future;
   }
 
-  void _onSelectExisting(PairAgentSummary agent) {
-    showAppDialog(
+  Future<void> _onSelectExisting(PairAgentSummary agent) async {
+    final choice = await showPairAgentActionSheet(context, agent);
+    if (choice == null || !mounted) return; // 用户取消/关 sheet
+    final (action, note) = choice;
+    if (action == 'authorize') {
+      // 授权发子密钥,非破坏性,直接完成
+      await _doComplete(agentId: agent.id, action: action, note: note);
+      return;
+    }
+    // 接管绑定:重置主密钥是破坏性操作,二次确认
+    await showAppDialog(
       context: context,
       title: '重置密钥',
       content: Text(
@@ -43,7 +53,7 @@ class _PairSelectAgentPageState extends ConsumerState<PairSelectAgentPage> {
         '继续将重置其密钥使旧连接失效，确定吗？',
       ),
       confirmText: '确定重置',
-      onConfirm: () => _doComplete(agentId: agent.id),
+      onConfirm: () => _doComplete(agentId: agent.id, action: action),
     );
   }
 
@@ -66,13 +76,20 @@ class _PairSelectAgentPageState extends ConsumerState<PairSelectAgentPage> {
     );
   }
 
-  Future<void> _doComplete({String? agentId, String? newAgentName}) async {
+  Future<void> _doComplete({
+    String? agentId,
+    String? newAgentName,
+    String action = 'bind',
+    String? note,
+  }) async {
     final api = ref.read(apiProvider);
     try {
       await api.pairComplete(
         widget.ticketId,
         agentId: agentId,
         newAgentName: newAgentName,
+        action: action,
+        note: note,
       );
       if (!mounted) return;
       showAppSnackBar(

@@ -5,7 +5,8 @@
   python3 wanling_upload.py <local_path> [conversation_id]
 
 流程:
-  1. 从 WANLING_CONFIG_DIR/config.json 读取 agent 凭证（serverUrl/agentId/secretKey）
+  1. 按探测顺序读取凭据 config.json（serverUrl/agentId/secretKey）:
+     WANLING_CONFIG_FILE → WANLING_CONFIG_DIR → ~/.config/opencode-wanling → ~/.config/wanling-skills
   2. POST /api/agents/:id/token 换 agent JWT
   3. POST /api/upload?conversation_id=... 上传（multipart 字段名 file）拿 file_id
 
@@ -27,11 +28,42 @@ def _redact(v):
     return "<redacted>" if v else ""
 
 
+def config_candidates():
+    """凭据探测顺序(与 install.sh 装后检测同序):第一个存在的文件生效。
+    WANLING_CONFIG_FILE 显式指定(唯一候选,不存在即报错) → 否则依次:
+    WANLING_CONFIG_DIR → opencode 插件配置(存在则用) → 技能 setup 配置(存在则用)。
+    注:文件探测之前,load_config 还有一层进程级 env 三元组(hermes 宿主身份)。"""
+    if os.environ.get("WANLING_CONFIG_FILE"):
+        return [os.environ["WANLING_CONFIG_FILE"]]
+    candidates = []
+    if os.environ.get("WANLING_CONFIG_DIR"):
+        candidates.append(os.path.join(os.environ["WANLING_CONFIG_DIR"], "config.json"))
+    candidates.append(os.path.expanduser("~/.config/opencode-wanling/config.json"))
+    candidates.append(os.path.expanduser("~/.config/wanling-skills/config.json"))
+    return candidates
+
+
 def load_config():
-    cfg_dir = os.environ.get("WANLING_CONFIG_DIR") or os.path.expanduser("~/.config/opencode-wanling")
-    cfg_file = os.environ.get("WANLING_CONFIG_FILE") or os.path.join(cfg_dir, "config.json")
-    if not os.path.isfile(cfg_file):
-        sys.exit(f"[wanling-upload] config 不存在: {cfg_file}")
+    # 0) 进程级三元组（hermes 等宿主 agent 的 env 注入,工具子进程天然继承）：
+    #    宿主内跑技能 = 宿主身份（主密钥），每个 agent 独立,不共享 fallback。
+    env_server = os.environ.get("WANLING_SERVER_URL")
+    env_agent = os.environ.get("WANLING_AGENT_ID")
+    env_secret = os.environ.get("WANLING_SECRET_KEY")
+    if env_server and env_agent and env_secret:
+        print(f"[wanling-upload] server: {env_server} (env: 宿主 agent 身份)")
+        return env_server, env_agent, env_secret
+    if env_server or env_agent or env_secret:
+        # 部分设置会跨 server 混用身份（如 env 的密钥发给文件里的另一台 server）,拒绝
+        sys.exit("[wanling-upload] 宿主 env 三元组不完整: WANLING_SERVER_URL/WANLING_AGENT_ID/"
+                 "WANLING_SECRET_KEY 需同时设置或同时不设")
+    candidates = config_candidates()
+    cfg_file = next((p for p in candidates if os.path.isfile(p)), "")
+    if not cfg_file:
+        sys.exit(
+            "[wanling-upload] 未找到凭据配置,已探测:\n  " + "\n  ".join(candidates)
+            + "\n  （或宿主进程 env 三元组 WANLING_SERVER_URL/WANLING_AGENT_ID/WANLING_SECRET_KEY）"
+            + "\n[wanling-upload] 运行 skills/install.sh --setup 用 APP 扫码完成授权"
+        )
     with open(cfg_file, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     server_url = cfg.get("serverUrl") or "http://localhost:18008"

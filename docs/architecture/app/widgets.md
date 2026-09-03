@@ -154,7 +154,7 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## NavTabBar
 
-自绘底部导航(替换 BottomNavigationBar)：消息/万灵固定图标槽 + pinned agent 头像槽 + `NavConvSlot` 会话槽(好友/群会话,关联 agent 在线时也渲染绿点) + 可选「更多」槽，槽位由 HomePage 从有效序列派生纯展示(无拖拽,点按 onSlotTap/更多 onMoreTap/长按 onSlotLongPress 进编辑页),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；头像含在线绿点(agent 槽恒看 status,conv 槽经 conv.agent.id 查 agentByIdProvider 同源联动,无 agent 恒不显示) + 未读角标。构造断言可见槽 ≤(showMore?4:5) 个
+自绘底部导航(替换 BottomNavigationBar)：消息/万灵/小程序固定图标槽 + pinned agent 头像槽 + `NavConvSlot` 会话槽(好友/群会话,关联 agent 在线时也渲染绿点) + 可选「更多」槽，槽位由 HomePage 从有效序列派生纯展示(无拖拽,点按 onSlotTap/更多 onMoreTap/长按 onSlotLongPress 进编辑页),label 超 5 字符截断加省略号；「更多」槽未激活显示格子图标,激活显示溢出 agent 头像+名字；头像含在线绿点(agent 槽恒看 status,conv 槽经 conv.agent.id 查 agentByIdProvider 同源联动,无 agent 恒不显示) + 未读角标。构造断言可见槽 ≤(showMore?4:5) 个
 
 ## AccountSidebar
 

@@ -22,6 +22,11 @@ String chatRoute(String convId, [String? agentId]) {
 /// agentId 走 path 参数,二级页据此调 getAgentSessions 拉取 session 群列表。
 String sessionsRoute(String agentId) => '/agent/$agentId/sessions';
 
+/// 拼接 agent 授权密钥管理页路由(子密钥列表/吊销,REST-only)。
+///
+/// 入口:Agent 详情页「授权密钥」操作项。agentId 走 path 参数。
+String subKeysRoute(String agentId) => '/agent/$agentId/subkeys';
+
 /// findOrCreate 会话后跳转 chat 页（统一错误处理）。
 /// 调用方需在调用前已确保 conversation 存在的场景（如 IM 列表已有 conv），
 /// 请直接用 [chatRoute] 拼路径 push，不要走此 helper。

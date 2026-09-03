@@ -84,5 +84,6 @@ flowchart TB
 @../docs/ai-handbook/rpc-methods.md
 @../docs/ai-handbook/approval-card.md
 @../docs/ai-handbook/qr-pair.md
+@../docs/ai-handbook/agent-subkeys.md
 @../docs/ai-handbook/migrations.md
 @../docs/ai-handbook/rest-response.md

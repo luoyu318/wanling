@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:wanling_core/models/admin_mini_program_info.dart';
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/agent_sub_key_info.dart';
 import 'package:wanling_core/models/agent_type_info.dart';
 import 'package:wanling_core/models/approval.dart';
 import 'package:wanling_core/models/conversation.dart';
@@ -391,11 +392,18 @@ class ApiService {
   }
 
   /// 扫码配对：选已有 agent（agentId）或新建（newAgentName）。
-  /// 二选一：agentId 非空走选已有（会重置 key），否则用 newAgentName 新建。
+  /// 二选一：agentId 非空走选已有（按 [action] 决定语义：bind 接管会重置 key /
+  /// authorize 发子密钥），否则用 newAgentName 新建。
+  ///
+  /// [action]：null/"bind"=接管绑定（重置主密钥）；"authorize"=发子密钥授权
+  /// （不重置主密钥，须带 agentId）。详见 docs/ai-handbook/agent-subkeys.md。
+  /// [note]：authorize 模式的子密钥备注，空由 server 落「技能授权」缺省。
   Future<PairCompleteResult> pairComplete(
     String ticketId, {
     String? agentId,
     String? newAgentName,
+    String? action,
+    String? note,
   }) async {
     final data = <String, dynamic>{};
     if (agentId != null) {
@@ -403,8 +411,26 @@ class ApiService {
     } else if (newAgentName != null) {
       data['new_agent_name'] = newAgentName;
     }
+    if (action != null) data['action'] = action;
+    if (note != null) data['note'] = note;
     final res = await _dio.post('/api/pair/tickets/$ticketId/complete', data: data);
     return PairCompleteResult.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// 列出 agent 全部子密钥（含已吊销，created_at DESC）。
+  /// 拦截器剥 {ok:true,data:{subkeys:[...]}} 后 res.data 是内层 map。
+  Future<List<AgentSubKeyInfo>> listSubKeys(String agentId) async {
+    final res = await _dio.get('/api/agents/$agentId/subkeys');
+    final body = res.data as Map<String, dynamic>;
+    final keys = body['subkeys'] as List? ?? const [];
+    return keys
+        .map((e) => AgentSubKeyInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 吊销单个子密钥（幂等：已吊销 / keyId 不存在都返 200）。
+  Future<void> revokeSubKey(String agentId, String keyId) async {
+    await _dio.delete('/api/agents/$agentId/subkeys/$keyId');
   }
 
   Future<List<Conversation>> getConversations() async {

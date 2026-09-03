@@ -118,6 +118,7 @@ class _NavEditPageState extends ConsumerState<NavEditPage> {
 String _slotName(WidgetRef ref, String tabId) {
   if (tabId == kNavTabMsg) return kNavTabMsgLabel;
   if (tabId == kNavTabWanling) return kNavTabWanlingLabel;
+  if (tabId == kNavTabMiniProgram) return kNavTabMiniProgramLabel;
   final convId = navConvIdOf(tabId);
   if (convId != null) {
     return ref.watch(convByIdProvider(convId))?.displayName ?? tabId;
@@ -158,9 +159,11 @@ class _SlotBox extends ConsumerWidget {
       // 固定项/「更多」格:白底图标方块(纯展示,不查 agent)。
       final icon = isMore
           ? Icons.apps
-          : (tabId == kNavTabMsg
-              ? Icons.chat_bubble_outline
-              : Icons.auto_awesome_outlined);
+          : switch (tabId) {
+              kNavTabMsg => Icons.chat_bubble_outline,
+              kNavTabWanling => Icons.auto_awesome_outlined,
+              _ => Icons.grid_view_outlined,
+            };
       inner = Container(
         width: box,
         height: box,

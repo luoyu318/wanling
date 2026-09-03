@@ -52,7 +52,7 @@ markdown 内嵌：
 python3 ~/.opencode/skills/wanling-send-image/upload.py <本地图片路径>
 ```
 
-脚本从 `WANLING_CONFIG_DIR`（默认 `~/.config/opencode-wanling`）的 `config.json` 读取 agent 凭证，换 JWT 后 `POST /api/upload`，输出末行为 `![image](/api/files/{file_id})`。
+脚本凭据按探测顺序取用：宿主 env 三元组（`WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY`，hermes 等宿主 agent 进程注入，身份随宿主）→ `WANLING_CONFIG_DIR`（默认 `~/.config/opencode-wanling`，存在则用）→ `~/.config/wanling-skills`（存在则用，子密钥）。换 JWT 后 `POST /api/upload`，输出末行为 `![image](/api/files/{file_id})`。
 
 ### 3. 输出给用户
 

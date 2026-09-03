@@ -1,6 +1,6 @@
 # Server HTTP Handler
 
-internal/handler/ 目录下的 15 个 HTTP handler + middleware/access_log。
+internal/handler/ 目录下的 16 个 HTTP handler + middleware/access_log。
 
 ## handler 总览
 
@@ -8,7 +8,7 @@ HTTP Handler 集合。
 
 ## auth_handler.go
 
-登录(返 access + refresh token pair)/ Agent token 换取(secret_key 换 72h JWT)/ Refresh(rotation:删旧 refresh + 签新 pair)/ Logout(黑名单当前 access jti + 删 refresh)。`issueTokenPair` helper 统一签发逻辑。`Register` 方法存在但**未注册任何路由**（公开注册接口已关，加用户只能走 admin-tool）。Refresh 限流 10/min/IP,AgentToken 限流 10/min/IP(撞库防御 + subtle.ConstantTimeCompare 防时序攻击)。
+登录(返 access + refresh token pair)/ Agent token 换取(secret_key 换 72h JWT,**`wlsk_` 前缀路由**:带前缀走子密钥分支——查 `agent_sub_keys` 未吊销 + agent 存在后签发 `key_kind="sub"` token + `TouchLastUsed`(fail-soft),无前缀走主密钥恒定时间比较原路径签发 `key_kind="master"`;claims 扩展见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md))/ Refresh(rotation:删旧 refresh + 签新 pair)/ Logout(黑名单当前 access jti + 删 refresh)。`issueTokenPair` helper 统一签发逻辑。`Register` 方法存在但**未注册任何路由**（公开注册接口已关，加用户只能走 admin-tool）。Refresh 限流 10/min/IP,AgentToken 限流 10/min/IP(撞库防御 + subtle.ConstantTimeCompare 防时序攻击)。
 
 ## user_handler.go
 
@@ -16,7 +16,7 @@ HTTP Handler 集合。
 
 ## agent_handler.go
 
-Agent CRUD + type 注册表。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（**type 为 `*string`:显式传空串=清空回普通 agent**,与当前不同时调 `UpdateType` 落库,让 APP 编辑资料对话框可切换类型）。响应（Create/List/Update）注入 **`multi_session`**（按 `agents.type` 查 `agent_type_registry`,未注册类型含 legacy 空串兜底 false）。**`ListAgentTypes`**（`GET /api/agent-types`,userAuth）全量下发注册表:APP 类型下拉(建/改 agent)与徽标查表数据源,新类型 INSERT 后 APP 零发版自动出现。
+Agent CRUD + type 注册表。`Update`（`PUT /api/agents/:id`）支持 type 字段更新（**type 为 `*string`:显式传空串=清空回普通 agent**,与当前不同时调 `UpdateType` 落库,让 APP 编辑资料对话框可切换类型）。响应（Create/List/Update）注入 **`multi_session`**（按 `agents.type` 查 `agent_type_registry`,未注册类型含 legacy 空串兜底 false）。**`ListAgentTypes`**（`GET /api/agent-types`,userAuth）全量下发注册表:APP 类型下拉(建/改 agent)与徽标查表数据源,新类型 INSERT 后 APP 零发版自动出现。**RotateSecret 级联**（`POST /api/agents/:id/rotate-secret`）:重置主密钥成功后调 `AgentSubKeyRepo.RevokeAllForAgent` 吊销全部子密钥,尽力清扫语义——失败仅记日志不回滚（主密钥重置已是总闸,下次 rotate 重试清扫）。
 
 ## conversation_handler.go（+ 5 个同包拆分文件）
 
@@ -66,7 +66,11 @@ WebSocket 协议（Hello → Identify → Heartbeat → Dispatch）
 
 ## pairing_handler.go
 
-扫码配对 4 接口（`CreateTicket`/`GetTicket`/`ScanTicket`/`CompleteTicket`）。GET completed 返回凭据后**领完即焚**（清空 `pairing_tickets.secret_key`）；scan 幂等（同 user 重扫 OK，跨 user 403）；complete 选已有 agent 重置 secret_key、新建 agent 走 `AgentRepo.Create`。响应统一返 `{status}` 字段串（pending/scanned/completed/expired/not_found）。**agent type 透传**：`CreateTicket` body 可选 `{type}` 声明 agent 类型(opencode 等,默认空串),存入 `pairing_tickets.type`;`CompleteTicket` 新建分支读 `ticket.type` 传给 `AgentRepo.Create`(替代原硬编码空串),实现扫码配对的 opencode agent 全链路 type 透传(APP 可识别 agent 类型)。
+扫码配对 4 接口（`CreateTicket`/`GetTicket`/`ScanTicket`/`CompleteTicket`）。GET completed 返回凭据后**领完即焚**（清空 `pairing_tickets.secret_key`）；scan 幂等（同 user 重扫 OK，跨 user 403）；complete 选已有 agent 重置 secret_key、新建 agent 走 `AgentRepo.Create`。**authorize 授权模式**：complete 请求体可选 `action`（缺省 `bind`）/`note`（子密钥备注,缺省「技能授权」），未知 action 值 fail fast 400；`authorize` 仅已有 agent（新建+authorize 400），不重置主密钥、发 `wlsk_` 子密钥（未吊销 ≥10 → 409 `subkey_limit`），轮询响应两分支统一带 `action` 字段（authorize 无 `owner_conv_id`），先查 agent 名再消费凭据（查询失败凭据保留可重试）。协议见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md)。响应统一返 `{status}` 字段串（pending/scanned/completed/expired/not_found）。**agent type 透传**：`CreateTicket` body 可选 `{type}` 声明 agent 类型(opencode 等,默认空串),存入 `pairing_tickets.type`;`CompleteTicket` 新建分支读 `ticket.type` 传给 `AgentRepo.Create`(替代原硬编码空串),实现扫码配对的 opencode agent 全链路 type 透传(APP 可识别 agent 类型)。
+
+## agent_sub_key_handler.go
+
+子密钥管理 2 接口（userAuth,owner 是数据边界,admin 归一为 user 后同样受限）。`List`（`GET /api/agents/:id/subkeys`）：`ListByAgent` 全量（含已吊销,created_at DESC），envelope `subkeys` 数组、空态归一 `[]`，**响应绝不引入 secret_key**（model `json:"-"` + handler 不拼装）。`Revoke`（`DELETE /api/agents/:id/subkeys/:keyId`）：软吊销幂等 200（不覆盖首次 revoked_at）；**keyId 归属白名单**——先 ListByAgent 圈定名下密钥再线性匹配，不属于该 agent（含他人 agent）按不存在直接幂等 200、绝不执行 Revoke（封死跨 agent 越权吊销）。协议见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md)。
 
 ## mini_program_handler.go
 

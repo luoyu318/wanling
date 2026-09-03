@@ -29,9 +29,9 @@ void main() {
     return (prefs, NavOrderNotifier(prefs: prefs, ownerId: ownerId));
   }
 
-  test('无任何持久化数据:初始为固定项前二', () async {
+  test('无任何持久化数据:初始为固定项前三', () async {
     final (prefs, n) = await make('u1');
-    expect(n.state, [kNavTabMsg, kNavTabWanling]);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
     expect(prefs.getStringList('nav_order_u1'), isNull); // 未写盘
   });
 
@@ -39,9 +39,9 @@ void main() {
     final (prefs, n) = await make('u1', seed: {
       'nav_pins_u1': ['a1', 'a2'],
     });
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'a1', 'a2']);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1', 'a2']);
     expect(prefs.getStringList('nav_order_u1'),
-        [kNavTabMsg, kNavTabWanling, 'a1', 'a2']);
+        [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1', 'a2']);
     // 旧 key 保留(降级回滚用)
     expect(prefs.getStringList('nav_pins_u1'), ['a1', 'a2']);
   });
@@ -51,20 +51,45 @@ void main() {
       'nav_order_u1': ['a1', kNavTabMsg],
       'nav_pins_u1': ['a9'],
     });
-    // 不迁移(a9 不进来);缺失的 wanling 按不变式补到 msg 前
-    expect(n.state, ['a1', kNavTabWanling, kNavTabMsg]);
+    // 不迁移(a9 不进来);缺失的 wanling 补到 msg 前,miniapps 补到 wanling 后
+    expect(n.state, ['a1', kNavTabWanling, kNavTabMiniProgram, kNavTabMsg]);
   });
 
   test('sanitize:去空/去重保序,固定项位置不强制', () async {
     final (_, n) = await make('u1', seed: {
       'nav_order_u1': ['', kNavTabMsg, 'a1', kNavTabMsg, kNavTabWanling],
     });
-    // 去空/去重保序,固定项位置保留;仅缺失才补(本用例不缺)
-    expect(n.state, [kNavTabMsg, 'a1', kNavTabWanling]);
+    // 去空/去重保序,固定项位置保留;仅缺失才补(本用例只缺 miniapps)
+    expect(n.state, [kNavTabMsg, 'a1', kNavTabWanling, kNavTabMiniProgram]);
     final (_, n2) = await make('u2', seed: {
       'nav_order_u2': ['a1', 'a2'], // 固定项全缺(数据损坏)
     });
-    expect(n2.state, [kNavTabMsg, kNavTabWanling, 'a1', 'a2']);
+    expect(n2.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1', 'a2']);
+  });
+
+  test('miniapps 缺失:补位紧跟 wanling', () async {
+    final (prefs, n) = await make('u1', seed: {
+      'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1'],
+    });
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
+    expect(prefs.getStringList('nav_order_u1'),
+        [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
+  });
+
+  test('三固定恰好一次:重复输入去重保序', () async {
+    final (_, n) = await make('u1', seed: {
+      'nav_order_u1': [kNavTabMiniProgram, kNavTabMsg, kNavTabMiniProgram,
+        kNavTabWanling, 'a1', kNavTabMsg],
+    });
+    expect(n.state, [kNavTabMiniProgram, kNavTabMsg, kNavTabWanling, 'a1']);
+  });
+
+  test('unpin 拒绝 miniapps', () async {
+    final (_, n) = await make('u1', seed: {
+      'nav_order_u1': [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram],
+    });
+    n.unpin(kNavTabMiniProgram);
+    expect(n.state, contains(kNavTabMiniProgram));
   });
 
   test('空 ownerId 登出中间态:空列表,不迁移不写幽灵 key', () async {
@@ -81,20 +106,22 @@ void main() {
     final (_, n) = await make('u1', seed: {
       'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2'],
     });
+    // 存量双固定数据构造时补位 miniapps → [msg, wanling, miniapps, a1, a2]
     n.reorder(kNavTabMsg, 2); // 固定项后移
-    expect(n.state, [kNavTabWanling, 'a1', kNavTabMsg, 'a2']);
+    expect(n.state, [kNavTabWanling, kNavTabMiniProgram, kNavTabMsg, 'a1', 'a2']);
     n.reorder('a2', 0); // agent 插到最前
-    expect(n.state, ['a2', kNavTabWanling, 'a1', kNavTabMsg]);
+    expect(n.state, ['a2', kNavTabWanling, kNavTabMiniProgram, kNavTabMsg, 'a1']);
   });
 
   test('reorder 越界/同位/不存在 no-op', () async {
     final (_, n) = await make('u1', seed: {
       'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1'],
     });
+    // 补位后 [msg, wanling, miniapps, a1],长度 4
     n.reorder('a9', 0);
-    n.reorder('a1', 3); // 越界
-    n.reorder('a1', 2); // 同位
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'a1']);
+    n.reorder('a1', 4); // 越界
+    n.reorder('a1', 3); // 同位
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
   });
 
   test('reorder 持久化 + 重载还原', () async {
@@ -103,7 +130,8 @@ void main() {
     });
     n.reorder('a1', 0);
     final reloaded = NavOrderNotifier(prefs: prefs, ownerId: 'u1');
-    expect(reloaded.state, ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+    expect(reloaded.state,
+        ['a1', kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
   });
 
   test('unpin 拒绝固定项;agent 可 unpin', () async {
@@ -112,11 +140,11 @@ void main() {
     });
     n.unpin(kNavTabMsg);
     n.unpin(kNavTabWanling);
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'a1']);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
     n.unpin('a1');
-    expect(n.state, [kNavTabMsg, kNavTabWanling]);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
     n.unpin('a1'); // 未 pin no-op
-    expect(n.state, [kNavTabMsg, kNavTabWanling]);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
   });
 
   test('pin 追加队尾;isPinned 判定', () async {
@@ -124,16 +152,16 @@ void main() {
     expect(n.isPinned('a1'), isFalse);
     n.pin('a1');
     expect(n.isPinned('a1'), isTrue);
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'a1']);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
     n.pin('a1'); // 重复 no-op
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'a1']);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1']);
   });
 
   test('账号隔离', () async {
     final (prefs, u1) = await make('u1');
     u1.pin('a1');
     final u2 = NavOrderNotifier(prefs: prefs, ownerId: 'u2');
-    expect(u2.state, [kNavTabMsg, kNavTabWanling]);
+    expect(u2.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
   });
 
   group('可见槽数 NavVisibleCountNotifier', () {
@@ -187,14 +215,15 @@ void main() {
     final (_, n) = await make('u1', seed: {
       'nav_order_u1': ['conv:c1', 'conv:c1', kNavTabMsg, 'a1', kNavTabWanling],
     });
-    expect(n.state, ['conv:c1', kNavTabMsg, 'a1', kNavTabWanling]);
+    expect(n.state,
+        ['conv:c1', kNavTabMsg, 'a1', kNavTabWanling, kNavTabMiniProgram]);
   });
 
   test('pin/unpin 对 conv 槽 id 生效', () async {
     final (_, n) = await make('u1');
     n.pin(navConvRef('c1'));
     expect(n.isPinned('conv:c1'), isTrue);
-    expect(n.state, [kNavTabMsg, kNavTabWanling, 'conv:c1']);
+    expect(n.state, [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'conv:c1']);
     n.unpin(navConvRef('c1'));
     expect(n.isPinned('conv:c1'), isFalse);
   });
@@ -248,7 +277,7 @@ void main() {
       container.read(conversationProvider.notifier).state = [conv('c1')];
 
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, 'conv:c1', kNavTabWanling]);
+          [kNavTabMsg, 'conv:c1', kNavTabWanling, kNavTabMiniProgram]);
     });
 
     test('会话恢复:同容器内 c1+c2 都在 → effective 重新含 conv:c2', () async {
@@ -260,12 +289,12 @@ void main() {
 
       notifier.state = [conv('c1')];
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, 'conv:c1', kNavTabWanling]);
+          [kNavTabMsg, 'conv:c1', kNavTabWanling, kNavTabMiniProgram]);
 
       // 模拟会话恢复/新会话出现:c2 回到会话列表
       notifier.state = [conv('c1'), conv('c2')];
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling]);
+          [kNavTabMsg, 'conv:c1', 'conv:c2', kNavTabWanling, kNavTabMiniProgram]);
     });
 
     test('空 convId 坏数据:conv: 不在会话列表 → effective 收缩不渲染', () async {
@@ -275,7 +304,7 @@ void main() {
       final container = makeContainer(prefs);
 
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, kNavTabWanling]);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
     });
 
     test('agent 分支行为锁:agent 列表为空 → 收缩;agent 出现 → 保留', () async {
@@ -285,14 +314,14 @@ void main() {
       final container = makeContainer(prefs); // agent 列表初始为空
 
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, kNavTabWanling]);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
 
       // 仅 a1 出现:a2 仍收缩
       container.read(agentListProvider.notifier).state = [
         Agent(id: 'a1', name: 'Bot', status: AgentStatus.online),
       ];
       expect(container.read(effectiveNavOrderProvider),
-          [kNavTabMsg, 'a1', kNavTabWanling]);
+          [kNavTabMsg, 'a1', kNavTabWanling, kNavTabMiniProgram]);
     });
   });
 }

@@ -157,6 +157,13 @@ class AgentDetailPage extends ConsumerWidget {
                   label: '编辑资料',
                   onTap: () => _editProfile(context, ref, agent),
                 ),
+                // 授权密钥(子密钥):REST-only 授权,不重置主密钥。
+                // 放「重置密钥」前:轻量管理操作优先,破坏性操作垫底。
+                SettingsTile(
+                  icon: Icons.key_outlined,
+                  label: '授权密钥',
+                  onTap: () => context.push(subKeysRoute(agent.id)),
+                ),
                 SettingsTile(
                   icon: Icons.vpn_key_outlined,
                   label: '重置密钥',

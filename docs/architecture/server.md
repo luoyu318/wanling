@@ -8,10 +8,10 @@ Go/Gin :18008,消息转发 + 用户/Agent 管理,不含 Agent 适配层。
 flowchart TB
     MAIN[cmd/main.go<br/>路由 + 组装]
     MW[middleware<br/>JWT + access log]
-    HANDLERS[handler/<br/>15 个 HTTP handler]
+    HANDLERS[handler/<br/>16 个 HTTP handler]
     HUB[hub<br/>WS 连接 + dispatch]
     PROC[message/processor<br/>事务 + dispatch]
-    REPO[repository/<br/>12 个 repo]
+    REPO[repository/<br/>15 个 repo]
     SVC[approval + pair<br/>状态机 + cleanup]
     STORAGE[storage + imaging<br/>文件 + 缩略图]
 
@@ -33,11 +33,11 @@ flowchart TB
 
 ### 入口与认证
 - `cmd/main.go` — 入口,组装依赖 + 注册路由(路由组角色限制 / 限流策略见详情)。详见 [entry.md](./server/entry.md)
-- `internal/auth/jwt.go` — JWT 认证,role 字段区分 user/agent,claims 含 jti(黑名单)+ ver(tokenver)。详见 [entry.md](./server/entry.md#authjwtgo)
+- `internal/auth/jwt.go` — JWT 认证,role 字段区分 user/agent,claims 含 jti(黑名单)+ ver(tokenver)+ key_kind/key_id(子密钥标识,016,详见 [agent-subkeys.md](../ai-handbook/agent-subkeys.md))。详见 [entry.md](./server/entry.md#authjwtgo)
 - `internal/auth/token_store.go` — Redis token store(refresh token rotation / jti 黑名单 / tokenver 版本号)。详见 [entry.md](./server/entry.md#authtoken_storego)
 
-### HTTP Handler(15 个)
-- `internal/handler/` — HTTP Handler 集合,涵盖 auth/user/agent/conversation/approval/ws/send/message/file/pairing/mini_program + middleware/access_log;mini_program 含 admin 审核端点 `GET /api/admin/mini-programs` + `PUT /api/admin/mini-programs/:id/status`(旧路径 `PUT /api/mini-programs/:id/status` 保留兼容别名)。详见 [handlers.md](./server/handlers.md)
+### HTTP Handler(16 个)
+- `internal/handler/` — HTTP Handler 集合,涵盖 auth/user/agent/agent_sub_key/conversation/approval/ws/send/message/file/pairing/mini_program + middleware/access_log;mini_program 含 admin 审核端点 `GET /api/admin/mini-programs` + `PUT /api/admin/mini-programs/:id/status`(旧路径 `PUT /api/mini-programs/:id/status` 保留兼容别名)。详见 [handlers.md](./server/handlers.md)
 
 ### 实时通道
 - `internal/hub/` — WS 连接管理器(SendToUser/Agent/Conv + 3 个审批广播 helper)。详见 [realtime.md](./server/realtime.md#hub)
@@ -46,7 +46,7 @@ flowchart TB
 - `internal/agent/slash_catalog_registry.go` — **`SlashCatalogRegistry`** 与 `AgentRegistry` 同构，存 plugin 上报的命令清单。`AGENT_SLASH_CATALOG` 事件写入，`GET /api/agents/:id/slash-catalog` 读取。server 重启清空，plugin 重连重报
 
 ### 数据层
-- `internal/repository/` — 12 个 repo:核心 IM 五件套(Conversation / Participant / Message / Delivery / File,含四档放行 CheckAccess)+ 账户与社交(User / Agent / Friendship)+ 状态机持久化(Approval / Pairing)+ 类型注册表(AgentType,011)+ 小程序注册表(MiniProgram,012)。详见 [data.md](./server/data.md)
+- `internal/repository/` — 15 个 repo:核心 IM 五件套(Conversation / Participant / Message / Delivery / File,含四档放行 CheckAccess)+ 账户与社交(User / Agent / Friendship)+ 状态机持久化(Approval / Pairing)+ 类型注册表(AgentType,011)+ 小程序注册表(MiniProgram,012)+ 小程序签名/身份(SigningKey / MiniProgramOpenid,013/015)+ 凭据授权(AgentSubKey,016)。详见 [data.md](./server/data.md)
 - `internal/model/null_json.go` — NullJSON 类型(可空 JSONB 字段处理)。详见 [data.md](./server/data.md#modelnull_jsongo)
 
 ### 支撑组件
