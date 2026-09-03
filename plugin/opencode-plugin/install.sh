@@ -225,6 +225,17 @@ build_code() {
 # ─── Systemd service ──────────────────────────────────────────────────────
 setup_systemd() {
     local service_file="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
+    # 多套防覆盖守卫:目标 unit 已存在且指向不同 config-dir 时拒绝静默覆写
+    # (2026-09-03 事故:--pair --config-dir=prod 用默认服务名重装,把 dev 套的
+    # unit 改指 prod 配置,双实例并存引发重复发卡与端口互踩 crash-loop)
+    if [[ -f "$service_file" ]]; then
+        local existing_dir
+        existing_dir=$(grep -oE 'WANLING_CONFIG_DIR=[^ "]+' "$service_file" 2>/dev/null | head -1 | cut -d= -f2)
+        if [[ -n "$existing_dir" && "$existing_dir" != "$CONFIG_DIR" ]]; then
+            die "拒绝覆写 unit ${SERVICE_NAME}.service: 它当前指向 ${existing_dir},与本次 --config-dir=${CONFIG_DIR} 不一致
+多套部署请显式指定服务名,如: --service-name=opencode-wanling-prod"
+        fi
+    fi
     local opencode_bin
     # || true 防 set -e 静默退出,让下面的 die 能输出提示
     opencode_bin=$(command -v opencode 2>/dev/null || true)
