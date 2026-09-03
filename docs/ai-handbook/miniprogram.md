@@ -51,7 +51,7 @@ private → published ⇄ disabled
 | 方法 | 路径 | 鉴权组 | 说明 |
 |---|---|---|---|
 | POST | /api/mini-programs | user+agent | 上传 zip 新建私有 / 同 owner 换版本;agent 直传 handler 内 owner 换算(照 file_handler 先例) |
-| GET | /api/mini-programs | user | published 全量 + 自己的(含 disabled);DTO 扇出 manifest 字段 + sha256/size/signature |
+| GET | /api/mini-programs | user+agent | published 全量 + 自己的(含 disabled);DTO 扇出 manifest 字段 + sha256/size/signature |
 | GET | /api/mini-programs/signing-key | user | 下发 ed25519 公钥 `{public_key}`(私钥永不出 server) |
 | DELETE | /api/mini-programs/:id | user | 仅 owner 删自己的 private,否则 409 |
 | GET | /api/mini-programs/:id/package | user+agent | 包下载(owner 或 published),响应头 `X-Mini-Program-Sha256` |

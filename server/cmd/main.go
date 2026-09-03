@@ -384,17 +384,17 @@ func main() {
 		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
 		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
 		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
-		// 小程序容器(两层模型):列表/owner 删除/公钥下发(上传与包下载在 mpAuth)。
-		userAuth.GET("/api/mini-programs", miniProgramHandler.List)
+		// 小程序容器(两层模型):owner 删除/公钥下发(列表/上传/包下载在 mpAuth)。
 		userAuth.GET("/api/mini-programs/signing-key", miniProgramHandler.GetSigningKey)
 		userAuth.GET("/api/mini-programs/openid", miniProgramHandler.GetOpenid)
 		userAuth.DELETE("/api/mini-programs/:id", miniProgramHandler.Delete)
 	}
 
-	// 小程序 Agent 直传(M2):上传与包下载允许 agent 角色(handler 内 owner 换算)。
+	// 小程序 Agent 直传(M2):上传/列表/包下载允许 agent 角色(handler 内 owner 换算)。
 	mpAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "user", "agent"))
 	{
 		mpAuth.POST("/api/mini-programs", miniProgramHandler.Upload)
+		mpAuth.GET("/api/mini-programs", miniProgramHandler.List)
 		mpAuth.GET("/api/mini-programs/:id/package", miniProgramHandler.DownloadPackage)
 		mpAuth.GET("/api/mini-programs/:id/icon", miniProgramHandler.GetIcon)
 	}
