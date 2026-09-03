@@ -19,6 +19,7 @@ import 'package:path/path.dart' as p;
 import 'package:app/services/mini_program_bridge.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
+import 'package:app/widgets/avatar.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart'
     show apiProvider, authProvider;
@@ -272,38 +273,96 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     if (mounted) context.pop();
   }
 
-  /// 胶囊「更多」菜单:刷新 / 分享到会话 / 关闭。
+  /// 胶囊「更多」菜单抽屉:信息头(图标+名称) + 方形圆角功能瓦片(刷新/分享,
+  /// 图标在上文字在下) + 细线分隔 + 底部整行「关闭」(仅收起抽屉;
+  /// 关闭小程序走胶囊 ◉,不再放抽屉里)。
   Future<void> _showMoreSheet(MiniProgramInfo info) async {
     final canShare = info.permissions.contains('wanling.chat.share');
+    final iconUrl =
+        info.iconUrlFor(ref.read(apiProvider).baseUrl);
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: const Color(0xFFF7F7F7),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
       builder: (sheetCtx) => SafeArea(
+        top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.refresh),
-              title: const Text('刷新'),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                _controller?.reload();
-              },
+            // —— 信息头:小程序图标 + 名称 ——
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+              child: Row(
+                children: [
+                  Avatar(
+                    name: info.name,
+                    url: iconUrl.isEmpty ? null : iconUrl,
+                    size: 44,
+                    radius: 10,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      info.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF111111),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('分享到会话'),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                _shareFromCapsule(info, canShare);
-              },
+            // —— 功能瓦片区:方形圆角图标 + 底部文字 ——
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              child: Row(
+                children: [
+                  _MoreSheetTile(
+                    icon: Icons.refresh,
+                    iconColor: const Color(0xFF07C160),
+                    label: '刷新',
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      _controller?.reload();
+                    },
+                  ),
+                  const SizedBox(width: 14),
+                  _MoreSheetTile(
+                    icon: Icons.ios_share,
+                    iconColor: const Color(0xFF5B8BF7),
+                    label: '分享到会话',
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      _shareFromCapsule(info, canShare);
+                    },
+                  ),
+                ],
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.close),
-              title: const Text('关闭小程序'),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                _close();
-              },
+            // —— 细线分隔 ——
+            const Divider(height: 1, thickness: 0.5, color: Color(0xFFE4E4E4)),
+            // —— 底部整行「关闭」:仅收起抽屉 ——
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero),
+                  foregroundColor: const Color(0xFF333333),
+                  textStyle: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w500),
+                ),
+                onPressed: () => Navigator.of(sheetCtx).pop(),
+                child: const Text('关闭'),
+              ),
             ),
           ],
         ),
@@ -743,6 +802,51 @@ class _ErrorView extends StatelessWidget {
             Text(message),
             const SizedBox(height: 16),
             ElevatedButton(onPressed: onBack, child: const Text('返回')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+/// 「更多」抽屉功能瓦片:方形圆角图标 + 底部文字(主流 IM 小程序菜单样式)。
+class _MoreSheetTile extends StatelessWidget {
+  const _MoreSheetTile({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        width: 76,
+        child: Column(
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, size: 26, color: iconColor),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12.5, color: Color(0xFF333333)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),
