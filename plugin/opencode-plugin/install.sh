@@ -36,6 +36,10 @@ SERVICE_NAME="opencode-wanling"
 # 单文件二进制产物路径(bun compile,免 NodeJS)。空 = 用源码模式(node dist/index.js)。
 # 远程安装时由 install-remote.sh 下载产物后以 --binary=<路径> 传入。
 PLUGIN_BIN=""
+# 端口 CLI 显式传参标记(--pair 端口保留逻辑用:显式传参优先于现有 config 回读)
+PORT_OPC_SET=false
+PORT_CTRL_SET=false
+PORT_PROXY_SET=false
 
 # ─── 参数解析 ──────────────────────────────────────────────────────────────
 MODE="install"
@@ -59,9 +63,9 @@ while [[ $# -gt 0 ]]; do
         --secret-key=*) SECRET_KEY="${1#*=}"; shift ;;
         --no-allow-all) ALLOW_ALL="false"; shift ;;
         --allowed-users=*) ALLOWED_USERS="${1#*=}"; shift ;;
-        --opencode-port=*) OPENCODE_PORT="${1#*=}"; shift ;;
-        --control-port=*) CONTROL_PORT="${1#*=}"; shift ;;
-        --proxy-port=*) PROXY_PORT="${1#*=}"; shift ;;
+        --opencode-port=*) OPENCODE_PORT="${1#*=}"; PORT_OPC_SET=true; shift ;;
+        --control-port=*) CONTROL_PORT="${1#*=}"; PORT_CTRL_SET=true; shift ;;
+        --proxy-port=*) PROXY_PORT="${1#*=}"; PORT_PROXY_SET=true; shift ;;
         --config-dir=*) CONFIG_DIR="${1#*=}"; shift ;;
         --service-name=*) SERVICE_NAME="${1#*=}"; shift ;;
         --binary=*) PLUGIN_BIN="${1#*=}"; shift ;;
@@ -542,6 +546,20 @@ print(d.get('owner_user_id',''))
     # 4. 写入配置 + 安装
     AGENT_ID="$agent_id"
     SECRET_KEY="$secret_key"
+    # 端口保留:未显式传 CLI 参数时回读现有 config 的端口,防止 --pair 把
+    # 多套部署的专用端口(如 prod 套 4098/5098/19782)重置为默认集,
+    # 与其它套端口冲突导致 crash-loop(2026-09-03 事故:端口漂移 →
+    # EADDRINUSE 循环重启 → 每轮换 token 轰爆限流 429)。
+    # serverUrl/凭据以本次配对为准,不回读。
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local old_opc old_ctrl old_proxy
+        old_opc=$(jq -r '.opencodePort // empty' "$CONFIG_FILE" 2>/dev/null)
+        old_ctrl=$(jq -r '.controlPort // empty' "$CONFIG_FILE" 2>/dev/null)
+        old_proxy=$(jq -r '.proxyPort // empty' "$CONFIG_FILE" 2>/dev/null)
+        [[ "$PORT_OPC_SET" != true && -n "$old_opc" ]] && OPENCODE_PORT="$old_opc"
+        [[ "$PORT_CTRL_SET" != true && -n "$old_ctrl" ]] && CONTROL_PORT="$old_ctrl"
+        [[ "$PORT_PROXY_SET" != true && -n "$old_proxy" ]] && PROXY_PORT="$old_proxy"
+    fi
     write_config
     install_deps
     build_code
