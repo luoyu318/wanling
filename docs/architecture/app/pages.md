@@ -12,7 +12,7 @@ lib/pages/ 目录下的 31 个 page(含 `pages/chat/` 子目录;TextPreviewPage 
 
 ## HomePage
 
-主容器：动态底部导航(NavTabBar：消息/万灵固定槽 + pinned agent 头像槽 + conv: 会话槽 + 可选「更多」槽) + NestedPageView 多页(页 0 = 消息+万灵 A 组合页,页 1..N = pinned agent sessions 页)。槽位溢出(≥4 个 pinned)收进「更多」底部抽屉点选切换;pin 收缩时页码越界自动回 A 组页。conv: 会话槽点击按消息列表逻辑路由(与消息列表一致:multi_session→sessions 页,其余→聊天页),不占平铺页
+主容器：动态底部导航(NavTabBar：消息/万灵/小程序固定槽 + pinned agent 头像槽 + conv: 会话槽 + mp: 小程序槽 + 可选「更多」槽) + NestedPageView 多页(页 0 = 消息+万灵 A 组合页,页 1..N = pinned agent sessions 页,小程序固定槽平铺内嵌小程序列表页)。槽位溢出(≥4 个 pinned)收进「更多」底部抽屉点选切换;pin 收缩时页码越界自动回 A 组页。conv: 会话槽点击按消息列表逻辑路由(与消息列表一致:multi_session→sessions 页,其余→聊天页),不占平铺页
 
 ## NavEditPage
 

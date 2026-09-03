@@ -60,7 +60,7 @@ admin 审核全量列表（`FutureProvider.autoDispose<List<AdminMiniProgramInfo
 
 ## navOrderProvider
 
-底部导航槽位有序序列，含固定项 msg/wanling + pinned agent（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_order_{ownerId}` 按 ownerId 隔离，首读缺失时从旧 `nav_pins_{ownerId}` 一次性迁移（固定项前置 + 立即落盘，旧 key 保留可回滚），ownerId 变化（切账号）时随 authProvider 重建重读；空 ownerId（登出中间态）维持幽灵 key 空列表语义，不 sanitize 不落盘。唯一不变式：固定项各恰好一次且不可移除（构造 sanitize 去空/去重保序，固定项位置不强制、仅缺失才补；unpin 拒固定项）。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorder`（move 语义任意槽排序，含固定项，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectiveNavOrderProvider` = 序列 ∩ 当前 agent 列表（固定项恒保留，agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源。槽位 ID 另支持 `conv:<convId>` 前缀好友/群会话槽；effective 序列同时按会话列表收缩（会话删除时槽自动消失）
+底部导航槽位有序序列，含固定项 msg/wanling/miniapps（小程序列表入口） + pinned agent（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_order_{ownerId}` 按 ownerId 隔离，首读缺失时从旧 `nav_pins_{ownerId}` 一次性迁移（固定项前置 + 立即落盘，旧 key 保留可回滚），ownerId 变化（切账号）时随 authProvider 重建重读；空 ownerId（登出中间态）维持幽灵 key 空列表语义，不 sanitize 不落盘。唯一不变式：固定项各恰好一次且不可移除（构造 sanitize 去空/去重保序，固定项位置不强制、仅缺失才补；unpin 拒固定项）。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorder`（move 语义任意槽排序，含固定项，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectiveNavOrderProvider` = 序列 ∩ 当前 agent 列表（固定项恒保留，agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源。槽位 ID 另支持 `conv:<convId>` 前缀好友/群会话槽；effective 序列同时按会话列表收缩（会话删除时槽自动消失）
 
 ## agentTabUnreadProvider
 
