@@ -23,7 +23,11 @@ import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
 
 class MiniProgramListPage extends ConsumerStatefulWidget {
-  const MiniProgramListPage({super.key});
+  /// embedded=true 时内嵌于底栏平铺页:去独立 AppBar,顶部 SafeArea 自适应,
+  /// 上传入口由网格末位「+ 添加」保留。
+  const MiniProgramListPage({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   ConsumerState<MiniProgramListPage> createState() =>
@@ -105,72 +109,85 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
     final baseUrl = ref.watch(apiProvider).baseUrl;
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('小程序'),
-        actions: [
-          IconButton(
-            onPressed: _uploading ? null : _upload,
-            icon: _uploading
-                ? const SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.upload_file),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async => ref.refresh(miniProgramsProvider.future),
-        child: async.when(
-          // 重进页面/下拉刷新时保旧数据,静默换新,不闪 loading
-          skipLoadingOnReload: true,
-          skipLoadingOnRefresh: true,
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) {
-            // 鉴权失败被 provider 上抛(不伪装空数据),解包后给友好文案;下拉可重试
-            final err = e is DioException ? e.error : e;
-            final authErr = err is ApiException &&
-                (err.statusCode == 401 || err.statusCode == 403);
-            return ListView(
-              children: [
-                const SizedBox(height: 120),
-                Center(
-                  child: Text(
-                    authErr ? '登录状态已失效，请重新登录后使用' : '加载失败，下拉重试',
-                    style: const TextStyle(color: Colors.black54),
-                  ),
+      appBar: widget.embedded
+          ? null
+          : AppBar(
+              title: const Text('小程序'),
+              actions: [
+                IconButton(
+                  onPressed: _uploading ? null : _upload,
+                  icon: _uploading
+                      ? const SizedBox(
+                          width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.upload_file),
                 ),
               ],
-            );
-          },
-          data: (list) {
-            if (list.isEmpty) {
-              return ListView(
-                children: const [
-                  SizedBox(height: 120),
-                  Center(child: Text('暂无小程序')),
-                ],
-              );
-            }
-            final published =
-                list.where((m) => m.status == 'published').toList();
-            final mine =
-                list.where((m) => m.status != 'published').toList();
-            return CustomScrollView(
-              slivers: [
-                if (published.isNotEmpty) ...[
-                  const SliverToBoxAdapter(child: _SectionHeader(title: '公共库')),
-                  _grid(published, baseUrl, withAdd: true, onUpload: _upload),
-                ],
-                if (mine.isNotEmpty) ...[
-                  const SliverToBoxAdapter(child: _SectionHeader(title: '我的')),
-                  _grid(mine, baseUrl),
-                ],
-                // 底部留白(手势条安全)
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ),
+      body: widget.embedded
+          ? SafeArea(child: _buildBody(context, async, baseUrl))
+          : _buildBody(context, async, baseUrl),
+    );
+  }
+
+  /// 列表主体:下拉刷新 + 两组宫格,路由页与 embedded 内嵌共用。
+  Widget _buildBody(
+    BuildContext context,
+    AsyncValue<List<MiniProgramInfo>> async,
+    String baseUrl,
+  ) {
+    return RefreshIndicator(
+      onRefresh: () async => ref.refresh(miniProgramsProvider.future),
+      child: async.when(
+        // 重进页面/下拉刷新时保旧数据,静默换新,不闪 loading
+        skipLoadingOnReload: true,
+        skipLoadingOnRefresh: true,
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) {
+          // 鉴权失败被 provider 上抛(不伪装空数据),解包后给友好文案;下拉可重试
+          final err = e is DioException ? e.error : e;
+          final authErr = err is ApiException &&
+              (err.statusCode == 401 || err.statusCode == 403);
+          return ListView(
+            children: [
+              const SizedBox(height: 120),
+              Center(
+                child: Text(
+                  authErr ? '登录状态已失效，请重新登录后使用' : '加载失败，下拉重试',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ),
+            ],
+          );
+        },
+        data: (list) {
+          if (list.isEmpty) {
+            return ListView(
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('暂无小程序')),
               ],
             );
-          },
-        ),
+          }
+          final published =
+              list.where((m) => m.status == 'published').toList();
+          final mine =
+              list.where((m) => m.status != 'published').toList();
+          return CustomScrollView(
+            slivers: [
+              if (published.isNotEmpty) ...[
+                const SliverToBoxAdapter(child: _SectionHeader(title: '公共库')),
+                _grid(published, baseUrl, withAdd: true, onUpload: _upload),
+              ],
+              if (mine.isNotEmpty) ...[
+                const SliverToBoxAdapter(child: _SectionHeader(title: '我的')),
+                _grid(mine, baseUrl),
+              ],
+              // 底部留白(手势条安全)
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ],
+          );
+        },
       ),
     );
   }
