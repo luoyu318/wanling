@@ -124,7 +124,26 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := hub.NewClient(connCtx, claims.Subject, claims.Role, conn)
+	// 子密钥禁止建立 WS 长连接(绑定独占主密钥):子密钥(wlsk_)换出的 token 携带
+	// key_kind="sub",仅限 HTTP API 使用;WS 通道必须用主密钥。判定必须正向——
+	// 仅显式 "sub" 拒绝,空串(存量 token)/"master"/user token(key_kind 恒空)一律放行。
+	// 位置在 role 归一之前:子密钥无论声明什么角色都拒。
+	if claims.KeyKind == "sub" {
+		logpkg.FromCtx(connCtx).WarnContext(connCtx, "WS 拒绝子密钥连接",
+			"agent_id", claims.Subject, "key_id", claims.KeyID)
+		_ = conn.WriteJSON(map[string]string{"error": "sub_key_ws_forbidden"})
+		conn.Close()
+		return
+	}
+
+	// admin 兼作 user(与 HTTP AuthMiddlewareWithStore 的归一口径一致):
+	// hub 分发(SendToUser/流式/busy)仅认 user/agent 两键,admin 原样注册
+	// 会成为收不到任何广播的孤儿连接。放行侧无角色白名单,归一不影响连接。
+	wsRole := claims.Role
+	if wsRole == "admin" {
+		wsRole = "user"
+	}
+	client := hub.NewClient(connCtx, claims.Subject, wsRole, conn)
 	h.hub.Register <- client
 
 	go h.writePump(client)

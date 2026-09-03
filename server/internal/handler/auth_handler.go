@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,7 @@ const bcryptCost = 12
 type AuthHandler struct {
 	userRepo   *repository.UserRepo
 	agentRepo  *repository.AgentRepo
+	subKeyRepo *repository.AgentSubKeyRepo
 	jwtSecret  string
 	tokenStore *auth.TokenStore
 	accessTTL  time.Duration
@@ -30,8 +32,8 @@ type AuthHandler struct {
 }
 
 // NewAuthHandler 创建认证处理器
-func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration) *AuthHandler {
-	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL}
+func NewAuthHandler(userRepo *repository.UserRepo, agentRepo *repository.AgentRepo, subKeyRepo *repository.AgentSubKeyRepo, jwtSecret string, tokenStore *auth.TokenStore, accessTTL, refreshTTL time.Duration) *AuthHandler {
+	return &AuthHandler{userRepo: userRepo, agentRepo: agentRepo, subKeyRepo: subKeyRepo, jwtSecret: jwtSecret, tokenStore: tokenStore, accessTTL: accessTTL, refreshTTL: refreshTTL}
 }
 
 // issueTokenPair 签发 access + refresh token。store 为 nil 时跳过 Redis 读写，仅签发 access。
@@ -95,13 +97,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	access, refresh, err := h.issueTokenPair(user.ID, "user", "")
+	access, refresh, err := h.issueTokenPair(user.ID, user.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	OkCreated(c, gin.H{"user": user, "token": access, "refresh_token": refresh})
+	OkCreated(c, gin.H{"user": user, "token": access, "refresh_token": refresh, "role": user.Role})
 }
 
 // LoginRequest 登录请求
@@ -144,13 +146,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
-	access, refresh, err := h.issueTokenPair(user.ID, "user", "")
+	access, refresh, err := h.issueTokenPair(user.ID, user.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	Ok(c, gin.H{"user": user, "token": access, "refresh_token": refresh})
+	Ok(c, gin.H{"user": user, "token": access, "refresh_token": refresh, "role": user.Role})
 }
 
 // AgentTokenRequest Agent token 换取请求
@@ -159,7 +161,9 @@ type AgentTokenRequest struct {
 	SecretKey string `json:"secret_key" binding:"required"`
 }
 
-// AgentToken Agent 通过密钥换取 token
+// AgentToken Agent 通过密钥换取 token。
+// 按 secret_key 前缀路由:wlsk_ 开头走子密钥校验（DB 精确匹配）,否则走主密钥
+// 恒定时间比较。两类 token 的 claims 均带 key_kind（master|sub）标识凭据来源。
 func (h *AuthHandler) AgentToken(c *gin.Context) {
 	var req AgentTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -167,21 +171,58 @@ func (h *AuthHandler) AgentToken(c *gin.Context) {
 		return
 	}
 
+	var keyKind, keyID string
+	if strings.HasPrefix(req.SecretKey, auth.SubKeyPrefix) {
+		// 子密钥分支:DB 精确匹配,不存在逐字节猜测面,无需恒定时间比较。
+		sk, err := h.subKeyRepo.GetByKey(c.Request.Context(), req.SecretKey)
+		if err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+			return
+		}
+		// GetByKey 含已吊销记录也返回,此处判 RevokedAt 拒绝。
+		if sk == nil || sk.RevokedAt != nil {
+			Err(c, http.StatusUnauthorized, "unauthorized", "无效凭证")
+			return
+		}
+		// 子密钥悬空（agent 已删）→ 401,不泄漏内部状态。
+		agent, err := h.agentRepo.GetByID(c.Request.Context(), sk.AgentID)
+		if err != nil || agent == nil {
+			Err(c, http.StatusUnauthorized, "unauthorized", "无效凭证")
+			return
+		}
+		keyKind, keyID = "sub", sk.ID
+
+		// fail-soft:刷新最后使用时间失败仅记日志,不阻断 token 签发。
+		if err := h.subKeyRepo.TouchLastUsed(c.Request.Context(), sk.ID); err != nil {
+			logpkg.FromCtx(c.Request.Context()).WarnContext(c.Request.Context(),
+				"子密钥 TouchLastUsed 失败", "key_id", sk.ID, "err", err)
+		}
+
+		jti := uuid.New().String()
+		token, err := auth.GenerateAgentToken(h.jwtSecret, agent.ID, agent.OwnerID, 72*time.Hour, jti, 0, keyKind, keyID)
+		if err != nil {
+			ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+			return
+		}
+		Ok(c, gin.H{"token": token})
+		return
+	}
+
+	// 主密钥分支:保持原有恒定时间比较防时序攻击。secret_key 是 64 字符 hex(256 bit),
+	// 实际利用时序差异逐字节猜需极高精度,且有 IP 限流(10/min)兜底,
+	// 但写一行代码堵上是免费的安全加固。
 	agent, err := h.agentRepo.GetByID(c.Request.Context(), req.AgentID)
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
-	// 恒定时间比较防时序攻击。secret_key 是 64 字符 hex(256 bit),
-	// 实际利用时序差异逐字节猜需极高精度,且有 IP 限流(10/min)兜底,
-	// 但写一行代码堵上是免费的安全加固。
 	if agent == nil || subtle.ConstantTimeCompare([]byte(agent.SecretKey), []byte(req.SecretKey)) != 1 {
 		Err(c, http.StatusUnauthorized, "unauthorized", "无效凭证")
 		return
 	}
 
 	jti := uuid.New().String()
-	token, err := auth.GenerateToken(h.jwtSecret, agent.ID, "agent", agent.OwnerID, 72*time.Hour, jti, 0)
+	token, err := auth.GenerateAgentToken(h.jwtSecret, agent.ID, agent.OwnerID, 72*time.Hour, jti, 0, "master", "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
@@ -229,18 +270,33 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	// role 读取必须在 rotation（删旧 refresh）之前，fail-safe：若 DB 瞬时故障返回 500，
+	// 旧 refresh 尚未删除，客户端可凭原 refresh 重试；若先删后读，DB 故障时 refresh
+	// 已被 rotation 失效，客户端被锁死只能重新登录。
+	// role DB 为准:refresh 重读当前 role 签发,旧 refresh token 内的 role 不再信任。
+	// 改 env/DB 撤销 admin 后,下次刷新即生效,无需重新登录。
+	u, err := h.userRepo.GetByID(c.Request.Context(), data.UserID)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if u == nil {
+		Err(c, http.StatusUnauthorized, "invalid_refresh", "refresh token 无效或已过期")
+		return
+	}
+
 	if err := h.tokenStore.DeleteRefresh(c.Request.Context(), req.RefreshToken); err != nil {
 		logpkg.FromCtx(c.Request.Context()).WarnContext(c.Request.Context(),
 			"rotation 删旧 refresh token 失败", "err", err)
 	}
 
-	access, refresh, err := h.issueTokenPair(data.UserID, data.Role, "")
+	access, refresh, err := h.issueTokenPair(data.UserID, u.Role, "")
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	Ok(c, gin.H{"token": access, "refresh_token": refresh})
+	Ok(c, gin.H{"token": access, "refresh_token": refresh, "role": u.Role})
 }
 
 // LogoutRequest 登出请求（refresh_token 可选，传了则一并删除）

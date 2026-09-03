@@ -15,6 +15,14 @@ const (
 // PairingTicketTTL 票据有效期。超过即视为 expired（查询时计算，不写 expires_at 列）。
 const PairingTicketTTL = 5 * time.Minute
 
+// 配对票据完成动作。bind=接管语义(重置 agent 主密钥) / authorize=授权语义(发子密钥,不动主密钥)。
+type PairingAction string
+
+const (
+	PairingActionBind      PairingAction = "bind"
+	PairingActionAuthorize PairingAction = "authorize"
+)
+
 // PairingTicket 对应 pairing_tickets 表。仅握手用，非业务表。
 // SecretKey 仅在 status=completed 且未被领取时非空（领取后 repo 清空它）。
 // Type 是 plugin 在 CreateTicket 时声明的 agent 类型标签
@@ -27,6 +35,7 @@ type PairingTicket struct {
 	AgentID     *string       `json:"agent_id,omitempty" db:"agent_id"`
 	SecretKey   *string       `json:"-" db:"secret_key"` // 凭据不直接 JSON 暴露，handler 显式取
 	Type        string        `json:"-" db:"type"`       // agent 类型标签,不直接 JSON 暴露(handler 透传到 agent)
+	Action      PairingAction `json:"-" db:"action"`     // 完成动作,不直接 JSON 暴露(handler 按需显式放)
 	CreatedAt   time.Time     `json:"created_at" db:"created_at"`
 	ScannedAt   *time.Time    `json:"scanned_at,omitempty" db:"scanned_at"`
 	CompletedAt *time.Time    `json:"completed_at,omitempty" db:"completed_at"`

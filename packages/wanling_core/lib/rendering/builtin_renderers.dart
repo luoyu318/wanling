@@ -19,6 +19,7 @@ import 'aggregate_card_renderer.dart';
 import 'card_renderer.dart';
 import 'file_diff_renderer.dart';
 import 'message_content_renderer.dart';
+import 'mini_program_card_renderer.dart';
 import 'permission_card_renderer.dart';
 import 'question_card_renderer.dart';
 import 'reasoning_renderer.dart';
@@ -455,4 +456,6 @@ void registerBuiltinRenderers() {
   ContentRendererRegistry.register(MsgType.slashEcho, const SlashEchoRenderer());
   ContentRendererRegistry.register(
       MsgType.aggregateCard, const AggregateCardRenderer());
+  ContentRendererRegistry.register(
+      MsgType.miniProgramCard, const MiniProgramCardRenderer());
 }

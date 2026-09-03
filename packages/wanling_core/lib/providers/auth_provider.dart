@@ -54,6 +54,8 @@ class AuthState {
   /// 若不标记会让 router 误跳 /login 造成"我的→登录页闪现→消息页"两次跳转。
   /// true 时 router 视同已登录,不触发 redirect,切换全程页面稳定。
   final bool isSwitching;
+  /// 当前账号角色（user / admin）。旧 server / 未登录时缺省 user。
+  final String role;
 
   AuthState({
     this.user,
@@ -61,6 +63,7 @@ class AuthState {
     this.isLoading = false,
     this.isRestoring = false,
     this.isSwitching = false,
+    this.role = 'user',
   });
 
   AuthState copyWith({
@@ -69,6 +72,7 @@ class AuthState {
     bool? isLoading,
     bool? isRestoring,
     bool? isSwitching,
+    String? role,
   }) =>
       AuthState(
         user: user ?? this.user,
@@ -76,9 +80,12 @@ class AuthState {
         isLoading: isLoading ?? this.isLoading,
         isRestoring: isRestoring ?? this.isRestoring,
         isSwitching: isSwitching ?? this.isSwitching,
+        role: role ?? this.role,
       );
 
   bool get isAuthenticated => token != null;
+  /// admin 账号标记（server 端 role=admin）。
+  bool get isAdmin => role == 'admin';
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
@@ -100,22 +107,24 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// refresh 成功回调:持久化新 token pair 到 TokenVault + prefs。
-  /// 由 ApiService 拦截器在 refresh 成功后调用(参数为 newAccess + newRefresh)。
-  void _onTokenRefreshed(String access, String refresh) {
+  /// 由 ApiService 拦截器在 refresh 成功后调用(参数为 newAccess + newRefresh + role)。
+  void _onTokenRefreshed(String access, String refresh, String role) {
     _lastKnownToken = access;
     _lastKnownRefreshToken = refresh;
     // fire-and-forget:拦截器不 await 持久化(失败仅日志,不阻塞业务)
     _persistTokens(access, refresh).catchError((e) {
       debugPrint('[auth] refresh 持久化失败: $e');
     });
-    // 更新 state.token 让 router / 业务层感知新 token
+    // 更新 state.token 让 router / 业务层感知新 token;role 随 refresh 响应同步
     if (state.user != null) {
-      state = AuthState(user: state.user, token: access);
+      state = state.copyWith(token: access, role: role);
     }
-    // 通知 bg-service 用新 token 重连 WS(若已连接则切到新 token)
+    // 通知 bg-service 用新 token 重连 WS(若已连接则切到新 token);
+    // refreshToken 一并推送,bg isolate 401 头像下载时自主刷新用。
     notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': access,
+      'refreshToken': refresh,
     });
   }
 
@@ -146,13 +155,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(
         user: result.user,
         token: result.token,
+        role: result.role,
       );
       // 同步 user_id 给 bg-service(防 SharedPreferences 跨 isolate cache 陈旧)
       _syncMyUserIdToBgService(result.user.id);
-      // 通知 service isolate 启动 WS
+      // 通知 service isolate 启动 WS(refreshToken 供 bg 401 自主刷新)
       notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': result.token,
+        'refreshToken': result.refreshToken,
       });
     } finally {
       state = state.copyWith(isLoading: false);
@@ -178,6 +189,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(
         user: user,
         token: result.token,
+        role: result.role,
       );
       // 同步 user_id 给 bg-service(register 不调 notifyService('start'),
       // 但 bg-service 可能下个 dispatch 就到,提前同步避免 echo 误弹通知)
@@ -190,6 +202,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 修改当前用户密码。不需要旧密码（JWT 已验证身份）。
   /// 改密后 server 返新 token pair（旧 token 因 tokenver 自增已失效），
   /// 更新 api 实例 + 持久化到 TokenVault/prefs + 通知 bg-service。
+  /// role 用响应值更新（server DB 为准，admin 改密不降级）；
+  /// 响应缺 role（旧 server）时保留现值，防止把 admin 误降为 user。
   Future<void> changePassword(String newPassword) async {
     final result = await api.changePassword(newPassword);
     api.setToken(result.token);
@@ -198,11 +212,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _lastKnownRefreshToken = result.refreshToken;
     await _persistTokens(result.token, result.refreshToken);
     if (state.user != null) {
-      state = AuthState(user: state.user, token: result.token);
+      state = state.copyWith(
+        token: result.token,
+        // copyWith null=保留；空串（旧 server 无 role 字段）同样保留现值
+        role: result.role.isEmpty ? null : result.role,
+      );
     }
     notifyService('start', {
       'baseUrl': api.baseUrl,
       'token': result.token,
+      'refreshToken': result.refreshToken,
     });
   }
 
@@ -269,6 +288,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(
         user: user,
         token: token,
+        // 冷启动从 /me 的 user.role 恢复角色
+        role: user.role,
         // 显式 false 防御 copyWith 残留
         isRestoring: false,
       );
@@ -316,6 +337,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
           // cachedUser 为 null 时 token 也设 null,router 跳 /login
           // cachedUser 非 null 时 token 保留,router 进消息页 + 离线 banner
           token: cachedUser != null ? token : null,
+          // 离线兜底从 cached_user 恢复角色（admin 离线不丢 isAdmin）
+          role: cachedUser?.role ?? 'user',
           isRestoring: false,
         );
         // 同步给 bg-service:cachedUser 非空 → 用 cachedUser.id;
@@ -335,6 +358,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       notifyService('start', {
         'baseUrl': api.baseUrl,
         'token': token,
+        // 冷启动恢复的 refresh token,供 bg isolate 401 时自主刷新(可空,
+        // bg 端 null 不覆盖已有值)
+        'refreshToken': _lastKnownRefreshToken,
       });
     }
   }

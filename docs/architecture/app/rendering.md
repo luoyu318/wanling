@@ -6,11 +6,15 @@
 
 `MessageContentRenderer` 接口（`selectable`/`wrapInBubble`/`build`）+ `ContentRendererRegistry` 注册表（`MsgType → Renderer`）+ `MessageRenderContext`。MessageBubble 只管外壳，内容渲染委托给注册表查到的 renderer。扩展新类型只需写一个 renderer 并 `register`
 
-**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)/`onToolGroupToggle`(折叠展开滚动补偿回调,聚合卡内可折叠元素 todowrite/权限卡终态经它同帧上报 ChatPage jumpTo,history 反向列表展开内容向上顶时视觉锚点不动)/`isHistorySliver`(当前消息所属 sliver 是否 history 反向,由 ChatPage 双 sliver 构建时透传)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
+**MessageRenderContext 透传字段**:`isMe`/`baseUrl`/`token`/`isDark`/`convId`(当前会话 ID,MessageBubble 从 message.conversationId 注入;权限/问题卡回复发送目标,小程序卡片跳转容器页 conv 参数)/`conversationMessages`/`openGallery`(点击图片进画廊)/`onFileTap`(点击文件触发下载 Sheet,4 参数 fileId/filename/mimeType/fileSize)/`fileDownloadSnapshots`(Map<fileId, FileDownloadSnapshot>,ChatPage 注入下载进度让 FileCard 实时切态)/`onToolGroupToggle`(折叠展开滚动补偿回调,聚合卡内可折叠元素 todowrite/权限卡终态经它同帧上报 ChatPage jumpTo,history 反向列表展开内容向上顶时视觉锚点不动)/`isHistorySliver`(当前消息所属 sliver 是否 history 反向,由 ChatPage 双 sliver 构建时透传)。`FileDownloadSnapshot` 是简单数据类(state: 0=notDownloaded/1=downloading/2=downloaded/3=uploading + progress 0.0-1.0)
 
 ## builtin_renderers
 
-内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
+内置 renderer：`TextContentRenderer`（含 markdown 语法检测分流）、`MarkdownContentRenderer`（走 MarkdownView）、`ImageContentRenderer`（不可选/不包气泡，缩略图包 Hero + 点击进画廊 `rc.openGallery`；用 `thumbUrl` 加载服务端 600px 缩略图 + `memCacheWidth:600` 限解码尺寸 + `cacheKey=thumbCacheKey` 统一内存缓存口径）、`FileContentRenderer`（独立卡片气泡，详见下）、`CardContentRenderer`、`MiniProgramCardRenderer`（wanling_core，详见下）。`registerBuiltinRenderers()` 在 main.dart 启动时调。text/markdown renderer 在 `rc.isStreaming=true` 时走 `StreamingText`（整段 mdBuilder 渲染,见 [chat-components.md](./app/chat-components.md#streamingtext)）
+
+### MiniProgramCardRenderer（M2 小程序分享卡片）
+
+`mini_program_card` 渲染器（wanling_core/rendering）：icon + 名称白卡胶囊（`wrapInBubble=true`），缺 appid 脏数据降级占位文案不抛异常。点击 `context.push('/mini-program/:appid?conv=:convId')` 携带来源会话（容器页注入 getChatContext），`data.params` 非 null 时以 URL 编码 JSON 追加 `&launch=` 透传（spec §8）。安装状态校验不做（容器页兜底）。协议见 [websocket-protocol.md](../../ai-handbook/websocket-protocol.md)
 
 ### FileContentRenderer（v1.0.6 重写）
 

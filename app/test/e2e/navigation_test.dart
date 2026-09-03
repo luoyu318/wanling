@@ -80,6 +80,9 @@ void main() {
     when(() => api.getAgents()).thenAnswer((_) async => agents);
     when(() => api.getConversations()).thenAnswer((_) async => []);
     when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+    // 三固定后 miniapps 平铺页常驻 PageView,effectiveNavOrder 亦 watch
+    // miniProgramsProvider → 全用例统一 stub 空列表。
+    when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
     final container = ProviderContainer(overrides: [
       apiProvider.overrideWithValue(api),
@@ -134,10 +137,11 @@ void main() {
       stubBaseUrl(api);
       final ws = FakeWS();
       when(() => api.getMe()).thenAnswer((_) async => _testUser);
-      // 重定向到 / 后首页会构建消息页(MESSAGES load)+底栏派生(agents load)，
-      // 故 getConversations + getAgents 都需 stub。
+      // 重定向到 / 后首页会构建消息页(MESSAGES load)+底栏派生(agents load),
+      // miniapps 平铺页常驻 PageView 也会拉小程序列表,故三者都需 stub。
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgents()).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -156,10 +160,11 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 应该看到 HomePage 的动态底部导航
+      // 应该看到 HomePage 的动态底部导航(三固定:消息/万灵/小程序)
       expect(find.byType(NavTabBar), findsOneWidget);
       expect(find.text('消息'), findsWidgets);
       expect(find.text('万灵'), findsWidgets);
+      expect(find.text('小程序'), findsWidgets);
     });
   });
 
@@ -171,9 +176,11 @@ void main() {
       final ws = FakeWS();
       when(() => api.getMe()).thenAnswer((_) async => _testUser);
       // 进入 MessagesPage 会触发 conversationProvider.load；切到 AgentListPage
-      // 时 AgentListNotifier 构造函数也会自动 load。stub 二者返回空。
+      // 时 AgentListNotifier 构造函数也会自动 load。stub 三者返回空
+      //(miniapps 平铺页常驻 PageView 拉小程序列表)。
       when(() => api.getAgents()).thenAnswer((_) async => []);
       when(() => api.getConversations()).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -207,7 +214,7 @@ void main() {
       expect(find.text('暂无 Agent'), findsNothing);
     });
 
-    testWidgets('pinned 2 agent 平铺:槽位渲染 + 点击切换到 sessions 页',
+    testWidgets('pinned 2 agent:三固定占三槽,a2 溢出抽屉,点槽切 sessions 页',
         (tester) async {
       SharedPreferences.setMockInitialValues({
         'token': 'fake-token',
@@ -224,6 +231,7 @@ void main() {
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any()))
           .thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -242,14 +250,25 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 底栏:消息/万灵/两个 agent 槽,无更多
-      expect(find.byType(NavTabBar), findsOneWidget);
-      expect(find.text('dev-1'), findsOneWidget);
-      expect(find.text('dsh-1'), findsOneWidget);
-      expect(find.text('更多'), findsNothing);
+      // 底栏:三固定+dev-1 前缀(5 项触发更多格),dsh-1 溢出不可见
+      final navBar = find.byType(NavTabBar);
+      expect(navBar, findsOneWidget);
+      expect(find.descendant(of: navBar, matching: find.text('dev-1')),
+          findsOneWidget);
+      expect(find.descendant(of: navBar, matching: find.text('dsh-1')),
+          findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('更多')),
+          findsOneWidget);
 
-      // 点 agent 槽 → sessions 页空状态
-      await tester.tap(find.text('dev-1'));
+      // 点更多 → 抽屉列出溢出的 dsh-1
+      await tester.tap(
+          find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
+      expect(find.text('dsh-1'), findsOneWidget);
+
+      // 点底栏 dev-1 槽(抽屉同时收起)→ sessions 页空状态
+      await tester
+          .tap(find.descendant(of: navBar, matching: find.text('dev-1')));
       await tester.pumpAndSettle();
       expect(find.text('暂无会话'), findsOneWidget);
     });
@@ -271,6 +290,7 @@ void main() {
           ]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -289,14 +309,19 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 可见:ag-1/ag-2 + 更多
-      expect(find.text('ag-1'), findsOneWidget);
-      expect(find.text('ag-2'), findsOneWidget);
-      expect(find.text('更多'), findsOneWidget);
+      // 可见:三固定+ag-1 + 更多(7 项,ag-2/3/4 溢出)
+      final navBar = find.byType(NavTabBar);
+      expect(find.descendant(of: navBar, matching: find.text('ag-1')),
+          findsOneWidget);
+      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+          findsNothing);
+      expect(find.descendant(of: navBar, matching: find.text('更多')),
+          findsOneWidget);
 
       // 点更多 → 抽屉列出溢出 agent
-      await tester.tap(find.text('更多'));
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
       await tester.pumpAndSettle();
+      expect(find.text('ag-2'), findsOneWidget);
       expect(find.text('ag-3'), findsOneWidget);
       expect(find.text('ag-4'), findsOneWidget);
 
@@ -331,6 +356,7 @@ void main() {
           ]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -371,9 +397,9 @@ void main() {
       expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
       // prefs 持久化:SP 列表与 provider state 均已移除 a1(旧 nav_pins key 迁移后保留不动)
       expect(container.read(sharedPrefsProvider).getStringList('nav_order_u1'),
-          [kNavTabMsg, kNavTabWanling, 'a2']);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
       expect(container.read(navOrderProvider),
-          [kNavTabMsg, kNavTabWanling, 'a2']);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
     });
 
     testWidgets('unpin 当前正在看的唯一 pinned agent:不崩溃且回平铺消息页',
@@ -393,6 +419,7 @@ void main() {
           .thenAnswer((_) async => [_multiSessionAgent('a1', 'ag-1')]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -426,7 +453,7 @@ void main() {
           findsNothing);
       expect(tester.widget<NavTabBar>(navBar).currentIndex, 0);
       expect(container.read(navOrderProvider),
-          [kNavTabMsg, kNavTabWanling]);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram]);
     });
 
     testWidgets('unpin 前面的 agent:当前 agent 页保持,跳到收缩后的新位置',
@@ -448,6 +475,7 @@ void main() {
           ]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -467,8 +495,10 @@ void main() {
       await tester.pumpAndSettle();
 
       final navBar = find.byType(NavTabBar);
-      // 进第 2 个 pinned agent(ag-2,page 2)的 sessions 页
-      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-2')));
+      // ag-2 溢出(三固定+3 agent=6 项,可见 4):开抽屉点选进其 sessions 页
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ag-2'));
       await tester.pumpAndSettle();
       expect(find.text('暂无会话'), findsOneWidget);
 
@@ -476,15 +506,15 @@ void main() {
       container.read(navOrderProvider.notifier).unpin('a1');
       await tester.pumpAndSettle();
 
-      // ag-2 仍在列表:停留其页(收缩后 page 1 → 槽位 2),不回 A 组;
+      // ag-2 仍在列表:停留其页(收缩后 page 3 → 槽位 3),不回 A 组;
       // 可见页 AppBar 标题为 ag-2(scoped 断言,规避保活页树中的同名文本)
       expect(container.read(navOrderProvider),
-          [kNavTabMsg, kNavTabWanling, 'a2', 'a3']);
+          [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2', 'a3']);
       expect(find.descendant(of: navBar, matching: find.text('ag-1')),
           findsNothing);
       expect(find.descendant(of: navBar, matching: find.text('ag-2')),
           findsOneWidget);
-      expect(tester.widget<NavTabBar>(navBar).currentIndex, 2);
+      expect(tester.widget<NavTabBar>(navBar).currentIndex, 3);
       expect(
           find.descendant(
               of: find.byType(AppBar), matching: find.text('ag-2')),
@@ -506,6 +536,7 @@ void main() {
           ]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -524,8 +555,10 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // 编辑入口:无更多槽(项≤4,抽屉不可达)时长按直进兜底
+      // 编辑入口:三固定+2 agent=5 项有更多格,须先弹抽屉再长按(避免误触)
       final navBar = find.byType(NavTabBar);
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
       await tester.pumpAndSettle();
@@ -551,6 +584,7 @@ void main() {
           ]);
       when(() => api.getConversations()).thenAnswer((_) async => []);
       when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
 
       final container = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api),
@@ -582,11 +616,14 @@ void main() {
       expect(find.descendant(of: navBar, matching: find.text('万灵')),
           findsNothing);
 
-      // 点更多格:抽屉里渲染消息/万灵图标方块
+      // 点更多格:抽屉里渲染消息/万灵/小程序图标方块
+      // (侧滑栏设置亦有「小程序」同名入口,miniapps 按抽屉项 key 定位)
       await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
       await tester.pumpAndSettle();
       expect(find.text('消息'), findsOneWidget);
       expect(find.text('万灵'), findsOneWidget);
+      expect(find.byKey(const ValueKey('more-$kNavTabMiniProgram')),
+          findsOneWidget);
 
       // 点抽屉「消息」→ 收起抽屉并跳到消息页
       await tester.tap(find.text('消息'));
@@ -609,7 +646,8 @@ void main() {
     testWidgets('固定项居中排序:槽序=序列序,默认激活身份仍映射消息槽',
         (tester) async {
       // 回归:序列 [a1, msg, a2, wanling] — agent 槽可在固定项之前,
-      // 槽序必须严格等于序列序(而非固定项强制前置)。
+      // 槽序必须严格等于序列序(而非固定项强制前置)。miniapps 由 sanitize
+      // 补到 wanling 紧后(5 项)溢出进抽屉。
       await pumpNavHome(tester, prefsSeed: {
         'token': 'fake-token',
         'nav_order_u1': ['a1', kNavTabMsg, 'a2', kNavTabWanling],
@@ -619,7 +657,7 @@ void main() {
       ]);
 
       final navBar = find.byType(NavTabBar);
-      // 2 个 agent 不触发更多槽,四槽全渲染
+      // 可见四槽全渲染,miniapps 溢出 → 有更多格
       for (final label in ['ag-1', '消息', 'ag-2', '万灵']) {
         expect(find.descendant(of: navBar, matching: find.text(label)),
             findsOneWidget,
@@ -627,7 +665,7 @@ void main() {
       }
       expect(
           find.descendant(of: navBar, matching: find.text('更多')),
-          findsNothing);
+          findsOneWidget);
       // 槽序 = 序列序:ag-1 在「消息」之前,wanling 在 ag-2 之后
       double slotDx(String label) => tester
           .getCenter(find.descendant(of: navBar, matching: find.text(label)))
@@ -637,11 +675,18 @@ void main() {
       expect(slotDx('ag-2'), lessThan(slotDx('万灵')));
       // 激活态按 tabId 身份映射:默认激活消息页(此刻位于槽 1)
       expect(tester.widget<NavTabBar>(navBar).currentIndex, 1);
+      // 溢出的 miniapps 在抽屉可达(侧滑栏设置亦有同名入口,按抽屉项 key 定位)
+      await tester.tap(
+          find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('more-$kNavTabMiniProgram')),
+          findsOneWidget);
     });
 
     testWidgets('编辑页白条拖拽排序:完成即生效,重建 container 模拟重启保序',
         (tester) async {
       // harness:预种 nav_order_u1 = [msg, wanling, a1, a2]
+      // (sanitize 补 miniapps → 5 项:[msg, wanling, miniapps, a1, a2])
       final container = await pumpNavHome(tester, prefsSeed: {
         'token': 'fake-token',
         'nav_order_u1': [kNavTabMsg, kNavTabWanling, 'a1', 'a2'],
@@ -650,8 +695,10 @@ void main() {
         _multiSessionAgent('a2', 'ag-2'),
       ]);
 
-      // 编辑入口:4 项无更多格,长按直进兜底
+      // 编辑入口:5 项有更多格,须先弹抽屉再长按
       final navBar = find.byType(NavTabBar);
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
       await tester.pumpAndSettle();
@@ -671,11 +718,11 @@ void main() {
       await tester.pump();
       await g.up();
       await tester.pumpAndSettle();
-      // move 语义:ag-1 落到消息槽位(0),其余项顺移
+      // move 语义:ag-1 落到消息槽位(0),其余顺移
       expect(container.read(navOrderProvider),
-          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+          ['a1', kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
 
-      // 「完成」仅 pop:底栏槽序即时生效(ag-1 → 消息 → 万灵 → ag-2)
+      // 「完成」仅 pop:底栏槽序即时生效(ag-1 → 消息 → 万灵 → 小程序,ag-2 溢出)
       await tester.tap(find.text('完成'));
       await tester.pumpAndSettle();
       expect(find.text('编辑底栏'), findsNothing);
@@ -684,7 +731,9 @@ void main() {
           .dx;
       expect(slotDx('ag-1'), lessThan(slotDx('消息')));
       expect(slotDx('消息'), lessThan(slotDx('万灵')));
-      expect(slotDx('万灵'), lessThan(slotDx('ag-2')));
+      expect(slotDx('万灵'), lessThan(slotDx('小程序')));
+      expect(find.descendant(of: navBar, matching: find.text('ag-2')),
+          findsNothing); // ag-2 掉进更多抽屉
 
       // 模拟重启:重建 container(同一 SP mock 存储)重新挂路由,读回序列保序
       final api2 = MockApi();
@@ -696,6 +745,7 @@ void main() {
           ]);
       when(() => api2.getConversations()).thenAnswer((_) async => []);
       when(() => api2.getAgentSessions(any())).thenAnswer((_) async => []);
+      when(() => api2.getMiniPrograms()).thenAnswer((_) async => []);
       final container2 = ProviderContainer(overrides: [
         apiProvider.overrideWithValue(api2),
         wsProvider.overrideWithValue(FakeWS()),
@@ -712,7 +762,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(container2.read(navOrderProvider),
-          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+          ['a1', kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
       expect(slotDx('ag-1'), lessThan(slotDx('消息')));
     });
 
@@ -729,8 +779,11 @@ void main() {
         _multiSessionAgent('a2', 'ag-2'),
       ]);
 
-      // 进编辑页:4 项无更多格,长按直进兜底;白条拖拽 ag-1 → 消息槽
+      // 进编辑页:5 项(sanitize 补 miniapps)有更多格,先弹抽屉再长按;
+      // 白条拖拽 ag-1 → 消息槽
       final navBar = find.byType(NavTabBar);
+      await tester.tap(find.descendant(of: navBar, matching: find.text('更多')));
+      await tester.pumpAndSettle();
       await tester.longPress(
           find.descendant(of: navBar, matching: find.text('ag-1')));
       await tester.pumpAndSettle();
@@ -746,13 +799,14 @@ void main() {
       await g.up();
       await tester.pumpAndSettle();
       expect(container.read(navOrderProvider),
-          ['a1', kNavTabMsg, kNavTabWanling, 'a2']);
+          ['a1', kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2']);
 
       await tester.tap(find.text('完成'));
       await tester.pumpAndSettle();
 
-      // 快速连点:ag-2 槽(页 3)后立刻 ag-1 槽(页 0),中间不 settle
-      await tester.tap(find.descendant(of: navBar, matching: find.text('ag-2')));
+      // 快速连点:万灵槽(页 2)后立刻 ag-1 槽(页 0),中间不 settle
+      // (ag-2 已溢出进抽屉,不可直点;跨两页仍有中间页 clamp 污染窗口)
+      await tester.tap(find.descendant(of: navBar, matching: find.text('万灵')));
       await tester.pump();
       await tester.tap(find.descendant(of: navBar, matching: find.text('ag-1')));
       await tester.pump();

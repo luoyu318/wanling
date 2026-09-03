@@ -1,0 +1,19 @@
+{
+  "appid": "showcase",
+  "name": "功能演示",
+  "version": 5,
+  "entry": "index.html",
+  "icon": "icon.png",
+  "permissions": [
+    "wanling.api",
+    "wanling.chat.read",
+    "wanling.chat.share",
+    "wanling.nav"
+  ],
+  "navigationBar": {
+    "style": "default",
+    "backgroundColor": "#07C160",
+    "foregroundColor": "#FFFFFF"
+  },
+  "minHostVersion": "1.6.3"
+}

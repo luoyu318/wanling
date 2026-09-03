@@ -16,10 +16,12 @@
 - 服务端测试: `cd server && go test ./...`（用 testcontainers 起 PG 容器,需 docker）
 - APP: `cd app && flutter run -d <device-id> --flavor dev`（`adb devices` 看 device-id）
 - APP 测试: `cd app && flutter test`
+- 本地开发配置：docs/local/
 - **Harness 工程命令**:
   - `make help` — 列出所有目标
   - `make install-tools` — 一键装齐 lint/scan 工具（首次必跑）
   - `make install-hooks` — 配置 git hooks（clone 后必跑一次）
+  - `skills/install.sh all` — 安装 agent 技能到 ~/.opencode/skills/（可选；agent 可自助安装，步骤见 skills/README.md「Agent 自助安装」）
   - `make lint` — 三端 lint
   - `make typecheck` — 三端类型检查
   - `make test` — 三端测试（Go -race + Flutter + vitest）
@@ -38,6 +40,7 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 
 - APP 动态底栏 tab（消息/万灵固定 + pinned agent）,server 仅做转发+管理,不含 Agent 适配层
 - agent 类型(hermes/opencode/dsh…)由 server 注册表统一下发(`agent_type_registry`,011):拓扑 multi_session 驱动路由,新类型 INSERT 一行即接入、APP 零发版
+- skills/:agent 技能资产(小程序发布/发图等),独立安装(`skills/install.sh`),不随 plugin 分发
 - 详细架构按目录分:
   - **改 Go 代码 → 读 [server/CLAUDE.md](./server/CLAUDE.md)**（路由 / Handler / Repo / migration 列表 / WS 协议 / 认证 / 测试规约）
   - **改 Flutter 代码 → 读 [app/CLAUDE.md](./app/CLAUDE.md)**（router / providers / pages / widgets / models / 测试规约）
@@ -52,7 +55,9 @@ Desktop（Flutter, Linux 自用）  ↔REST+WS↘                    ↓
 | 新增 / 改 server 路由或 Handler | server/CLAUDE.md |
 | 新增 / 改 Flutter page / provider / widget | app/CLAUDE.md |
 | 新增 / 改插件 install 模式 / adapter 协议 | plugin/CLAUDE.md |
+| 新增 / 改 skills/ 技能 | skills/README.md + 对应 SKILL.md（改文件后重生成 manifest.sha256） |
 | 新增 / 改 SDK 协议或方法 | sdk/CLAUDE.md + docs/architecture/sdk.md |
+| 新增 / 改子密钥授权协议 | docs/ai-handbook/agent-subkeys.md |
 | 新增 migration | server/CLAUDE.md + docs/ai-handbook/migrations.md（被 server/CLAUDE.md @import） |
 | 跨子系统协议变更（WS opcode / 聚合卡 / 审批卡片 / 扫码配对） | docs/ai-handbook/<对应>.md（物理单文件,各子 CLAUDE.md @import 引用同一份） |
 | **新增 / 改子系统模块依赖**（新增 internal/ 包 / 改数据流） | **docs/architecture/<子系统>.md 的 Mermaid 图 + 组件清单** |

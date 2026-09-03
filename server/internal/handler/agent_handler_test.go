@@ -25,7 +25,7 @@ func TestAgentHandler_UpdateDelete_Ownership(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	// presence.New(nil) 安全：IsOnline 对 nil rdb 返回 false，不连 Redis。
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	// 两个 user：owner 与 attacker
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
@@ -109,7 +109,7 @@ func TestAgentCreate_ReturnsSecretKey(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -153,7 +153,7 @@ func TestAgentList_HidesSecretKey(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -211,7 +211,7 @@ func TestAgentHandler_Create_BuildsDefaultConv(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	crepo := repository.NewConversationRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, crepo, presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, crepo, presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -276,7 +276,7 @@ func TestAgentHandler_Models(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewAgentRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), reg, agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), reg, agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -382,7 +382,7 @@ func TestAgentHandler_SlashCatalog(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewSlashCatalogRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), reg, agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), reg, agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -491,7 +491,7 @@ func TestAgentHandler_RotateSecret(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -572,7 +572,7 @@ func TestAgentHandler_Modes(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewModeRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), reg, agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), reg, agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -658,7 +658,7 @@ func TestAgentHandler_Presets(t *testing.T) {
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
 	reg := agent.NewPresetRegistry()
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), reg, repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), reg, repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "owner_"), "$2a$10$hash")
 	if err != nil {
@@ -737,7 +737,7 @@ func TestAgentHandler_Presets(t *testing.T) {
 //   - 新 INSERT 的类型立即可见(零发版接入的 server 侧验证)
 func TestAgentHandler_ListAgentTypes(t *testing.T) {
 	db := repository.SetupTestDB(t)
-	h := NewAgentHandler(repository.NewAgentRepo(db), repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(repository.NewAgentRepo(db), repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	r := gin.New()
 	r.GET("/api/agent-types", h.ListAgentTypes)
@@ -782,7 +782,7 @@ func TestAgentHandler_List_FillsMultiSession(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	arepo := repository.NewAgentRepo(db)
 	urepo := repository.NewUserRepo(db)
-	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db))
+	h := NewAgentHandler(arepo, repository.NewConversationRepo(db), presence.New(nil), agent.NewAgentRegistry(), agent.NewSlashCatalogRegistry(), agent.NewModeRegistry(), agent.NewPresetRegistry(), repository.NewAgentTypeRepo(db), repository.NewAgentSubKeyRepo(db))
 
 	owner, err := urepo.Create(t.Context(), shortName(t, "own_"), "$2a$10$hash")
 	if err != nil {

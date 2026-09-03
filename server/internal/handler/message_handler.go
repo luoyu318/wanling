@@ -276,11 +276,15 @@ func (h *MessageHandler) UpdateContent(c *gin.Context) {
 		broadcastContent = injectAggregatePreview(delta, merged)
 	}
 	if flipped {
-		var convType, convTitle string
+		var meta hub.MessageUpdateMeta
 		if conv, err := h.convRepo.GetByID(c.Request.Context(), msg.ConversationID); err == nil && conv != nil {
-			convType, convTitle = conv.Type, conv.Title
+			meta.ConvType, meta.ConvTitle = conv.Type, conv.Title
 		}
-		h.hub.BroadcastMessageUpdateWithConvMeta(msg.ConversationID, id, broadcastContent, convType, convTitle)
+		// sender 三件套口径与 message/processor 的 senderDisplayName/senderAvatarURL
+		// 一致(查询失败返空串,不阻塞广播),bg-service 弹通知直接消费。
+		meta.SenderID = msg.SenderID
+		meta.SenderName, meta.SenderAvatarURL = h.senderMeta(c.Request.Context(), msg.SenderID, msg.SenderType)
+		h.hub.BroadcastMessageUpdateWithConvMeta(msg.ConversationID, id, broadcastContent, meta)
 	} else {
 		h.hub.BroadcastMessageUpdate(msg.ConversationID, id, broadcastContent)
 	}
@@ -457,21 +461,29 @@ func (h *MessageHandler) canAccess(ctx context.Context, convID, actorID, role st
 // senderDisplay 查 sender 昵称:user 走 userRepo (nickname||username),agent 走 agentRepo (name)。
 // 查询失败返空串(client 端会用 sender_id fallback 占位),不阻塞撤回流程。
 func (h *MessageHandler) senderDisplay(ctx context.Context, senderID, senderType string) string {
+	name, _ := h.senderMeta(ctx, senderID, senderType)
+	return name
+}
+
+// senderMeta 查 sender 展示名 + 头像 URL。口径与 message/processor 的
+// senderDisplayName/senderAvatarURL 一致:查询失败返空串,不阻塞广播。
+func (h *MessageHandler) senderMeta(ctx context.Context, senderID, senderType string) (string, string) {
 	if senderType == "agent" {
 		a, err := h.agentRepo.GetByID(ctx, senderID)
 		if err != nil || a == nil {
-			return ""
+			return "", ""
 		}
-		return a.Name
+		return a.Name, a.AvatarURL
 	}
 	u, err := h.userRepo.GetByID(ctx, senderID)
 	if err != nil || u == nil {
-		return ""
+		return "", ""
 	}
+	name := u.Username
 	if u.Nickname != nil && *u.Nickname != "" {
-		return *u.Nickname
+		name = *u.Nickname
 	}
-	return u.Username
+	return name, u.AvatarURL
 }
 
 // unicastHide 把 hide scope 的 MESSAGE_DELETE 单播给当前请求者(只对我消失)。

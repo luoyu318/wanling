@@ -96,14 +96,25 @@ void main() {
     late BackgroundChatService service;
     late List<({NotificationPayload payload, String title, String body, int unreadCount})>
     notified;
+    final loaderCalls = <({String agentId, String? avatarUrl})>[];
+    final fakeAvatar = Uint8List.fromList([1, 2, 3]);
 
-    String updateRaw({required bool silent, String state = 'generating'}) =>
+    String updateRaw({
+      required bool silent,
+      String state = 'generating',
+      String? senderId,
+      String? senderName,
+      String? senderAvatarUrl,
+    }) =>
         jsonEncode({
           'op': 0,
           't': 'MESSAGE_UPDATE',
           'd': {
             'message_id': 'm1',
             'conversation_id': 'c1',
+            'sender_id': ?senderId,
+            'sender_name': ?senderName,
+            'sender_avatar_url': ?senderAvatarUrl,
             'content': {
               'msg_type': 'aggregate_card',
               'data': {
@@ -138,6 +149,7 @@ void main() {
 
     setUp(() {
       notified = [];
+      loaderCalls.clear();
       service = BackgroundChatService(
         _MockServiceInstance(),
         showNotification: ({
@@ -154,7 +166,113 @@ void main() {
             unreadCount: unreadCount,
           ));
         },
+        avatarLoader: ({
+          required agentId,
+          required name,
+          avatarUrl,
+          required baseUrl,
+          required httpHeaders,
+          onUnauthorized,
+        }) async {
+          loaderCalls.add((agentId: agentId, avatarUrl: avatarUrl));
+          return (fakeAvatar, avatarUrl != null && avatarUrl.isNotEmpty);
+        },
       );
+    });
+
+    test('翻转(新 server 带 sender 三件套)→ 回查不依赖 CREATE 记录,直接消费 payload', () async {
+      // 模拟 bg-service 回合中途重启:_convSenders 空(没见过 MESSAGE_CREATE),
+      // 仅收到翻转 MESSAGE_UPDATE(新 server payload 带 sender 字段)。
+      service.setConnectionForTest(baseUrl: 'http://localhost:18008', token: 't');
+      await service.handleRawMessageForTest(
+        updateRaw(
+          silent: false,
+          state: 'done',
+          senderId: 'agent-9',
+          senderName: '灵仔',
+          senderAvatarUrl: '/api/files/abc',
+          ),
+      );
+
+      expect(notified.length, 1);
+      // loader 直接用 payload 的 senderId + avatarUrl 发起下载(非色块路径)
+      expect(loaderCalls.single.agentId, 'agent-9');
+      expect(loaderCalls.single.avatarUrl, '/api/files/abc');
+      // 通知 avatarBytes 是 loader 返回的真头像(非空)
+      // (title 因 agent_session 无 conv 字段走单聊分支 = senderName)
+      expect(notified.first.title, '灵仔');
+    });
+
+    test('翻转(新 server 带 sender 字段)→ 回填 _convSenders + 真头像进内存缓存', () async {
+      service.setConnectionForTest(baseUrl: 'http://localhost:18008', token: 't');
+      await service.handleRawMessageForTest(
+        updateRaw(
+          silent: false,
+          state: 'done',
+          senderId: 'agent-9',
+          senderName: '灵仔',
+          senderAvatarUrl: '/api/files/abc',
+          ),
+      );
+      await service.handleRawMessageForTest(
+        updateRaw(
+          silent: false,
+          state: 'done',
+          senderId: 'agent-9',
+          senderName: '灵仔',
+          senderAvatarUrl: '/api/files/abc',
+          ),
+      );
+
+      expect(notified.length, 2);
+      // 第二次通知头像走内存缓存,loader 仅首次调用
+      expect(loaderCalls.length, 1);
+      expect(loaderCalls.single.agentId, 'agent-9');
+    });
+
+    test('翻转(loader 返回色块 isReal=false)→ 色块不进内存缓存,下次重新加载', () async {
+      var isReal = false;
+      final blockLoaderCalls = <String>[];
+      final blockService = BackgroundChatService(
+        _MockServiceInstance(),
+        showNotification: ({
+          required NotificationPayload payload,
+          required String title,
+          required String body,
+          required int unreadCount,
+          Uint8List? avatarBytes,
+        }) async {
+          notified.add((
+            payload: payload,
+            title: title,
+            body: body,
+            unreadCount: unreadCount,
+          ));
+        },
+        avatarLoader: ({
+          required agentId,
+          required name,
+          avatarUrl,
+          required baseUrl,
+          required httpHeaders,
+          onUnauthorized,
+        }) async {
+          blockLoaderCalls.add(agentId);
+          return (fakeAvatar, isReal);
+        },
+      );
+      blockService.setConnectionForTest(baseUrl: 'http://localhost:18008', token: 't');
+      await blockService.handleRawMessageForTest(
+        updateRaw(silent: false, state: 'done', senderId: 'agent-9', senderName: '灵仔'),
+      );
+      isReal = true; // 模拟弱网恢复:第二次加载拿到真头像
+      await blockService.handleRawMessageForTest(
+        updateRaw(silent: false, state: 'done', senderId: 'agent-9', senderName: '灵仔'),
+      );
+
+      // 色块那次没进缓存,第二次重新调 loader(下载重试机会)
+      expect(blockLoaderCalls.length, 2);
+      expect(notified.length, 2);
     });
 
     test('翻转(silent false)→ 弹通知 + unread +1', () async {

@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>万灵小程序 · 功能演示</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1a1a1a;--sub:#8a8f99;--line:#ececec;
+  --brand:#07c160;--brand-weak:rgba(7,193,96,.12);--warn:#ffa426;--danger:#fa5151;--blue:#3c7cf7;
+}
+body.dark{
+  --bg:#17181c;--card:#26272d;--text:#eeeeee;--sub:#aaaaaa;--line:#333;
+  --brand-weak:rgba(7,193,96,.2);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+.page{display:none;padding:16px;padding-bottom:40px;animation:fade .22s ease}
+.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--line)}
+.card h3{font-size:14px;margin-bottom:10px;color:var(--brand)}
+.menu-item{display:flex;align-items:center;gap:12px;padding:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;cursor:pointer;text-decoration:none;color:var(--text)}
+.menu-item:active{opacity:.7}
+.menu-item .ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+.menu-item .tx{flex:1;min-width:0}
+.menu-item .tx b{display:block;font-size:15px}
+.menu-item .tx span{display:block;font-size:12px;color:var(--sub);margin-top:2px}
+.menu-item .arrow{color:var(--sub)}
+button.btn{width:100%;padding:11px;border:none;border-radius:10px;background:var(--brand);color:#fff;font-size:15px;cursor:pointer;margin-bottom:10px}
+button.btn.gray{background:var(--brand-weak);color:var(--brand)}
+button.btn.blue{background:var(--blue)}
+button.btn:active{opacity:.75}
+pre.out{background:var(--brand-weak);color:var(--text);border-radius:10px;padding:10px;font-size:12px;white-space:pre-wrap;word-break:break-all;min-height:40px}
+.row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.row label{font-size:14px}
+input[type=text],select{padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text);font-size:14px;width:100%}
+select{width:auto}
+.switch{position:relative;width:46px;height:26px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider{position:absolute;inset:0;background:#ccc;border-radius:26px;transition:.2s;cursor:pointer}
+.switch .slider:before{content:'';position:absolute;width:22px;height:22px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:var(--brand)}
+.switch input:checked+.slider:before{transform:translateX(20px)}
+input[type=range]{width:100%;accent-color:var(--brand)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:5px 12px;border-radius:999px;font-size:12px;background:var(--brand-weak);color:var(--brand);cursor:pointer}
+.chip.warn{background:rgba(255,164,38,.15);color:var(--warn)}
+.chip.danger{background:rgba(250,81,81,.12);color:var(--danger)}
+.chip.blue{background:rgba(60,124,247,.12);color:var(--blue)}
+.chip.on{outline:2px solid var(--brand)}
+.prog{height:8px;background:var(--line);border-radius:8px;overflow:hidden;margin-top:8px}
+.prog i{display:block;height:100%;background:var(--brand);border-radius:8px;transition:width .2s}
+.list-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.list-item:last-child{border-bottom:none}
+.avt{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;flex:none}
+.spin{width:22px;height:22px;border:3px solid var(--brand-weak);border-top-color:var(--brand);border-radius:50%;animation:sp 1s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:60px;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;padding:9px 18px;border-radius:9px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99}
+.toast.show{opacity:1}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+.stat b{font-size:20px;color:var(--brand)}
+.stat span{display:block;font-size:11px;color:var(--sub);margin-top:3px}
+</style>
+</head>
+<body>
+
+<!-- ============ 首页 ============ -->
+<div class="page active" id="p-home">
+  <div class="card" style="display:flex;align-items:center;gap:12px">
+    <div class="ic" style="width:46px;height:46px;border-radius:12px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px">✦</div>
+    <div><b style="font-size:17px">万灵小程序</b><div style="font-size:12px;color:var(--sub)" id="homeVer">加载中…</div></div>
+  </div>
+  <a class="menu-item" onclick="go('api')">
+    <div class="ic" style="background:var(--brand-weak);color:var(--brand)">⚡</div>
+    <div class="tx"><b>宿主 API 演示</b><span>wanling.request 读取真实数据</span></div><span class="arrow">›</span>
+  </a>
+  <a class="menu-item" onclick="go('chat')">
+    <div class="ic" style="background:rgba(60,124,247,.12);color:var(--blue)">💬</div>
+    <div class="tx"><b>聊天打通演示</b><span>会话上下文 / 分享卡片到会话</span></div><span class="arrow">›</span>
+  </a>
+  <a class="menu-item" onclick="go('nav')">
+    <div class="ic" style="background:rgba(255,164,38,.15);color:var(--warn)">🚀</div>
+    <div class="tx"><b>拉起原生页面</b><span>openPage 白名单跳转宿主</span></div><span class="arrow">›</span>
+  </a>
+  <a class="menu-item" onclick="go('widgets')">
+    <div class="ic" style="background:rgba(250,81,81,.12);color:var(--danger)">🎛</div>
+    <div class="tx"><b>控件展示</b><span>表单 / 列表 / 交互元素</span></div><span class="arrow">›</span>
+  </a>
+  <a class="menu-item" onclick="go('about')">
+    <div class="ic" style="background:var(--brand-weak);color:var(--brand)">ℹ️</div>
+    <div class="tx"><b>关于本程序</b><span>manifest 自报（同源读取）</span></div><span class="arrow">›</span>
+  </a>
+</div>
+
+<!-- ============ API 页 ============ -->
+<div class="page" id="p-api">
+  <div class="card">
+    <h3>wanling.request（带登录态代理）</h3>
+    <button class="btn" onclick="loadTypes()">GET /api/agent-types</button>
+    <pre class="out" id="apiOut">点击按钮请求宿主 API（token 留在原生层）</pre>
+  </div>
+  <div class="card">
+    <h3>并发请求 + 计时</h3>
+    <button class="btn gray" onclick="loadAll()">并发拉取 agent-types ×3</button>
+    <pre class="out" id="benchOut">演示 Promise.all 与耗时统计</pre>
+  </div>
+</div>
+
+<!-- ============ 聊天页 ============ -->
+<div class="page" id="p-chat">
+  <div class="card">
+    <h3>wanling.getChatContext</h3>
+    <button class="btn blue" onclick="readCtx()">读取当前会话 ID</button>
+    <pre class="out" id="ctxOut">从聊天卡片打开时返回会话 ID，独立打开为 null</pre>
+  </div>
+  <div class="card">
+    <h3>wanling.shareToChat</h3>
+    <button class="btn" onclick="share()">分享本程序卡片到会话</button>
+    <pre class="out" id="shareOut">弹出会话选择器，以 mini_program_card 发送</pre>
+  </div>
+</div>
+
+<!-- ============ 导航页 ============ -->
+<div class="page" id="p-nav">
+  <div class="card">
+    <h3>wanling.openPage（白名单跳转宿主）</h3>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:12px">跳转后按系统返回键回到本程序（导航栈）</div>
+    <button class="btn" onclick="nav('miniPrograms')">打开 · 小程序列表</button>
+    <button class="btn" onclick="nav('home')">返回 · 宿主主页（出栈）</button>
+  </div>
+  <div class="card">
+    <h3>带参数跳转：Agent 详情</h3>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">先拉取 agent 列表，点击行跳转对应详情页</div>
+    <button class="btn gray" onclick="loadAgents()">加载 agent 列表</button>
+    <div id="agentList"></div>
+  </div>
+  <div class="card">
+    <h3>安全边界演示</h3>
+    <button class="btn" style="background:rgba(250,81,81,.12);color:var(--danger)" onclick="navBad()">尝试跳白名单外页面</button>
+    <pre class="out" id="navBadOut">预期被 bridge 拒绝：未知页面</pre>
+  </div>
+</div>
+
+<!-- ============ 控件页 ============ -->
+<div class="page" id="p-widgets">
+  <div class="card">
+    <h3>表单控件</h3>
+    <div style="margin-bottom:10px"><input type="text" placeholder="文本输入（试试输入）" oninput="widgetEcho()"></div>
+    <div class="row"><label>开关 Switch</label><label class="switch"><input type="checkbox" checked onchange="widgetEcho()"><span class="slider"></span></label></div>
+    <div class="row"><label>滑块 Range</label><span id="rangeVal" style="color:var(--brand);font-weight:600">50</span></div>
+    <input type="range" min="0" max="100" value="50" oninput="document.getElementById('rangeVal').textContent=this.value;widgetEcho()">
+    <div class="row"><label>下拉 Select</label>
+      <select onchange="widgetEcho()"><option>选项 A</option><option>选项 B</option><option>选项 C</option></select>
+    </div>
+    <div class="row"><label>复选框</label><span><input type="checkbox" checked onchange="widgetEcho()"> 甲 <input type="checkbox" onchange="widgetEcho()"> 乙</span></div>
+    <pre class="out" id="widgetOut" style="margin-top:10px">控件状态实时回显区</pre>
+  </div>
+  <div class="card">
+    <h3>标签 / 徽章</h3>
+    <div class="chips">
+      <span class="chip on" onclick="toast('点了绿色标签')">默认</span>
+      <span class="chip blue" onclick="toast('点了蓝色标签')">信息</span>
+      <span class="chip warn" onclick="toast('点了橙色标签')">警告</span>
+      <span class="chip danger" onclick="toast('点了红色标签')">危险</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>进度 / 加载</h3>
+    <div class="prog"><i id="progBar" style="width:30%"></i></div>
+    <button class="btn gray" style="margin-top:10px" onclick="runProg()">播放进度动画</button>
+    <div style="margin-top:8px"><span class="spin"></span> <span style="font-size:13px;color:var(--sub)">加载指示器（CSS 动画）</span></div>
+  </div>
+  <div class="card">
+    <h3>列表</h3>
+    <div class="list-item"><div class="avt" style="background:#3c7cf7">A</div><div style="flex:1"><b style="font-size:14px">列表项标题</b><div style="font-size:12px;color:var(--sub)">副文本说明</div></div><span class="chip">标签</span></div>
+    <div class="list-item"><div class="avt" style="background:#ffa426">B</div><div style="flex:1"><b style="font-size:14px">另一列表项</b><div style="font-size:12px;color:var(--sub)">可点击</div></div><span class="arrow" style="color:var(--sub)">›</span></div>
+  </div>
+  <div class="card">
+    <h3>数据统计卡</h3>
+    <div class="grid" id="statsGrid"></div>
+  </div>
+  <div class="card">
+    <h3>主题切换（CSS 变量）</h3>
+    <button class="btn" onclick="toggleTheme()">切换 亮 / 暗 主题</button>
+  </div>
+</div>
+
+<!-- ============ 关于页 ============ -->
+<div class="page" id="p-about">
+  <div class="card">
+    <h3>身份（wanling.getProfile · 调用式授权）</h3>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">首次调用弹授权对话框，拒绝不落痕可重试；openid 为本程序内专属匿名标识，不同小程序互不相同</div>
+    <button class="btn" onclick="loadProfile()">获取我的身份</button>
+    <div id="profileBox"><pre class="out">未获取</pre></div>
+  </div>
+  <div class="card"><h3>manifest（fetch 同源读取本地包）</h3><pre class="out" id="aboutOut">加载中…</pre></div>
+  <div class="card"><h3>运行环境</h3>
+    <div class="row"><label>UserAgent</label></div>
+    <div style="font-size:11px;color:var(--sub);word-break:break-all" id="uaOut"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================= hash 路由（多级页面） ================= */
+const PAGES = ['home','api','chat','nav','widgets','about'];
+const TITLES = {home:'万灵小程序 · 功能演示',api:'宿主 API 演示',chat:'聊天打通演示',nav:'拉起原生页面',widgets:'控件展示',about:'关于'};
+function go(p){
+  location.hash = '#'+p;
+}
+window.addEventListener('hashchange', route);
+function route(){
+  const p = (location.hash || '#home').slice(1);
+  PAGES.forEach(id => document.getElementById('p-'+id).classList.toggle('active', id === p));
+  document.title = TITLES[p] || TITLES.home; // 同步宿主 AppBar 标题(onTitleChanged)
+  window.scrollTo(0,0);
+  if (p === 'about') loadAbout();
+}
+function toast(s){
+  const t = document.getElementById('toast');
+  t.textContent = s; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+/* ================= API 演示 ================= */
+async function loadTypes(){
+  const el = document.getElementById('apiOut');
+  el.textContent = '请求中…';
+  try {
+    const data = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+    el.textContent = '✓ agent-types 数量: ' + data.length + '\n' +
+      data.map(t=>`${t.type}(${t.label}) multi_session=${t.multi_session}`).join('\n');
+  } catch(e){ el.textContent = '✗ ' + (e && e.message); }
+}
+async function loadAll(){
+  const el = document.getElementById('benchOut');
+  el.textContent = '并发请求中…';
+  const t0 = performance.now();
+  try {
+    const rs = await Promise.all([0,1,2].map(() =>
+      wanling.request({ path: '/api/agent-types', method: 'GET' })));
+    el.textContent = `✓ 3 次并发完成，耗时 ${(performance.now()-t0).toFixed(0)}ms，` +
+      `各返回 ${rs.map(r=>r.length).join('/')} 条`;
+  } catch(e){ el.textContent = '✗ ' + (e && e.message); }
+}
+
+/* ================= 聊天打通 ================= */
+async function readCtx(){
+  const el = document.getElementById('ctxOut');
+  try {
+    const ctx = await wanling.getChatContext();
+    el.textContent = ctx ? '✓ 来源会话: ' + ctx.conversation_id : 'null（非卡片打开，无会话上下文）';
+  } catch(e){ el.textContent = '✗ ' + (e && e.message); }
+}
+async function share(){
+  const el = document.getElementById('shareOut');
+  el.textContent = '弹出会话选择器…';
+  try {
+    const r = await wanling.shareToChat({ title: '功能演示', params: { from: 'showcase' } });
+    el.textContent = '✓ 已分享, message_id: ' + r.message_id;
+  } catch(e){ el.textContent = (e && e.message === 'cancelled') ? '已取消' : '✗ ' + (e && e.message); }
+}
+
+/* ================= 拉起原生页面 ================= */
+async function nav(page){
+  try { await wanling.openPage({ page }); }
+  catch(e){ toast('✗ ' + (e && e.message)); }
+}
+async function navBad(){
+  const el = document.getElementById('navBadOut');
+  try {
+    await wanling.openPage({ page: 'secretAdminPanel' });
+    el.textContent = '不应该走到这里';
+  } catch(e){ el.textContent = '✓ 已被 bridge 拒绝: ' + (e && e.message); }
+}
+let agentsLoaded = false;
+async function loadAgents(){
+  if (agentsLoaded) return;
+  try {
+    const agents = await wanling.request({ path: '/api/agents', method: 'GET' });
+    const box = document.getElementById('agentList');
+    box.innerHTML = agents.slice(0,5).map(a =>
+      `<div class="list-item" onclick="navAgent('${a.id}')">
+        <div class="avt" style="background:var(--brand)">${(a.display_name||a.name||'?').slice(0,1)}</div>
+        <div style="flex:1"><b style="font-size:14px">${a.display_name||a.name||a.id}</b>
+        <div style="font-size:12px;color:var(--sub)">${a.type||''} · 点击跳详情页</div></div>
+        <span style="color:var(--sub)">›</span></div>`).join('');
+    agentsLoaded = true;
+  } catch(e){ toast('✗ ' + (e && e.message)); }
+}
+function navAgent(id){ wanling.openPage({ page: 'agentDetail', params: { agentId: id } }).catch(e=>toast('✗ '+(e&&e.message))); }
+
+/* ================= 控件交互 ================= */
+function widgetEcho(){
+  const inp = document.querySelector('#p-widgets input[type=text]');
+  const sw = document.querySelector('#p-widgets .switch input');
+  const rg = document.querySelector('#p-widgets input[type=range]');
+  const sel = document.querySelector('#p-widgets select');
+  const cks = [...document.querySelectorAll('#p-widgets input[type=checkbox]')];
+  document.getElementById('widgetOut').textContent = JSON.stringify({
+    text: inp.value, switch: sw.checked, range: +rg.value,
+    select: sel.value, checks: cks.map(c=>c.checked)
+  }, null, 1);
+}
+function runProg(){
+  const bar = document.getElementById('progBar');
+  let w = 0; bar.style.width = '0%';
+  const h = setInterval(()=>{ w += 7; bar.style.width = Math.min(w,100)+'%'; if (w>=100) clearInterval(h); }, 60);
+}
+function renderStats(){
+  const data = [['3','bridge 方法组'],['4','声明权限'],['0','token 泄漏'],['∞','控件可能']];
+  document.getElementById('statsGrid').innerHTML =
+    data.map(d=>`<div class="stat"><b>${d[0]}</b><span>${d[1]}</span></div>`).join('');
+}
+function toggleTheme(){ document.body.classList.toggle('dark'); }
+
+/* ================= 身份（调用式授权） ================= */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function errMsg(e){
+  // 宿主 bootstrap 将错误对象转 Error 后 message 显示 [object Object](已知限制),
+  // 判型:命中即语义性拒绝(jsonrpc code -32090 用户未授权 / -32091 端点收紧)
+  if (e && e.message === '[object Object]') return '请求被拒绝（用户未授权或当前环境不支持）';
+  return (e && e.message) || String(e);
+}
+async function loadProfile(){
+  const box = document.getElementById('profileBox');
+  box.innerHTML = '<pre class="out">获取中…</pre>';
+  try {
+    const p = await wanling.getProfile();
+    const openid = esc((p.openid || '').slice(0, 8)) + '…';
+    const nick = esc(p.nickname || '未设置昵称');
+    const av = p.avatarUrl
+      ? `<img src="${esc(p.avatarUrl)}" style="width:38px;height:38px;border-radius:10px;object-fit:cover;flex:none" onerror="this.style.display='none'">`
+      : `<div class="avt" style="background:var(--brand)">${esc((p.nickname || '?').slice(0,1))}</div>`;
+    box.innerHTML = `<div class="list-item">${av}
+      <div style="flex:1;min-width:0"><b style="font-size:14px">${nick}</b>
+      <div style="font-size:12px;color:var(--sub)">openid（脱敏）: ${openid}</div></div></div>`;
+    toast('已获取身份');
+  } catch(e){
+    box.innerHTML = `<pre class="out">✗ ${esc(errMsg(e))}</pre>`;
+  }
+}
+
+/* ================= 关于 ================= */
+async function loadAbout(){
+  document.getElementById('uaOut').textContent = navigator.userAgent;
+  try {
+    const res = await fetch('./manifest.json'); // 同源(虚拟域)=本地包文件拦截
+    const m = await res.json();
+    document.getElementById('aboutOut').textContent = JSON.stringify(m, null, 2);
+  } catch(e){ document.getElementById('aboutOut').textContent = '读取失败: ' + e; }
+}
+
+/* 首页版本卡:启动即拉 manifest 自报 */
+(async () => {
+  try {
+    const m = await (await fetch('./manifest.json')).json();
+    document.getElementById('homeVer').textContent = 'v' + m.version + ' · ' + m.permissions.length + ' 项权限';
+  } catch(e){ document.getElementById('homeVer').textContent = '版本读取失败'; }
+})();
+
+renderStats();
+route();
+</script>
+</body>
+</html>

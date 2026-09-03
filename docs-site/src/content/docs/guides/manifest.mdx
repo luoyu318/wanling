@@ -1,0 +1,41 @@
+---
+title: 包格式规范
+description: manifest.json 全字段说明与平台校验规则
+---
+
+
+## 总览
+
+小程序包是一个 zip 压缩包，`manifest.json` 必须位于压缩包根目录（不要把外层文件夹打进 zip）。
+
+平台在上传时对包做整体校验，任一规则不满足则**整包被拒**，返回 400 `invalid_package`，错误 message 中带有具体明细。
+
+## manifest.json 全字段
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| appid | string | 是 | 全局唯一，正则 `^[a-z0-9][a-z0-9-]{2,31}$`；先到先得（他人占用时上传返回 403） |
+| name | string | 是 | 显示名 |
+| version | int | 是 | 正整数，同 appid 单调递增；重传即换版本 |
+| entry | string | 否 | 入口 HTML，默认 `index.html`，必须存在于包内 |
+| icon | string | 否 | 图标包内相对路径，扩展名 png/jpg/jpeg/webp，≤256KB；上传时校验文件存在与魔数，缺一整包被拒；建议 512×512 PNG；未提供时用「名称首字+哈希色块」兜底 |
+| permissions | string[] | 否 | 白名单：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，未知值整包被拒 |
+| navigationBar | object | 否 | `{style, backgroundColor, foregroundColor}`；style ∈ `default`（缺省，宿主原生标题栏，可配色）/ `custom`（隐藏标题栏全屏）；颜色 `#RRGGBB`，非法值被拒 |
+| minHostVersion | string | 否 | 宿主 APP 最低版本声明；当前平台对该字段暂不强制校验，声明不影响上传与运行 |
+
+其中 `navigationBar` 决定小程序的标题栏形态，容器托管的标题栏、返回键与胶囊区约定详见[页面与导航](/docs/guides/navigation/)。
+
+## 包体硬限制
+
+- 压缩后与解压后总大小均 ≤20MB（默认上限 20MB），请求体超限返回 413 `payload_too_large`
+- 文件数 ≤2000
+- `manifest.json` ≤1MB
+- 条目名含 `../`、绝对路径或反斜杠的一律拒绝（防路径穿越）
+
+## 打包命令
+
+在包目录**内部**执行打包，保证 `manifest.json` 位于 zip 根目录：
+
+```bash
+cd hello-demo && zip -r ../hello-demo.zip .
+```

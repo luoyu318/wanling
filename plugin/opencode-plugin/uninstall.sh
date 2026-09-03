@@ -57,5 +57,10 @@ if [[ -d "${SCRIPT_DIR}/node_modules" ]]; then
     ok "node_modules 已删除"
 fi
 
+# agent 技能与插件解耦,卸载插件不删用户自主安装的技能
+if compgen -G "${HOME}/.opencode/skills/wanling-*" > /dev/null; then
+    info "agent 技能(~/.opencode/skills/wanling-*)为独立安装,未随插件卸载;不再需要时可手动删除"
+fi
+
 echo ""
 ok "卸载完成"

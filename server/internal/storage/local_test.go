@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,5 +81,44 @@ func TestRead_DirectoryTraversal_ReturnsWithinBaseDir(t *testing.T) {
 	_, err := s.Read("../../etc/passwd")
 	if err == nil {
 		t.Fatal("路径遍历攻击应失败（文件不在 baseDir 内）")
+	}
+}
+
+func TestSaveThumbnail_NestedKey(t *testing.T) {
+	// 嵌套子目录 key（小程序 icon 场景）：自动创建父目录、可读回、同名覆盖
+	dir := t.TempDir()
+	s := &LocalStorage{baseDir: dir}
+	key := "mp-icon/mp-abc123/1.png"
+
+	if err := s.SaveThumbnail(key, []byte("first")); err != nil {
+		t.Fatalf("嵌套 key 保存应成功: %v", err)
+	}
+	r, err := s.Read(key)
+	if err != nil {
+		t.Fatalf("保存后应可读回: %v", err)
+	}
+	got, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatalf("读回失败: %v", err)
+	}
+	if string(got) != "first" {
+		t.Errorf("内容应一致, got %q", got)
+	}
+
+	if err := s.SaveThumbnail(key, []byte("second")); err != nil {
+		t.Fatalf("覆盖写应成功: %v", err)
+	}
+	r, err = s.Read(key)
+	if err != nil {
+		t.Fatalf("覆盖后应可读回: %v", err)
+	}
+	got, err = io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatalf("读回失败: %v", err)
+	}
+	if string(got) != "second" {
+		t.Errorf("覆盖后内容应为最新, got %q", got)
 	}
 }

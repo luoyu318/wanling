@@ -1,0 +1,101 @@
+---
+title: 快速开始
+description: 从零构建、上传、运行第一个万灵小程序
+---
+
+
+本页以官方示例 hello-demo 为例（appid `hello-demo`，三个按钮分别演示 `wanling.request` / `wanling.getChatContext` / `wanling.shareToChat`），完整走一遍：建包 → 上传 → 运行 → 分享 → 调试。
+
+示例源码：[hello-demo 源码](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-hello)（仓库内相对路径 `scripts/examples/miniprogram-hello/`）。
+
+## 1. 建包
+
+目录结构（manifest.json 必须在 zip 根目录，不要把外层文件夹打进 zip）：
+
+```
+hello-demo/
+├── manifest.json
+└── index.html
+```
+
+manifest.json：
+
+```json
+{
+  "appid": "hello-demo",
+  "name": "Hello 示例",
+  "version": 2,
+  "entry": "index.html",
+  "icon": "icon.png",
+  "permissions": ["wanling.api", "wanling.chat.read", "wanling.chat.share"],
+  "minHostVersion": "1.6.3"
+}
+```
+
+字段说明速览（全字段表见[包格式规范](/docs/guides/manifest/)）：
+
+- `appid`：匹配 `^[a-z0-9][a-z0-9-]{2,31}$`，全局唯一，先到先得（他人占用时上传返回 403）
+- `version`：正整数，同 appid 重传即换版本
+- `permissions`：只能从 `wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` 里选，出现未知值整个包被拒
+- `entry`：缺省 `index.html`，但无论写什么，该文件必须真实存在于包内
+
+## 2. 调用宿主能力
+
+index.html 是一个纯静态页，需要宿主能力时调用 `window.wanling`：
+
+```html
+<script>
+// 万灵 API 代理(需 wanling.api;path 仅允许 /api/ 前缀),失败 throw Error
+const types = await wanling.request({ path: '/api/agent-types', method: 'GET' });
+
+// 会话上下文(需 wanling.chat.read):从聊天卡片打开返回 {conversation_id},独立打开 null
+const ctx = await wanling.getChatContext();
+
+// 分享卡片到会话(需 wanling.chat.share;仅 published 小程序可用),用户取消 throw 'cancelled'
+const r = await wanling.shareToChat({ title: '标题', params: { any: 'json' } });
+
+// 关闭小程序页
+wanling.close();
+</script>
+```
+
+这四个调用（以及 `openPage`、`getProfile` 等其余 API）的参数与行为细则详见 [JSBridge 参考](/docs/api/bridge/)。
+
+## 3. 打包上传
+
+在包目录内将内容打成 zip（注意在包目录**内部**执行，保证 manifest.json 位于 zip 根目录）：
+
+```bash
+cd hello-demo && zip -r ../hello-demo.zip .
+```
+
+打开 APP「万灵」tab → 小程序列表 → 上传按钮 → 系统文件选择器选择 zip。任意用户都可上传，上传后的小程序为私有状态，仅自己可见、可运行。
+
+小程序的本地存储（localStorage/IndexedDB）按账号隔离：同一设备多账号之间互不可见，同账号同小程序共享。详见[存储与更新](/docs/guides/storage/)。
+
+## 4. 权限授权
+
+首次运行小程序时，`wanling.chat.read` / `wanling.chat.share` 会逐项弹出授权对话框（允许 / 拒绝；拒绝后对应 API 持续 reject）。`wanling.api` 不弹窗，manifest 声明即静默生效。
+
+授权结果本地持久化，**卸载小程序即重置**，重装后重新授权。详见[权限与授权](/docs/guides/permissions/)。
+
+## 5. 分享与发布
+
+页内调用 `wanling.shareToChat({ title, params })` 会弹出会话选择器，将小程序卡片发到所选会话。**仅发布（published）状态的小程序可分享**，私有小程序调用会收到「仅公开小程序可分享到会话」的错误。
+
+发布流程：由管理员对该小程序执行发布操作，之后小程序进入公共库、全员可见。
+
+消息侧闭环：收到卡片的好友点击卡片 → 冷启动小程序并自动携带来源会话（`conv`）与启动参数（`launch`，URL 编码的 JSON）。页内用 `wanling.getChatContext()` 拿到 `conversation_id`，`launch` 从入口 URL query 用 `URLSearchParams` 自取。详见[发布上架](/docs/guides/publishing/)。
+
+## 6. 调试
+
+- 小程序暂无远程调试，推荐使用 vConsole 类页内日志面板输出 `console.log`（hello-demo 用 `<pre id="out">` 直接展示调用结果，同一思路）。
+- JSBridge 错误以 rejected promise 的 `Error(message)` 抛出，`try/catch` 后展示即可；上传 / 运行失败的错误信息包含具体明细，先看返回内容再对照错误表排查。
+
+常见错误对照详见[调试与常见错误](/docs/guides/debugging/)。
+
+## 下一步
+
+- **[包格式规范](/docs/guides/manifest/)**——manifest.json 全字段说明与包体硬限制
+- **[JSBridge 参考](/docs/api/bridge/)**——`window.wanling` 全部 API 的参数与行为细则
+- **[示例索引](/docs/examples/)**——官方示例小程序一览，可直接下载体验

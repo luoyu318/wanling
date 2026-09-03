@@ -5,16 +5,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'agent_provider.dart' show agentListProvider;
 import 'auth_provider.dart' show authProvider;
 import 'conversation_provider.dart' show conversationProvider;
+import 'mini_programs_provider.dart' show miniProgramsProvider;
 import 'saved_logins_provider.dart' show sharedPrefsProvider;
 
 /// 底栏固定 tab 的保留 id(agent id 为 UUID,不会与之冲突)。
 const kNavTabMsg = 'msg';
 const kNavTabWanling = 'wanling';
-const kNavFixedIds = {kNavTabMsg, kNavTabWanling};
+const kNavTabMiniProgram = 'miniapps';
+const kNavFixedIds = {kNavTabMsg, kNavTabWanling, kNavTabMiniProgram};
 
 /// 固定项底栏文案(与 id 常量同源,消费方禁止再写字面量)。
 const kNavTabMsgLabel = '消息';
 const kNavTabWanlingLabel = '万灵';
+const kNavTabMiniProgramLabel = '小程序';
 
 /// 会话槽前缀:底栏序列中会话槽存 'conv:<convId>'(agent 为 UUID,不会冲突)。
 const kNavConvPrefix = 'conv:';
@@ -30,6 +33,20 @@ String? navConvIdOf(String id) =>
 
 /// convId → 会话槽序列元素。
 String navConvRef(String convId) => '$kNavConvPrefix$convId';
+
+/// 小程序槽前缀:底栏序列中小程序槽存 'mp:<appid>'(appid 正则 [a-z0-9-],与
+/// agent UUID/conv: 前缀不冲突)。固定/取消固定复用 pin/unpin(mp: 不在固定集)。
+const kNavMpPrefix = 'mp:';
+
+/// 该序列元素是否为小程序槽。
+bool isMpNavId(String id) => id.startsWith(kNavMpPrefix);
+
+/// 'mp:<appid>' → appid;非小程序槽返回 null。
+String? navMpAppidOf(String id) =>
+    isMpNavId(id) ? id.substring(kNavMpPrefix.length) : null;
+
+/// appid → 小程序槽序列元素。
+String navMpRef(String appid) => '$kNavMpPrefix$appid';
 
 /// 底部导航槽位有序序列(含固定项 + pinned agent)。
 ///
@@ -77,7 +94,10 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
     if (current != null) return (current, false);
     if (ownerId.isEmpty) return (const <String>[], false);
     final legacy = prefs.getStringList('nav_pins_$ownerId') ?? const <String>[];
-    return ([kNavTabMsg, kNavTabWanling, ...legacy], legacy.isNotEmpty);
+    return (
+      [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, ...legacy],
+      legacy.isNotEmpty
+    );
   }
 
   /// 不变式修复:去空/去重保序;固定项保证恰好一次(仅缺失才补,补位后固定项相邻)。
@@ -85,7 +105,9 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
   static List<String> _sanitize(List<String> raw) {
     final seen = <String>{};
     final out = <String>[];
-    var hasMsg = false, hasWanling = false;
+    var hasMsg = false,
+        hasWanling = false,
+        hasMiniProgram = false;
     for (final id in raw) {
       if (id.isEmpty || !seen.add(id)) continue;
       if (id == kNavTabMsg) {
@@ -94,15 +116,23 @@ class NavOrderNotifier extends StateNotifier<List<String>> {
       } else if (id == kNavTabWanling) {
         if (hasWanling) continue;
         hasWanling = true;
+      } else if (id == kNavTabMiniProgram) {
+        if (hasMiniProgram) continue;
+        hasMiniProgram = true;
       }
       out.add(id);
     }
-    // 补位:wanling 缺失插到 msg 紧前(msg 亦缺时先占最前),msg 缺失补最前。
+    // 补位:wanling 缺失插到 msg 紧前(msg 亦缺时先占最前),msg 缺失补最前,
+    // miniapps 缺失插到 wanling 紧后(此时 wanling 必已补齐;length 仅为防御)。
     if (!hasWanling) {
       final msgIdx = out.indexOf(kNavTabMsg);
       out.insert(msgIdx == -1 ? 0 : msgIdx, kNavTabWanling);
     }
     if (!hasMsg) out.insert(0, kNavTabMsg);
+    if (!hasMiniProgram) {
+      final wIdx = out.indexOf(kNavTabWanling);
+      out.insert(wIdx == -1 ? out.length : wIdx + 1, kNavTabMiniProgram);
+    }
     return out;
   }
 
@@ -154,10 +184,16 @@ final effectiveNavOrderProvider = Provider<List<String>>((ref) {
   final order = ref.watch(navOrderProvider);
   final agents = ref.watch(agentListProvider);
   final convs = ref.watch(conversationProvider);
+  // mp 槽存活按小程序列表 appid 判定;列表未加载(启动/刷新瞬间 valueOrNull=null)
+  // 保守返回 true 不收缩,防已固定槽闪没(home_page 收缩守卫会回退页 0)。
+  final mps = ref.watch(miniProgramsProvider).valueOrNull;
   bool alive(String id) {
     if (kNavFixedIds.contains(id)) return true;
     final convId = navConvIdOf(id);
     if (convId != null) return convs.any((c) => c.id == convId);
+    if (isMpNavId(id)) {
+      return mps == null || mps.any((m) => m.appid == navMpAppidOf(id));
+    }
     return agents.any((a) => a.id == id);
   }
 

@@ -40,6 +40,16 @@ class NavConvTab {
   });
 }
 
+/// 小程序槽位数据(与 MiniProgramInfo 解耦)。
+/// iconUrl 为空时 _AgentAvatar 走哈希首字 fallback(与 agent/会话槽同源)。
+class NavMpTab {
+  final String id;
+  final String name;
+  final String? iconUrl;
+
+  const NavMpTab({required this.id, required this.name, this.iconUrl});
+}
+
 /// 底栏槽位描述:由 HomePage 从有效导航序列派生,组件保持纯展示(无拖拽)。
 sealed class NavSlot {
   const NavSlot({required this.tabId});
@@ -76,6 +86,13 @@ class NavConvSlot extends NavSlot {
   const NavConvSlot({required super.tabId, required this.tab});
 
   final NavConvTab tab;
+}
+
+/// 小程序槽:点按由上层 push 容器页(不驻 PageView,与 conv 槽同构)。
+class NavMpSlot extends NavSlot {
+  const NavMpSlot({required super.tabId, required this.tab});
+
+  final NavMpTab tab;
 }
 
 /// 底栏槽位名截断:>5 字符(字素簇计数)取前 5 + '…'。
@@ -140,6 +157,13 @@ class NavTabBar extends StatelessWidget {
                     onLongPress: onSlotLongPress,
                   ),
                   NavConvSlot s => _ConvSlot(
+                    slot: i,
+                    tab: s.tab,
+                    selected: currentIndex == i,
+                    onTap: onSlotTap,
+                    onLongPress: onSlotLongPress,
+                  ),
+                  NavMpSlot s => _MpSlot(
                     slot: i,
                     tab: s.tab,
                     selected: currentIndex == i,
@@ -295,6 +319,56 @@ class _ConvSlot extends StatelessWidget {
               avatarUrl: tab.avatarUrl,
               online: tab.online,
               unread: tab.unread,
+              size: 24,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: selected ? FontWeight.w600 : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 小程序槽:点按由上层 push 容器页,长按进编辑页。
+class _MpSlot extends StatelessWidget {
+  final int slot;
+  final NavMpTab tab;
+  final bool selected;
+  final ValueChanged<int> onTap;
+  final ValueChanged<int> onLongPress;
+
+  const _MpSlot({
+    required this.slot,
+    required this.tab,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accentGreen : AppColors.textSecondary;
+    final label = _navSlotLabel(tab.name);
+    return Expanded(
+      child: InkWell(
+        onTap: () => onTap(slot),
+        onLongPress: () => onLongPress(slot),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _AgentAvatar(
+              name: tab.name,
+              avatarUrl: tab.iconUrl,
+              online: false,
+              unread: 0,
               size: 24,
             ),
             const SizedBox(height: 2),

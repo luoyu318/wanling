@@ -105,6 +105,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 # ─── 查找插件目录 ──────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$SCRIPT_DIR"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ─── 前置检查 ─────────────────────────────────────────────────────────────
 check_node() {
@@ -197,7 +198,8 @@ install_deps() {
     info "安装 npm 依赖..."
     cd "$PLUGIN_DIR"
     local npm_log
-    if npm_log=$(npm install 2>&1); then
+    # --include=dev:全局 omit=dev 时缺省装不上 tsc(与 ensure_sdk_dist 同因,显式带上)
+    if npm_log=$(npm install --include=dev 2>&1); then
         ok "npm 依赖已就绪"
     else
         die "npm install 失败:${npm_log:+ $npm_log}"
@@ -220,7 +222,8 @@ build_code() {
 setup_systemd() {
     local service_file="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
     local opencode_bin
-    opencode_bin=$(which opencode 2>/dev/null)
+    # || true 防 set -e 静默退出,让下面的 die 能输出提示
+    opencode_bin=$(command -v opencode 2>/dev/null || true)
     if [[ -z "$opencode_bin" ]]; then
         die "未在 PATH 中找到 opencode 二进制。请先安装 opencode，再重跑本脚本。"
     fi
@@ -283,6 +286,32 @@ setup_shell_aliases() {
   export PATH=\"${bin_dir}:\$PATH\""
     else
         ok "快捷命令已安装到 ${bin_dir}(ocwl / ocwl-restart / ocwl-logs)"
+    fi
+}
+
+# ─── Skills 提示(技能已独立到仓库根 skills/,插件不再自动同步) ─────────────
+# 对比仓库技能与落盘副本,有缺失/差异仅提示,由用户按需运行 skills/install.sh。
+check_skills_hint() {
+    local skills_src="${REPO_ROOT}/skills"
+    local skills_dst="${HOME}/.opencode/skills"
+    [[ -d "$skills_src" ]] || return 0
+    local pending=()
+    local dir name state
+    for dir in "$skills_src"/wanling-*/; do
+        [[ -d "$dir" ]] || continue
+        name="$(basename "$dir")"
+        if [[ ! -d "$skills_dst/$name" ]]; then
+            state="(未安装)"
+        elif ! diff -rq "$dir" "$skills_dst/$name" >/dev/null 2>&1; then
+            state="(有新版)"
+        else
+            continue
+        fi
+        pending+=("${name}${state}")
+    done
+    if ((${#pending[@]})); then
+        warn "检测到 agent 技能待同步: ${pending[*]}"
+        warn "技能已与插件解耦,按需运行: ${REPO_ROOT}/skills/install.sh all"
     fi
 }
 
@@ -518,6 +547,7 @@ print(d.get('owner_user_id',''))
     build_code
     setup_systemd
     setup_shell_aliases
+    check_skills_hint
     ensure_service
 
     print_summary "安装完成"
@@ -561,6 +591,7 @@ do_install() {
     fi
     setup_systemd
     setup_shell_aliases
+    check_skills_hint
     ensure_service
 
     print_summary "安装完成"
@@ -588,6 +619,7 @@ do_update() {
     fi
     setup_systemd
     setup_shell_aliases
+    check_skills_hint
 
     if systemctl --user is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
         systemctl --user restart "${SERVICE_NAME}"
@@ -614,10 +646,13 @@ do_config() {
 }
 
 # ─── 入口 ──────────────────────────────────────────────────────────────────
-case "$MODE" in
-    install) do_install ;;
-    pair)    do_pair ;;
-    update)  do_update ;;
-    config)  do_config ;;
-    *)       die "未知模式: $MODE" ;;
-esac
+# 仅直接执行时进入模式分发;source(如测试 check_skills_hint)不触发任何安装动作
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "$MODE" in
+        install) do_install ;;
+        pair)    do_pair ;;
+        update)  do_update ;;
+        config)  do_config ;;
+        *)       die "未知模式: $MODE" ;;
+    esac
+fi

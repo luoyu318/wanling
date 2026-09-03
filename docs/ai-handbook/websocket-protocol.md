@@ -8,7 +8,7 @@
 |--------|------|------|------|
 | 0 | Dispatch | S→C | 事件推送（MESSAGE_CREATE / MESSAGE_UPDATE / MESSAGE_DELETE / AGENT_ONLINE / AGENT_OFFLINE / TYPING_START / APPROVAL_DECIDED / APPROVAL_EXPIRED） |
 | 1 | Heartbeat | C→S | 心跳（仅 `{op:1}`，不再携带 seq；seq 由 Dispatch 自带，Resume 单独走 op=6） |
-| 2 | Identify | C→S | 鉴权（携带 JWT token）。**握手阶段强制只接受 Identify**，其余 opcode 必须在 Identify 之后 |
+| 2 | Identify | C→S | 鉴权（携带 JWT token）。**握手阶段强制只接受 Identify**，其余 opcode 必须在 Identify 之后。**子密钥 token（`key_kind=sub`）identify 即拒**：回裸 JSON 错误帧 `{"error":"sub_key_ws_forbidden"}`（非 WSMessage envelope,client 按裸帧识别）后关闭连接,不进 hub,详见 [agent-subkeys.md](./agent-subkeys.md) |
 | 3 | SetActiveConv | C→S | 上报当前正在看的会话（`{conv_id}`），供服务端判断要不要计未读。空 conv_id = 退出会话。仅 user 角色（agent 不计未读）。见「未读感知」节 |
 | 6 | Resume | C→S | 断线恢复，携带最后收到的序列号。**必须在 Identify 之后** |
 | 7 | Reconnect | S→C | 服务端要求重连 |
@@ -54,7 +54,8 @@
 - `MESSAGE_UPDATE`（双端，user+agent）— 消息内容更新。审批决策后双写 messages.content，广播此事件让 APP 端切换卡片终态（按钮置灰 + 徽章）。payload：`{message_id, conversation_id, content}`
   - **silent 翻转语义**（聚合卡模式）:聚合卡创建时 `silent=true`（过程态不响铃/不计未读），回合结束 plugin PATCH 显式带 `silent:false` + `state:"done"` 翻转。server `mergePreservedSilent` 规则：PATCH 显式带 silent 以新值为准，未带则保留原值；原 true→新 false 翻转时对**非 sender 全员 +1 未读**（`IncrUnread`，与发消息口径一致），随后广播 MESSAGE_UPDATE
   - **翻转广播附带 `data.preview`**:set_silent 翻转(false)时 server 从聚合卡 elements 取最后 markdown 正文写入 `data.preview`（落库 merged + 注入广播 delta）。增量广播本无 elements,通知 body / 会话列表摘要直接读 preview,APP 端无 markdown 元素时 fallback `[聚合回复]`
-  - **APP 三处消费方**（识别 `msg_type==aggregate_card && silent==false` 才响应翻转）:bg-service 弹通知+计未读（广播不带 sender 字段，回查 MESSAGE_CREATE 阶段缓存的会话发送者;body 取 `data.preview`）;conversation_provider / agent_sessions_provider 徽章+1+预览更新（取 `data.preview` 或最后 markdown 元素 text）+置顶排序。generating 阶段（silent 仍 true）的 PATCH 只刷新渲染不打扰
+  - **翻转广播附带 sender 三件套 + 会话元信息**(v1.6.3):翻转广播 payload 为 `{message_id, conversation_id, content, conversation_type, conversation_title, sender_id, sender_name, sender_avatar_url}`。bg-service 弹通知直接消费 sender 字段(名字/头像下载),并回填本地会话发送者缓存——不再依赖 MESSAGE_CREATE 阶段的内存回查(bg-service 重启后回查必失败,曾导致通知 title fallback 'Agent' + 头像色块)。旧 client 忽略未知字段;旧 server 不带 sender 字段时 client 走内存回查 fallback 链
+  - **APP 三处消费方**（识别 `msg_type==aggregate_card && silent==false` 才响应翻转）:bg-service 弹通知+计未读（sender 信息优先取广播 payload,缺失时回查 MESSAGE_CREATE 阶段缓存的会话发送者;body 取 `data.preview`）;conversation_provider / agent_sessions_provider 徽章+1+预览更新（取 `data.preview` 或最后 markdown 元素 text）+置顶排序。generating 阶段（silent 仍 true）的 PATCH 只刷新渲染不打扰
 - `APPROVAL_DECIDED`（仅 agent）— 推决策结果。payload：`{approval_id, message_id, conversation_id, session_key, confirm_id, decision, reason, decided_by, decided_at}`。agent 拿 session_key + confirm_id 路由到等待协程（exec_approval 用 session_key 调 `resolve_gateway_approval`；slash_confirm 用 confirm_id 调 `slash_confirm.resolve`）
 - `APPROVAL_EXPIRED`（仅 agent）— 超时通知。payload：`{approval_id, message_id, conversation_id, session_key, expired_at}`
 
@@ -133,6 +134,7 @@ plugin 把 agent 生成中的 reasoning/text 按 300ms 节流推**全量快照**
 | `file` | `{file_id, filename?, file_size?, mime_type?}` | 文件消息（file_size/mime_type 由 server 补全） |
 | `mixed` | `{text?, items: [{type:'image'\|'file', file_id, filename?, mime_type?, file_size?}]}` | 图文/文件混排（text 为顶层字段；items 至少 1 个条目，file_id 必填；server 不富化 items，filename/mime_type/file_size 由发送端写入；dsh/hermes/opencode 消费） |
 | `card` | `{card_type, ...}` | 审批卡片（见 approval-card.md） |
+| `mini_program_card` | `{appid, title, params?}` | 小程序分享卡片（spec §8，APP shareToChat 发出）：点击冷启动/打开容器页 `/mini-program/:appid?conv=&launch=`，conv 携带来源会话供 getChatContext，params 为可选启动参数（URL 编码 JSON 透传入口 query） |
 | `recalled` | — | 撤回占位（server 端写，client 识别后置 isRecalled） |
 
 **Agent 过程消息类型**（仅 opencode-plugin streamer 发，展示 AI 思考/工具/步骤过程）：

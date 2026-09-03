@@ -80,6 +80,32 @@ void main() {
     expect(res.data, isNot(isA<Map<String, dynamic>>()));
   });
 
+  test('getMiniPrograms 拦截器剥 envelope 后按裸 list 解析', () async {
+    // mock 返回服务端原始 envelope;getMiniPrograms 必须在拦截器剥离后的
+    // res.data(List)上解析,若再解一次 envelope(data['data'])会抛 TypeError。
+    api.dio.httpClientAdapter = MockHttpClientAdapter(
+      200,
+      {
+        'ok': true,
+        'data': [
+          {
+            'id': 'id-1',
+            'appid': 'a',
+            'owner_id': 'o',
+            'name': 'A',
+            'version': 1,
+            'status': 'published',
+            'sha256': 'x',
+            'size': 1,
+          },
+        ],
+      },
+    );
+    final list = await api.getMiniPrograms();
+    expect(list, hasLength(1));
+    expect(list.first.appid, 'a');
+  });
+
   test('ok=false 缺 error 字段兜底 internal_error', () async {
     api.dio.httpClientAdapter = MockHttpClientAdapter(
       200,

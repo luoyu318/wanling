@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
+	"github.com/wanling/server/internal/auth"
 	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
@@ -270,4 +274,213 @@ func TestHandleOpStream_UserRoleRejected(t *testing.T) {
 	wsh.handleOpStream(sender, data)
 
 	recvNoneStream(t, viewer, "viewer(role 拒绝)")
+}
+
+// TestServeHTTP_AdminTokenRegistersAsUser:ADMIN_USERNAMES 命中用户拿 admin token 连 WS,
+// 必须以 user 身份注册(clientKey("user", uid))。hub 分发(SendToUser/流式/busy)仅认
+// user 键,admin 原样注册会成为收不到任何广播的孤儿连接;归一口径与 HTTP
+// AuthMiddlewareWithStore 的 admin→user 一致(admin 兼作 user 能力)。
+func TestServeHTTP_AdminTokenRegistersAsUser(t *testing.T) {
+	h := hub.NewHub(nil, nil, nil, nil)
+	// 消费 Register/Unregister channel(生产由 hub.Run 消费;测试用同步注册替代,
+	// 跳过 presence/agent 状态广播副作用,与本测试断言无关)
+	go func() {
+		for c := range h.Register {
+			h.RegisterClient(c)
+		}
+	}()
+	go func() {
+		for range h.Unregister {
+		}
+	}()
+
+	const (
+		secret = "test-secret"
+		uid    = "admin-user-1"
+	)
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	srv := httptest.NewServer(wsh)
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	token, err := auth.GenerateToken(secret, uid, "admin", "", time.Hour, "", 0)
+	if err != nil {
+		t.Fatalf("签发 admin token: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 握手:Hello → Identify(admin token)
+	var hello model.WSMessage
+	if err := conn.ReadJSON(&hello); err != nil || hello.Op != model.OpHello {
+		t.Fatalf("期望 Hello(op=%d), 实际 op=%d err=%v", model.OpHello, hello.Op, err)
+	}
+	idData, _ := json.Marshal(map[string]string{"token": token})
+	if err := conn.WriteJSON(model.WSMessage{Op: model.OpIdentify, D: idData}); err != nil {
+		t.Fatalf("identify: %v", err)
+	}
+
+	// admin token 连接必须注册在 user 键下(eventually 等握手+注册完成)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := h.GetClient("user", uid); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("admin token 连接未注册为 user 键(将收不到任何广播的孤儿连接)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 端到端:SendToUser 广播必须真正到达该连接
+	if err := h.SendToUser(uid, &model.WSMessage{Op: model.OpDispatch, D: []byte(`{"probe":true}`)}); err != nil {
+		t.Fatalf("SendToUser: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var got model.WSMessage
+	if err := conn.ReadJSON(&got); err != nil {
+		t.Fatalf("user 键广播未到达连接: %v", err)
+	}
+	if got.Op != model.OpDispatch {
+		t.Fatalf("期望 op=%d(DISPATCH), 实际 %d", model.OpDispatch, got.Op)
+	}
+}
+
+// TestServeHTTP_SubKeyTokenRejected:子密钥(key_kind="sub")token identify →
+// 服务端回 {"error":"sub_key_ws_forbidden"} 错误帧并关闭连接,不注册进 hub。
+// 子密钥仅限 HTTP API 使用,WS 长连接绑定独占主密钥(安全边界)。
+func TestServeHTTP_SubKeyTokenRejected(t *testing.T) {
+	h := hub.NewHub(nil, nil, nil, nil)
+	// 消费 Register/Unregister channel(生产由 hub.Run 消费;测试用同步注册替代,
+	// 跳过 presence/agent 状态广播副作用。本场景预期不注册;若拦截失守,identify
+	// 会经此真正注册进 hub,末尾 GetClient 断言即可捕获,channel 也不阻塞泄漏)
+	go func() {
+		for c := range h.Register {
+			h.RegisterClient(c)
+		}
+	}()
+	go func() {
+		for range h.Unregister {
+		}
+	}()
+
+	const (
+		secret  = "test-secret"
+		agentID = "agent-sub-1"
+		ownerID = "owner-1"
+	)
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	srv := httptest.NewServer(wsh)
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	token, err := auth.GenerateAgentToken(secret, agentID, ownerID, time.Hour, "", 0, "sub", "key-1")
+	if err != nil {
+		t.Fatalf("签发 sub token: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// 握手:Hello → Identify(sub token)
+	var hello model.WSMessage
+	if err := conn.ReadJSON(&hello); err != nil || hello.Op != model.OpHello {
+		t.Fatalf("期望 Hello(op=%d), 实际 op=%d err=%v", model.OpHello, hello.Op, err)
+	}
+	idData, _ := json.Marshal(map[string]string{"token": token})
+	if err := conn.WriteJSON(model.WSMessage{Op: model.OpIdentify, D: idData}); err != nil {
+		t.Fatalf("identify: %v", err)
+	}
+
+	// 必须收到错误帧 {"error":"sub_key_ws_forbidden"}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var errFrame struct {
+		Error string `json:"error"`
+	}
+	if err := conn.ReadJSON(&errFrame); err != nil {
+		t.Fatalf("未收到 sub_key_ws_forbidden 错误帧: %v", err)
+	}
+	if errFrame.Error != "sub_key_ws_forbidden" {
+		t.Fatalf("期望 error=sub_key_ws_forbidden, 实际 %q", errFrame.Error)
+	}
+
+	// 错误帧之后连接必须被服务端关闭(后续读返回错误)
+	if err := conn.ReadJSON(&hello); err == nil {
+		t.Fatal("错误帧后连接应被服务端关闭,但仍读到了消息")
+	}
+
+	// 不得注册进 hub(独占主密钥边界:子密钥连接不存在于连接表)
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, ok := h.GetClient("agent", agentID); ok {
+			t.Fatal("sub token 连接不应注册进 hub")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestServeHTTP_MasterKeyTokenIdentifies:主密钥(key_kind="master")token 照常完成
+// identify 并注册为 agent 键,确认拦截只针对子密钥,不误伤正常 agent 连接。
+func TestServeHTTP_MasterKeyTokenIdentifies(t *testing.T) {
+	h := hub.NewHub(nil, nil, nil, nil)
+	// 消费 Register/Unregister channel(生产由 hub.Run 消费;测试用同步注册替代,
+	// 跳过 presence/agent 状态广播副作用,与本测试断言无关)
+	go func() {
+		for c := range h.Register {
+			h.RegisterClient(c)
+		}
+	}()
+	go func() {
+		for range h.Unregister {
+		}
+	}()
+
+	const (
+		secret  = "test-secret"
+		agentID = "agent-master-1"
+		ownerID = "owner-1"
+	)
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	srv := httptest.NewServer(wsh)
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	token, err := auth.GenerateAgentToken(secret, agentID, ownerID, time.Hour, "", 0, "master", "")
+	if err != nil {
+		t.Fatalf("签发 master token: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 握手:Hello → Identify(master token)
+	var hello model.WSMessage
+	if err := conn.ReadJSON(&hello); err != nil || hello.Op != model.OpHello {
+		t.Fatalf("期望 Hello(op=%d), 实际 op=%d err=%v", model.OpHello, hello.Op, err)
+	}
+	idData, _ := json.Marshal(map[string]string{"token": token})
+	if err := conn.WriteJSON(model.WSMessage{Op: model.OpIdentify, D: idData}); err != nil {
+		t.Fatalf("identify: %v", err)
+	}
+
+	// master token 照常注册为 agent 键(eventually 等握手+注册完成)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := h.GetClient("agent", agentID); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("master token 连接未注册为 agent 键")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

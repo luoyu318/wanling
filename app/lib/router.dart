@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 import 'package:wanling_core/models/file_entry.dart';
 import 'pages/about_page.dart';
 import 'pages/add_friend_page.dart';
+import 'pages/admin_mini_program_page.dart';
 import 'pages/agent_detail_page.dart';
 import 'pages/agent_sessions_page.dart';
+import 'pages/agent_sub_keys_page.dart';
 import 'pages/change_password_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/chat/file_browser_page.dart';
@@ -17,6 +19,8 @@ import 'pages/edit_profile_page.dart';
 import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/mini_program_list_page.dart';
+import 'pages/mini_program_page.dart';
 import 'pages/nav_edit_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
@@ -175,6 +179,18 @@ final routerProvider = Provider<GoRouter>((ref) {
           final agentId = state.pathParameters['agentId']!;
           return _cupertinoPage(
             child: AgentSessionsPage(agentId: agentId),
+            key: state.pageKey,
+          );
+        },
+      ),
+      // agent 授权密钥管理页(子密钥列表/吊销):Agent 详情页「授权密钥」进入。
+      // 静态段 'subkeys' 与 '/agent/:agentId/sessions' 同为 3 段,互不冲突。
+      GoRoute(
+        path: '/agent/:agentId/subkeys',
+        pageBuilder: (context, state) {
+          final agentId = state.pathParameters['agentId']!;
+          return _cupertinoPage(
+            child: AgentSubKeysPage(agentId: agentId),
             key: state.pageKey,
           );
         },
@@ -381,6 +397,32 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/about',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const AboutPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/mini-programs',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const MiniProgramListPage(),
+          key: state.pageKey,
+        ),
+      ),
+      // admin 小程序审核:侧栏 admin 专属入口,server 端二次校验角色。
+      GoRoute(
+        path: '/admin/mini-programs',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const AdminMiniProgramPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/mini-program/:appid',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: MiniProgramPage(
+            appid: state.pathParameters['appid']!,
+            conversationId: state.uri.queryParameters['conv'],
+            launchParams: state.uri.queryParameters['launch'],
+          ),
           key: state.pageKey,
         ),
       ),

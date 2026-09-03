@@ -1,6 +1,6 @@
 # APP Pages
 
-lib/pages/ 目录下的 25 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
+lib/pages/ 目录下的 31 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
 
 ## SplashPage
 
@@ -12,7 +12,7 @@ lib/pages/ 目录下的 25 个 page(含 `pages/chat/` 子目录;TextPreviewPage 
 
 ## HomePage
 
-主容器：动态底部导航(NavTabBar：消息/万灵固定槽 + pinned agent 头像槽 + conv: 会话槽 + 可选「更多」槽) + NestedPageView 多页(页 0 = 消息+万灵 A 组合页,页 1..N = pinned agent sessions 页)。槽位溢出(≥4 个 pinned)收进「更多」底部抽屉点选切换;pin 收缩时页码越界自动回 A 组页。conv: 会话槽点击按消息列表逻辑路由(与消息列表一致:multi_session→sessions 页,其余→聊天页),不占平铺页
+主容器：动态底部导航(NavTabBar：消息/万灵/小程序固定槽 + pinned agent 头像槽 + conv: 会话槽 + mp: 小程序槽 + 可选「更多」槽) + NestedPageView 多页(页 0 = 消息+万灵 A 组合页,页 1..N = pinned agent sessions 页,小程序固定槽平铺内嵌小程序列表页)。槽位溢出(≥4 个 pinned)收进「更多」底部抽屉点选切换;pin 收缩时页码越界自动回 A 组页。conv: 会话槽点击按消息列表逻辑路由(与消息列表一致:multi_session→sessions 页,其余→聊天页),不占平铺页
 
 ## NavEditPage
 
@@ -28,7 +28,11 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AgentDetailPage
 
-详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA。编辑资料对话框含类型下拉（普通/OpenCode），保存时 PUT type 字段
+详情：密钥眼睛切换 + 复制 + 编辑/删除 + 发消息 CTA。编辑资料对话框含类型下拉（普通/OpenCode），保存时 PUT type 字段。SettingsGroup 含「授权密钥」入口（Icons.key_outlined,置于「重置密钥」前,轻量操作优先破坏性垫底）→ `subKeysRoute()` 跳 AgentSubKeysPage
+
+## AgentSubKeysPage
+
+**授权密钥管理页**（路由 `/agent/:agentId/subkeys`,与 `/agent/:agentId/sessions` 相邻注册）。顶部说明文案（「授权密钥仅供 REST 调用,不能建立长连接;重置主密钥将同时吊销全部授权密钥」）+ FutureBuilder 列表：名称/创建于/最后使用（`formatRelativeTime`,无记录「从未使用」）/状态「生效中·已吊销」,已吊销整行置灰无吊销按钮。吊销 `showAppDialog` 确认（「吊销后该密钥不能再换新 token,已签发 token 过期前仍有效」）→ `revokeSubKey` → snackbar + 重拉列表。数据源 wanling_core `listSubKeys`/`revokeSubKey`（协议见 [agent-subkeys.md](../../ai-handbook/agent-subkeys.md)）;`AgentSubKeyInfo` model 对 last_used_at/revoked_at **字段缺席与显式 null 均容忍**
 
 ## AgentSessionsPage
 
@@ -44,9 +48,9 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 **子 Agent 详情页**(v1.0.10)。从 ChatPage task 卡片点击跳转,路由 `/chat/subagent/:taskCardId?convId=:convId`(必须排在 `/chat/:convId` 之前,否则 GoRouter 把 'subagent' 当成 convId)。展示某 task 卡片下挂的全部子 agent 事件流(reasoning / tool_card / markdown 子树)。数据来源:HTTP `api.getSubagentMessages(convId, taskCardId)` 拉 root 子树 + WS 双订阅(MESSAGE_CREATE 按 root_msg_id 过滤追加 / MESSAGE_UPDATE 按 message_id 替换条目内容,同步 task 卡片 running→completed 终态)。MessageRenderContext 注入 convId/messageId 让嵌套 task 卡片跳转可用,空 convId/taskCardId 时 router 直接返错误页
 
-## ScanPairPage / PairSelectAgentPage
+## ScanPairPage / PairSelectAgentPage / PairAgentActionSheet
 
-扫码配对两件套（见「扫码配对」节），AgentListPage 右上角 `+` 拉起
+扫码配对两件套 + 三选弹窗（见「扫码配对」节），AgentListPage 右上角 `+` 拉起。选已有 agent 由 `pair_agent_action_sheet.dart` 弹**三选**：授权（发子密钥不碰主密钥,备注输入 placeholder「技能授权」,直接 `pairComplete(action:'authorize', note)`）/ 接管绑定（红字「重置主密钥,原绑定将失效」,保留既有二次确认,显式传 `action:'bind'`）/ 取消。sheet 独立文件（`showPairAgentActionSheet()` 返回 `(action, note)?` record）便于独立单测
 
 ## 好友 / 群组页面（UI 未开放，代码保留）
 
@@ -93,3 +97,15 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 ## SessionDiffFilePage
 
 **单文件 diff 全屏页**（路由 `/session-diff-file/:agentId/:convId`，idx 通过查询参数或状态传递）。展示某文件的完整 unified diff patch（`DiffPatchViewer` 语法高亮 +/- 行）。从 `sessionDiffProvider` 的文件列表按 idx 取单文件 patch。纯展示页
+
+## MiniProgramListPage
+
+**小程序列表页**（路由 `/mini-programs`，设置侧滑栏入口，见 sidebar_profile_panel）。数据源 `miniProgramsProvider`，按 status 分两组渲染：公共库（published）+ 我的（private/disabled，带删除按钮）。上传按钮 → file_picker 选 zip → `MiniProgramService.uploadPackage` 建私有 → invalidate 刷新。删除不可逆（远端 + 本地包 + WebView storage + **KVS `deleteMpPerms` 清授权**（M2，重装后重新弹权限申请））先弹确认框。点击条目 `context.push('/mini-program/${mp.appid}')` 进容器页
+
+## MiniProgramPage
+
+**小程序 WebView 容器页**（路由 `/mini-program/:appid`，M2 起可选 query `conv`（来源会话）与 `launch`（卡片 params，URL 编码 JSON））。origin 隔离：每小程序独立虚拟域名 `https://<appid>.<user_id>.mini.wanling.local`（host 含账号段，隔离多账号 storage）。启动流程：TokenVault 取 token → `MiniProgramService.installedDir` 命中即用 / 未装或版本旧则 `install`（下载 → sha256 校验 fail-fast → 解压到 `documents/miniprograms/<appid>/<version>/` 原子替换）→ **`_ensurePermissions` chat 权限授权流程**：KVS `getMpPerms` 读已授权集 → 未决 `wanling.chat.*` 逐个弹权限确认框（拒绝/点遮罩视为拒绝）→ `putMpPerms` 持久化增量 → `effectivePermissions(declared, granted)` 算有效权限集（非 chat 权限不弹窗直接生效）；拒绝项不进 granted，bridge 持续拒绝。`shouldInterceptRequest`：`/api/` 路径经 `proxyApiResource` 用宿主 ApiService 带登录态代理回源（仅 GET，非 GET 405 / 上游失败 502 / 点段归一化防路径混淆），其余从本地包读文件（`resolveLocalFile` 包根越界 403 / 缺失 404 + MIME 映射）；`shouldOverrideUrlLoading` 仅放行本 appid 虚拟 origin，外链一律拦截。JS 侧经注入的 `window.wanling.request/close/getChatContext/shareToChat` 四桥 → `MiniProgramBridge` 门禁（token 不进 JS，权限/`/api/` 路径白名单）→ `apiProvider.proxyRequest` 原生代理；**conv/launch 注入**：conv 经 `onChatContext` 回调供 getChatContext，launch 透传入口 URL query（H5 URLSearchParams 自取，不进 bridge）；**shareToChat** 校验仅 published 可分享 → 弹会话选择器 → `mini_program_card` 发消息。disabled 状态渲染「已被管理员停用」，appid 不存在/已下架返提示
+
+## AdminMiniProgramPage
+
+**小程序审核页**(admin 专属,路由 `/admin/mini-programs`,侧栏 isAdmin 显隐入口,server 端 adminAuth 二次校验)。数据源 `adminMiniProgramsProvider`(autoDispose,失败上抛:**错误视图先 `_asApiError` 解包拦截器包装的 ApiException 再判 403**,403 渲染「无权限查看」,其余错误给重试入口)。按 status 三 Tab 分组:待审(private)/已发布(published)/已下架(disabled),行内发布/下架/上架操作 `showAppDialog` 二次确认后调 `setMiniProgramStatus`(admin 新路径)流转 → invalidate 刷新(下拉/操作后 invalidate 保旧数据静默换新,不闪 loading);操作失败 403 提示「无权限操作」,其余 Snackbar 提示且不触发 invalidate

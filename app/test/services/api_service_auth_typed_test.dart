@@ -53,14 +53,16 @@ void main() {
     expect(user.id, 'u1');
   });
 
-  test('changePassword 返新 token pair', () async {
+  test('changePassword 返新 token pair + role', () async {
     final api = _api({
       'token': 'access-new',
       'refresh_token': 'rt-new',
+      'role': 'admin',
     });
     final result = await api.changePassword('newpw');
     expect(result.token, 'access-new');
     expect(result.refreshToken, 'rt-new');
+    expect(result.role, 'admin');
   });
 
   test('updateMe 返 User', () async {

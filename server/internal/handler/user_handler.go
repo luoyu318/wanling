@@ -62,7 +62,8 @@ type ChangePasswordRequest struct {
 //   - 用户不存在 → 404；DB 错误 → 500；绑定失败 → 400
 //
 // 改密成功后 INCR tokenver 使所有旧 access token 立即失效，并返回新 token pair，
-// 前端用新 token 替换本地凭证。
+// 前端用新 token 替换本地凭证。重签 token 的 role 以 DB 为准（GetByID 重读），
+// 与 Register/Login/Refresh 四个签发端点同口径——admin 改密不会意外降级为 user。
 //
 // Redis 操作（IncrTokenVersion / CreateRefresh）失败时返回 500，不降级：
 // IncrTokenVersion 失败意味着旧 token 不会失效，CreateRefresh 失败意味着返回的
@@ -78,6 +79,18 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	userID := c.GetString("userID")
+
+	// role DB 为准：重签前重读当前用户 role，不信任旧 access token claims。
+	// 先查后写（fail fast）：查不到用户就不动密码，避免写完才失败的半完成状态。
+	u, err := h.userRepo.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
+		return
+	}
+	if u == nil {
+		Err(c, http.StatusNotFound, "not_found", "用户不存在")
+		return
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -106,18 +119,19 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	jti := uuid.New().String()
-	access, err := auth.GenerateToken(h.jwtSecret, userID, "user", "", h.accessTTL, jti, newVer)
+	access, err := auth.GenerateToken(h.jwtSecret, userID, u.Role, "", h.accessTTL, jti, newVer)
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 	refresh := auth.GenerateRefreshToken()
-	if err := h.tokenStore.CreateRefresh(c.Request.Context(), refresh, userID, "user", newVer, h.refreshTTL); err != nil {
+	if err := h.tokenStore.CreateRefresh(c.Request.Context(), refresh, userID, u.Role, newVer, h.refreshTTL); err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
 	}
 
-	Ok(c, gin.H{"token": access, "refresh_token": refresh})
+	// 响应顶层带 role，与 Login/Refresh 契约一致
+	Ok(c, gin.H{"token": access, "refresh_token": refresh, "role": u.Role})
 }
 
 // UpdateMeRequest 更新当前用户资料。部分更新语义：

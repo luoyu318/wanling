@@ -62,7 +62,7 @@ flowchart TB
 
 ## 测试规约
 
-- **hermes-plugin**: 自检脚本 `~/.hermes/hermes-agent/venv/bin/python plugin/hermes-plugin/adapter.py`（含 `_rewrite_remote_images` + 聚合卡 mock REST 全流程 + REST 通道 keep-alive/401 真服务自检）。install.sh 改动后，在测试 profile 跑 4 模式回归（默认 / `--update` / `--config` / `--pair`）。gateway 进程日志仅 WARNING+ 可见，plugin INFO 日志取证走 server journal access log 交叉验证。真机触发回合用 user token 走 `POST /api/messages`（`send_test_message.py` 是 agent→user 反方向）；模拟断网须等本回合新卡处于 RUN 态再停 server（停服会丢 dispatch buffer 在途消息）
+- **hermes-plugin**: 自检脚本 `~/.hermes/hermes-agent/venv/bin/python plugin/hermes-plugin/adapter.py`（含 `_rewrite_remote_images` + 聚合卡发图双模式改写 `_rewrite_images_for_card` + 聚合卡 mock REST 全流程 + REST 通道 keep-alive/401 真服务自检）。install.sh 改动后，在测试 profile 跑 4 模式回归（默认 / `--update` / `--config` / `--pair`）。gateway 进程日志仅 WARNING+ 可见，plugin INFO 日志取证走 server journal access log 交叉验证。真机触发回合用 user token 走 `POST /api/messages`（`send_test_message.py` 是 agent→user 反方向）；模拟断网须等本回合新卡处于 RUN 态再停 server（停服会丢 dispatch buffer 在途消息）
 - **opencode-plugin**: `cd plugin/opencode-plugin && npx tsc` 零 error + `npx eslint src/` 零 error + `npx vitest run` 全绿。改动后重启 systemd 服务 `systemctl --user restart opencode-wanling`
 - **Lint**: `cd plugin/opencode-plugin && npx eslint src/`（配置见 `plugin/opencode-plugin/eslint.config.js`，flat config + typed linting）
 

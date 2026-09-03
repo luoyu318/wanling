@@ -40,6 +40,8 @@ Agent _agent(String id) => Agent(
 /// [seed] 可覆盖 nav_order_u1(如 agent 前置序列场景)。
 /// [convs] 预种会话列表(effectiveNavOrderProvider 依赖 conversationProvider,
 /// ConversationListNotifier 构造即 load,必须 stub getConversations)。
+/// 三固定不变式:sanitize 恒补 miniapps 到 wanling 紧后(默认 seed 实为 7 项,
+/// 白条=[msg,wanling,miniapps,a1]+更多格,网格=[a2,a3,a4])。
 Future<ProviderContainer> _harness(WidgetTester tester,
     {List<String>? seed, List<Conversation> convs = const []}) async {
   SharedPreferences.setMockInitialValues({
@@ -54,6 +56,8 @@ Future<ProviderContainer> _harness(WidgetTester tester,
       .thenAnswer((_) async => [_agent('a1'), _agent('a2'), _agent('a3'), _agent('a4')]);
   when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
   when(() => api.getConversations()).thenAnswer((_) async => convs);
+  // 编辑页槽位名/图标 watch miniProgramsProvider → stub 空列表
+  when(() => api.getMiniPrograms()).thenAnswer((_) async => []);
   final ws = FakeWS();
   final container = ProviderContainer(overrides: [
     apiProvider.overrideWithValue(api),
@@ -73,11 +77,13 @@ Future<ProviderContainer> _harness(WidgetTester tester,
 void main() {
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  testWidgets('渲染:白条显示 msg/wanling/a1/a2+更多格,网格显示溢出 a3/a4',
+  testWidgets('渲染:白条显示 msg/wanling/miniapps/a1+更多格,网格显示溢出 a2/a3/a4',
       (tester) async {
     await _harness(tester);
     expect(find.text('更多'), findsOneWidget); // 白条更多格
+    expect(find.text('小程序'), findsOneWidget); // 白条 miniapps 固定槽
     expect(find.text('n-a1'), findsOneWidget);
+    expect(find.text('n-a2'), findsOneWidget); // 溢出进网格
     expect(find.text('n-a3'), findsOneWidget);
     expect(find.text('完成'), findsOneWidget);
   });
@@ -94,7 +100,7 @@ void main() {
     await tester.pumpAndSettle();
     // move 语义:a1 落到消息槽(位 0),其余顺移——固定项可被换到任意位。
     expect(container.read(navOrderProvider),
-        ['a1', kNavTabMsg, kNavTabWanling, 'a2', 'a3', 'a4']);
+        ['a1', kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a2', 'a3', 'a4']);
   });
 
   testWidgets('跨区拖拽:网格 agent 拖到白条槽上,可见性互换并扩容', (tester) async {
@@ -108,15 +114,16 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     // a3 插到序列位 2,其余顺移:a2 掉溢出区;可见数上限 4,set(5) 被 clamp
+    // a3 插到序列位 3(白条 a1 槽),其余顺移:a2 掉溢出区
     expect(container.read(navOrderProvider),
-        [kNavTabMsg, kNavTabWanling, 'a3', 'a1', 'a2', 'a4']);
+        [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a3', 'a1', 'a2', 'a4']);
     expect(container.read(navVisibleCountProvider), 4);
   });
 
   testWidgets('池项拖到白条空白处放手:按落点 x 计算插入槽位', (tester) async {
     final container = await _harness(tester);
-    // 白条槽宽:barRect 宽/5,落点选第 4 槽(a2,序列位 3)中部
-    // → floor 后 idx=3 → a3 插到 a2 前
+    // 白条槽宽:barRect 宽/5,落点选第 4 槽(a1,序列位 3)中部
+    // → floor 后 idx=3 → a3 插到 a1 前
     final a3Center = tester.getCenter(find.text('n-a3'));
     final barBox = tester.getRect(find.byKey(const ValueKey('nav-edit-bar')));
     final dropX = barBox.left + 8 + (barBox.width - 16) / 5 * 3.2;
@@ -130,23 +137,26 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(container.read(navOrderProvider),
-        [kNavTabMsg, kNavTabWanling, 'a1', 'a3', 'a2', 'a4']);
+        [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a3', 'a1', 'a2', 'a4']);
     // 可见数已在上限 4:set(5) 被 clamp,新项挤进白条末位原项掉池(交换语义)
     expect(container.read(navVisibleCountProvider), 4);
   });
 
-  testWidgets('agent 前置序列:白条=前 4 agent,消息/万灵进网格池仍可达', (tester) async {
+  testWidgets('agent 前置序列:白条=前 4 agent,三固定进网格池仍可达', (tester) async {
     await _harness(tester,
         seed: ['a1', 'a2', 'a3', 'a4', kNavTabMsg, kNavTabWanling]);
     // 白条 = 序列前缀(4 agent)+更多格
     expect(find.text('更多'), findsOneWidget);
     expect(find.text('n-a1'), findsOneWidget);
     expect(find.text('n-a2'), findsOneWidget);
-    // 消息/万灵被截进网格池(图标方块,无减号),各恰一次
+    // 消息/万灵/小程序被截进网格池(图标方块,无减号),各恰一次
     expect(find.text('消息'), findsOneWidget);
     expect(find.text('万灵'), findsOneWidget);
+    expect(find.text('小程序'), findsOneWidget);
     expect(find.byKey(const ValueKey('unpin-$kNavTabMsg')), findsNothing);
     expect(find.byKey(const ValueKey('unpin-$kNavTabWanling')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('unpin-$kNavTabMiniProgram')), findsNothing);
   });
 
   testWidgets('白条项拖到池区放手:收进更多(插入池首,可见数-1)', (tester) async {
@@ -162,7 +172,7 @@ void main() {
     // 池格不再接受白条来源项 → 拖出白条放手 = 收进更多:
     // msg move 到池首(原 visible-1=3),可见数 4→3
     expect(container.read(navOrderProvider),
-        [kNavTabWanling, 'a1', 'a2', kNavTabMsg, 'a3', 'a4']);
+        [kNavTabWanling, kNavTabMiniProgram, 'a1', kNavTabMsg, 'a2', 'a3', 'a4']);
     expect(container.read(navVisibleCountProvider), 3);
   });
 
@@ -178,6 +188,8 @@ void main() {
     await _harness(tester);
     expect(find.byKey(const ValueKey('unpin-$kNavTabMsg')), findsNothing);
     expect(find.byKey(const ValueKey('unpin-$kNavTabWanling')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('unpin-$kNavTabMiniProgram')), findsNothing);
   });
 
   testWidgets('点完成 pop 页面', (tester) async {
@@ -186,11 +198,11 @@ void main() {
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
     expect(find.text('完成'), findsNothing); // 页面已退出
-    expect(container.read(navOrderProvider).length, 6); // 数据未被破坏
+    expect(container.read(navOrderProvider).length, 7); // 数据未被破坏
   });
 
   testWidgets('会话槽:池渲染名字/未读,减号 unpin 生效', (tester) async {
-    // conv:c1 垫在 a1/a2 之后(5 项,visible=4)使其溢出进网格池;
+    // conv:c1 垫在 a1/a2 之后(三固定后 6 项,visible=4)使其溢出进网格池;
     // 简报原 seed 3 项全可见落白条,grid key 永远找不到,按测试语义适配。
     final container = await _harness(
       tester,
@@ -217,6 +229,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('grid-conv:c1')), findsNothing);
     expect(container.read(navOrderProvider),
-        [kNavTabMsg, kNavTabWanling, 'a1', 'a2']);
+        [kNavTabMsg, kNavTabWanling, kNavTabMiniProgram, 'a1', 'a2']);
   });
 }

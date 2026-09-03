@@ -35,12 +35,28 @@ func newMWToken(t *testing.T, userID, jti string, ver int) string {
 	return tok
 }
 
+// newMWAdminToken 签发 admin 角色 token(admin 兼作 user 的超集测试用)。
+func newMWAdminToken(t *testing.T, userID, jti string, ver int) string {
+	t.Helper()
+	tok, err := auth.GenerateToken(mwTestSecret, userID, "admin", "", 2*time.Hour, jti, ver)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	return tok
+}
+
 // doMWRequest 构造一个带 Bearer token 的 GET 请求，跑通中间件后命中 200 handler（放行）或被中间件拦截。
 func doMWRequest(t *testing.T, store *auth.TokenStore, token string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doMWRequestRoles(t, store, token)
+}
+
+// doMWRequestRoles 与 doMWRequest 同款,但可指定允许角色组(测 admin 超集放行)。
+func doMWRequestRoles(t *testing.T, store *auth.TokenStore, token string, allowedRoles ...string) *httptest.ResponseRecorder {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/ping", AuthMiddlewareWithStore(mwTestSecret, store), func(c *gin.Context) {
+	r.GET("/ping", AuthMiddlewareWithStore(mwTestSecret, store, allowedRoles...), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -51,6 +67,25 @@ func doMWRequest(t *testing.T, store *auth.TokenStore, token string) *httptest.R
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+// doMWRequestCaptureRole 与 doMWRequestRoles 同款,但 handler 把下游读到的 role 带回响应体
+// (测 admin 归一化:下游消费 role 当 memberType,必须读到 user)。
+func doMWRequestCaptureRole(t *testing.T, token string, allowedRoles ...string) (int, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	var role string
+	r.GET("/ping", AuthMiddlewareWithStore(mwTestSecret, nil, allowedRoles...), func(c *gin.Context) {
+		role = c.GetString("role")
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w.Code, role
 }
 
 // TestAuthMiddlewareWithStore_TokenVersionMismatch 验证改密后旧 token（ver 不匹配）被拦截。
@@ -123,4 +158,40 @@ func TestAuthMiddlewareWithStore_Ver0AfterIncr(t *testing.T) {
 	}
 	w2 := doMWRequest(t, store, tok)
 	AssertErr(t, w2, http.StatusUnauthorized, "token_version_mismatch")
+}
+
+// TestAuthMiddleware_AdminIsUserSuperset 方案 a:admin 是 user 的超集,
+// admin token 请求 user 组路由应放行(平台管理员可用 APP 全部用户能力)。
+func TestAuthMiddleware_AdminIsUserSuperset(t *testing.T) {
+	tok := newMWAdminToken(t, "admin-superset", "jti-admin-user", 0)
+	w := doMWRequestRoles(t, nil, tok, "user")
+	AssertOk(t, w, http.StatusOK)
+}
+
+// TestAuthMiddleware_AdminNotAgent agent 组保持严格隔离,admin token 不能当 agent。
+func TestAuthMiddleware_AdminNotAgent(t *testing.T) {
+	tok := newMWAdminToken(t, "admin-agent", "jti-admin-agent", 0)
+	w := doMWRequestRoles(t, nil, tok, "agent")
+	AssertErr(t, w, http.StatusForbidden, "forbidden")
+}
+
+// TestAuthMiddleware_AdminRoleNormalizedToUser 终审 I1 收尾:下游 handler 把 role 当
+// memberType 消费(participant 查询等,值域 user/agent),admin 进 user 组后 context role
+// 必须归一为 user,否则群消息等接口全部 403(真机暴露的回归)。
+func TestAuthMiddleware_AdminRoleNormalizedToUser(t *testing.T) {
+	tok := newMWAdminToken(t, "admin-normalize", "jti-admin-norm", 0)
+	code, role := doMWRequestCaptureRole(t, tok, "user")
+	if code != http.StatusOK {
+		t.Fatalf("admin 进 user 组应放行,实际 %d", code)
+	}
+	if role != "user" {
+		t.Errorf("下游 role 应归一为 user,实际 %q", role)
+	}
+
+	// user 角色行为不变
+	tokU := newMWToken(t, "norm-user", "jti-norm-user", 0)
+	codeU, roleU := doMWRequestCaptureRole(t, tokU, "user")
+	if codeU != http.StatusOK || roleU != "user" {
+		t.Errorf("user 角色应原样透出,实际 %d %q", codeU, roleU)
+	}
 }

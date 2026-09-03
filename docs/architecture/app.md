@@ -7,7 +7,7 @@ Flutter APP,动态底部 tab IM 风格(消息/万灵固定 + 可 pin 多会话 a
 ```mermaid
 flowchart TB
     MAIN[main.dart<br/>async main + locale]
-    ROUTER[router.dart<br/>平铺 GoRoute 22 条]
+    ROUTER[router.dart<br/>平铺 GoRoute 25 条]
 
     subgraph 服务层
         API[api_service<br/>Dio HTTP]
@@ -21,7 +21,7 @@ flowchart TB
     end
 
     subgraph 视图层
-        PAGES[25 个 pages]
+        PAGES[29 个 pages]
         WIDGETS[widgets/<br/>gallery+feedback+chat]
         RENDER[rendering/<br/>消息内容注册表]
     end
@@ -53,7 +53,7 @@ flowchart TB
 
 ### 入口与路由
 - `lib/main.dart` — 入口,runApp 前调 restoreSession(zh locale 固定)。详见 [entry.md](./app/entry.md#maindart)
-- `lib/router.dart` — GoRouter 平铺路由(22 条)+ 22 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
+- `lib/router.dart` — GoRouter 平铺路由(25 条)+ 25 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
 - `lib/router_helpers.dart` — chatRoute 拼路径 + startChatAndPush 统一跳转。详见 [entry.md](./app/entry.md#router_helpersdart)
 
 ### Services
@@ -63,12 +63,13 @@ flowchart TB
 - `lib/services/secure_storage.dart` — TokenVault(flutter_secure_storage 封装,存 access/refresh token + 用户凭证)。详见 [services.md](./app/services.md#secure_storagedart)
 - `lib/services/notification_service.dart` — flutter_local_notifications 封装,后台收消息弹通知 + 智能单例跳转。详见 [services.md](./app/services.md#notification_servicedart)
 - `lib/services/file_download_service.dart` — 聊天文件下载管理器,进度流 + 取消 + fileId 校验(v1.0.6)。详见 [services.md](./app/services.md#file_download_servicedart)
+- `lib/services/mini_program_bridge.dart` — 小程序 JSBridge 门禁(token 不进 JS/权限 fail-fast/`/api/` 路径白名单),`wanling_core` 的 `MiniProgramService` 负责本地包管理(下载/sha256 校验/解压/原子替换)。详见 [services.md](./app/services.md#mini_program_servicedart)
 
 ### Providers(Riverpod)
-- `lib/providers/` — 状态管理 18 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft(connState 定义在 chat_provider 内,非独立文件)。详见 [providers.md](./app/providers.md)
+- `lib/providers/` — 状态管理 20 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core)。详见 [providers.md](./app/providers.md)
 
 ### Pages
-- `lib/pages/` — 25 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About。详见 [pages.md](./app/pages.md)
+- `lib/pages/` — 29 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About / MiniProgramList / MiniProgram / AdminMiniProgram(admin only)。详见 [pages.md](./app/pages.md)
 
 ### Rendering
 - `lib/rendering/` — 消息内容渲染器体系(注册表模式):renderer 接口 + 内置(text/markdown/image/file/card) + Agent 过程渲染器(tuiUser/reasoning/toolCall/toolResult/toolError/subagent/question/stepFinish/fileDiff, v1.0.7) + tool_card_renderer(v1.0.10,工具调用统一卡片 + task 4 状态机 + read 高亮视图)。详见 [rendering.md](./app/rendering.md)
@@ -83,4 +84,4 @@ flowchart TB
 - `lib/utils/` — 工具集合:app_lifecycle_observer / avatar_bitmap / diff_merge / dio_error / emoji_editing_controller / emoji_span / gallery_image / image_cache_key / image_normalizer / notification_payload / permission_helper / reconnect_backoff / secure_storage / snackbar / file_format(v1.0.6)。chat/ 子目录:gallery_opener / message_preview / render_box_utils / unread_tracker(ChatPage 抽离工具)。详见 [utils.md](./app/utils.md)
 
 ### Models
-- `lib/models/` — 数据模型:User / Agent / Conversation / Message / WSMessage / Approval / Pairing / SavedLogin / AccountMark / UnreadInfo。详见 [models.md](./app/models.md)
+- `lib/models/` — 数据模型:User / Agent / Conversation / Message / WSMessage / Approval / Pairing / SavedLogin / AccountMark / UnreadInfo。wanling_core 另有 `MiniProgramInfo`(小程序注册条目)。详见 [models.md](./app/models.md)

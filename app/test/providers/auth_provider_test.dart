@@ -143,6 +143,21 @@ void main() {
       final decoded = jsonDecode(cached!) as Map<String, dynamic>;
       expect(decoded['id'], 'u1');
       expect(decoded['username'], 'alice');
+      // 普通 user 登录（result.role 缺省）→ isAdmin=false
+      expect(container.read(authProvider).isAdmin, false);
+    });
+
+    test('admin 登录 → isAdmin=true', () async {
+      SharedPreferences.setMockInitialValues({});
+      when(() => api.login('root', 'pw')).thenAnswer((_) async => LoginResult(
+            token: 't', refreshToken: 'r',
+            user: User(id: 'u1', username: 'root', createdAt: DateTime.parse('2026-06-13T00:00:00Z')),
+            role: 'admin',
+          ));
+      final container = ProviderContainer(overrides: [apiProvider.overrideWithValue(api)]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).login('root', 'pw');
+      expect(container.read(authProvider).isAdmin, true);
     });
 
     test('restoreSession 网络错 + 有 cached_user → state.user=cachedUser, token 保留', () async {
@@ -336,6 +351,53 @@ void main() {
       final state = container.read(authProvider);
       expect(state.user, isNull);  // JSON 解析失败,cachedUser=null
       expect(state.token, isNull);  // cachedUser=null → token 也清
+    });
+  });
+
+  group('changePassword role 同步', () {
+    // 防回归:role 签发链路 DB 为准,server 改密响应顶层带 role。
+    // APP 端必须用响应 role 更新 state,admin 改密后 isAdmin 保持 true,
+    // 避免 UI(审核入口)与后端(adminAuth)角色判定矛盾。
+    Future<ProviderContainer> loginAdmin() async {
+      SharedPreferences.setMockInitialValues({'token': 'tok-admin'});
+      when(() => api.getMe()).thenAnswer((_) async => User(
+        id: 'u1',
+        username: 'root',
+        role: 'admin',
+        createdAt: DateTime.utc(2026, 7, 1),
+      ));
+      final container = ProviderContainer(overrides: [
+        apiProvider.overrideWithValue(api),
+      ]);
+      addTearDown(container.dispose);
+      await container.read(authProvider.notifier).restoreSession();
+      return container;
+    }
+
+    test('admin 改密 → 响应 role=admin → isAdmin 保持 true', () async {
+      final container = await loginAdmin();
+      expect(container.read(authProvider).isAdmin, true);
+
+      when(() => api.changePassword('newpw123')).thenAnswer((_) async =>
+          (token: 'tok-new', refreshToken: 'rt-new', role: 'admin'));
+      await container.read(authProvider.notifier).changePassword('newpw123');
+
+      final state = container.read(authProvider);
+      expect(state.token, 'tok-new');
+      expect(state.isAdmin, true, reason: 'admin 改密后 role 应跟随响应保持 admin');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('token'), 'tok-new');
+    });
+
+    test('旧 server 响应无 role(空串)→ 保留现值 admin 不降级', () async {
+      final container = await loginAdmin();
+
+      when(() => api.changePassword('newpw123')).thenAnswer((_) async =>
+          (token: 'tok-new', refreshToken: 'rt-new', role: ''));
+      await container.read(authProvider.notifier).changePassword('newpw123');
+
+      expect(container.read(authProvider).isAdmin, true,
+          reason: '响应 role 缺失时应保留现值,防止把 admin 误降为 user');
     });
   });
 

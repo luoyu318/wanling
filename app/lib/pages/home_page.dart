@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
+import '../pages/mini_program_list_page.dart';
 import '../router_helpers.dart' show chatRoute, sessionsRoute;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
@@ -17,6 +19,7 @@ import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
     show convByIdProvider, totalUnreadProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
+import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/app_action_menu.dart';
@@ -48,9 +51,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   // 底栏切换只靠点按导航槽;PageView 禁用拖动手势(避免与二级页横滑手势冲突)。
   static const _kPageViewPhysics = NeverScrollableScrollPhysics();
 
-  /// PageView 页序列:导航序列去掉会话槽(会话槽是跳转入口,不占平铺页)。
-  List<String> get _pages =>
-      [for (final id in _effectiveOrder) if (!isConvNavId(id)) id];
+  /// PageView 页序列:导航序列去掉会话槽与小程序槽(两者都是跳转入口,不占平铺页)。
+  List<String> get _pages => [
+        for (final id in _effectiveOrder)
+          if (!isConvNavId(id) && !isMpNavId(id)) id
+      ];
 
   final PageController _pageCtrl = PageController(initialPage: 0);
   String _activeTabId = kNavTabMsg; // 当前激活 tab(任意槽,含溢出 agent)
@@ -97,6 +102,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       } else {
         context.push(chatRoute(conv.id, conv.agent?.id));
       }
+      return;
+    }
+    // 小程序槽:push 容器页,不改变 tab 激活态(conv 槽同构)。
+    final appid = navMpAppidOf(tabId);
+    if (appid != null) {
+      context.push('/mini-program/$appid');
       return;
     }
     setState(() => _activeTabId = tabId);
@@ -177,6 +188,25 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 小程序槽 id → 底栏槽位数据(名称/icon,iconUrl 空走 Avatar 首字 fallback)。
+  NavMpTab _toNavMpTab(String id) {
+    final appid = navMpAppidOf(id)!;
+    final list = ref.watch(miniProgramsProvider).valueOrNull;
+    MiniProgramInfo? mp;
+    for (final m in list ?? const <MiniProgramInfo>[]) {
+      if (m.appid == appid) {
+        mp = m;
+        break;
+      }
+    }
+    final url = mp?.iconUrlFor(ref.watch(apiProvider).baseUrl);
+    return NavMpTab(
+      id: appid,
+      name: mp?.name ?? appid,
+      iconUrl: (url == null || url.isEmpty) ? null : url,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final totalUnread = ref.watch(totalUnreadProvider);
@@ -230,6 +260,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                       kNavTabMsg => _MsgNavPage(onOpenSidebar: _openSidebar),
                       kNavTabWanling =>
                         _WanlingNavPage(onOpenSidebar: _openSidebar),
+                      kNavTabMiniProgram =>
+                        const MiniProgramListPage(embedded: true),
                       _ => AgentSessionsPage(agentId: id, embedded: true),
                     },
                   ),
@@ -253,8 +285,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                         label: kNavTabWanlingLabel,
                         icon: Icons.auto_awesome,
                         activeIcon: Icons.auto_awesome_outlined)
+                  else if (id == kNavTabMiniProgram)
+                    const NavIconSlot(
+                        tabId: kNavTabMiniProgram,
+                        label: kNavTabMiniProgramLabel,
+                        icon: Icons.grid_view,
+                        activeIcon: Icons.grid_view_outlined)
                   else if (isConvNavId(id))
                     NavConvSlot(tabId: id, tab: _toNavConvTab(id))
+                  else if (isMpNavId(id))
+                    NavMpSlot(tabId: id, tab: _toNavMpTab(id))
                   else
                     NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
               ],
@@ -442,6 +482,14 @@ class _MoreSheetPanel extends ConsumerWidget {
                       onTap: () => onPickItem(id),
                       onLongPress: () => onLongPressItem(id),
                     )
+                  else if (isMpNavId(id))
+                    _MoreSheetMpItem(
+                      key: ValueKey('more-$id'),
+                      mpId: id,
+                      active: id == activeTabId,
+                      onTap: () => onPickItem(id),
+                      onLongPress: () => onLongPressItem(id),
+                    )
                   else
                     _MoreSheetItem(
                       key: ValueKey('more-$id'),
@@ -476,7 +524,12 @@ class _MoreSheetIconItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isMsg = tabId == kNavTabMsg;
+    // 固定项 icon/文案三分支:抽屉内恒用 outline 形态(与底栏 activeIcon 同源)。
+    final (icon, label) = switch (tabId) {
+      kNavTabMsg => (Icons.chat_bubble_outline, kNavTabMsgLabel),
+      kNavTabWanling => (Icons.auto_awesome_outlined, kNavTabWanlingLabel),
+      _ => (Icons.grid_view_outlined, kNavTabMiniProgramLabel),
+    };
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -499,14 +552,14 @@ class _MoreSheetIconItem extends ConsumerWidget {
             ),
             alignment: Alignment.center,
             child: Icon(
-              isMsg ? Icons.chat_bubble_outline : Icons.auto_awesome_outlined,
+              icon,
               size: 32,
               color: AppColors.textSecondary,
             ),
           ),
           const SizedBox(height: 6),
           Text(
-            isMsg ? '消息' : '万灵',
+            label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -652,6 +705,76 @@ class _MoreSheetConvItem extends ConsumerWidget {
                   child: UnreadBadge(count: unread),
                 ),
             ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            name.characters.length > 6
+                ? '${name.characters.take(6).join()}…'
+                : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 抽屉网格项(小程序):大圆角方形 icon 头像+灰名字;激活绿描边。
+/// 点击由 HomePage onPickItem → _switchTab push 容器页(与 conv 槽同构)。
+class _MoreSheetMpItem extends ConsumerWidget {
+  const _MoreSheetMpItem({
+    super.key,
+    required this.mpId,
+    required this.active,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String mpId;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 溢出项序列元素是 'mp:<appid>'，先去前缀再查小程序(与底栏可见槽同语义)。
+    final appid = navMpAppidOf(mpId)!;
+    final list = ref.watch(miniProgramsProvider).valueOrNull;
+    MiniProgramInfo? mp;
+    for (final m in list ?? const <MiniProgramInfo>[]) {
+      if (m.appid == appid) {
+        mp = m;
+        break;
+      }
+    }
+    final name = mp?.name ?? appid;
+    final url = mp?.iconUrlFor(ref.watch(apiProvider).baseUrl);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 大圆角方形头像本体(无未读角标/在线点);激活描边用 foregroundDecoration
+          // 叠边框,不影响头像裁剪(结构对齐 _MoreSheetConvItem)。
+          Container(
+            width: 64,
+            height: 64,
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: active
+                  ? Border.all(color: AppColors.accentGreen, width: 1.5)
+                  : null,
+            ),
+            child: Avatar(
+                name: name,
+                url: (url == null || url.isEmpty) ? null : url,
+                size: 64,
+                radius: 16),
           ),
           const SizedBox(height: 6),
           Text(

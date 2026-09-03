@@ -115,11 +115,18 @@ func main() {
 	capabilityRegistry := agent.NewCapabilityRegistry()
 	processor := message.NewProcessor(h, convRepo, msgRepo, agentRepo, userRepo, fileRepo, participantRepo, deliveryRepo, agentRegistry, slashCatalogRegistry, capabilityRegistry, modeRegistry, presetRegistry)
 
-	authHandler := handler.NewAuthHandler(userRepo, agentRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
+	agentSubKeyRepo := repository.NewAgentSubKeyRepo(db)
+	authHandler := handler.NewAuthHandler(userRepo, agentRepo, agentSubKeyRepo, cfg.JWT.Secret, tokenStore, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	agentTypeRepo := repository.NewAgentTypeRepo(db)
-	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo)
+	agentHandler := handler.NewAgentHandler(agentRepo, convRepo, p, agentRegistry, slashCatalogRegistry, modeRegistry, presetRegistry, agentTypeRepo, agentSubKeyRepo)
+	// 子密钥管理面:owner 查看/吊销 agent 子密钥(列表绝不返 secret_key)。
+	subKeyHandler := handler.NewAgentSubKeyHandler(agentRepo, agentSubKeyRepo)
 	convHandler := handler.NewConversationHandler(db, convRepo, participantRepo, friendshipRepo, msgRepo, deliveryRepo, agentRepo, userRepo, h, rpcRegistry, agentTypeRepo)
 	fileHandler := handler.NewFileHandler(fileRepo, store, cfg.Storage.MaxUploadBytes)
+	miniProgramRepo := repository.NewMiniProgramRepo(db)
+	signingKeyRepo := repository.NewSigningKeyRepo(db)
+	miniProgramOpenidRepo := repository.NewMiniProgramOpenidRepo(db)
+	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes, miniProgramOpenidRepo)
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
@@ -130,7 +137,7 @@ func main() {
 
 	sendHandler := handler.NewSendHandler(processor)
 
-	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo, convRepo)
+	pairHandler := handler.NewPairingHandler(pairRepo, agentRepo, convRepo, agentSubKeyRepo)
 
 	approvalRepo := repository.NewApprovalRepo(db)
 	approvalSvc := approval.NewService(approvalRepo, h, approvalRepo)
@@ -250,15 +257,10 @@ func main() {
 	r.Use(handler.BusinessAccessLog())
 
 	// 全局 JSON body 限制(防超大 JSON 请求体耗内存)。
-	// /api/upload 路由由 file_handler 自带的 MaxBytesReader 拦截(更大),跳过本中间件。
+	// multipart 上传路由(如 /api/upload、/api/mini-programs)由各 handler 自带的
+	// MaxBytesReader 拦截(更大),按 Content-Type 跳过本中间件。
 	// /ws 路由读取二进制帧,也跳过(由 ws_handler.SetReadLimit 64KB 兜底)。
-	maxJSONBody := cfg.Server.MaxJSONBodyBytes
-	r.Use(func(c *gin.Context) {
-		if c.Request.URL.Path != "/api/upload" && c.Request.URL.Path != "/ws" {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBody)
-		}
-		c.Next()
-	})
+	r.Use(middleware.JSONBodyLimit(cfg.Server.MaxJSONBodyBytes))
 
 	// CORS:fail-closed 默认。env CORS_ALLOWED_ORIGINS 未配 → 不放行任何跨域(仅同源可访问);
 	// 显式配 "*" 才放行所有。生产单域名建议显式列出。
@@ -318,7 +320,12 @@ func main() {
 		userAuth.PUT("/api/agents/:id", agentHandler.Update)
 		userAuth.DELETE("/api/agents/:id", agentHandler.Delete)
 		// 重置密钥:owner 自助轮换,旧连接立即失效。新 key 仅本次响应下发。
+		// 成功后级联吊销该 agent 全部子密钥(尽力而为,失败仅日志)。
 		userAuth.POST("/api/agents/:id/rotate-secret", agentHandler.RotateSecret)
+		// 子密钥管理:列表(含已吊销,绝不返 secret_key)+ 单个吊销(幂等 200,
+		// 404 仅当 agent 不存在)。详见 docs/ai-handbook/agent-subkeys.md。
+		userAuth.GET("/api/agents/:id/subkeys", subKeyHandler.List)
+		userAuth.DELETE("/api/agents/:id/subkeys/:keyId", subKeyHandler.Revoke)
 		// 模型清单:plugin 通过 WS AGENT_MODELS 上报 → registry 缓存 → 本端点供 APP 读取(Task 3)。
 		// 空清单也返 200(plugin 离线 / server 重启 / opencode 未就绪 均合法)。
 		userAuth.GET("/api/agents/:id/models", agentHandler.Models)
@@ -377,6 +384,28 @@ func main() {
 		userAuth.POST("/api/friend-requests/:id/accept", friendshipHandler.Accept)
 		userAuth.POST("/api/friend-requests/:id/reject", friendshipHandler.Reject)
 		userAuth.POST("/api/friend-requests/:id/cancel", friendshipHandler.Cancel)
+		// 小程序容器(两层模型):列表/owner 删除/公钥下发(上传与包下载在 mpAuth)。
+		userAuth.GET("/api/mini-programs", miniProgramHandler.List)
+		userAuth.GET("/api/mini-programs/signing-key", miniProgramHandler.GetSigningKey)
+		userAuth.GET("/api/mini-programs/openid", miniProgramHandler.GetOpenid)
+		userAuth.DELETE("/api/mini-programs/:id", miniProgramHandler.Delete)
+	}
+
+	// 小程序 Agent 直传(M2):上传与包下载允许 agent 角色(handler 内 owner 换算)。
+	mpAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "user", "agent"))
+	{
+		mpAuth.POST("/api/mini-programs", miniProgramHandler.Upload)
+		mpAuth.GET("/api/mini-programs/:id/package", miniProgramHandler.DownloadPackage)
+		mpAuth.GET("/api/mini-programs/:id/icon", miniProgramHandler.GetIcon)
+	}
+
+	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序审核(全量列表 + publish/disable)。
+	adminAuth := r.Group("", handler.AuthMiddlewareWithStore(cfg.JWT.Secret, tokenStore, "admin"))
+	{
+		adminAuth.GET("/api/admin/mini-programs", miniProgramHandler.ListAdmin)
+		adminAuth.PUT("/api/admin/mini-programs/:id/status", miniProgramHandler.UpdateStatus)
+		// 兼容别名:SKILL.md 在用路径,过渡期保留(挂同一 handler)。
+		adminAuth.PUT("/api/mini-programs/:id/status", miniProgramHandler.UpdateStatus)
 	}
 
 	// 文件相关：user 和 agent 都可访问。
@@ -454,6 +483,18 @@ func main() {
 	// 优雅关闭：SIGTERM/SIGINT 时先停止 accept 新连接，
 	// 等活跃请求（含 WS）写完再关 DB pool，避免 kill 丢消息。
 	// 用 http.Server 替代 r.Run()，拿到 Shutdown 的控制权。
+
+	// 启动补签:历史 published 包缺 signature 的补上(幂等;失败仅日志不阻断启动)。
+	if err := miniProgramHandler.BackfillSignatures(context.Background()); err != nil {
+		log.Printf("[mini_program] 启动补签失败: %v", err)
+	}
+
+	// 启动种子:ADMIN_USERNAMES 命中账号升为 admin(DB 为准,幂等只升不降;
+	// 失败仅日志不阻断启动,与 BackfillSignatures 同策略)。
+	if err := userRepo.PromoteAdmins(context.Background(), cfg.Admin.Usernames); err != nil {
+		log.Printf("[admin] 启动种子 PromoteAdmins 失败: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
 		Handler:           r,

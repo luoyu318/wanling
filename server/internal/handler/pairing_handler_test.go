@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wanling/server/internal/auth"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
 )
@@ -21,7 +23,8 @@ func setupPairHandler(t *testing.T) (*PairingHandler, *repository.PairingRepo, *
 	repo := repository.NewPairingRepo(db)
 	arepo := repository.NewAgentRepo(db)
 	crepo := repository.NewConversationRepo(db)
-	h := NewPairingHandler(repo, arepo, crepo)
+	skrepo := repository.NewAgentSubKeyRepo(db)
+	h := NewPairingHandler(repo, arepo, crepo, skrepo)
 	r := gin.New()
 	return h, repo, arepo, crepo, r
 }
@@ -115,7 +118,7 @@ func TestPairingHandler_GetTicket_Completed_ReturnsSecretKeyOnce(t *testing.T) {
 	})
 	ticket, _ := repo.Create(t.Context(), "get-completed-001", "")
 	_ = repo.MarkScanned(t.Context(), ticket.ID, user.ID)
-	_ = repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "the-new-secret")
+	_ = repo.MarkCompleted(t.Context(), ticket.ID, agent.ID, "the-new-secret", string(model.PairingActionBind))
 
 	// 第一次 GET：应该返回 secret_key + owner_conv_id
 	req := httptest.NewRequest("GET", "/api/pair/tickets/"+ticket.ID, nil)
@@ -138,6 +141,10 @@ func TestPairingHandler_GetTicket_Completed_ReturnsSecretKeyOnce(t *testing.T) {
 	// owner_conv_id 应为已建的默认 conv(hermes 端写 WANLING_HOME_CONV)
 	if data["owner_conv_id"] != conv.ID {
 		t.Fatalf("owner_conv_id = %v, want %s", data["owner_conv_id"], conv.ID)
+	}
+	// bind 动作统一带 action 字段(消费方判 action)
+	if data["action"] != "bind" {
+		t.Fatalf("action = %v, want bind", data["action"])
 	}
 
 	// 第二次 GET：领完即焚，secret_key 应消失
@@ -600,5 +607,298 @@ func TestPairingHandler_CompleteTicket_SelectExisting_TypeMatch_NoUpdate(t *test
 	after, _ := arepo.GetByID(t.Context(), agent.ID)
 	if string(after.Type) != "" {
 		t.Errorf("agent.Type = %q, want empty(ticket 无 type 不应误改)", after.Type)
+	}
+}
+
+// ─── Task 5: 配对 authorize 模式（发子密钥授权） ─────────────────────────────
+
+// scanAndComplete 模拟 app 侧扫码 + 完成配对，返回 complete 响应 data。
+// body 是 complete 请求 JSON。自建 router，不污染调用方的 r（可多次调用）。
+func scanAndComplete(t *testing.T, h *PairingHandler, userID, ticketID, body string) map[string]interface{} {
+	t.Helper()
+	r := gin.New()
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", userID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", userID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticketID+"/scan", nil))
+
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticketID+"/complete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return AssertOk(t, w, http.StatusOK)
+}
+
+// TestPairingHandler_CompleteTicket_Authorize_IssuesSubKey 验收红线：
+// authorize 模式给已有 agent 发 wlsk_ 子密钥，且 agent 主密钥不变（对比重置前后）。
+func TestPairingHandler_CompleteTicket_Authorize_IssuesSubKey(t *testing.T) {
+	h, repo, arepo, _, _ := setupPairHandler(t)
+	skrepo := repository.NewAgentSubKeyRepo(arepo.DBForTest())
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "authsub_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "AuthAgent", "orig-secret", "")
+	ticket, _ := repo.Create(t.Context(), "authorize-001", "")
+
+	scanAndComplete(t, h, user.ID, ticket.ID, `{"agent_id":"`+agent.ID+`","action":"authorize"}`)
+
+	// agent 主密钥不变（authorize 与 bind 的本质区别）
+	after, _ := arepo.GetByID(t.Context(), agent.ID)
+	if after.SecretKey != "orig-secret" {
+		t.Fatalf("agent.secret_key = %q, want orig-secret(authorize 不应重置主密钥)", after.SecretKey)
+	}
+
+	// 子密钥落库：1 条,缺省备注「技能授权」
+	keys, err := skrepo.ListByAgent(t.Context(), agent.ID)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListByAgent = %v, want 1 条", keys)
+	}
+	if keys[0].Name != "技能授权" {
+		t.Fatalf("子密钥 name = %q, want 技能授权(缺省备注)", keys[0].Name)
+	}
+
+	// ticket 落 completed，凭据是 wlsk_ 子密钥（非 agent 主密钥）
+	got, _ := repo.GetByID(t.Context(), ticket.ID)
+	if got.Status != model.PairingStatusCompleted {
+		t.Fatalf("ticket status = %q, want completed", got.Status)
+	}
+	if got.Action != model.PairingActionAuthorize {
+		t.Fatalf("ticket action = %q, want authorize", got.Action)
+	}
+	if got.SecretKey == nil || !strings.HasPrefix(*got.SecretKey, auth.SubKeyPrefix) {
+		t.Fatalf("ticket secret_key = %v, want %s 前缀子密钥", got.SecretKey, auth.SubKeyPrefix)
+	}
+	if *got.SecretKey != keys[0].SecretKey {
+		t.Fatalf("ticket 凭据与落库子密钥不一致")
+	}
+}
+
+// TestPairingHandler_CompleteTicket_Authorize_WithNewAgentName_BadRequest
+// 新建 + authorize 是语义冲突，必须 400。
+func TestPairingHandler_CompleteTicket_Authorize_WithNewAgentName_BadRequest(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "authnew_"), "$2a$10$hash")
+	ticket, _ := repo.Create(t.Context(), "authorize-new-001", "")
+
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/scan", nil))
+
+	body := strings.NewReader(`{"new_agent_name":"新agent","action":"authorize"}`)
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+
+	// 缺 agent_id 的纯 authorize 也是 400
+	body2 := strings.NewReader(`{"action":"authorize"}`)
+	req2 := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body2)
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	AssertErr(t, w2, http.StatusBadRequest, "bad_request")
+}
+
+// TestPairingHandler_CompleteTicket_Authorize_SubKeyLimit
+// 未吊销子密钥达上限（10）时 authorize 必须 409 subkey_limit。
+func TestPairingHandler_CompleteTicket_Authorize_SubKeyLimit(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	skrepo := repository.NewAgentSubKeyRepo(arepo.DBForTest())
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "authlim_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "LimitAgent", "orig-secret", "")
+	// 预置 10 条未吊销子密钥
+	for i := 0; i < 10; i++ {
+		if _, err := skrepo.Create(t.Context(), agent.ID, fmt.Sprintf("seed-%d", i), auth.SubKeyPrefix+fmt.Sprintf("seed-%d", i)); err != nil {
+			t.Fatalf("seed 子密钥 %d: %v", i, err)
+		}
+	}
+	ticket, _ := repo.Create(t.Context(), "authorize-limit-001", "")
+
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/scan", nil))
+
+	body := strings.NewReader(`{"agent_id":"` + agent.ID + `","action":"authorize"}`)
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	AssertErr(t, w, http.StatusConflict, "subkey_limit")
+
+	// 拒绝后 ticket 不得落 completed（保持 scanned，可改用 bind 流程）
+	got, _ := repo.GetByID(t.Context(), ticket.ID)
+	if got.Status != model.PairingStatusScanned {
+		t.Fatalf("409 后 ticket status = %q, want scanned", got.Status)
+	}
+}
+
+// TestPairingHandler_CompleteTicket_Authorize_NotOwnerForbidden
+// authorize 他人 agent 必须 403（与 bind 同等 owner 校验）。
+func TestPairingHandler_CompleteTicket_Authorize_NotOwnerForbidden(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user1, _ := urepo.Create(t.Context(), shortName(t, "authow1_"), "$2a$10$hash")
+	user2, _ := urepo.Create(t.Context(), shortName(t, "authow2_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user1.ID, "Owner1Agent", "s1", "")
+	ticket, _ := repo.Create(t.Context(), "authorize-forbidden-001", "")
+
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", user2.ID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", user2.ID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/scan", nil))
+
+	body := strings.NewReader(`{"agent_id":"` + agent.ID + `","action":"authorize"}`)
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	AssertErr(t, w, http.StatusForbidden, "forbidden")
+}
+
+// TestPairingHandler_GetTicket_Authorize_CompletedResponse
+// authorize 模式轮询响应字段：action=authorize + agent_name + wlsk_ 凭据，
+// 领完即焚后凭据消失但 action 保留。
+func TestPairingHandler_GetTicket_Authorize_CompletedResponse(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "getauth_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "GetAuthAgent", "orig-secret", "")
+	ticket, _ := repo.Create(t.Context(), "authorize-get-001", "")
+	data := scanAndComplete(t, h, user.ID, ticket.ID, `{"agent_id":"`+agent.ID+`","action":"authorize"}`)
+	if data["agent_id"] != agent.ID {
+		t.Fatalf("complete 响应 agent_id = %v, want %s", data["agent_id"], agent.ID)
+	}
+
+	// 第一次 GET：authorize 响应结构
+	r.GET("/api/pair/tickets/:id", h.GetTicket)
+	req := httptest.NewRequest("GET", "/api/pair/tickets/"+ticket.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	got := AssertOk(t, w, http.StatusOK)
+	if got["status"] != "completed" || got["action"] != "authorize" {
+		t.Fatalf("status/action = %v/%v, want completed/authorize", got["status"], got["action"])
+	}
+	if got["agent_name"] != "GetAuthAgent" {
+		t.Fatalf("agent_name = %v, want GetAuthAgent", got["agent_name"])
+	}
+	if sk, _ := got["secret_key"].(string); !strings.HasPrefix(sk, auth.SubKeyPrefix) {
+		t.Fatalf("secret_key = %v, want %s 前缀子密钥", got["secret_key"], auth.SubKeyPrefix)
+	}
+	if got["owner_user_id"] != user.ID {
+		t.Fatalf("owner_user_id = %v, want %s", got["owner_user_id"], user.ID)
+	}
+	if _, exists := got["owner_conv_id"]; exists {
+		t.Fatal("authorize 响应不应含 owner_conv_id(技能侧不消费)")
+	}
+
+	// 第二次 GET：领完即焚，凭据消失，action 仍保留
+	req2 := httptest.NewRequest("GET", "/api/pair/tickets/"+ticket.ID, nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	got2 := AssertOk(t, w2, http.StatusOK)
+	if _, exists := got2["secret_key"]; exists {
+		t.Fatal("第二次 GET 不应再返回 secret_key(领完即焚)")
+	}
+	if got2["action"] != "authorize" {
+		t.Fatalf("已领响应 action = %v, want authorize", got2["action"])
+	}
+}
+
+// TestPairingHandler_CompleteTicket_BindBackwardCompat
+// bind 回归：缺省 action 走 bind（重置主密钥），显式 "bind" 等价。
+func TestPairingHandler_CompleteTicket_BindBackwardCompat(t *testing.T) {
+	h, repo, arepo, _, _ := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "bindbwd_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "BindAgent", "orig-secret", "")
+
+	// 缺省 action = bind
+	ticket1, _ := repo.Create(t.Context(), "bind-bwd-001", "")
+	scanAndComplete(t, h, user.ID, ticket1.ID, `{"agent_id":"`+agent.ID+`"}`)
+	after, _ := arepo.GetByID(t.Context(), agent.ID)
+	if after.SecretKey == "orig-secret" {
+		t.Fatal("缺省 action 应走 bind(重置主密钥)")
+	}
+	got, _ := repo.GetByID(t.Context(), ticket1.ID)
+	if got.Action != model.PairingActionBind {
+		t.Fatalf("缺省 action ticket.Action = %q, want bind", got.Action)
+	}
+	resetKey := after.SecretKey
+
+	// 显式 "bind" 等价
+	ticket2, _ := repo.Create(t.Context(), "bind-bwd-002", "")
+	scanAndComplete(t, h, user.ID, ticket2.ID, `{"agent_id":"`+agent.ID+`","action":"bind"}`)
+	after2, _ := arepo.GetByID(t.Context(), agent.ID)
+	if after2.SecretKey == resetKey {
+		t.Fatal("显式 bind 应再次重置主密钥")
+	}
+	got2, _ := repo.GetByID(t.Context(), ticket2.ID)
+	if got2.Action != model.PairingActionBind {
+		t.Fatalf("显式 bind ticket.Action = %q, want bind", got2.Action)
+	}
+}
+
+// TestPairingHandler_CompleteTicket_UnknownAction_BadRequest
+// 未知 action（如拼写变体 "authorise"）必须 400 fail fast，
+// 不允许静默降级为 bind（会重置主密钥把在用 agent 踢下线）。
+func TestPairingHandler_CompleteTicket_UnknownAction_BadRequest(t *testing.T) {
+	h, repo, arepo, _, r := setupPairHandler(t)
+	urepo := repository.NewUserRepo(arepo.DBForTest())
+	user, _ := urepo.Create(t.Context(), shortName(t, "unkact_"), "$2a$10$hash")
+	agent, _ := arepo.Create(t.Context(), user.ID, "UnknownActionAgent", "orig-secret", "")
+	ticket, _ := repo.Create(t.Context(), "unknown-action-001", "")
+
+	r.POST("/api/pair/tickets/:id/scan", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.ScanTicket(c)
+	})
+	r.POST("/api/pair/tickets/:id/complete", func(c *gin.Context) {
+		c.Set("userID", user.ID)
+		h.CompleteTicket(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/scan", nil))
+
+	// 未知 action 携带 agent_id → 400（静默降级 bind 会重置主密钥）
+	body := strings.NewReader(`{"agent_id":"` + agent.ID + `","action":"authorise"}`)
+	req := httptest.NewRequest("POST", "/api/pair/tickets/"+ticket.ID+"/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	AssertErr(t, w, http.StatusBadRequest, "bad_request")
+
+	// ticket 保持 scanned（未落 completed），可纠正 action 后重试
+	got, _ := repo.GetByID(t.Context(), ticket.ID)
+	if got.Status != model.PairingStatusScanned {
+		t.Fatalf("400 后 ticket status = %q, want scanned", got.Status)
+	}
+
+	// agent 主密钥未变（未触发 bind 重置）
+	after, _ := arepo.GetByID(t.Context(), agent.ID)
+	if after.SecretKey != "orig-secret" {
+		t.Fatalf("agent.secret_key = %q, want orig-secret(未知 action 不得重置主密钥)", after.SecretKey)
 	}
 }

@@ -25,6 +25,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 import weakref
 from typing import Any, Dict, List, Optional
 
@@ -532,6 +533,9 @@ def get_active_by_conv(conv_id: str) -> Optional[AggregateSession]:
 # run 内同步执行），所以该标记可靠；adapter.send() 命中后清除。
 _CONV_TEXT_TAKEN: Dict[str, bool] = {}
 _CONV_TEXT_TAKEN_LOCK = threading.Lock()
+# conv_id → 最近一次接管正文的时刻（monotonic 墙钟 time.time()）。
+# 供 card_mode_recent 判断媒体吸收窗口，见 mark_conv_text_taken 处注释。
+_CARD_MODE_AT: Dict[str, float] = {}
 
 # 审批卡持久映射：session_key(oc_request_id) → {conv_id, msg_id, element_id}。
 # 回合结束后 session 可能已注销（审批决策晚于回合收尾），permission_decided
@@ -564,6 +568,28 @@ def mark_conv_text_taken(conv_id: str) -> None:
         return
     with _CONV_TEXT_TAKEN_LOCK:
         _CONV_TEXT_TAKEN[conv_id] = True
+        # 记录接管时刻（供 card_mode_recent 判断媒体吸收窗口）：上游
+        # extract_images → 平台媒体接口的调用可能晚于卡 finish,仅靠活跃卡
+        # 判断会漏吸收。容量上限防长连泄漏（超限淘汰最旧一条）。
+        _CARD_MODE_AT[conv_id] = time.time()
+        if len(_CARD_MODE_AT) > 256:
+            oldest = min(_CARD_MODE_AT, key=lambda k: _CARD_MODE_AT[k])
+            _CARD_MODE_AT.pop(oldest, None)
+
+
+def card_mode_recent(conv_id: str, window: float = 60.0) -> bool:
+    """该 conv 是否处于/刚处于聚合卡模式（adapter 媒体接口吸收独立气泡的依据）。
+
+    活跃卡未收尾 → True；卡已收尾但 hook 最近（window 秒内）标记过接管正文
+    → True（覆盖卡 finish 与上游媒体调用之间的竞序窗口）。
+    """
+    if not conv_id:
+        return False
+    if get_active_by_conv(conv_id) is not None:
+        return True
+    with _CONV_TEXT_TAKEN_LOCK:
+        ts = _CARD_MODE_AT.get(conv_id, 0.0)
+    return ts > 0 and (time.time() - ts) < window
 
 
 def take_conv_text(conv_id: str) -> bool:
@@ -637,6 +663,20 @@ async def _dispatch_event(adapter: Any, event: Dict[str, Any]) -> None:
     if not _aggregate_enabled():
         return
     kind = event.get("kind")
+
+    # 聚合卡模式图片改写（双模式区分的核心）：本地图/远程图统一替换为
+    # /api/files/ markdown，图文一体进卡元素；气泡模式的独立 image 气泡路径
+    # 在 adapter.send()，两者互不干扰。改写放 consumer 侧（asyncio task）——
+    # 上传耗时只拖慢本卡 PATCH，不阻塞 WS 心跳与 agent worker 线程。
+    # 改写内部失败降级保留原文；此处兜底防改写器抛异常拖垮事件分发。
+    if kind in ("markdown", "markdown_update"):
+        text = event.get("text") or ""
+        rewriter = getattr(adapter, "_rewrite_images_for_card", None)
+        if rewriter is not None and text:
+            try:
+                event = {**event, "text": await rewriter(text)}
+            except Exception:
+                logger.warning("Wanling aggregate 图片改写失败,保留原文", exc_info=True)
 
     # 断卡（interrupt）：Agent 执行中用户发新消息 → 结束当前聚合卡段落。
     # 按 conv_id 定位活跃 session，running 工具标 error 后 finish(interrupt)

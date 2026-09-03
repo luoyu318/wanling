@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 18 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft(connState 定义在 chat_provider 内,非独立文件)。
+状态管理 20 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core)。
 
 ## authProvider
 
@@ -50,9 +50,17 @@ agent_session 二级列表状态管理（对齐 conversationProvider 模式，fa
 
 Agent 状态聚合（`StateNotifier<Map<String, AgentStatus>>`，key=agentId）。聚合 typing + pending approval 数 → 三态（idle/busy/retry）供二级列表 SessionTile 三体指示器 + 目录面板 busyCount + chat_page 状态文案。监听 `wsProvider.messages`（agent MESSAGE_CREATE 清 busy）+ `typingProvider`（typing → busy）+ `chatProvider` 的 pending approval 数
 
+## miniProgramsProvider
+
+用户可见小程序列表（`FutureProvider<List<MiniProgramInfo>>`，wanling_core）。`GET /api/mini-programs` 返回 published 全量 + 自己的 private/disabled。非 autoDispose 登录周期内缓存；失败返空列表（列表页空态，不炸 UI）。上传/删除成功后 `invalidate` 刷新
+
+## adminMiniProgramsProvider
+
+admin 审核全量列表（`FutureProvider.autoDispose<List<AdminMiniProgramInfo>>`，wanling_core）。调 `GET /api/admin/mini-programs` 拉全量,进页拉取、操作后 invalidate。与 miniProgramsProvider 相反**失败向上抛不吞**:审核页需区分 403(无权限视图)与网络错误(重试入口)
+
 ## navOrderProvider
 
-底部导航槽位有序序列，含固定项 msg/wanling + pinned agent（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_order_{ownerId}` 按 ownerId 隔离，首读缺失时从旧 `nav_pins_{ownerId}` 一次性迁移（固定项前置 + 立即落盘，旧 key 保留可回滚），ownerId 变化（切账号）时随 authProvider 重建重读；空 ownerId（登出中间态）维持幽灵 key 空列表语义，不 sanitize 不落盘。唯一不变式：固定项各恰好一次且不可移除（构造 sanitize 去空/去重保序，固定项位置不强制、仅缺失才补；unpin 拒固定项）。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorder`（move 语义任意槽排序，含固定项，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectiveNavOrderProvider` = 序列 ∩ 当前 agent 列表（固定项恒保留，agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源。槽位 ID 另支持 `conv:<convId>` 前缀好友/群会话槽；effective 序列同时按会话列表收缩（会话删除时槽自动消失）
+底部导航槽位有序序列，含固定项 msg/wanling/miniapps（小程序列表入口） + pinned agent（`StateNotifier<List<String>>`，wanling_core）。纯本地持久化，无 API 三态：SharedPreferences `nav_order_{ownerId}` 按 ownerId 隔离，首读缺失时从旧 `nav_pins_{ownerId}` 一次性迁移（固定项前置 + 立即落盘，旧 key 保留可回滚），ownerId 变化（切账号）时随 authProvider 重建重读；空 ownerId（登出中间态）维持幽灵 key 空列表语义，不 sanitize 不落盘。唯一不变式：固定项各恰好一次且不可移除（构造 sanitize 去空/去重保序，固定项位置不强制、仅缺失才补；unpin 拒固定项）。方法 `pin`（追加队尾，重复 no-op）/ `unpin` / `reorder`（move 语义任意槽排序，含固定项，越界/同位/不存在 no-op），每次变更即同步写 SP。派生 `effectiveNavOrderProvider` = 序列 ∩ 当前 agent 列表（固定项恒保留，agent 被删时自动收缩），是底栏槽位与 PageView 页面的唯一事实源。槽位 ID 另支持 `conv:<convId>` 前缀好友/群会话槽；effective 序列同时按会话列表收缩（会话删除时槽自动消失）
 
 ## agentTabUnreadProvider
 
