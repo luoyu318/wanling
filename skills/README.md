@@ -42,9 +42,21 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 
 安装器逐文件从 Gitee raw 下载（失败自动落 GitHub 镜像），对照 `manifest.sha256` 校验后原子替换目标目录。仓库内开发者可 `cd skills && ./install.sh`（本地模式，cp 直装）。`README.md` 与 `manifest.sha256` 不进技能安装目录。
 
-## 扫码授权技能凭据（推荐）
+## 凭据：装完即用（多数场景无需授权）
 
-技能的发布/发图需要 agent 凭据。除复用 opencode 插件配置外，可用 APP 扫码授权发放**子密钥**（不动 agent 主密钥，随时可在 APP「我的 → Agent → 授权密钥」吊销）：
+`publish.py` / `upload.py` 按以下顺序探测凭据，装过 opencode 插件或 hermes 的机器自动命中宿主身份：
+
+1. 宿主进程 env 三元组 `WANLING_SERVER_URL`/`WANLING_AGENT_ID`/`WANLING_SECRET_KEY`（hermes 等宿主 agent，身份随宿主）
+2. `$WANLING_CONFIG_FILE`（显式指定）
+3. `$WANLING_CONFIG_DIR/config.json`（opencode 插件注入）
+4. `~/.config/opencode-wanling/config.json`（存在则用）
+5. `~/.config/wanling-skills/config.json`（技能 setup 子密钥）
+
+全都不存在时报错列出探测路径并提示 `--setup`。
+
+## 扫码授权子密钥（仅无宿主平台需要）
+
+外来平台（如 Claude Code）且机器上没有任何主密钥配置时，用 APP 扫码授权发放**子密钥**（REST-only，不动 agent 主密钥，随时可在 APP「我的 → Agent → 授权密钥」吊销）：
 
 ```bash
 bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --setup
@@ -54,14 +66,7 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 
 流程：终端打印二维码 → 万灵 APP 扫一扫 → 选已有 Agent → 点「授权技能使用」→ 凭据自动写入 config.json（权限 600，不含明文回显）。
 
-`publish.py` / `upload.py` 按以下顺序探测凭据（第一个存在的文件生效）：
-
-1. `$WANLING_CONFIG_FILE`（显式指定）
-2. `$WANLING_CONFIG_DIR/config.json`
-3. `~/.config/opencode-wanling/config.json`（opencode 插件，存在则用）
-4. `~/.config/wanling-skills/config.json`（技能 setup）
-
-全都不存在时报错列出探测路径并提示运行 `--setup`。`--setup` 可与安装共存：带技能名运行先装技能再授权（如 `./install.sh --setup wanling-miniprogram-publish`）。
+已检测到可用凭据时 `--setup` 自动跳过（宿主身份优先）；确要另发子密钥加 `--force`。`--setup` 可与安装共存：带技能名运行先装技能再授权（如 `./install.sh --setup wanling-miniprogram-publish`）。
 
 ## 旧目录迁移
 
@@ -102,7 +107,7 @@ agent 无需克隆仓库，直接执行上方「手动安装」命令即可；�
 
 ## 凭据获取
 
-技能调用 server API 需要 agent 凭据。推荐走 `install.sh --setup` 两步完成（无需用户 token）：
+技能调用 server API 需要 agent 凭据。宿主 agent 内自动用宿主身份（见上节探测顺序），无需授权；仅无宿主平台需要子密钥，走 `install.sh --setup` 两步完成（无需用户 token）：
 
 1. 填 server URL——`--server=URL` 参数或交互输入，默认 `http://localhost:18008`；
 2. 万灵 APP 扫码 → 选已有 Agent → 点「授权技能使用」，子密钥（`wlsk_` 前缀）自动写入配置文件（权限 600，无明文回显），终端轮询到凭据即完成。

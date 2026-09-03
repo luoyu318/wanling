@@ -15,7 +15,8 @@
 #   --server=URL      万灵 server 地址(--setup 用;未传则交互输入,默认 http://localhost:18008)
 #   --config-dir=PATH 凭据配置目录(--setup 用;默认 ~/.config/wanling-skills;
 #                     setup 写路径刻意忽略 env WANLING_CONFIG_DIR,防运行环境注入 env 覆盖插件配置)
-#   --force           --setup 允许向插件专用目录(opencode-wanling[-prod])写凭据(默认拒绝)
+#   --force           覆盖 --setup 安全默认:已有凭据仍强制发新子密钥;
+#                     允许向插件专用目录(opencode-wanling[-prod])写凭据(均默认拒绝)
 #   --remote          强制远程模式(默认按 SCRIPT_DIR 自动判定)
 #   -h                帮助;技能名缺省 = 全部(--setup 单跑时除外)
 #
@@ -189,6 +190,18 @@ print_credential_status() {
 do_setup() {
     command -v curl >/dev/null 2>&1 || die "未找到 curl"
     command -v python3 >/dev/null 2>&1 || die "扫码授权需要 python3(解析 server 响应)"
+
+    # 短路:已检测到可用凭据(宿主 env 三元组或任一配置文件)时默认跳过——
+    # 宿主内跑技能自动用宿主身份,再扫码发子密钥是多余动作;确需给无宿主
+    # 平台(如 Claude Code)另发受限子密钥,加 --force 继续
+    if [[ "$SETUP_FORCE" != true ]]; then
+        local existing_cred
+        if existing_cred="$(detect_credential)"; then
+            info "已检测到凭据: ${existing_cred},跳过扫码授权(宿主身份优先)"
+            info "仅当要给「无宿主平台」另发受限子密钥时才需要: --setup --force"
+            return 0
+        fi
+    fi
 
     # server URL:CLI 显式传入直接用;未传则交互(非交互终端直接用默认,防自动化卡死)
     if [[ -z "$SETUP_SERVER" ]]; then
