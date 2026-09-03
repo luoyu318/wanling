@@ -763,3 +763,38 @@ func TestMiniProgramHandler_Openid_不存在appid404(t *testing.T) {
 	AssertErr(t, s.do(httptest.NewRequest("GET", "/api/mini-programs/openid?appid=mp-nope", nil)),
 		http.StatusNotFound, "not_found")
 }
+
+// TestMiniProgramHandler_List_AgentOwnerVisibility 验证 agent 身份查 List 时
+// owner 换算到其服务的用户(照 Upload 先例):可见主人私有小程序,不可见他人私有。
+// published 全量可见由 repo 层 ListVisibleTo 测试覆盖,此处不重复。
+func TestMiniProgramHandler_List_AgentOwnerVisibility(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	owner := e.user(t, "mown")
+	other := e.user(t, "moth")
+	agentID := "agent-" + uuid.NewString()[:8]
+
+	// 主人上传私有小程序(新建默认 private)
+	s.as(owner.ID, "user")
+	ownAppid := "mp-" + uuid.NewString()[:8]
+	AssertOk(t, s.do(mpUploadReq(t, buildTestZip(t, ownAppid, 1))), http.StatusCreated)
+
+	// 他人上传私有小程序
+	s.as(other.ID, "user")
+	otherAppid := "mp-" + uuid.NewString()[:8]
+	AssertOk(t, s.do(mpUploadReq(t, buildTestZip(t, otherAppid, 1))), http.StatusCreated)
+
+	// agent 身份查 List:可见主人私有,不可见他人私有
+	s.asAgent(agentID, owner.ID)
+	items := AssertOkList(t, s.do(httptest.NewRequest("GET", "/api/mini-programs", nil)), http.StatusOK)
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.(map[string]any)["appid"].(string)] = true
+	}
+	if !got[ownAppid] {
+		t.Errorf("agent 应可见主人私有小程序 %s: %v", ownAppid, got)
+	}
+	if got[otherAppid] {
+		t.Errorf("agent 不可见他人私有小程序 %s: %v", otherAppid, got)
+	}
+}

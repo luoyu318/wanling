@@ -188,8 +188,15 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 }
 
 // List GET /api/mini-programs:published 全量 + 自己的。
+// agent 身份 owner 换算(照 Upload 先例):agent 查列表以主人视角可见,
+// 支撑发布后发卡/独立发卡(私有小程序 owner 会话内可发可开,容器页兜底校验)。
 func (h *MiniProgramHandler) List(c *gin.Context) {
 	userID := c.GetString("userID")
+	if c.GetString("role") == "agent" {
+		if ownerID := c.GetString("ownerID"); ownerID != "" {
+			userID = ownerID
+		}
+	}
 	list, err := h.repo.ListVisibleTo(c.Request.Context(), userID)
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "查询失败")
