@@ -28,10 +28,10 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) wanling-miniprogram-publish
 ```
 
-`--target` 控制哪些 agent 工具通过软链发现技能（逗号分隔）：`agents`（只装通用目录本体）/ `opencode`（默认）/ `claude` / `codex` / `gemini` / `copilot`。例如同时给 Claude Code 与 OpenCode：
+`--target` 控制哪些 agent 工具通过软链发现技能（逗号分隔）：`agents`（只装通用目录本体）/ `opencode`（默认）/ `claude` / `codex` / `gemini` / `copilot` / `hermes`（链入 `~/.hermes/skills/` 全局树，全部 profile 共享，装完需 gateway 重启或 reload-skills 重扫）。例如同时给 OpenCode、Claude Code 与 Hermes：
 
 ```bash
-bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --target claude,opencode
+bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --target opencode,claude,hermes
 ```
 
 落到自定义目录（不建软链）：

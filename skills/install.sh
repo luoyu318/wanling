@@ -6,7 +6,7 @@
 #       --target 指定哪些 agent 工具通过软链发现它,避免多副本重复发现。
 #
 # 选项:
-#   --target LIST     逗号分隔: agents,opencode,claude,codex,gemini,copilot(默认 opencode)
+#   --target LIST     逗号分隔: agents,opencode,claude,codex,gemini,copilot,hermes(默认 opencode)
 #   --dir PATH        安装到自定义目录(忽略 --target,不建软链)
 #   --migrate-legacy  发现旧位置真实副本时允许迁移(默认停止,防静默覆盖)
 #   --gen-manifest    (仅本地)重新生成 manifest.sha256
@@ -56,6 +56,9 @@ declare -A TARGET_DIR=(
     [codex]="${HOME}/.codex/skills"
     [gemini]="${HOME}/.gemini/skills"
     [copilot]="${HOME}/.copilot/skills"
+    # hermes: 全局技能树(所有 profile 共享;SKILL.md 同格式)。
+    # 装完需 gateway 重启/重扫(reload-skills)才被 agent 感知。
+    [hermes]="${HOME}/.hermes/skills"
 )
 # 历史安装器可能落过真实目录的位置(防同名重复发现)
 LEGACY_DIRS=(
@@ -515,3 +518,6 @@ fi
 # 装后凭据检测(与 load_config 探测同序;--setup 刚写的凭据会立即命中)
 print_credential_status
 echo "完成。新会话/重启 agent 后生效;验证: 让 agent 列出它发现的 skills。"
+if [[ ",${TARGETS}," == *",hermes,"* ]]; then
+    info "hermes 目标: 需 gateway 重启(或对 agent 发 reload-skills)重扫技能树后才可见"
+fi
