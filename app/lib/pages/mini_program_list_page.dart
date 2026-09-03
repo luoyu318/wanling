@@ -125,7 +125,10 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
               ],
             ),
       body: widget.embedded
-          ? SafeArea(child: _buildBody(context, async, baseUrl))
+          // 底栏平铺容器:布局区已在 NavTabBar(自带 bottom SafeArea)之上,
+          // 外层 Scaffold 不移除 body 的 bottom insets,四边 SafeArea 会叠加
+          // 手势条高度留白 → bottom 关闭,只保 top(无 AppBar 需避开状态栏)。
+          ? SafeArea(bottom: false, child: _buildBody(context, async, baseUrl))
           : _buildBody(context, async, baseUrl),
     );
   }

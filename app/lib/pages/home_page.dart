@@ -10,6 +10,7 @@ import 'package:wanling_core/models/user.dart';
 import '../pages/agent_list_page.dart';
 import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
+import '../pages/mini_program_list_page.dart';
 import '../router_helpers.dart' show chatRoute, sessionsRoute;
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
@@ -259,6 +260,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                       kNavTabMsg => _MsgNavPage(onOpenSidebar: _openSidebar),
                       kNavTabWanling =>
                         _WanlingNavPage(onOpenSidebar: _openSidebar),
+                      kNavTabMiniProgram =>
+                        const MiniProgramListPage(embedded: true),
                       _ => AgentSessionsPage(agentId: id, embedded: true),
                     },
                   ),
@@ -282,6 +285,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                         label: kNavTabWanlingLabel,
                         icon: Icons.auto_awesome,
                         activeIcon: Icons.auto_awesome_outlined)
+                  else if (id == kNavTabMiniProgram)
+                    const NavIconSlot(
+                        tabId: kNavTabMiniProgram,
+                        label: kNavTabMiniProgramLabel,
+                        icon: Icons.grid_view,
+                        activeIcon: Icons.grid_view_outlined)
                   else if (isConvNavId(id))
                     NavConvSlot(tabId: id, tab: _toNavConvTab(id))
                   else if (isMpNavId(id))
@@ -515,7 +524,12 @@ class _MoreSheetIconItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isMsg = tabId == kNavTabMsg;
+    // 固定项 icon/文案三分支:抽屉内恒用 outline 形态(与底栏 activeIcon 同源)。
+    final (icon, label) = switch (tabId) {
+      kNavTabMsg => (Icons.chat_bubble_outline, kNavTabMsgLabel),
+      kNavTabWanling => (Icons.auto_awesome_outlined, kNavTabWanlingLabel),
+      _ => (Icons.grid_view_outlined, kNavTabMiniProgramLabel),
+    };
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -538,14 +552,14 @@ class _MoreSheetIconItem extends ConsumerWidget {
             ),
             alignment: Alignment.center,
             child: Icon(
-              isMsg ? Icons.chat_bubble_outline : Icons.auto_awesome_outlined,
+              icon,
               size: 32,
               color: AppColors.textSecondary,
             ),
           ),
           const SizedBox(height: 6),
           Text(
-            isMsg ? '消息' : '万灵',
+            label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
