@@ -51,7 +51,7 @@ private → published ⇄ disabled
 | 方法 | 路径 | 鉴权组 | 说明 |
 |---|---|---|---|
 | POST | /api/mini-programs | user+agent | 上传 zip 新建私有 / 同 owner 换版本;agent 直传 handler 内 owner 换算(照 file_handler 先例) |
-| GET | /api/mini-programs | user+agent | published 全量 + 自己的(含 disabled);DTO 扇出 manifest 字段 + sha256/size/signature |
+| GET | /api/mini-programs | user+agent | published 全量 + 自己的(含 disabled);agent 身份 handler 内 owner 换算(照 Upload 先例),主人私有可见;DTO 扇出 manifest 字段 + sha256/size/signature |
 | GET | /api/mini-programs/signing-key | user | 下发 ed25519 公钥 `{public_key}`(私钥永不出 server) |
 | DELETE | /api/mini-programs/:id | user | 仅 owner 删自己的 private,否则 409 |
 | GET | /api/mini-programs/:id/package | user+agent | 包下载(owner 或 published),响应头 `X-Mini-Program-Sha256` |
@@ -111,6 +111,7 @@ data: { appid: string, title: string, icon?: string, params?: any }
 ```
 
 - APP shareToChat 发出(title 缺省用小程序名);server 零改动(msg_type 为自由字符串)
+- agent 发卡:REST `POST /api/conversations/:id/messages`(SendAsAgent)发同结构卡片,title/icon 由 agent 按 appid 查 List 自取;发卡走独立卡片消息,无聚合卡通道
 - `data.icon`(可选):分享时刻的 icon 相对 URL 快照(`?v=` 版本参数,与列表 DTO `icon` 字段同值);消息不可变恒为分享时刻图标,缺失(旧消息/无 icon 包)渲染端走通用图标 fallback
 - 渲染:大图卡(hero icon 84dp + 底部标题栏,独立卡不包气泡);缺 appid 脏数据降级占位,不抛异常
 - 点击 → `/mini-program/<appid>?conv=<来源会话>[&launch=<URL 编码 JSON params>]`:conv 供 getChatContext 返 conversation_id,launch 透传入口 query(H5 URLSearchParams 自取,percent-encode 往返无损)
