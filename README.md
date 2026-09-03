@@ -73,6 +73,25 @@ docker compose run --rm --entrypoint /app/wanling-admin server add-user --userna
 
 **或 systemd 源码部署**:见 [docs/deployment-source.md](docs/deployment-source.md)。
 
+## Agent 技能
+
+内置可安装的 **Agent 技能**（SKILL.md + 脚本），装好后 agent 自动发现并具备对应能力，支持 OpenCode / Claude Code / Codex / Gemini / Copilot / Hermes 多平台软链分发：
+
+- **wanling-miniprogram-publish** — 编写并发布小程序：包格式规范、JSBridge 能力与直传上传全流程
+- **wanling-send-image** — 在会话中发图：本地截图/文件与远程图片均可，输出可点击放大的图片消息
+
+一键远程安装（无需克隆仓库）：
+
+```bash
+# 安装全部技能(默认给 OpenCode;--target 指定平台,逗号分隔)
+bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --target opencode,claude,hermes
+
+# 附:扫码授权技能凭据(子密钥,仅无宿主 env 的外来平台需要)
+bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh) --setup
+```
+
+凭据语义:宿主 agent 内跑技能自动用宿主身份（hermes / OpenCode 均为 env 注入，各 agent 独立互不共享）；`--setup` 发放的子密钥 REST-only，可随时在 APP「我的 → Agent → 授权密钥」单独吊销。详见 [skills/README.md](skills/README.md)。
+
 ## 文档
 
 | 想了解什么 | 看哪 |
@@ -81,6 +100,7 @@ docker compose run --rm --entrypoint /app/wanling-admin server add-user --userna
 | 完整部署(源码/systemd) | [docs/deployment-source.md](docs/deployment-source.md) |
 | 项目全貌 + 架构 + 协议 + 数据库设计 | [CLAUDE.md](CLAUDE.md) |
 | Agent 平台接入插件(hermes / opencode) | [plugin/README.md](plugin/README.md) |
+| Agent 技能(安装 / 编写 / 凭据) | [skills/README.md](skills/README.md) |
 | 外部开发者用 SDK 接入 Agent(TS + Python) | [sdk/README.md](sdk/README.md) |
 | nginx 反代模板 + certbot 续期 | [deploy/nginx/README.md](deploy/nginx/README.md) |
 
