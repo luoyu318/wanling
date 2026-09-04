@@ -19,8 +19,8 @@ import 'pages/edit_profile_page.dart';
 import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/mini_program_launch_page.dart';
 import 'pages/mini_program_list_page.dart';
-import 'pages/mini_program_page.dart';
 import 'pages/nav_edit_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
@@ -415,14 +415,23 @@ final routerProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
         ),
       ),
+      // 入口壳:经 launcher 归一(manager 置前台 + live 壳同步),WebView 由宿主层渲染。
       GoRoute(
         path: '/mini-program/:appid',
         pageBuilder: (context, state) => _cupertinoPage(
-          child: MiniProgramPage(
+          child: MiniProgramLaunchPage(
             appid: state.pathParameters['appid']!,
             conversationId: state.uri.queryParameters['conv'],
             launchParams: state.uri.queryParameters['launch'],
           ),
+          key: state.pageKey,
+        ),
+      ),
+      // live 壳:仅拦截系统返回键(返回 = 最小化),由 launcher 压栈/弹出。
+      GoRoute(
+        path: '/mini-program-live/:appid',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const MiniProgramLiveShellPage(),
           key: state.pageKey,
         ),
       ),
