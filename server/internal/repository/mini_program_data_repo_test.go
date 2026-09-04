@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"strings"
@@ -352,6 +353,105 @@ func TestMPData_Stats(t *testing.T) {
 	}
 	if st.AppBytes != 150 || st.AppEntries != 3 || st.MyBytes != 30 || st.MyEntries != 1 {
 		t.Fatalf("期望 App 150B/3 + My(B) 30B/1,实际 %+v", st)
+	}
+}
+
+// 用例 14: 共享档写者所有权迁移 — A 建行,B 覆写同 key → 行 owner 迁到 B、
+// version+1,Stats 把 size 记到最后写者 B 头上(A 不再计)。
+func TestMPData_Shared_UpsertOwnershipMigration(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewMiniProgramDataRepo(db)
+	ownerA := mpDataSeed(t, db, "o1", "app-o")
+	ownerB := mpDataUser(t, db, "o2")
+	limits := mpDataDefaultLimits()
+
+	if _, err := repo.UpsertEntryShared(t.Context(), "app-o", ownerA, "board", "k1", mpDataJSONPad(t, 60), nil, limits); err != nil {
+		t.Fatalf("A 首写: %v", err)
+	}
+	got, err := repo.UpsertEntryShared(t.Context(), "app-o", ownerB, "board", "k1", mpDataJSONPad(t, 30), nil, limits)
+	if err != nil {
+		t.Fatalf("B 覆写同 key: %v", err)
+	}
+	if got.OwnerID != ownerB || got.Version != 2 {
+		t.Fatalf("期望 owner=B version=2,实际 owner=%s version=%d", got.OwnerID, got.Version)
+	}
+	// 跨 owner 读:行全局唯一,A 视角读到的也是 B 覆写后的行
+	row, err := repo.GetEntryShared(t.Context(), "app-o", "board", "k1")
+	if err != nil || row == nil || row.OwnerID != ownerB || row.Version != 2 {
+		t.Fatalf("GetEntryShared 应返回 B 的行: %v %v", row, err)
+	}
+	// size 记在最后写者头上:B 30B/1 条,A 0B/0 条
+	stB, err := repo.Stats(t.Context(), "app-o", ownerB)
+	if err != nil {
+		t.Fatalf("Stats(B): %v", err)
+	}
+	if stB.MyBytes != 30 || stB.MyEntries != 1 {
+		t.Fatalf("B 子量应 30B/1 条,实际 %d/%d", stB.MyBytes, stB.MyEntries)
+	}
+	stA, _ := repo.Stats(t.Context(), "app-o", ownerA)
+	if stA.MyBytes != 0 || stA.MyEntries != 0 {
+		t.Fatalf("A 子量应 0B/0 条,实际 %d/%d", stA.MyBytes, stA.MyEntries)
+	}
+}
+
+// 用例 15: 共享档同 key 并发首写 — advisory lock 串行化,恰落一行。
+// 通道对齐两写者起点;若并发首写各自 INSERT 会产生双行,此处兜底 COUNT 断言。
+func TestMPData_Shared_ConcurrentFirstWrite(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewMiniProgramDataRepo(db)
+	ownerA := mpDataSeed(t, db, "p1", "app-p")
+	ownerB := mpDataUser(t, db, "p2")
+	limits := mpDataDefaultLimits()
+
+	start := make(chan struct{})
+	done := make(chan error, 2)
+	for _, w := range []string{ownerA, ownerB} {
+		go func(id string) {
+			<-start
+			_, err := repo.UpsertEntryShared(context.Background(), "app-p", id, "board", "k1", []byte(`{"w": 1}`), nil, limits)
+			done <- err
+		}(w)
+	}
+	close(start)
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("并发首写不应出错: %v", err)
+		}
+	}
+	var n int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM mini_program_data WHERE appid=$1 AND coll=$2 AND key=$3`,
+		"app-p", "board", "k1").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("同 key 并发首写应恰一行,实际 %d", n)
+	}
+}
+
+// 用例 16: 共享档跨 owner 列举 — A、B 各写不同 key,ListEntriesShared 全见两行。
+func TestMPData_Shared_ListAcrossOwners(t *testing.T) {
+	db := SetupTestDB(t)
+	repo := NewMiniProgramDataRepo(db)
+	ownerA := mpDataSeed(t, db, "q1", "app-q")
+	ownerB := mpDataUser(t, db, "q2")
+	limits := mpDataDefaultLimits()
+
+	if _, err := repo.UpsertEntryShared(t.Context(), "app-q", ownerA, "board", "ka", []byte(`{"a": 1}`), nil, limits); err != nil {
+		t.Fatalf("A 写: %v", err)
+	}
+	if _, err := repo.UpsertEntryShared(t.Context(), "app-q", ownerB, "board", "kb", []byte(`{"b": 1}`), nil, limits); err != nil {
+		t.Fatalf("B 写: %v", err)
+	}
+	rows, next, err := repo.ListEntriesShared(t.Context(), "app-q", "board", "", "", 100)
+	if err != nil {
+		t.Fatalf("ListEntriesShared: %v", err)
+	}
+	if len(rows) != 2 || next != "" || rows[0].Key != "ka" || rows[1].Key != "kb" {
+		t.Fatalf("期望 ka,kb 两行,实际 %+v next=%q", rows, next)
+	}
+	if rows[0].OwnerID != ownerA || rows[1].OwnerID != ownerB {
+		t.Fatalf("行归属应保留各写者: %+v", rows)
 	}
 }
 

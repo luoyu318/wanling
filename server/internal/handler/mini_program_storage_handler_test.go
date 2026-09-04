@@ -476,6 +476,65 @@ func TestStorage_QuotaEndpoint(t *testing.T) {
 	}
 }
 
+// 用例 13: shared_write 第三用户跨读 — 非 owner 用户 A 写的行,
+// 第三用户 C(既非 owner 也非写者)GET/List 都可见(共享行全局身份)。
+func TestStorage_SharedWrite_ThirdUserReadsOwnerRow(t *testing.T) {
+	e := newStorageEnv(t, storageCfg(100<<20))
+	s := e.newSrv(t)
+	owner, a, c := e.user(t, "st13a"), e.user(t, "st13b"), e.user(t, "st13c")
+	appid := stAppid()
+	s.as(owner.ID, "user")
+	s.seedApp(t, appid, true)
+
+	s.as(a.ID, "user")
+	AssertOk(t, s.do(stPut(appid, "a1", "board", `{"value":{"w":"a"}}`)), http.StatusOK)
+
+	// C 读 A 写的行 → 命中
+	s.as(c.ID, "user")
+	data := AssertOk(t, s.do(stGet(appid, "a1", "board")), http.StatusOK)
+	stValueEqual(t, data["value"], `{"w":"a"}`)
+	if v, _ := data["version"].(float64); v != 1 {
+		t.Errorf("version 应 1: %v", data)
+	}
+	// C 列表也能看到 A 的行
+	items := AssertOkList(t, s.do(stList(appid, "board")), http.StatusOK)
+	if len(items) != 1 || items[0].(map[string]any)["key"] != "a1" {
+		t.Errorf("shared_write 列表 C 应见 a1: %v", items)
+	}
+}
+
+// 用例 14: shared_write 两人写同 key — B 覆写 A 建的 key 成功(全局行 version 连续),
+// C 读到同一行 version=2。
+func TestStorage_SharedWrite_TwoUsersSameKey(t *testing.T) {
+	e := newStorageEnv(t, storageCfg(100<<20))
+	s := e.newSrv(t)
+	owner, a, b, c := e.user(t, "st14a"), e.user(t, "st14b"), e.user(t, "st14c"), e.user(t, "st14d")
+	appid := stAppid()
+	s.as(owner.ID, "user")
+	s.seedApp(t, appid, true)
+
+	s.as(a.ID, "user")
+	AssertOk(t, s.do(stPut(appid, "k1", "board", `{"value":{"w":"a"}}`)), http.StatusOK)
+	s.as(b.ID, "user")
+	data := AssertOk(t, s.do(stPut(appid, "k1", "board", `{"value":{"w":"b"}}`)), http.StatusOK)
+	if v, _ := data["version"].(float64); v != 2 {
+		t.Errorf("B 覆写 A 建的 key version 应 2: %v", data)
+	}
+
+	// C 读到同一行 version=2
+	s.as(c.ID, "user")
+	data2 := AssertOk(t, s.do(stGet(appid, "k1", "board")), http.StatusOK)
+	stValueEqual(t, data2["value"], `{"w":"b"}`)
+	if v, _ := data2["version"].(float64); v != 2 {
+		t.Errorf("C 读应见 version=2: %v", data2)
+	}
+	// 列表全局唯一行,无双行
+	items := AssertOkList(t, s.do(stList(appid, "board")), http.StatusOK)
+	if len(items) != 1 || items[0].(map[string]any)["key"] != "k1" {
+		t.Errorf("同 key 应恰一行: %v", items)
+	}
+}
+
 // 用例 12:agent 身份换算 ownerID 后以 owner 视角写 shared_read 成功。
 func TestStorage_AgentOwnerWrite(t *testing.T) {
 	e := newStorageEnv(t, storageCfg(100<<20))

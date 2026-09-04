@@ -116,23 +116,11 @@ func (h *MiniProgramStorageHandler) authStorage(c *gin.Context, write, keyCheck 
 	return &storageCtx{mp: mp, actor: actor, coll: coll, mode: mode}, true
 }
 
-// readSlots 按档位返回读取槽位(owner 维度,前者优先):
-//   - private → [请求者](仅本人行);
-//   - shared_read → [小程序 owner](公告栏所有行都是 owner 写的,单槽即完整);
-//   - shared_write → [请求者, 小程序 owner](本人行优先 + owner 行兜底,
-//     repo 查询按 owner 槽位隔离,第三用户行跨读不可达,见任务报告 concerns)。
-func (h *MiniProgramStorageHandler) readSlots(sc *storageCtx) []string {
-	switch sc.mode {
-	case miniprogram.CollectionModeSharedRead:
-		return []string{sc.mp.OwnerID}
-	case miniprogram.CollectionModeSharedWrite:
-		if sc.actor == sc.mp.OwnerID {
-			return []string{sc.mp.OwnerID}
-		}
-		return []string{sc.actor, sc.mp.OwnerID}
-	default:
-		return []string{sc.actor}
-	}
+// isSharedMode 档位是否共享(shared_read/shared_write):
+// 共享行全局身份 (appid,coll,key),读写走 repo Shared 方法族(跨 owner 可见);
+// private 档继续走槽位隔离方法(本人行)。
+func isSharedMode(mode string) bool {
+	return mode == miniprogram.CollectionModeSharedRead || mode == miniprogram.CollectionModeSharedWrite
 }
 
 // limitsFor 组装写入配额:全局默认 + mini_programs.quota_bytes 覆盖
@@ -164,18 +152,13 @@ func (h *MiniProgramStorageHandler) mapRepoErr(c *gin.Context, err error) {
 	}
 }
 
-// getEntryShared 单键读:依次查读取槽位,首个命中即返回(全 miss → nil)。
-func (h *MiniProgramStorageHandler) getEntryShared(c *gin.Context, sc *storageCtx, key string) (*model.MiniProgramData, error) {
-	for _, owner := range h.readSlots(sc) {
-		e, err := h.dataRepo.GetEntry(c.Request.Context(), sc.mp.Appid, owner, sc.coll, key)
-		if err != nil {
-			return nil, err
-		}
-		if e != nil {
-			return e, nil
-		}
+// getEntryChecked 单键读:shared 档走全局行查询(跨 owner 可见),
+// private 档走请求者槽位(仅本人行)。
+func (h *MiniProgramStorageHandler) getEntryChecked(c *gin.Context, sc *storageCtx, key string) (*model.MiniProgramData, error) {
+	if isSharedMode(sc.mode) {
+		return h.dataRepo.GetEntryShared(c.Request.Context(), sc.mp.Appid, sc.coll, key)
 	}
-	return nil, nil
+	return h.dataRepo.GetEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll, key)
 }
 
 // GetEntry GET /api/mini-program-storage/:appid/entries/:key?coll=
@@ -185,7 +168,7 @@ func (h *MiniProgramStorageHandler) GetEntry(c *gin.Context) {
 	if !ok {
 		return
 	}
-	e, err := h.getEntryShared(c, sc, c.Param("key"))
+	e, err := h.getEntryChecked(c, sc, c.Param("key"))
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
@@ -198,7 +181,8 @@ func (h *MiniProgramStorageHandler) GetEntry(c *gin.Context) {
 }
 
 // PutEntry PUT /api/mini-program-storage/:appid/entries/:key?coll=
-// body {"value":any,"expected_version":int?};行归写者(shared_read 归 owner)。
+// body {"value":any,"expected_version":int?}。shared 档写全局行
+// (owner=最后写者);private 档写请求者槽位行。
 func (h *MiniProgramStorageHandler) PutEntry(c *gin.Context) {
 	sc, ok := h.authStorage(c, true, true)
 	if !ok {
@@ -212,8 +196,15 @@ func (h *MiniProgramStorageHandler) PutEntry(c *gin.Context) {
 		Err(c, http.StatusBadRequest, "bad_request", "body 需为 {\"value\":any,\"expected_version\":int?}")
 		return
 	}
-	e, err := h.dataRepo.UpsertEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
-		c.Param("key"), req.Value, req.ExpectedVersion, h.limitsFor(sc.mp))
+	var e *model.MiniProgramData
+	var err error
+	if isSharedMode(sc.mode) {
+		e, err = h.dataRepo.UpsertEntryShared(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
+			c.Param("key"), req.Value, req.ExpectedVersion, h.limitsFor(sc.mp))
+	} else {
+		e, err = h.dataRepo.UpsertEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
+			c.Param("key"), req.Value, req.ExpectedVersion, h.limitsFor(sc.mp))
+	}
 	if err != nil {
 		h.mapRepoErr(c, err)
 		return
@@ -222,7 +213,7 @@ func (h *MiniProgramStorageHandler) PutEntry(c *gin.Context) {
 }
 
 // DeleteEntry DELETE /api/mini-program-storage/:appid/entries/:key?coll=&expected_version=
-// 删请求者槽位的行(行归写者);不存在 → data:null(幂等)。
+// shared 档删全局行,private 档删请求者槽位行;不存在 → data:null(幂等)。
 func (h *MiniProgramStorageHandler) DeleteEntry(c *gin.Context) {
 	sc, ok := h.authStorage(c, true, true)
 	if !ok {
@@ -237,8 +228,15 @@ func (h *MiniProgramStorageHandler) DeleteEntry(c *gin.Context) {
 		}
 		expected = &v
 	}
-	if _, err := h.dataRepo.DeleteEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
-		c.Param("key"), expected); err != nil {
+	var err error
+	if isSharedMode(sc.mode) {
+		_, err = h.dataRepo.DeleteEntryShared(c.Request.Context(), sc.mp.Appid, sc.coll,
+			c.Param("key"), expected)
+	} else {
+		_, err = h.dataRepo.DeleteEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
+			c.Param("key"), expected)
+	}
+	if err != nil {
 		h.mapRepoErr(c, err)
 		return
 	}
@@ -261,7 +259,16 @@ func (h *MiniProgramStorageHandler) ListEntries(c *gin.Context) {
 		}
 		limit = v
 	}
-	rows, next, err := h.listEntriesMerged(c, sc, c.Query("prefix"), c.Query("cursor"), limit)
+	var rows []*model.MiniProgramData
+	var next string
+	var err error
+	if isSharedMode(sc.mode) {
+		rows, next, err = h.dataRepo.ListEntriesShared(c.Request.Context(), sc.mp.Appid, sc.coll,
+			c.Query("prefix"), c.Query("cursor"), limit)
+	} else {
+		rows, next, err = h.dataRepo.ListEntries(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
+			c.Query("prefix"), c.Query("cursor"), limit)
+	}
 	if err != nil {
 		ErrMsg(c, http.StatusInternalServerError, "服务器错误")
 		return
@@ -274,53 +281,6 @@ func (h *MiniProgramStorageHandler) ListEntries(c *gin.Context) {
 		c.Header("X-Next-Cursor", next)
 	}
 	Ok(c, items)
-}
-
-// listEntriesMerged 列表读:单槽位直接查;shared_write 非 owner 双槽位
-// 各取一页后按 key 归并去重(请求者槽位优先),再截断 limit。
-// hasMore 判定含两侧 repo nextCursor,防单槽恰好取满时误判末页。
-func (h *MiniProgramStorageHandler) listEntriesMerged(c *gin.Context, sc *storageCtx, prefix, cursor string, limit int) ([]*model.MiniProgramData, string, error) {
-	ctx := c.Request.Context()
-	slots := h.readSlots(sc)
-	if len(slots) == 1 {
-		return h.dataRepo.ListEntries(ctx, sc.mp.Appid, slots[0], sc.coll, prefix, cursor, limit)
-	}
-	// 与 repo 的 LIMIT 兜底同规则(0→默认 100),截断/hasMore 判定须用生效值
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	a, nextA, err := h.dataRepo.ListEntries(ctx, sc.mp.Appid, slots[0], sc.coll, prefix, cursor, limit)
-	if err != nil {
-		return nil, "", err
-	}
-	b, nextB, err := h.dataRepo.ListEntries(ctx, sc.mp.Appid, slots[1], sc.coll, prefix, cursor, limit)
-	if err != nil {
-		return nil, "", err
-	}
-	merged := make([]*model.MiniProgramData, 0, len(a)+len(b))
-	i, j := 0, 0
-	for i < len(a) || j < len(b) {
-		switch {
-		case j >= len(b) || (i < len(a) && a[i].Key <= b[j].Key):
-			if j < len(b) && a[i].Key == b[j].Key {
-				j++ // 同 key 去重,前槽位(请求者)行优先
-			}
-			merged = append(merged, a[i])
-			i++
-		default:
-			merged = append(merged, b[j])
-			j++
-		}
-	}
-	hasMore := len(merged) > limit || nextA != "" || nextB != ""
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
-	next := ""
-	if hasMore && len(merged) > 0 {
-		next = merged[len(merged)-1].Key
-	}
-	return merged, next, nil
 }
 
 // GetQuota GET /api/mini-program-storage/:appid/quota

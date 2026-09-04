@@ -141,6 +141,195 @@ func (r *MiniProgramDataRepo) UpsertEntry(ctx context.Context, appid, ownerID, c
 	return e, nil
 }
 
+// ---- 共享档(shared_read/shared_write)方法族 ----
+// 共享行的数据模型:行全局身份 (appid,coll,key),owner_id = 最后写者,
+// size_bytes 恒记在最后写者头上(Stats 按 owner 聚合自然一致)。
+
+// UpsertEntryShared 共享档写入:行全局身份 (appid,coll,key),owner_id=最后写者。
+// pg_advisory_xact_lock 串行化同 key 并发首写(防双行);expectedVersion 对现行 CAS。
+// 配额:appid 池按增量(oldSize→newSize);写者子帽按全额 newSize 校验(行将记到写者头上)。
+func (r *MiniProgramDataRepo) UpsertEntryShared(ctx context.Context, appid, actorID, coll, key string, value []byte, expectedVersion *int64, q QuotaLimits) (*model.MiniProgramData, error) {
+	tx, err := r.beginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mp_data begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	newSize := int64(len(value))
+
+	// advisory lock 串行化同 key 写入:并发首写时第二个事务在此等待,
+	// 提交后锁内快照必见先行者已插的行,走 UPDATE 分支,杜绝双行。
+	// hashtextextended → bigint;事务结束自动释放。
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1||':'||$2||':'||$3, 0))`,
+		appid, coll, key); err != nil {
+		return nil, fmt.Errorf("mp_data advisory lock: %w", err)
+	}
+
+	// 锁全局行(存在时),后续 CAS 校验与增量计算基于锁内快照
+	const lockQ = `SELECT id, owner_id, version, size_bytes FROM mini_program_data
+		WHERE appid=$1 AND coll=$2 AND key=$3 FOR UPDATE`
+	var curID, curVersion, oldSize int64
+	var curOwner string
+	exists := true
+	switch err := tx.QueryRowContext(ctx, lockQ, appid, coll, key).Scan(&curID, &curOwner, &curVersion, &oldSize); {
+	case errors.Is(err, sql.ErrNoRows):
+		exists = false
+		// 调用方带 expectedVersion 说明预期行已存在,行缺失即冲突
+		if expectedVersion != nil {
+			return nil, fmt.Errorf("%w: entry missing, expected version %d", ErrVersionConflict, *expectedVersion)
+		}
+	case err != nil:
+		return nil, fmt.Errorf("mp_data lock: %w", err)
+	default:
+		if expectedVersion != nil && *expectedVersion != curVersion {
+			return nil, fmt.Errorf("%w: expected %d, current %d", ErrVersionConflict, *expectedVersion, curVersion)
+		}
+	}
+
+	// 单值上限
+	if newSize > q.MaxValueBytes {
+		return nil, fmt.Errorf("%w: value too large (%d > %d)", ErrQuotaExceeded, newSize, q.MaxValueBytes)
+	}
+
+	// 双层配额。写者子量按「排除本行」计算:行属 actor 时 SUM 恰好扣掉旧值
+	// (行不属 actor 时本就未计入),故子帽恒按全额 newSize 校验。
+	// appid 总量不排除本行,替换语义走增量。
+	const quotaQ = `SELECT
+		COALESCE(SUM(size_bytes), 0), COUNT(*),
+		COALESCE(SUM(size_bytes) FILTER (WHERE owner_id = $2 AND id <> $3), 0),
+		COUNT(*) FILTER (WHERE owner_id = $2 AND id <> $3)
+		FROM mini_program_data WHERE appid = $1`
+	var appBytes, appEntries, myBytes, myEntries int64
+	if err := tx.QueryRowContext(ctx, quotaQ, appid, actorID, curID).
+		Scan(&appBytes, &appEntries, &myBytes, &myEntries); err != nil {
+		return nil, fmt.Errorf("mp_data quota sum: %w", err)
+	}
+	if exists {
+		// 池替换语义:SUM 已含旧值,按增量校验
+		if appBytes-oldSize+newSize > q.AppBytes {
+			return nil, fmt.Errorf("%w: app bytes quota (%d-%d+%d)", ErrQuotaExceeded, appBytes, oldSize, newSize)
+		}
+	} else if appBytes+newSize > q.AppBytes || appEntries+1 > q.AppEntries {
+		return nil, fmt.Errorf("%w: app quota (%dB/%d entries)", ErrQuotaExceeded, appBytes, appEntries)
+	}
+	// 写者子帽全额:行已属 actor(替换)时条数不变,否则 +1
+	entryDelta := int64(1)
+	if exists && curOwner == actorID {
+		entryDelta = 0
+	}
+	if myBytes+newSize > q.MyBytes || myEntries+entryDelta > q.MyEntries {
+		return nil, fmt.Errorf("%w: writer quota (%dB/%d entries)", ErrQuotaExceeded, myBytes, myEntries)
+	}
+
+	if exists {
+		const upQ = `UPDATE mini_program_data SET
+				value = $4, size_bytes = $5, version = version + 1, owner_id = $6, updated_at = now()
+			WHERE appid = $1 AND coll = $2 AND key = $3
+			RETURNING ` + mpDataColumns
+		e, err := scanMiniProgramData(tx.QueryRowContext(ctx, upQ, appid, coll, key, value, newSize, actorID).Scan)
+		if err != nil {
+			return nil, fmt.Errorf("mp_data update shared: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("mp_data commit: %w", err)
+		}
+		return e, nil
+	}
+	const inQ = `INSERT INTO mini_program_data (appid, owner_id, coll, key, value, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING ` + mpDataColumns
+	e, err := scanMiniProgramData(tx.QueryRowContext(ctx, inQ, appid, actorID, coll, key, value, newSize).Scan)
+	if err != nil {
+		return nil, fmt.Errorf("mp_data insert shared: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("mp_data commit: %w", err)
+	}
+	return e, nil
+}
+
+// GetEntryShared 跨 owner 查 (appid,coll,key) 全局行;未找到 nil,nil。
+func (r *MiniProgramDataRepo) GetEntryShared(ctx context.Context, appid, coll, key string) (*model.MiniProgramData, error) {
+	const q = `SELECT ` + mpDataColumns + ` FROM mini_program_data
+		WHERE appid=$1 AND coll=$2 AND key=$3`
+	e, err := scanMiniProgramData(r.queryRow(ctx, q, appid, coll, key).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mp_data get shared: %w", err)
+	}
+	return e, nil
+}
+
+// DeleteEntryShared 跨 owner 删除,expectedVersion CAS 同 DeleteEntry 语义;未找到 nil,nil。
+func (r *MiniProgramDataRepo) DeleteEntryShared(ctx context.Context, appid, coll, key string, expectedVersion *int64) (*model.MiniProgramData, error) {
+	cur, err := r.GetEntryShared(ctx, appid, coll, key)
+	if err != nil || cur == nil {
+		return nil, err
+	}
+	if expectedVersion != nil && *expectedVersion != cur.Version {
+		return nil, fmt.Errorf("%w: delete expected %d, current %d", ErrVersionConflict, *expectedVersion, cur.Version)
+	}
+	const q = `DELETE FROM mini_program_data
+		WHERE appid=$1 AND coll=$2 AND key=$3 AND version=$4
+		RETURNING ` + mpDataColumns
+	e, err := scanMiniProgramData(r.queryRow(ctx, q, appid, coll, key, cur.Version).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: concurrent modification", ErrVersionConflict)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mp_data delete shared: %w", err)
+	}
+	return e, nil
+}
+
+// ListEntriesShared 跨 owner 列举 (appid,coll) 频道全部行,key 升序 cursor 翻页,同 ListEntries 契约。
+func (r *MiniProgramDataRepo) ListEntriesShared(ctx context.Context, appid, coll, prefix, cursor string, limit int) ([]*model.MiniProgramData, string, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100 // LIMIT 兜底(审计 L12)
+	}
+	q := `SELECT ` + mpDataColumns + ` FROM mini_program_data
+		WHERE appid=$1 AND coll=$2`
+	args := []any{appid, coll}
+	if prefix != "" {
+		args = append(args, prefix+"%")
+		q += fmt.Sprintf(" AND key LIKE $%d", len(args))
+	}
+	if cursor != "" {
+		args = append(args, cursor)
+		q += fmt.Sprintf(" AND key > $%d", len(args))
+	}
+	args = append(args, limit+1)
+	q += fmt.Sprintf(" ORDER BY key LIMIT $%d", len(args))
+
+	rows, err := r.query(ctx, q, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("mp_data list shared: %w", err)
+	}
+	defer rows.Close()
+
+	result := []*model.MiniProgramData{}
+	for rows.Next() {
+		e, err := scanMiniProgramData(rows.Scan)
+		if err != nil {
+			return nil, "", fmt.Errorf("mp_data scan: %w", err)
+		}
+		result = append(result, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("mp_data rows: %w", err)
+	}
+
+	next := ""
+	if len(result) > limit {
+		next = result[limit-1].Key
+		result = result[:limit]
+	}
+	return result, next, nil
+}
+
 // GetEntry 单键读取;未找到返 nil,nil。
 func (r *MiniProgramDataRepo) GetEntry(ctx context.Context, appid, ownerID, coll, key string) (*model.MiniProgramData, error) {
 	const q = `SELECT ` + mpDataColumns + ` FROM mini_program_data
