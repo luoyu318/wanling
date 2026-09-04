@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // NavigationBarSpec 小程序导航栏声明(manifest.navigation_bar,可选)。
 // Style=default(缺省)宿主原生 AppBar 承担返回+标题;custom 宿主隐藏 AppBar 全屏。
@@ -36,7 +39,8 @@ type MiniProgram struct {
 	SHA256        string
 	Size          int64
 	Status        string
-	Signature     string // 包签名 hex;空串=未签(DB NULL 中转)
+	Signature     string        // 包签名 hex;空串=未签(DB NULL 中转)
+	QuotaBytes    sql.NullInt64 // 云数据 appid 总帽覆盖(NULL=用全局默认,管理员可调)
 }
 
 // SigningKey 小程序包签名密钥对(server 单行表,私钥永不下发)。

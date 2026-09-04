@@ -18,14 +18,14 @@ func NewMiniProgramRepo(db *sql.DB) *MiniProgramRepo {
 	return &MiniProgramRepo{queryExecutor: queryExecutor{db: db}}
 }
 
-const mpColumns = `id, appid, owner_id, name, version, manifest, package_file_id, sha256, size, status, signature`
+const mpColumns = `id, appid, owner_id, name, version, manifest, package_file_id, sha256, size, status, signature, quota_bytes`
 
 func scanMiniProgram(row *sql.Row) (*model.MiniProgram, error) {
 	var e model.MiniProgram
 	// signature NULL=未签,经 NullString 中转为空串
 	var sig sql.NullString
 	if err := row.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
-		&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
+		&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig, &e.QuotaBytes); err != nil {
 		return nil, err
 	}
 	e.Signature = sig.String
@@ -85,7 +85,7 @@ func (r *MiniProgramRepo) ListVisibleTo(ctx context.Context, userID string) ([]*
 		var e model.MiniProgram
 		var sig sql.NullString
 		if err := rows.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
-			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
+			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig, &e.QuotaBytes); err != nil {
 			return nil, fmt.Errorf("mini_program scan: %w", err)
 		}
 		e.Signature = sig.String
@@ -108,7 +108,7 @@ type AdminMiniProgram struct {
 // ListAll admin 审核全量列表:三状态全含,updated_at 倒序。
 func (r *MiniProgramRepo) ListAll(ctx context.Context) ([]AdminMiniProgram, error) {
 	const q = `SELECT m.id, m.appid, m.owner_id, m.name, m.version, m.manifest, m.package_file_id,
-		m.sha256, m.size, m.status, m.signature, m.updated_at, u.username
+		m.sha256, m.size, m.status, m.signature, m.quota_bytes, m.updated_at, u.username
 		FROM mini_programs m JOIN users u ON u.id = m.owner_id
 		ORDER BY m.updated_at DESC`
 	rows, err := r.query(ctx, q)
@@ -124,7 +124,7 @@ func (r *MiniProgramRepo) ListAll(ctx context.Context) ([]AdminMiniProgram, erro
 		// signature NULL=未签,经 NullString 中转为空串
 		var sig sql.NullString
 		if err := rows.Scan(&mp.ID, &mp.Appid, &mp.OwnerID, &mp.Name, &mp.Version,
-			&mp.ManifestJSON, &mp.PackageFileID, &mp.SHA256, &mp.Size, &mp.Status, &sig,
+			&mp.ManifestJSON, &mp.PackageFileID, &mp.SHA256, &mp.Size, &mp.Status, &sig, &mp.QuotaBytes,
 			&it.UpdatedAt, &it.OwnerUsername); err != nil {
 			return nil, fmt.Errorf("mini_program list_all scan: %w", err)
 		}
@@ -195,7 +195,7 @@ func (r *MiniProgramRepo) ListPublishedMissingSignature(ctx context.Context) ([]
 		var e model.MiniProgram
 		var sig sql.NullString
 		if err := rows.Scan(&e.ID, &e.Appid, &e.OwnerID, &e.Name, &e.Version,
-			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig); err != nil {
+			&e.ManifestJSON, &e.PackageFileID, &e.SHA256, &e.Size, &e.Status, &sig, &e.QuotaBytes); err != nil {
 			return nil, fmt.Errorf("mini_program scan: %w", err)
 		}
 		e.Signature = sig.String

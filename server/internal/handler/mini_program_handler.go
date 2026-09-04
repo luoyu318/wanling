@@ -50,10 +50,13 @@ type mpItem struct {
 	Icon          string                   `json:"icon"`
 	Permissions   []string                 `json:"permissions"`
 	NavigationBar *model.NavigationBarSpec `json:"navigation_bar"`
-	Status        string                   `json:"status"`
-	SHA256        string                   `json:"sha256"`
-	Size          int64                    `json:"size"`
-	Signature     string                   `json:"signature"`
+	// Collections manifest.collections 档位声明扇出(APP 免二次解析 jsonb;
+	// 未声明时为 null,APP 侧按空清单处理)
+	Collections []model.MiniProgramCollection `json:"collections"`
+	Status      string                        `json:"status"`
+	SHA256      string                        `json:"sha256"`
+	Size        int64                         `json:"size"`
+	Signature   string                        `json:"signature"`
 	// OwnerUsername 仅 admin 全量列表回填(普通 List 不填,omitempty 不下发)
 	OwnerUsername string `json:"owner_username,omitempty"`
 }
@@ -74,8 +77,8 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 	}
 	return mpItem{ID: mp.ID, Appid: mp.Appid, OwnerID: mp.OwnerID, Name: mp.Name,
 		Version: mp.Version, Entry: entry, Icon: iconURL, Permissions: m.Permissions,
-		NavigationBar: m.NavigationBar,
-		Status:        mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
+		NavigationBar: m.NavigationBar, Collections: m.Collections,
+		Status: mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
 }
 
 // Upload POST /api/mini-programs:zip 上传 → 新建私有或同 owner 换版本。
