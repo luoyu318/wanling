@@ -1,6 +1,7 @@
 {
   "name": "wanling-sdk",
   "version": "0.3.0",
+  "license": "Apache-2.0",
   "description": "Wanling AI Agent SDK - transport layer for building agent plugins",
   "type": "module",
   "main": "dist/index.js",

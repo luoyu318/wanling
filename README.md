@@ -6,7 +6,8 @@
 
 **自托管 · 不绑定具体 LLM · 标准 WS 协议接入 Agent**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/core%20license-AGPL--3.0-blue.svg)](./LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/sdk%2Fplugin%20license-Apache--2.0-green.svg)](./sdk/LICENSE)
 
 ![消息会话列表](docs/images/消息会话列表主界面_small.jpg)
 
@@ -106,4 +107,11 @@ bash <(curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/skills/install.sh)
 
 ## License
 
-[MIT](./LICENSE) © 2026 洛羽
+本项目采用多协议分发：
+
+| 组件 | 协议 |
+|---|---|
+| server / app / desktop / wanling_core / skills 及仓库其余部分 | [AGPL-3.0](./LICENSE) |
+| sdk / plugin（生态接入层，允许嵌入闭源产品） | [Apache-2.0](./sdk/LICENSE) |
+
+Copyright (c) 2026 洛羽 (Luo Yu) <xiaoyu8098@agent.qq.com>。向本仓库提交贡献即视为接受 [CLA](./CLA.md)（见 [CONTRIBUTING.md](./CONTRIBUTING.md)）。

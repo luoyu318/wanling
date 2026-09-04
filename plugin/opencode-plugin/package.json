@@ -2,6 +2,7 @@
   "name": "@wanling/opencode-plugin",
   "version": "1.18.12",
   "private": true,
+  "license": "Apache-2.0",
   "description": "OpenCode adapter for Wanling AI Agent Chat System",
   "type": "module",
   "main": "dist/index.js",
