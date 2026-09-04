@@ -24,7 +24,8 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 | version | 是 | 正整数；**同 appid 重传必须递增**（重传=换版本且状态重置回私有） |
 | entry | 否 | 入口 HTML，默认 `index.html`，必须真实存在于包内 |
 | icon | 否 | 包内相对路径；扩展名 png/jpg/jpeg/webp、≤256KB、内容须为真实图片（魔数校验） |
-| permissions | 否 | 白名单四选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，其他值会被拒 |
+| permissions | 否 | 白名单五选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`（云数据 KV，声明即生效），其他值会被拒 |
+| collections | 否 | 云数据集合声明 `[{name, mode}]`，≤16 个；name `^[a-z0-9_-]{1,32}$` 且不可用保留名 `default`、不可重名；mode 三选一 `private`/`shared_read`/`shared_write`；未声明的 coll 运行时不可用（`default` 集合免声明、恒 private） |
 | navigationBar | 否 | 导航栏声明：`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`；default=宿主原生 AppBar（可配色），custom=全屏无标题栏 |
 | minHostVersion | 否 | 宿主最低版本声明 |
 

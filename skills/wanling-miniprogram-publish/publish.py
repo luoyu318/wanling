@@ -23,12 +23,15 @@ import zipfile
 
 MAX_ZIP_BYTES = 20 * 1024 * 1024
 MAX_FILES = 2000
-ALLOWED_PERMISSIONS = {"wanling.api", "wanling.chat.read", "wanling.chat.share", "wanling.nav"}
+ALLOWED_PERMISSIONS = {"wanling.api", "wanling.chat.read", "wanling.chat.share", "wanling.nav", "wanling.storage"}
 APPID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,31}$")
 # 以下与 server validate.go 对齐
 ICON_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_ICON_BYTES = 256 << 10
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+COLLECTION_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+ALLOWED_COLLECTION_MODES = {"private", "shared_read", "shared_write"}
+MAX_COLLECTIONS = 16
 
 
 def sniff_image_ct(b):
@@ -73,6 +76,26 @@ def validate_icon(m, src_dir):
         sys.exit(f"[mp-publish] icon 超 256KB 上限（{len(data)} 字节）")
     if not sniff_image_ct(data):
         sys.exit("[mp-publish] icon 内容非图片（魔数不识别）")
+
+
+def validate_collections(m):
+    """镜像 server validate.go 的 collections 校验：
+    ≤16 个、name 正则 + default 保留、mode 三选一、重名拒。"""
+    colls = m.get("collections") or []
+    if len(colls) > MAX_COLLECTIONS:
+        sys.exit(f"[mp-publish] collections 数量超上限({MAX_COLLECTIONS})")
+    seen = set()
+    for c in colls:
+        name = c.get("name", "") if isinstance(c, dict) else ""
+        if not COLLECTION_NAME_RE.match(name):
+            sys.exit(f"[mp-publish] collection name 非法: {name!r}(须 ^[a-z0-9_-]{{1,32}}$)")
+        if name == "default":
+            sys.exit("[mp-publish] collection name 保留: default")
+        if c.get("mode") not in ALLOWED_COLLECTION_MODES:
+            sys.exit(f"[mp-publish] collection mode 非法: {c.get('mode')!r}(须 private/shared_read/shared_write)")
+        if name in seen:
+            sys.exit(f"[mp-publish] collection 重名: {name}")
+        seen.add(name)
 
 
 def config_candidates():
@@ -162,6 +185,7 @@ def local_check(src_dir):
         if p not in ALLOWED_PERMISSIONS:
             sys.exit(f"[mp-publish] 未知 permission: {p}（白名单: {sorted(ALLOWED_PERMISSIONS)}）")
     validate_navigation_bar(m.get("navigationBar"))
+    validate_collections(m)
     validate_icon(m, src_dir)
     zip_path = os.path.join("/tmp", f"mp_publish_{appid}.zip")
     count = 0
