@@ -225,6 +225,19 @@ func stValueEqual(t *testing.T, got any, want string) {
 	}
 }
 
+// stListPage 断言列表响应并解包 data:{items,next_cursor} 形状
+// (集合+游标的形状例外,游标走 body 而非响应头)。
+// 返回 items 与 next_cursor 原值:有下页为 string,末页为 nil(null)。
+func stListPage(t *testing.T, w *httptest.ResponseRecorder) ([]any, any) {
+	t.Helper()
+	data := AssertOk(t, w, http.StatusOK)
+	items, ok := data["items"].([]any)
+	if !ok {
+		t.Fatalf("data.items 应为数组: %s", w.Body.String())
+	}
+	return items, data["next_cursor"]
+}
+
 // 用例 1:private 档(default coll)PUT → GET 往返,响应形状齐全。
 func TestStorage_PutGet_Roundtrip(t *testing.T) {
 	e := newStorageEnv(t, storageCfg(100<<20))
@@ -347,7 +360,7 @@ func TestStorage_SharedWrite_AllWrite(t *testing.T) {
 	stValueEqual(t, data2["value"], `{"w":"b"}`)
 
 	// B 列表含两人的行
-	items := AssertOkList(t, s.do(stList(appid, "board")), http.StatusOK)
+	items, _ := stListPage(t, s.do(stList(appid, "board")))
 	keys := map[string]bool{}
 	for _, it := range items {
 		keys[it.(map[string]any)["key"].(string)] = true
@@ -405,7 +418,9 @@ func TestStorage_Quota_413(t *testing.T) {
 		http.StatusRequestEntityTooLarge, "payload_too_large")
 }
 
-// 用例 10:列表 prefix + cursor 翻页,X-Next-Cursor 头断言(末页空头)。
+// 用例 10:列表 prefix + cursor 翻页,data:{items,next_cursor} body 断言。
+// 游标必须走 body:APP 桥经 proxyRequest 只透 body,响应头到不了 JS 侧;
+// 末页 next_cursor 为 null。
 func TestStorage_List_PrefixCursor(t *testing.T) {
 	e := newStorageEnv(t, storageCfg(100<<20))
 	s := e.newSrv(t)
@@ -417,34 +432,37 @@ func TestStorage_List_PrefixCursor(t *testing.T) {
 		AssertOk(t, s.do(stPut(appid, fmt.Sprintf("k%d", i), "", fmt.Sprintf(`{"value":%d}`, i))), http.StatusOK)
 	}
 
-	// 第一页:prefix=k&limit=2 → k1,k2 + cursor=k2
+	// 第一页:prefix=k&limit=2 → k1,k2 + next_cursor=k2
 	w1 := s.do(stList(appid, "", "prefix", "k", "limit", "2"))
-	items1 := AssertOkList(t, w1, http.StatusOK)
+	items1, cur1 := stListPage(t, w1)
 	if len(items1) != 2 || items1[0].(map[string]any)["key"] != "k1" || items1[1].(map[string]any)["key"] != "k2" {
 		t.Errorf("第一页应 k1,k2: %v", items1)
 	}
-	if cur := w1.Header().Get("X-Next-Cursor"); cur != "k2" {
-		t.Errorf("第一页 cursor 应 k2,实际 %q", cur)
+	if cur, ok := cur1.(string); !ok || cur != "k2" {
+		t.Errorf("第一页 next_cursor 应 k2,实际 %v", cur1)
+	}
+	if h := w1.Header().Get("X-Next-Cursor"); h != "" {
+		t.Errorf("不应再设 X-Next-Cursor 头,实际 %q", h)
 	}
 
-	// 第二页:cursor=k2 → k3,k4 + cursor=k4
+	// 第二页:cursor=k2 → k3,k4 + next_cursor=k4
 	w2 := s.do(stList(appid, "", "prefix", "k", "cursor", "k2", "limit", "2"))
-	items2 := AssertOkList(t, w2, http.StatusOK)
+	items2, cur2 := stListPage(t, w2)
 	if len(items2) != 2 || items2[0].(map[string]any)["key"] != "k3" || items2[1].(map[string]any)["key"] != "k4" {
 		t.Errorf("第二页应 k3,k4: %v", items2)
 	}
-	if cur := w2.Header().Get("X-Next-Cursor"); cur != "k4" {
-		t.Errorf("第二页 cursor 应 k4,实际 %q", cur)
+	if cur, ok := cur2.(string); !ok || cur != "k4" {
+		t.Errorf("第二页 next_cursor 应 k4,实际 %v", cur2)
 	}
 
-	// 末页:cursor=k4 → 仅 k5,无 cursor 头
+	// 末页:cursor=k4 → 仅 k5,next_cursor 为 null
 	w3 := s.do(stList(appid, "", "prefix", "k", "cursor", "k4", "limit", "2"))
-	items3 := AssertOkList(t, w3, http.StatusOK)
+	items3, cur3 := stListPage(t, w3)
 	if len(items3) != 1 || items3[0].(map[string]any)["key"] != "k5" {
 		t.Errorf("末页应仅 k5: %v", items3)
 	}
-	if cur := w3.Header().Get("X-Next-Cursor"); cur != "" {
-		t.Errorf("末页应无 cursor 头,实际 %q", cur)
+	if cur3 != nil {
+		t.Errorf("末页 next_cursor 应 null,实际 %v", cur3)
 	}
 }
 
@@ -497,7 +515,7 @@ func TestStorage_SharedWrite_ThirdUserReadsOwnerRow(t *testing.T) {
 		t.Errorf("version 应 1: %v", data)
 	}
 	// C 列表也能看到 A 的行
-	items := AssertOkList(t, s.do(stList(appid, "board")), http.StatusOK)
+	items, _ := stListPage(t, s.do(stList(appid, "board")))
 	if len(items) != 1 || items[0].(map[string]any)["key"] != "a1" {
 		t.Errorf("shared_write 列表 C 应见 a1: %v", items)
 	}
@@ -529,7 +547,7 @@ func TestStorage_SharedWrite_TwoUsersSameKey(t *testing.T) {
 		t.Errorf("C 读应见 version=2: %v", data2)
 	}
 	// 列表全局唯一行,无双行
-	items := AssertOkList(t, s.do(stList(appid, "board")), http.StatusOK)
+	items, _ := stListPage(t, s.do(stList(appid, "board")))
 	if len(items) != 1 || items[0].(map[string]any)["key"] != "k1" {
 		t.Errorf("同 key 应恰一行: %v", items)
 	}

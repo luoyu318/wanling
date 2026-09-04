@@ -272,8 +272,16 @@ func (h *MiniProgramStorageHandler) DeleteEntry(c *gin.Context) {
 	Ok(c, nil)
 }
 
+// storageListPageDTO 列表页 DTO:集合+游标的形状例外(data:{items,next_cursor})。
+// 游标必须走 body:APP 桥经 ApiService.proxyRequest 只透 body,
+// 放响应头则 JS 侧翻页游标永远缺失(末页 next_cursor 为 null)。
+type storageListPageDTO struct {
+	Items      []storageEntryDTO `json:"items"`
+	NextCursor *string           `json:"next_cursor"`
+}
+
 // ListEntries GET /api/mini-program-storage/:appid/entries?coll=&prefix=&cursor=&limit=
-// data 直接数组;有下一页时带 X-Next-Cursor 头(末页无头)。
+// data 为 {items:[...],next_cursor:"..."|null}(游标 body 携带,见 DTO 注释)。
 func (h *MiniProgramStorageHandler) ListEntries(c *gin.Context) {
 	sc, ok := h.authStorage(c, false, false)
 	if !ok {
@@ -306,10 +314,11 @@ func (h *MiniProgramStorageHandler) ListEntries(c *gin.Context) {
 	for _, e := range rows {
 		items = append(items, toStorageEntryDTO(e))
 	}
+	var nextCursor *string
 	if next != "" {
-		c.Header("X-Next-Cursor", next)
+		nextCursor = &next
 	}
-	Ok(c, items)
+	Ok(c, storageListPageDTO{Items: items, NextCursor: nextCursor})
 }
 
 // GetQuota GET /api/mini-program-storage/:appid/quota

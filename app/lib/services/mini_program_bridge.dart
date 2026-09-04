@@ -344,7 +344,8 @@ class MiniProgramBridge {
         if (cursor != null && cursor.isNotEmpty) {
           path += '&cursor=${Uri.encodeComponent(cursor)}';
         }
-        // 透传 server 形状(next 游标在 X-Next-Cursor 头,由 proxy 接线层处理)
+        // 透传 server 形状 data:{items,next_cursor}(游标 body 携带,
+        // proxy 链路只透 body,响应头到不了 JS 侧;末页 next_cursor 为 null)
         return {'ok': true, 'data': await proxy(path, 'GET', null)};
       default:
         return {'ok': false, 'error': 'unknown method: $handlerName'};
