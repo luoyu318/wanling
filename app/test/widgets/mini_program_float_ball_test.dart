@@ -59,6 +59,25 @@ void main() {
     expect(find.byType(MiniProgramFloatBall), findsOneWidget);
   });
 
+  testWidgets('长按拖拽被取消 → 复位就近吸附,不卡拖拽态', (tester) async {
+    await tester.pumpWidget(_host([
+      MiniProgramInstance(appid: 'a', openedAt: DateTime.now()),
+    ]));
+    final center = tester.getCenter(find.byType(MiniProgramFloatBall));
+    final gesture = await tester.startGesture(center);
+    await tester.pump(const Duration(milliseconds: 600)); // 越过长按阈值
+    await gesture.moveBy(const Offset(-100, 80));
+    await tester.pump();
+    // 系统事件打断(如系统弹窗)→ 手势取消
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    final p = _ballPositioned(tester);
+    // 拖拽态解除:回到吸附态露出宽度
+    expect(p.width, closeTo(56.0 / 3, 0.01));
+    // 拖后球心在右半屏 → 就近吸附右缘
+    expect(p.left, closeTo(800 - 56.0 / 3, 0.01));
+  });
+
   testWidgets('初始吸附右缘,露 1/3 宽', (tester) async {
     await tester.pumpWidget(_host([
       MiniProgramInstance(appid: 'a', openedAt: DateTime.now()),

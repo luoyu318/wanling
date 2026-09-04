@@ -132,6 +132,8 @@ class _MiniProgramFloatBallState extends State<MiniProgramFloatBall> {
           setState(() => _pos = _clampDy(_dragStartPos + d.offsetFromOrigin));
         },
         onLongPressEnd: (_) => _snapToNearestEdge(),
+        // 手势被系统打断(弹窗等)时兜底复位,防 _dragging 卡 true 球停在半空
+        onLongPressCancel: _snapToNearestEdge,
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 150),
           opacity: _dragging ? 1.0 : 0.45,
