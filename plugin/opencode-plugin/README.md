@@ -2,7 +2,32 @@
 
 将 OpenCode CLI/TUI 与万灵 APP 双向实时同步。
 
-## 快速开始
+## 远程一键安装（推荐，免克隆、免 NodeJS）
+
+无需克隆仓库、无需 Node.js：从主仓库 release 下载单文件二进制，扫码配对后自动装成 systemd 用户级服务。
+
+```bash
+# 扫码配对（推荐）：终端出二维码，万灵 APP「消息 tab → 右上角 + → 扫一扫」授权
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+  bash -s -- --plugin=opencode-plugin --version=v1.6.4 --pair --server=https://your.server.com
+
+# 或手动填凭据（Agent 注册时下发的 id + secret_key）
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+  bash -s -- --plugin=opencode-plugin --version=v1.6.4 \
+    --server=https://your.server.com --agent-id=<id> --secret-key=<key>
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--version=<tag>` | 主仓库 release tag（示例以最新 release 为准），据此下载对应二进制附件 `wanling-opencode-plugin-<os>-<arch>` |
+| `--pair` | 扫码配对，免手输凭据；不传则需 `--agent-id` + `--secret-key` |
+| `--server=URL` | 管道安装必须显式传（`curl \| bash` 下 stdin 是管道，脚本无法交互式询问） |
+
+> 二维码渲染需要 `qrencode` 或 `python3+qrcode`，都没有时打印纯文本配对码，授权效果相同。
+
+安装完成即自动注册并启动 systemd 用户级服务（默认 `opencode-wanling`，`ocwl-restart` / `ocwl-logs` 运维），之后连 TUI 用快捷命令 `ocwl` 即可。
+
+## 快速开始（源码方式）
 
 ### 1. 扫码配对（推荐）
 
