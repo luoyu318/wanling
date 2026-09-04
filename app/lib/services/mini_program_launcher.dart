@@ -33,20 +33,31 @@ void openMiniProgramWith(
 void bindLiveRoute() => _liveActive = true;
 
 /// Host 回调(最小化/恢复/关闭)之后同步 live 壳有无。
-void syncLiveRouteWith(ProviderContainer container) {
+/// 返回是否弹出了一个壳页:壳页的返回键回调据此决定是否需要残余壳兜底自弹。
+bool syncLiveRouteWith(ProviderContainer container) {
   final has = container.read(miniProgramManagerProvider).hasForeground;
   if (has && !_liveActive) {
     _ensureLiveRouteWith(container);
   } else if (!has && _liveActive) {
     _liveActive = false;
     final router = container.read(routerProvider);
-    if (router.canPop()) router.pop();
+    if (router.canPop()) {
+      router.pop();
+      return true;
+    }
   }
+  return false;
 }
 
 void _ensureLiveRouteWith(ProviderContainer container) {
   if (_liveActive) return;
   _liveActive = true;
   final appid = container.read(miniProgramManagerProvider).foregroundAppid;
-  container.read(routerProvider).push('/mini-program-live/$appid');
+  container
+      .read(routerProvider)
+      .push('/mini-program-live/$appid')
+      .then((_) {}, onError: (Object _) {
+    // push 失败(如路由未注册):复位壳占位,下次打开可重试,避免壳状态卡死
+    _liveActive = false;
+  });
 }

@@ -9,9 +9,12 @@ import 'package:app/services/mini_program_launcher.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 
-/// 系统返回键拦截壳:返回 = 最小化(前台清空 + live 路由同步)。
-class _MinimizeOnPop extends StatelessWidget {
-  const _MinimizeOnPop();
+/// 小程序壳层返回键拦截:返回 = 最小化(前台清空 + live 路由同步)。
+/// 残余壳兜底:sync 未弹壳(它已弹则本回调直接结束,不会双弹)且已无前台时,
+/// 自弹本页(Navigator.pop 不受 PopScope 门控)——防双入口压栈等场景下
+/// 残余壳以 canPop:false 拦死系统返回,用户卡空屏。
+class MiniProgramBackScope extends StatelessWidget {
+  const MiniProgramBackScope({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -20,8 +23,13 @@ class _MinimizeOnPop extends StatelessWidget {
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         final container = ProviderScope.containerOf(context);
-        container.read(miniProgramManagerProvider).minimize();
-        syncLiveRouteWith(container);
+        final manager = container.read(miniProgramManagerProvider);
+        manager.minimize();
+        final popped = syncLiveRouteWith(container);
+        if (popped) return;
+        if (!manager.hasForeground && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
       },
       child: const SizedBox.shrink(),
     );
@@ -79,17 +87,31 @@ class _MiniProgramLaunchPageState extends ConsumerState<MiniProgramLaunchPage> {
 
   @override
   Widget build(BuildContext context) {
-    return const _MinimizeOnPop();
+    return const MiniProgramBackScope();
   }
 }
 
 /// live 路由壳:页面本身无 UI(WebView 由宿主层渲染),
 /// 职责仅为拦截系统返回键(返回 = 最小化)。
-class MiniProgramLiveShellPage extends StatelessWidget {
+class MiniProgramLiveShellPage extends StatefulWidget {
   const MiniProgramLiveShellPage({super.key});
 
   @override
+  State<MiniProgramLiveShellPage> createState() =>
+      _MiniProgramLiveShellPageState();
+}
+
+class _MiniProgramLiveShellPageState extends State<MiniProgramLiveShellPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 正常由 launcher 在 push 前置位占位,此处自报是幂等兜底:
+    // 深链直达 /mini-program-live/:appid 时保证 flag 与壳栈一致
+    bindLiveRoute();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const _MinimizeOnPop();
+    return const MiniProgramBackScope();
   }
 }

@@ -82,10 +82,28 @@ void main() {
   });
 
   test('无前台且壳不在栈上时 sync 幂等', () {
-    syncLiveRouteWith(container);
-
+    expect(syncLiveRouteWith(container), isFalse);
     verifyNever(() => router.push(any<String>()));
     verifyNever(() => router.pop());
+  });
+
+  test('最小化 + sync 弹壳返回 true(壳页据此跳过兜底自弹)', () {
+    openMiniProgramWith(container, 'a');
+    container.read(miniProgramManagerProvider).minimize();
+
+    expect(syncLiveRouteWith(container), isTrue);
+  });
+
+  test('push 失败复位壳占位,下次打开可重试', () async {
+    when(() => router.push(any<String>()))
+        .thenAnswer((_) async => throw Exception('路由未注册'));
+    openMiniProgramWith(container, 'a');
+    // 等 push future 的失败复位跑完
+    await Future<void>.delayed(Duration.zero);
+
+    when(() => router.push(any<String>())).thenAnswer((_) async => null);
+    openMiniProgramWith(container, 'a');
+    verify(() => router.push('/mini-program-live/a')).called(2);
   });
 
   test('无前台且壳在栈上但 canPop=false 时 sync 只复位不 pop', () {
