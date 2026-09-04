@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>共享清单</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#fff;--text:#1a1a1a;--sub:#8a8f99;--line:#ececec;
+  --brand:#07c160;--brand-weak:rgba(7,193,96,.12);--blue:#3c7cf7;--danger:#fa5151;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+.wrap{padding:16px;padding-bottom:40px}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--line)}
+.card h3{font-size:14px;margin-bottom:10px;color:var(--brand)}
+button.btn{width:100%;padding:11px;border:none;border-radius:10px;background:var(--brand);color:#fff;font-size:15px;cursor:pointer}
+button.btn:active{opacity:.75}
+button.mini{padding:7px 12px;border:none;border-radius:8px;background:var(--brand-weak);color:var(--brand);font-size:13px;cursor:pointer}
+input[type=text]{padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text);font-size:14px;width:100%}
+.frow{display:flex;gap:8px;margin-bottom:8px}
+.frow input{flex:1}
+.todo{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.todo:last-child{border-bottom:none}
+.todo input[type=checkbox]{width:20px;height:20px;accent-color:var(--brand);flex:none}
+.todo .tx{flex:1;min-width:0;font-size:14px;word-break:break-all}
+.todo.done .tx{color:var(--sub);text-decoration:line-through}
+.todo .del{color:var(--danger);font-size:13px;padding:4px 6px;cursor:pointer}
+.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.head b{font-size:13px;color:var(--sub);font-weight:500}
+.empty{color:var(--sub);font-size:13px;text-align:center;padding:16px 0}
+.toast{position:fixed;left:50%;bottom:60px;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;padding:9px 18px;border-radius:9px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:80vw}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <h3>共享清单（shared_write 档 board · 多人实时同步）</h3>
+    <div class="frow">
+      <input type="text" id="newText" placeholder="要做的事…" onkeydown="if(event.key==='Enter')addItem()">
+      <button class="mini" onclick="addItem()">新增</button>
+    </div>
+    <div class="head"><b id="count">--</b><button class="mini" onclick="fullLoad()">全量刷新（兜底）</button></div>
+    <div id="list"><div class="empty">加载中…</div></div>
+  </div>
+
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =============== hash 路由 + 标题（宿主 AppBar 靠 document.title 同步，不自绘返回键） =============== */
+function route(){
+  // 单页应用：hash 仅 #home 一页，切页时同步标题即可
+  document.title = '共享清单';
+}
+window.addEventListener('hashchange', route);
+route();
+
+const COLL = 'board';
+const $ = id => document.getElementById(id);
+function toast(s){
+  const t = $('toast');
+  t.textContent = s; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 2000);
+}
+function storage(){ return window.wanling && window.wanling.storage; }
+// 乐观锁冲突识别：server 409 的 code=invalid_state，message 含「版本冲突」
+function isConflict(e){
+  const m = (e && e.message) || String(e);
+  return m.indexOf('invalid_state') >= 0 || m.indexOf('版本冲突') >= 0 || m.indexOf('version conflict') >= 0;
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* 本地缓存：key → {value, version}。事件按到达序在此合并后统一重渲染 */
+const cache = {};
+
+/* =============== 事件驱动：订阅 + 版本判断 =============== */
+function onEvent(ev){
+  if (!ev || ev.coll !== COLL) return;
+  const hit = cache[ev.key];
+  if (ev.deleted){
+    // delete 事件 version 是被删行旧值（非递增），不做版本去重，直接应用
+    delete cache[ev.key];
+  } else if (hit && hit.version >= ev.version){
+    return; // 比本地旧的 set 事件，丢弃（瞬态乱序兜底）
+  } else {
+    cache[ev.key] = {value: ev.value, version: ev.version};
+  }
+  render();
+}
+
+/* =============== 初始化：订阅 + 全量兜底首拉 =============== */
+(async function init(){
+  if (!storage()){ $('list').innerHTML = '<div class="empty">wanling.storage 不可用：请在万灵 APP 中打开本小程序</div>'; return; }
+  try {
+    await storage().subscribe([COLL]);  // 订阅 board 频道（WS 推送）
+    storage().on(onEvent);              // 注册事件回调（到达序应用）
+  } catch(e){ toast('订阅失败: ' + ((e && e.message) || e)); }
+  fullLoad(); // 推送是「瞬态可丢」的增值路径，首屏/兜底始终全量拉
+})();
+
+/* 全量拉取：游标翻到取完，重建本地缓存（事件丢失/乱序的兜底） */
+async function fullLoad(){
+  if (!storage()) return;
+  try {
+    let rows = [], cursor = null;
+    do {
+      const page = await storage().items({coll: COLL, limit: 100, cursor});
+      rows = rows.concat(page.items || []);
+      cursor = page.next_cursor;
+    } while (cursor);
+    for (const k in cache) delete cache[k];
+    for (const row of rows) cache[row.key] = {value: row.value, version: row.version};
+    render();
+  } catch(e){ $('list').innerHTML = '<div class="empty">拉取失败: ' + ((e && e.message) || e) + '</div>'; }
+}
+
+/* =============== 渲染 =============== */
+function render(){
+  const keys = Object.keys(cache).sort(); // key 内嵌时间戳，字典序≈创建序
+  let done = 0;
+  const html = keys.map(k => {
+    const v = cache[k].value || {};
+    if (v.done) done++;
+    const checked = v.done ? ' checked' : '';
+    const cls = v.done ? ' todo done' : ' todo';
+    return '<div class="' + cls + '"><input type="checkbox"' + checked + ' onchange="flip(\'' + k + '\')">' +
+      '<div class="tx">' + esc(v.text || '') + '</div>' +
+      '<span class="del" onclick="delItem(\'' + k + '\')">删除</span></div>';
+  }).join('');
+  $('count').textContent = keys.length ? ('共 ' + keys.length + ' 条 · 已完成 ' + done) : '';
+  $('list').innerHTML = html || '<div class="empty">清单是空的，加一条试试</div>';
+}
+
+/* =============== 写操作 =============== */
+async function addItem(){
+  if (!storage()) return;
+  const text = $('newText').value.trim();
+  if (!text){ toast('请输入内容'); return; }
+  // key = t-<毫秒时间戳36进制>-<随机>：满足 ^[A-Za-z0-9_.:@-]{1,128}$ 且创建序可排序
+  const key = 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+  try {
+    const w = await storage().set({key: key, value: {text: text, done: false}, coll: COLL});
+    cache[key] = {value: w.value, version: w.version}; // 写返回即写后 entry，直接进缓存（事件可能重复到达，被 version 去重）
+    $('newText').value = '';
+    render();
+  } catch(e){ toast('新增失败: ' + ((e && e.message) || e)); }
+}
+
+// checkbox 翻转：带 expectedVersion 乐观锁；409 冲突时重读重试一次
+async function flip(key){
+  const hit = cache[key];
+  if (!hit) return;
+  const newVal = {text: hit.value.text, done: !hit.value.done};
+  try {
+    const w = await storage().set({key: key, value: newVal, coll: COLL, expectedVersion: hit.version});
+    cache[key] = {value: w.value, version: w.version};
+    render();
+  } catch(e){
+    if (!isConflict(e)){ toast('更新失败: ' + ((e && e.message) || e)); render(); return; }
+    // 他人先改了：重读最新值，基于最新内容重试一次
+    try {
+      const fresh = await storage().get({key: key, coll: COLL});
+      if (!fresh){ delete cache[key]; render(); return; } // 已被他人删除
+      const retryVal = {text: fresh.value.text, done: !fresh.value.done};
+      const w = await storage().set({key: key, value: retryVal, coll: COLL, expectedVersion: fresh.version});
+      cache[key] = {value: w.value, version: w.version};
+      render();
+      toast('已被他人更新，已按最新内容重试');
+    } catch(e2){ toast('重试仍失败: ' + ((e2 && e2.message) || e2)); fullLoad(); }
+  }
+}
+
+async function delItem(key){
+  if (!storage()) return;
+  try {
+    await storage().remove({key: key, coll: COLL}); // 删除幂等，不带乐观锁
+    delete cache[key];
+    render();
+  } catch(e){ toast('删除失败: ' + ((e && e.message) || e)); }
+}
+</script>
+</body>
+</html>
