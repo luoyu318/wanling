@@ -298,7 +298,7 @@ func TestServeHTTP_AdminTokenRegistersAsUser(t *testing.T) {
 		secret = "test-secret"
 		uid    = "admin-user-1"
 	)
-	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry(), nil)
 	srv := httptest.NewServer(wsh)
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -373,7 +373,7 @@ func TestServeHTTP_SubKeyTokenRejected(t *testing.T) {
 		agentID = "agent-sub-1"
 		ownerID = "owner-1"
 	)
-	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry(), nil)
 	srv := httptest.NewServer(wsh)
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -446,7 +446,7 @@ func TestServeHTTP_MasterKeyTokenIdentifies(t *testing.T) {
 		agentID = "agent-master-1"
 		ownerID = "owner-1"
 	)
-	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry())
+	wsh := NewWSHandler(h, secret, nil, nil, hub.NewRPCRegistry(), nil)
 	srv := httptest.NewServer(wsh)
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -483,4 +483,69 @@ func TestServeHTTP_MasterKeyTokenIdentifies(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// === OpMpSubscribe(op=15)订阅鉴权测试 ===
+// 订阅帧必须校验可见性,否则非 owner 可订阅 private 小程序数据变更造成泄漏。
+
+// seedMpSubscribeDB 复用 storage 测试环境:owner + stranger + 私有(未发布)小程序,
+// manifest 声明 notes=shared_read / board=shared_write(见 stStorageManifest)。
+// 返回 mpRepo + appid + 两 user ID。
+func seedMpSubscribeDB(t *testing.T) (mpRepo *repository.MiniProgramRepo, appid, ownerID, strangerID string) {
+	t.Helper()
+	e := newStorageEnv(t, storageCfg(100<<20))
+	s := e.newSrv(t)
+	owner := e.user(t, "mpsub-o")
+	stranger := e.user(t, "mpsub-s")
+	s.as(owner.ID, "user")
+	appid = stAppid()
+	s.seedApp(t, appid, false) // 不发布,保持 private
+	return e.mpRepo, appid, owner.ID, stranger.ID
+}
+
+// TestHandleMpSubscribe_PrivateAppRejected:非 owner 订 private 小程序 → 拒(hub 无登记);
+// appid 不存在 → 同样拒。均以「fanout 后收不到帧」反证无登记。
+func TestHandleMpSubscribe_PrivateAppRejected(t *testing.T) {
+	mpRepo, appid, _, strangerID := seedMpSubscribeDB(t)
+
+	h := hub.NewHub(nil, nil, nil, nil)
+	wsh := &WSHandler{hub: h, mpRepo: mpRepo}
+
+	stranger := hub.NewClient(context.Background(), strangerID, "user", nil)
+	wsh.handleMpSubscribe(stranger, appid, []string{"default"})
+	// appid 不存在(mp==nil)→ 拒
+	wsh.handleMpSubscribe(stranger, "ghost-app-404", []string{"default"})
+
+	h.SendMpDataUpdate(appid, "default", "k1", json.RawMessage(`1`), false, 1, "op")
+	recvNoneStream(t, stranger, "非 owner 订 private 小程序")
+
+	h.SendMpDataUpdate("ghost-app-404", "default", "k1", json.RawMessage(`1`), false, 1, "op")
+	recvNoneStream(t, stranger, "不存在的小程序")
+}
+
+// TestHandleMpSubscribe_OwnerAllowed:owner 订自己的 private 小程序成功——
+// default(免声明)+ board(manifest 已声明)两频道都能收到 MP_DATA_UPDATE;
+// 未声明 coll(ghost)被拒,该频道收不到。
+func TestHandleMpSubscribe_OwnerAllowed(t *testing.T) {
+	mpRepo, appid, ownerID, _ := seedMpSubscribeDB(t)
+
+	h := hub.NewHub(nil, nil, nil, nil)
+	wsh := &WSHandler{hub: h, mpRepo: mpRepo}
+
+	owner := hub.NewClient(context.Background(), ownerID, "user", nil)
+	wsh.handleMpSubscribe(owner, appid, []string{"default", "board"})
+
+	h.SendMpDataUpdate(appid, "default", "k1", json.RawMessage(`{"a":1}`), false, 1, "op-1")
+	got := recvStream(t, owner)
+	if got.T != model.EventMpDataUpdate {
+		t.Fatalf("期望 MP_DATA_UPDATE, 实际 %s", got.T)
+	}
+
+	h.SendMpDataUpdate(appid, "board", "k2", json.RawMessage(`{"b":2}`), false, 2, "op-1")
+	recvStream(t, owner)
+
+	// 未声明 coll → 拒(防订阅未授权频道)
+	wsh.handleMpSubscribe(owner, appid, []string{"ghost"})
+	h.SendMpDataUpdate(appid, "ghost", "k3", json.RawMessage(`3`), false, 3, "op-1")
+	recvNoneStream(t, owner, "未声明 coll 频道")
 }

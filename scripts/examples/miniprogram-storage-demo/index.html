@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>云存储记账</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#fff;--text:#1a1a1a;--sub:#8a8f99;--line:#ececec;
+  --brand:#07c160;--brand-weak:rgba(7,193,96,.12);--danger:#fa5151;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+.wrap{padding:16px;padding-bottom:40px}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--line)}
+.card h3{font-size:14px;margin-bottom:10px;color:var(--brand)}
+button.btn{width:100%;padding:11px;border:none;border-radius:10px;background:var(--brand);color:#fff;font-size:15px;cursor:pointer}
+button.btn:active{opacity:.75}
+input{padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text);font-size:14px;width:100%}
+.frow{display:flex;gap:8px;margin-bottom:8px}
+.frow>div{flex:1;min-width:0}
+label{display:block;font-size:12px;color:var(--sub);margin-bottom:4px}
+.day{padding:10px 0;border-bottom:1px solid var(--line)}
+.day:last-child{border-bottom:none}
+.day b{font-size:13px;color:var(--sub);font-weight:500}
+.rec{display:flex;justify-content:space-between;padding:7px 0 7px 12px;font-size:14px}
+.rec .amt{color:var(--danger)}
+.total{display:flex;justify-content:space-between;align-items:baseline}
+.total b{font-size:18px;color:var(--danger)}
+.qrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;color:var(--sub)}
+.qrow span:last-child{color:var(--text)}
+.empty{color:var(--sub);font-size:13px;text-align:center;padding:16px 0}
+.toast{position:fixed;left:50%;bottom:60px;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;padding:9px 18px;border-radius:9px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:80vw}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <label>记账月份（列表按月前缀拉取 items）</label>
+    <input type="month" id="month" onchange="reload()">
+  </div>
+
+  <div class="card">
+    <h3>记一笔（私有档 records · 按日整键读写）</h3>
+    <div class="frow">
+      <div style="flex:1.4"><label>日期（=存储 key）</label><input type="date" id="fDate"></div>
+      <div><label>金额</label><input type="number" id="fAmt" step="0.01" placeholder="0.00"></div>
+    </div>
+    <div class="frow">
+      <div><label>名目</label><input type="text" id="fName" placeholder="午饭"></div>
+    </div>
+    <button class="btn" onclick="addRecord()">写入 storage.set</button>
+  </div>
+
+  <div class="card">
+    <div class="total"><span>当月支出</span><b id="monthTotal">--</b></div>
+    <div id="list"><div class="empty">加载中…</div></div>
+  </div>
+
+  <div class="card">
+    <h3>配额 quota()（应用 / 我的 双层）</h3>
+    <div id="quota"><div class="empty">加载中…</div></div>
+  </div>
+
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =============== hash 路由 + 标题（宿主 AppBar 靠 document.title 同步，不自绘返回键） =============== */
+function route(){
+  // 单页应用：hash 仅 #home 一页，切页时同步标题即可
+  document.title = '云存储记账';
+}
+window.addEventListener('hashchange', route);
+route();
+
+const COLL = 'records';
+const $ = id => document.getElementById(id);
+function toast(s){
+  const t = $('toast');
+  t.textContent = s; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 2000);
+}
+// 友好错误文案：quota exceeded 单独分流，其余透传原始 message
+function errText(e){
+  const m = (e && e.message) || String(e);
+  return m.indexOf('quota exceeded') >= 0 ? '存储配额已满，记不下新账了，请先清理旧记录' : m;
+}
+// 字节数人性化显示
+function fmtBytes(n){
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  return (n/1048576).toFixed(2) + ' MB';
+}
+function storage(){ return window.wanling && window.wanling.storage; }
+
+/* =============== 初始化 =============== */
+// 月份/日期用本地时区拼(toISOString 是 UTC,东八区晚间会前移一天)
+function ym(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1); }
+(function init(){
+  if (!storage()){ $('list').innerHTML = '<div class="empty">wanling.storage 不可用：请在万灵 APP 中打开本小程序</div>'; return; }
+  const now = new Date();
+  $('month').value = ym(now);
+  $('fDate').value = ym(now)+'-'+String(now.getDate()).padStart(2,'0');
+  reload();
+})();
+
+/* =============== 拉取：items 按月前缀 + quota =============== */
+async function reload(){
+  if (!storage()) return;
+  loadQuota();
+  loadList();
+}
+
+async function loadList(){
+  const month = $('month').value;
+  if (!/^\d{4}-\d{2}$/.test(month)){ $('list').innerHTML = '<div class="empty">请选择月份</div>'; return; }
+  // 按月前缀拉取（key=YYYY-MM-DD，前缀 YYYY-MM 即当月全部天）；游标翻页到取完
+  let rows = [], cursor = null;
+  try {
+    do {
+      const page = await storage().items({coll: COLL, prefix: month, cursor, limit: 100});
+      rows = rows.concat(page.items || []);
+      cursor = page.next_cursor;
+    } while (cursor);
+  } catch(e){ $('list').innerHTML = '<div class="empty">拉取失败: ' + errText(e) + '</div>'; return; }
+
+  // key 倒序 = 日期倒序；按天分组渲染
+  rows.sort((a,b) => a.key < b.key ? 1 : -1);
+  let total = 0, html = '';
+  for (const row of rows){
+    const items = (row.value && row.value.items) || [];
+    let daySum = 0;
+    const rowsHtml = items.map(it => {
+      daySum += Number(it.amount) || 0;
+      return '<div class="rec"><span>' + esc(it.name) + '</span><span class="amt">¥' +
+        (Number(it.amount) || 0).toFixed(2) + '</span></div>';
+    }).join('');
+    total += daySum;
+    html += '<div class="day"><b>' + row.key + ' · ¥' + daySum.toFixed(2) + '</b>' + rowsHtml + '</div>';
+  }
+  $('monthTotal').textContent = '¥' + total.toFixed(2);
+  $('list').innerHTML = html || '<div class="empty">本月还没有记录</div>';
+}
+
+async function loadQuota(){
+  try {
+    const q = await storage().quota();
+    // 双层数字：应用级配额（整个小程序全体用户） + 我的配额（当前用户）
+    $('quota').innerHTML =
+      '<div class="qrow"><span>应用层 用量/上限</span><span>' + fmtBytes(q.app_used_bytes) + ' / ' + fmtBytes(q.app_limit_bytes) + '</span></div>' +
+      '<div class="qrow"><span>应用层 条数</span><span>' + q.app_used_entries + ' / ' + q.app_limit_entries + '</span></div>' +
+      '<div class="qrow"><span>我的 用量/上限</span><span>' + fmtBytes(q.my_used_bytes) + ' / ' + fmtBytes(q.my_limit_bytes) + '</span></div>' +
+      '<div class="qrow"><span>我的 条数</span><span>' + q.my_used_entries + ' / ' + q.my_limit_entries + '</span></div>';
+  } catch(e){ $('quota').innerHTML = '<div class="empty">配额读取失败: ' + errText(e) + '</div>'; }
+}
+
+/* =============== 写入：读-改-写整键（私有档单写者，追加后整写回） =============== */
+async function addRecord(){
+  if (!storage()) return;
+  const date = $('fDate').value, name = $('fName').value.trim(), amt = Number($('fAmt').value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)){ toast('请选择日期'); return; }
+  if (!name){ toast('请填名目'); return; }
+  if (!(amt > 0)){ toast('金额需为正数'); return; }
+  try {
+    // 1) 读当日整键（不存在返回 null）
+    const cur = await storage().get({key: date, coll: COLL});
+    const items = (cur && cur.value && cur.value.items) || [];
+    // 2) 追加一笔后整键写回
+    items.push({name: name, amount: amt});
+    await storage().set({key: date, value: {items: items}, coll: COLL});
+    $('fName').value = ''; $('fAmt').value = '';
+    toast('已记入 ' + date);
+    reload();
+  } catch(e){ toast(errText(e)); }
+}
+
+// 简易 HTML 转义，防名目注入标签
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+</script>
+</body>
+</html>

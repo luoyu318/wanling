@@ -15,7 +15,8 @@ manifest.json 全字段:
 | version | int | 是 | 正整数,同 appid 单调递增;重传即换版本 |
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
 | icon | string | 否 | 图标**包内相对路径**,扩展名 png/jpg/jpeg/webp,≤256KB;上传时校验存在+魔数(fail fast);列表 DTO 下发为相对 URL `/api/mini-programs/{id}/icon?v={版本}`(无 icon 空串,APP 用首字哈希色块 fallback) |
-| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`,未知值拒绝 |
+| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`,未知值拒绝 |
+| collections | object[] | 否 | 云数据集合声明 `[{name, mode}]`(≤16 个);name `^[a-z0-9_-]{1,32}$` 且 `default` 保留、重名拒;mode ∈ private/shared_read/shared_write;换版本时同名 coll 档位不可变更(400,新增/删除 coll 允许);规则详见 §8 |
 | navigationBar | object | 否 | 导航栏声明:`{style, backgroundColor, foregroundColor}`;style ∈ `default`(缺省,宿主原生 AppBar)/`custom`(隐藏 AppBar 全屏,SafeArea 避让状态栏);颜色 `#RRGGBB`,非法值 400 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
 
@@ -85,6 +86,7 @@ private → published ⇄ disabled
 
 **声明式权限**(`manifest.permissions`,启动弹序列):
 - `wanling.api`:不涉及用户会话数据,manifest 声明即静默生效,无弹窗
+- `wanling.storage`:云数据 KV 读写(见 §8),manifest 声明即静默生效,无弹窗(档位级鉴权在 server 端做)
 - `wanling.chat.*`(read/share):首次运行逐项弹授权对话框,拒绝 = 该项持续 reject;文案:read「读取当前会话 ID(用于关联你正在看的会话)」/ share「向你选择的好友/群聊分享小程序卡片」
 - `wanling.nav`:跳宿主页面白名单,首次运行弹授权对话框(跳转动作不涉及用户数据读取,但宿主导航属可感知行为需用户知情);拒绝 = 持续 reject
 
@@ -127,9 +129,41 @@ data: { appid: string, title: string, icon?: string, params?: any }
   - verifyEd25519 纯函数:hex/长度异常一律返 false 不抛(验签失败是安全决策结果而非程序异常)
 - 安装顺序:下载 → sha256 校验(不匹配抛「sha256 不匹配」严禁跳过安装)→ ed25519 验签 → 解压到 .tmp → 原子换目录 + 清理旧版本;打开时版本比对静默更新
 
+## 8. 云数据(KV 存储 + 实时订阅,migration 019)
+
+服务端 KV:`mini_program_data` 表。private 档按 (appid, owner_id, coll, key) 槽位隔离(每用户自己的行);共享档全局行。五端点均在 AuthMiddleware 后(user+agent,agent 换算其服务用户槽位)。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/mini-program-storage/:appid/entries/:key?coll= | 单键读;data:`{key,coll,value,version,updated_at}` 或 `null`(不存在/私有档他人行不可见,非 404) |
+| PUT | /api/mini-program-storage/:appid/entries/:key?coll= | 写;body `{"value":any,"expected_version":int?}`(乐观锁);返回写入后 entry |
+| DELETE | /api/mini-program-storage/:appid/entries/:key?coll=&expected_version= | 删;幂等(data:null);乐观锁走 query 参数 |
+| GET | /api/mini-program-storage/:appid/entries?coll=&prefix=&cursor=&limit= | 列表;data:`{items:[entry],next_cursor:string\|null}`(末页 null;游标走 body 因 JS 桥只透 body);limit 1-500 |
+| GET | /api/mini-program-storage/:appid/quota | 配额;八字段 app_/my_ × used_/limit_ × bytes/entries |
+
+- 鉴权链(fail fast 顺序):小程序不存在 404 → unpublished 非 owner 403 → coll 未在 manifest 声明(且 ≠ default)400 → key 不匹配 `^[A-Za-z0-9_.:@-]{1,128}$` 400
+- 档位矩阵(coll 缺省 `default`,恒 private 免声明):
+
+| mode | 读 | 写 | 行身份 |
+|---|---|---|---|
+| private(默认) | 本人 | 本人 | (appid, owner, coll, key) 槽位隔离 |
+| shared_read | 所有人(published 前提) | 仅 owner,非 owner 写 403 | 全局 (appid, coll, key) |
+| shared_write | 所有人 | 所有人 | 全局 (appid, coll, key),owner=最后写者 |
+
+- 错误语义:409 `invalid_state`=expected_version 版本冲突(重读后重试);413 `payload_too_large`=超配额(单值/条数/字节,原因在 message);写端点(PUT/DELETE)限流 60/min/user+appid,读不限
+- 配额:appid 层默认 100MB/5万条(`MINIPROGRAM_STORAGE_APP_BYTES`/`_APP_ENTRIES`)+ 单用户 20MB/5000条(`_MY_BYTES`/`_MY_ENTRIES`)+ 单值 256KB(`_MAX_VALUE_BYTES`);`mini_programs.quota_bytes` 非 NULL 时覆盖 appid 字节总帽(管理员可调)
+- WS 订阅:op=15 `d:{appid,colls:[...]}`(仅 user;小程序须 published 或请求者 owner;colls 逐个校验须 manifest 声明或 default,未声明频道跳过);op=16 `d:{}` 退订该连接全部频道(断连自动清理)。变更推送 op=0 `t:"MP_DATA_UPDATE"` `d:{appid,coll,key,value|nil,deleted,version,writer_openid}`(writer_openid=写者在本 appid 的 openid 投影);delete 事件 value=null、version=被删行旧值(非递增),消费方按到达序应用;瞬态可丢(发送满则丢,按 version 兜底重拉)
+- JS 桥(须声明 `wanling.storage`):`wanling.storage.get({key,coll?})` / `set({key,value,expectedVersion?,coll?})` / `remove({key,expectedVersion?,coll?})` / `items({coll?,prefix?,cursor?,limit?})`(limit 桥侧钳 1-500,<1 视 100)/ `quota()` / `subscribe(colls)` / `unsubscribe()` / `on(cb)`(返回 off 函数;回调参数即 MP_DATA_UPDATE 的 d)
+
+### 已知限制
+
+- 多容器页同连接并发时,unsubscribe 为连接级语义(op16 清该连接全部 mp 订阅,会连带清掉同连接其他页的订阅)
+- subscribe 传空 colls 数组返回 ok 但零登记(server 不视为错误)
+- op15/16 订阅帧不计入 WS 消息限流(走 op 通道非 dispatch)
+
 ## 组件清单
 
-- server:`internal/miniprogram`(validate.go 包校验 / signing.go ed25519 纯函数)、`handler/mini_program_handler.go`(含 openid 查询端点)、`repository/mini_program_repo.go` + `mini_program_openid_repo.go`(GetOrCreateOpenid) + `signing_key_repo.go`、`migrations/012` / `013` / `015`
+- server:`internal/miniprogram`(validate.go 包校验 / signing.go ed25519 纯函数)、`handler/mini_program_handler.go`(含 openid 查询端点)、`repository/mini_program_repo.go` + `mini_program_openid_repo.go`(GetOrCreateOpenid) + `signing_key_repo.go`、`migrations/012` / `013` / `015`;云数据:`handler/mini_program_storage_handler.go`(五端点+档位鉴权)、`repository/mini_program_data_repo.go`、`hub/mp_channels.go`(MP 频道表)、`migrations/019`
 - app:`pages/mini_program_page.dart`(WebView 容器 + profile 授权弹窗)、`services/mini_program_bridge.dart`(wanlingGetProfile / 端点收紧) + `mini_program_permission_flow.dart`、`pages/mini_program_list_page.dart`(公共库/我的两个分组 + 上传/卸载)、`widgets/mini_program_conversation_picker.dart`
 - wanling_core:`services/mini_program_service.dart`(下载/sha256/验签/解压安装)、`rendering/mini_program_card_renderer.dart`、`providers/mini_programs_provider.dart`
 - 示例:`scripts/examples/miniprogram-hello/`(appid `hello-demo`)

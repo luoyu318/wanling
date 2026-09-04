@@ -1,0 +1,10 @@
+{
+  "appid": "todo-board",
+  "name": "共享清单示例",
+  "version": 1,
+  "entry": "index.html",
+  "icon": "",
+  "permissions": ["wanling.storage"],
+  "collections": [{"name": "board", "mode": "shared_write"}],
+  "minHostVersion": "1.6.3"
+}

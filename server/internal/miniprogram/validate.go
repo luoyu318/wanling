@@ -15,12 +15,25 @@ import (
 	"github.com/wanling/server/internal/model"
 )
 
-// allowedPermissions manifest.permissions 允许集(M2 起含 chat 类,M2.5 起 nav 跳转)。
+// 档位常量(handler/fanout 共用)。
+const (
+	CollectionModePrivate     = "private"
+	CollectionModeSharedRead  = "shared_read"
+	CollectionModeSharedWrite = "shared_write"
+)
+
+// allowedPermissions manifest.permissions 允许集(M2 起含 chat 类,M2.5 起 nav 跳转,云数据起含 storage)。
 var allowedPermissions = map[string]struct{}{
 	"wanling.api":        {},
 	"wanling.chat.read":  {},
 	"wanling.chat.share": {},
 	"wanling.nav":        {},
+	"wanling.storage":    {},
+}
+
+var collectionNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+var allowedCollectionModes = map[string]struct{}{
+	CollectionModePrivate: {}, CollectionModeSharedRead: {}, CollectionModeSharedWrite: {},
 }
 
 const maxFiles = 2000
@@ -145,6 +158,25 @@ func ValidatePackage(zipBytes []byte, maxBytes int64) (*model.MiniprogramManifes
 		if _, ok := allowedPermissions[p]; !ok {
 			return nil, nil, fmt.Errorf("未知 permission: %s", p)
 		}
+	}
+	seenColl := map[string]struct{}{}
+	if len(m.Collections) > 16 {
+		return nil, nil, fmt.Errorf("collections 数量超上限(16)")
+	}
+	for _, c := range m.Collections {
+		if !collectionNameRe.MatchString(c.Name) {
+			return nil, nil, fmt.Errorf("collection name 非法: %q(须 ^[a-z0-9_-]{1,32}$)", c.Name)
+		}
+		if c.Name == "default" {
+			return nil, nil, fmt.Errorf("collection name 保留: default")
+		}
+		if _, ok := allowedCollectionModes[c.Mode]; !ok {
+			return nil, nil, fmt.Errorf("collection mode 非法: %q(须 private/shared_read/shared_write)", c.Mode)
+		}
+		if _, dup := seenColl[c.Name]; dup {
+			return nil, nil, fmt.Errorf("collection 重名: %s", c.Name)
+		}
+		seenColl[c.Name] = struct{}{}
 	}
 	if err := validateNavigationBar(m.NavigationBar); err != nil {
 		return nil, nil, err

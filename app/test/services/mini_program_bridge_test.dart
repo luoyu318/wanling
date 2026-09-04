@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wanling_core/services/api_response.dart';
 import 'package:app/services/mini_program_bridge.dart';
 
 void main() {
@@ -747,6 +748,266 @@ void main() {
     test('空对象兜底为可读占位,不抛异常', () {
       expect(normalizeBridgeError(const {}), '未知错误');
       expect(normalizeBridgeError(null), '未知错误');
+    });
+  });
+
+  group('storage', () {
+    test('无 wanling.storage 权限 → get/set/subscribe 全拒且 proxy 未触达', () async {
+      var called = false;
+      var subscribed = false;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async {
+          called = true;
+          return null;
+        },
+        onMpSubscribe: (_, _) => subscribed = true,
+      );
+      final rGet = await b.handle('wanlingStorageGet', [
+        {'key': 'k1'}
+      ]);
+      final rSet = await b.handle('wanlingStorageSet', [
+        {'key': 'k1', 'value': 1}
+      ]);
+      final rSub = await b.handle('wanlingStorageSubscribe', [
+        {
+          'colls': ['notes']
+        }
+      ]);
+      expect((rGet as Map)['ok'], isFalse);
+      expect(rGet['error'], 'permission denied: wanling.storage');
+      expect((rSet as Map)['ok'], isFalse);
+      expect((rSub as Map)['ok'], isFalse);
+      expect(called, isFalse);
+      expect(subscribed, isFalse);
+    });
+
+    test('get 走 GET 路径 + query 断言(coll 缺省 default,key 编码)', () async {
+      String? seenPath;
+      String? seenMethod;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (path, method, _) async {
+          seenPath = path;
+          seenMethod = method;
+          return {
+            'key': 'user:1',
+            'coll': 'notes',
+            'value': {'n': 1},
+            'version': 2,
+          };
+        },
+      );
+      final r = await b.handle('wanlingStorageGet', [
+        {'key': 'user:1', 'coll': 'notes'}
+      ]);
+      expect((r as Map)['ok'], isTrue);
+      expect((r['data'] as Map)['version'], 2);
+      expect(seenMethod, 'GET');
+      // ':' 在 key 白名单内但属路径保留字,须百分号编码
+      expect(seenPath,
+          '/api/mini-program-storage/com.demo.app/entries/user%3A1?coll=notes');
+      await b.handle('wanlingStorageGet', [
+        {'key': 'k1'}
+      ]);
+      expect(seenPath, '/api/mini-program-storage/com.demo.app/entries/k1?coll=default');
+    });
+
+    test('set 走 PUT + body 含 value/expected_version(缺省不带)', () async {
+      String? seenPath;
+      String? seenMethod;
+      Object? seenBody;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (path, method, body) async {
+          seenPath = path;
+          seenMethod = method;
+          seenBody = body;
+          return {'key': 'k1', 'version': 2};
+        },
+      );
+      final r = await b.handle('wanlingStorageSet', [
+        {
+          'key': 'k1',
+          'value': {'n': 1},
+          'coll': 'notes',
+          'expectedVersion': 3,
+        }
+      ]);
+      expect((r as Map)['ok'], isTrue);
+      expect(seenMethod, 'PUT');
+      expect(seenPath,
+          '/api/mini-program-storage/com.demo.app/entries/k1?coll=notes');
+      expect(seenBody, {
+        'value': {'n': 1},
+        'expected_version': 3,
+      });
+      // expectedVersion 缺省 → body 仅 value
+      await b.handle('wanlingStorageSet', [
+        {'key': 'k1', 'value': 5}
+      ]);
+      expect(seenBody, {'value': 5});
+    });
+
+    test('remove 走 DELETE,expected_version 拼进 query', () async {
+      String? seenPath;
+      String? seenMethod;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (path, method, _) async {
+          seenPath = path;
+          seenMethod = method;
+          return null;
+        },
+      );
+      final r = await b.handle('wanlingStorageRemove', [
+        {'key': 'k1', 'coll': 'notes', 'expectedVersion': 7}
+      ]);
+      expect((r as Map)['ok'], isTrue);
+      expect(seenMethod, 'DELETE');
+      expect(seenPath,
+          '/api/mini-program-storage/com.demo.app/entries/k1?coll=notes&expected_version=7');
+      await b.handle('wanlingStorageRemove', [
+        {'key': 'k1'}
+      ]);
+      expect(seenPath, '/api/mini-program-storage/com.demo.app/entries/k1?coll=default');
+    });
+
+    test('items limit 钳制(999→500,0/缺省→100),query 拼接 coll/prefix/cursor', () async {
+      final paths = <String>[];
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (path, _, _) async {
+          paths.add(path);
+          return <dynamic>[];
+        },
+      );
+      await b.handle('wanlingStorageItems', [
+        {'limit': 999}
+      ]);
+      await b.handle('wanlingStorageItems', [
+        {'limit': 0}
+      ]);
+      await b.handle('wanlingStorageItems', const [{}]);
+      expect(paths[0],
+          '/api/mini-program-storage/com.demo.app/entries?coll=default&limit=500');
+      expect(paths[1],
+          '/api/mini-program-storage/com.demo.app/entries?coll=default&limit=100');
+      expect(paths[2],
+          '/api/mini-program-storage/com.demo.app/entries?coll=default&limit=100');
+      await b.handle('wanlingStorageItems', [
+        {'coll': 'notes', 'prefix': '2026-', 'cursor': 'k9', 'limit': 10}
+      ]);
+      expect(paths[3],
+          '/api/mini-program-storage/com.demo.app/entries?coll=notes&limit=10&prefix=2026-&cursor=k9');
+    });
+
+    test('key 带空格 → invalid key 不触 proxy', () async {
+      var called = false;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async {
+          called = true;
+          return null;
+        },
+      );
+      final r = await b.handle('wanlingStorageGet', [
+        {'key': 'a b'}
+      ]);
+      expect((r as Map)['ok'], isFalse);
+      expect(r['error'], 'invalid key');
+      expect(called, isFalse);
+    });
+
+    test('coll 非法(大写) → invalid coll 不触 proxy', () async {
+      var called = false;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async {
+          called = true;
+          return null;
+        },
+      );
+      final r = await b.handle('wanlingStorageGet', [
+        {'key': 'k1', 'coll': 'Notes'}
+      ]);
+      expect((r as Map)['ok'], isFalse);
+      expect(r['error'], 'invalid coll');
+      expect(called, isFalse);
+    });
+
+    test('subscribe 无接线 → storage unavailable;有接线 → 记录 appid/colls 且 ok', () async {
+      final b1 = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async => null,
+      );
+      final r1 = await b1.handle('wanlingStorageSubscribe', [
+        {
+          'colls': ['notes']
+        }
+      ]);
+      expect((r1 as Map)['ok'], isFalse);
+      expect(r1['error'], 'storage unavailable');
+
+      String? seenAppid;
+      List<String>? seenColls;
+      final b2 = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async => null,
+        onMpSubscribe: (appid, colls) {
+          seenAppid = appid;
+          seenColls = colls;
+        },
+      );
+      final r2 = await b2.handle('wanlingStorageSubscribe', [
+        {
+          'colls': ['notes', 'board']
+        }
+      ]);
+      expect((r2 as Map)['ok'], isTrue);
+      expect(seenAppid, 'com.demo.app');
+      expect(seenColls, ['notes', 'board']);
+    });
+
+    test('unsubscribe 调注入回调(未接线也安全 no-op) → ok:true', () async {
+      var calls = 0;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async => null,
+        onMpUnsubscribe: () async => calls++,
+      );
+      final r = await b.handle('wanlingStorageUnsubscribe', const []);
+      expect((r as Map)['ok'], isTrue);
+      expect(calls, 1);
+
+      final b2 = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        proxy: (_, _, _) async => null,
+      );
+      final r2 = await b2.handle('wanlingStorageUnsubscribe', const []);
+      expect((r2 as Map)['ok'], isTrue);
+    });
+
+    test('quota proxy 抛 ApiException(quota exceeded) → 错误透传可按子串分流', () async {
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.storage'},
+        appid: 'com.demo.app',
+        proxy: (_, _, _) async =>
+            throw ApiException('quota_exceeded', 'quota exceeded', statusCode: 413),
+      );
+      final r = await b.handle('wanlingStorageQuota', const []);
+      expect((r as Map)['ok'], isFalse);
+      expect((r['error'] as String), contains('quota exceeded'));
     });
   });
 }

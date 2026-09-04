@@ -24,6 +24,7 @@ description: window.wanling 全部 API 参考
 | `wanling.getChatContext` | `wanling.chat.read` | 读取来源会话 ID |
 | `wanling.shareToChat` | `wanling.chat.share` | 分享小程序卡片到所选会话 |
 | `wanling.openPage` | `wanling.nav` | 跳转白名单内的宿主页面 |
+| `wanling.storage.*` | `wanling.storage` | 云数据读写与订阅（跨设备同步、多人实时协作） |
 | `wanling.close` | 无 | 关闭小程序页 |
 
 ## wanling.request(\{ path, method?, body? \})
@@ -123,4 +124,73 @@ await wanling.openPage({ page: 'agentDetail', params: { agentId: agents[0].id } 
 wanling.close();
 ```
 
-容器对页面能力与 API 路径的更多约束见[限制与白名单](/docs/api/limits/)。
+## wanling.storage —— 云数据
+
+宿主提供的文档型 KV 云存储：数据存在服务端、跨设备同步，并支持多人实时协作（shared 档 + 变更推送）。档位模型、配额与最佳实践见[云数据](/docs/guides/cloud-storage/)。
+
+- **权限**：`wanling.storage`（manifest 声明即生效，无弹窗）
+- **key 格式**：`^[A-Za-z0-9_.:@-]{1,128}$`；**coll（集合名）**：`^[a-z0-9_-]{1,32}$`，缺省 `default`，且须在 manifest `collections` 声明（`default` 除外）
+- **单值上限**：256KB（JSON 序列化后）
+
+### get / set / remove
+
+```js
+// 写入（整键覆盖）。带 expectedVersion 时做乐观锁,版本不符 throw '... 版本冲突,请重读后重试'
+const entry = await wanling.storage.set({ key: '2026-09-04', value: { items: [{ name: '午饭', amount: 30 }] } });
+// entry: { key, coll, value, version, updated_at } —— version 可用于下次乐观锁
+
+// 读取。不存在 resolve null,否则为条目对象(同上形状)
+const cur = await wanling.storage.get({ key: '2026-09-04' });
+
+// 删除(可带 expectedVersion 乐观锁)
+await wanling.storage.remove({ key: '2026-09-04' });
+
+// 指定集合:所有方法均可带 coll(须在 manifest collections 声明)
+await wanling.storage.set({ key: 'room-1', value: {...}, coll: 'rooms' });
+```
+
+### items —— 前缀分页枚举
+
+```js
+// 按 key 前缀翻页列举(直接带 value,无需逐条 get)
+const page = await wanling.storage.items({ coll: 'records', prefix: '2026-09', limit: 100 });
+// page: { items: [条目...], next_cursor } —— next_cursor 为 null 表示末页;翻页把它作为 cursor 传入
+const next = page.next_cursor
+  ? await wanling.storage.items({ coll: 'records', prefix: '2026-09', cursor: page.next_cursor })
+  : null;
+// limit 钳制 1..500,缺省 100
+```
+
+### quota —— 配额查询
+
+```js
+const q = await wanling.storage.quota();
+// { app_used_bytes, app_limit_bytes, app_used_entries, app_limit_entries,
+//   my_used_bytes, my_limit_bytes, my_used_entries, my_limit_entries }
+// app_* = 小程序全体用户共享池;my_* = 当前用户占用。超配额写入 throw '... quota exceeded ...'
+```
+
+### subscribe / unsubscribe / on —— 实时订阅
+
+```js
+// 订阅集合变更(打开页面时调用一次;断线重连后宿主自动重放,无需自行处理)
+await wanling.storage.subscribe(['board']);
+
+// 监听推送:任何用户对该集合的写入/删除都会实时回调
+const off = wanling.storage.on((ev) => {
+  // ev: { appid, coll, key, value, deleted, version, writer_openid }
+  if (ev.deleted) { removeFromView(ev.key); return; }
+  if (latestVersion(ev.key) >= ev.version) return; // 丢弃过期事件
+  upsertToView(ev.key, ev.value, ev.version);
+});
+
+// 离开页面时退订(宿主也会在页面关闭时自动退订)
+await wanling.storage.unsubscribe();
+off(); // 解绑监听器
+```
+
+- **事件顺序**：按到达序应用；`version` 仅用于丢弃比本地旧的 set 事件；**delete 事件的 version 是被删行的旧值**（非递增），收到后直接应用删除
+- **writer_openid**：写者在小程序内的匿名身份（与 `getProfile` 返回的 openid 同源），可用于展示「谁改的」
+- **错误**：未声明 `wanling.storage` 时全部 throw `permission denied: wanling.storage`
+
+容器对云数据的路径与配额约束见[限制与白名单](/docs/api/limits/)。

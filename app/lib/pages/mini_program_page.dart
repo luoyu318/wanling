@@ -6,6 +6,7 @@
 // 模板: templates/flutter-page.dart.tmpl(controller 分离/const+key/loading+error UI)。
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -21,19 +22,23 @@ import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
+import 'package:wanling_core/models/ws_message.dart';
 import 'package:wanling_core/providers/auth_provider.dart'
     show apiProvider, authProvider;
+import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/local_message_store_provider.dart'
     show localMessageStoreProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
+import 'package:wanling_core/services/websocket_service.dart';
 
 import '../widgets/feedback/app_dialog.dart';
 
-/// 注入 window.wanling:request/close/getChatContext/shareToChat 四个桥,
-/// 底层走 flutter_inappwebview callHandler。
+/// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
+/// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
+/// flutter_inappwebview callHandler。
 const _jsBridgeBootstrap = """
 window.wanling = {
   request: function(opts) {
@@ -80,7 +85,55 @@ window.wanling = {
         });
   }
 };
+
+// —— 云数据桥(window.wanling.storage):七方法 + 事件监听 ——
+// IIFE 包裹:call 辅助函数不泄漏到页面全局作用域。
+(function() {
+  // callHandler promise 化包装(envelope 剥壳对齐上方各方法)
+  function call(handler, opts) {
+    return window.flutter_inappwebview
+        .callHandler(handler, opts || {})
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'storage call failed');
+        });
+  }
+  // 事件消费语义(控制器裁决):事件按到达序应用;version 仅用于丢弃比本地
+  // 旧的 set 事件;delete 事件的 version 是被删行旧值(非递增),不做 version
+  // 去重。小程序侧缓存合并示例:
+  //   var hit = myCache[ev.coll + '/' + ev.key];
+  //   if (!ev.deleted && hit && hit.version >= ev.version) return; // 旧 set 丢弃
+  //   myCache[ev.coll + '/' + ev.key] = ev; // delete 事件也按到达序直接应用
+  window.wanling._mpListeners = [];
+  window.wanling.storage = {
+    get: function(o) { return call('wanlingStorageGet', o); },
+    set: function(o) { return call('wanlingStorageSet', o); },
+    remove: function(o) { return call('wanlingStorageRemove', o); },
+    items: function(o) { return call('wanlingStorageItems', o || {}); },
+    quota: function() { return call('wanlingStorageQuota', {}); },
+    subscribe: function(colls) { return call('wanlingStorageSubscribe', {colls: colls}); },
+    unsubscribe: function() { return call('wanlingStorageUnsubscribe', {}); },
+    on: function(cb) {
+      window.wanling._mpListeners.push(cb);
+      return function() { // off:移除该监听器
+        var i = window.wanling._mpListeners.indexOf(cb);
+        if (i >= 0) window.wanling._mpListeners.splice(i, 1);
+      };
+    }
+  };
+  // 由原生 evaluateJavascript 调:遍历监听器分发事件
+  // (slice 拷贝防回调内 on/off 增删正在遍历的数组;单回调异常不阻断其余)
+  window.wanling._emitMpStorageEvent = function(ev) {
+    window.wanling._mpListeners.slice().forEach(function(cb) {
+      try { cb(ev); } catch (e) {}
+    });
+  };
+})();
 """;
+
+/// 测试可见别名:bootstrap 源码包含性断言用(库私有 const 单测不可见)。
+@visibleForTesting
+const String jsBridgeBootstrapSource = _jsBridgeBootstrap;
 
 /// 将虚拟域 URL path 解析为包内本地文件;越出包根(含 `../` 越界)返回 null。
 /// zip-slip 第二层防护(第一层在安装解压时)。[pkgRoot] 为包根目录
@@ -108,6 +161,18 @@ String? resolveLocalFile(String pkgRoot, String requestPath) {
 /// (同设备多账号打开同一小程序,localStorage/IndexedDB 互不可见)。
 String virtualHostFor(String appid, String uid) =>
     '$appid.$uid.mini.wanling.local';
+
+/// MP_DATA_UPDATE 事件过滤(公开顶层纯函数便于单测,对齐 resolveLocalFile 模式):
+/// d.appid 与当前小程序不匹配返回 null(他包事件不进本 WebView);
+/// 匹配则把整个 payload 序列化为 json 字符串,供 evaluateJavascript 调
+/// `window.wanling._emitMpStorageEvent(<json>)`。畸形帧(d 缺失/非对象)
+/// 一律返回 null 丢弃,不转发进 WebView。
+String? mpEventFilter(WSMessage msg, String appid) {
+  final d = msg.d;
+  if (d is! Map) return null;
+  if (d['appid'] != appid) return null;
+  return jsonEncode(d);
+}
 
 /// 文本响应(403 越界 / 404 缺失 / 405 非 GET / 502 代理失败)。statusCode 需
 /// 同时带 headers + reasonPhrase(平台约定)。
@@ -242,6 +307,13 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 当前登录 user_id(_start 快照),进虚拟 host 账号段隔离多账号 storage。
   String? _uid;
+
+  /// WS 服务快照(_start 缓存,dispose 退订用;对齐 chat_page 缓存实例模式,
+  /// dispose 内不碰 ref)。
+  WebSocketService? _ws;
+
+  /// 云数据推送流订阅(MP_DATA_UPDATE → mpEventFilter → evaluateJavascript)。
+  StreamSubscription<WSMessage>? _mpEventSub;
 
   String get _virtualHost => virtualHostFor(widget.appid, _uid!);
 
@@ -428,6 +500,9 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
       final uid = await TokenVault.getUserId() ?? '';
       final store = ref.read(localMessageStoreProvider).valueOrNull;
       final user = ref.read(authProvider).user;
+      // 云数据订阅接线依赖的 WS 实例(bridge 回调闭包捕获;dispose 退订复用)
+      final ws = ref.read(wsProvider);
+      _ws = ws;
       _bridge = MiniProgramBridge(
         permissions: effective,
         proxy: (path, method, body) =>
@@ -451,7 +526,26 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               await store?.getMpPerms(uid, info.appid) ?? <String>{};
           await store?.putMpPerms(uid, info.appid, {...granted, _profilePermKey});
         },
+        // 云数据订阅接线:bridge 权限门禁(wanling.storage)通过后回调,
+        // 容器页接 WS;appid 为 bridge 持有的宿主注入值,JS 不可传参
+        onMpSubscribe: (mpAppid, colls) => ws.sendMpSubscribe(mpAppid, colls),
+        onMpUnsubscribe: () async => ws.sendMpUnsubscribe(),
       );
+      // 云数据推送:订阅 MP_DATA_UPDATE 流,过滤本 appid 后转发进 WebView
+      // (JS 侧按到达序应用,version 语义见 bootstrap 注释)。
+      // cancel 返回 Future,async 上下文内需显式丢弃(_starting 守卫下仅跑一次)
+      unawaited(_mpEventSub?.cancel());
+      _mpEventSub = ws.mpStorageUpdates.listen((m) {
+        final json = mpEventFilter(m, info.appid);
+        if (json == null) return;
+        final controller = _controller;
+        if (!mounted || controller == null) return;
+        // 页面正在销毁/重载时注入可能失败,best-effort 吞掉不阻断后续事件
+        unawaited(controller
+            .evaluateJavascript(
+                source: 'window.wanling._emitMpStorageEvent($json)')
+            .catchError((_) {}));
+      });
       await _controller?.loadUrl(
         urlRequest: URLRequest(url: WebUri(_entryUrl(info).toString())),
       );
@@ -461,6 +555,15 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     } finally {
       _starting = false;
     }
+  }
+
+  @override
+  void dispose() {
+    // 云数据退订闭环:best-effort 发 op=16(连接断开时 send 对 null channel
+    // no-op 不抛异常),再取消流订阅防泄漏。
+    _ws?.sendMpUnsubscribe();
+    _mpEventSub?.cancel();
+    super.dispose();
   }
 
   /// chat 权限授权流程:KVS 读已授权集 → 未决项逐个弹窗 → 持久化增量授权。
@@ -654,6 +757,41 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                   handlerName: 'wanlingGetProfile',
                   callback: (args) async =>
                       await _bridge?.handle('wanlingGetProfile', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageGet',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageGet', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageSet',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageSet', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageRemove',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageRemove', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageItems',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageItems', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageQuota',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageQuota', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageSubscribe',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageSubscribe', args),
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'wanlingStorageUnsubscribe',
+                  callback: (args) async =>
+                      await _bridge?.handle('wanlingStorageUnsubscribe', args),
                 );
                 unawaited(_start(info));
               },

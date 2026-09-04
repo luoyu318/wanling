@@ -1,0 +1,10 @@
+{
+  "appid": "storage-demo",
+  "name": "云存储记账示例",
+  "version": 1,
+  "entry": "index.html",
+  "icon": "",
+  "permissions": ["wanling.storage"],
+  "collections": [{"name": "records", "mode": "private"}],
+  "minHostVersion": "1.6.3"
+}

@@ -22,6 +22,12 @@ const (
 	// 让 APP 逐段渲染 reasoning/text。绕过 dispatchBuffer(bufferedSend 仅缓存 OpDispatch)、
 	// 不落库、不带 seq、不计未读、不触发离线推送。终态仍走 OpDispatch MESSAGE_CREATE。
 	OpStream = 14
+
+	// 小程序云数据订阅(user 端实时刷新)。Subscribe 携带 {appid, colls:[...]},
+	// server 校验可见性(published 或 owner)+ coll 声明后登记频道;
+	// 写路径落库成功即 fanout MP_DATA_UPDATE(OpDispatch)。
+	OpMpSubscribe   = 15 // C→S 订阅 {appid, colls:[...]}
+	OpMpUnsubscribe = 16 // C→S 退订(该连接全部)
 )
 
 type WSMessage struct {
@@ -90,4 +96,9 @@ const (
 	// 流式输出事件(op=14 STREAM)。
 	// payload: {conversation_id, stream_id, msg_type, text}。text 为累积全量快照。
 	EventStream = "STREAM"
+
+	// 小程序云数据变更事件(op=15 订阅通道,经 OpDispatch 下发)。
+	// payload: {appid, coll, key, value|nil, deleted, version, writer_openid}。
+	// deleted 时 value 为 JSON null;瞬态可丢,客户端按 _version 兜底重拉。
+	EventMpDataUpdate = "MP_DATA_UPDATE"
 )

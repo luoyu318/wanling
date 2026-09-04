@@ -50,10 +50,13 @@ type mpItem struct {
 	Icon          string                   `json:"icon"`
 	Permissions   []string                 `json:"permissions"`
 	NavigationBar *model.NavigationBarSpec `json:"navigation_bar"`
-	Status        string                   `json:"status"`
-	SHA256        string                   `json:"sha256"`
-	Size          int64                    `json:"size"`
-	Signature     string                   `json:"signature"`
+	// Collections manifest.collections 档位声明扇出(APP 免二次解析 jsonb;
+	// 未声明时为 null,APP 侧按空清单处理)
+	Collections []model.MiniProgramCollection `json:"collections"`
+	Status      string                        `json:"status"`
+	SHA256      string                        `json:"sha256"`
+	Size        int64                         `json:"size"`
+	Signature   string                        `json:"signature"`
 	// OwnerUsername 仅 admin 全量列表回填(普通 List 不填,omitempty 不下发)
 	OwnerUsername string `json:"owner_username,omitempty"`
 }
@@ -74,8 +77,8 @@ func toMPItem(mp *model.MiniProgram) mpItem {
 	}
 	return mpItem{ID: mp.ID, Appid: mp.Appid, OwnerID: mp.OwnerID, Name: mp.Name,
 		Version: mp.Version, Entry: entry, Icon: iconURL, Permissions: m.Permissions,
-		NavigationBar: m.NavigationBar,
-		Status:        mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
+		NavigationBar: m.NavigationBar, Collections: m.Collections,
+		Status: mp.Status, SHA256: mp.SHA256, Size: mp.Size, Signature: mp.Signature}
 }
 
 // Upload POST /api/mini-programs:zip 上传 → 新建私有或同 owner 换版本。
@@ -127,6 +130,27 @@ func (h *MiniProgramHandler) Upload(c *gin.Context) {
 	if existing != nil && existing.OwnerID != userID {
 		Err(c, http.StatusForbidden, "forbidden", "appid 已被占用")
 		return
+	}
+
+	// 换版本禁改同名 collection 档位(fail fast,先于任何落盘):档位翻转会让
+	// 历史私有行落入共享查询面(如 private→shared_read 后 GetEntryShared 无
+	// owner 过滤命中他人旧私有行,唯一跨用户越权路径)。新增 coll 无历史数据、
+	// 删除 coll 的旧行按原档位不可达或仅 owner 可见,均无越权面,允许;
+	// 需隔离新旧数据时换 coll 名天然隔离。
+	if existing != nil {
+		var old model.MiniprogramManifest
+		// 旧 manifest 由本服务上传时 json.Marshal 落库,解析失败按无声明处理(空清单,全部视为新增)
+		_ = json.Unmarshal(existing.ManifestJSON, &old)
+		oldModes := make(map[string]string, len(old.Collections))
+		for _, cl := range old.Collections {
+			oldModes[cl.Name] = cl.Mode
+		}
+		for _, cl := range manifest.Collections {
+			if oldMode, ok := oldModes[cl.Name]; ok && oldMode != cl.Mode {
+				Err(c, http.StatusBadRequest, "bad_request", "collection 档位不可变更: "+cl.Name+"(换名以隔离新旧数据)")
+				return
+			}
+		}
 	}
 
 	// 归属授权通过后,icon 快照按 appid+version 落存储(zip 之前,失败无副作用);

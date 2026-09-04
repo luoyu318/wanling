@@ -19,7 +19,8 @@ description: manifest.json 全字段说明与平台校验规则
 | version | int | 是 | 正整数，同 appid 单调递增；重传即换版本 |
 | entry | string | 否 | 入口 HTML，默认 `index.html`，必须存在于包内 |
 | icon | string | 否 | 图标包内相对路径，扩展名 png/jpg/jpeg/webp，≤256KB；上传时校验文件存在与魔数，缺一整包被拒；建议 512×512 PNG；未提供时用「名称首字+哈希色块」兜底 |
-| permissions | string[] | 否 | 白名单：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，未知值整包被拒 |
+| permissions | string[] | 否 | 白名单：`wanling.api` / `wanling.storage` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav`，未知值整包被拒 |
+| collections | object[] | 否 | 云数据集合声明：`[{name, mode}]`；name 正则 `^[a-z0-9_-]{1,32}$`（`default` 为保留名）、≤16 个、mode ∈ `private` / `shared_read` / `shared_write`、重名拒绝；未声明时全部按 `private` 处理；档位模型详见[云数据](/docs/guides/cloud-storage/) |
 | navigationBar | object | 否 | `{style, backgroundColor, foregroundColor}`；style ∈ `default`（缺省，宿主原生标题栏，可配色）/ `custom`（隐藏标题栏全屏）；颜色 `#RRGGBB`，非法值被拒 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明；当前平台对该字段暂不强制校验，声明不影响上传与运行 |
 

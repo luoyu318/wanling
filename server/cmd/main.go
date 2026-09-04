@@ -127,8 +127,19 @@ func main() {
 	signingKeyRepo := repository.NewSigningKeyRepo(db)
 	miniProgramOpenidRepo := repository.NewMiniProgramOpenidRepo(db)
 	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes, miniProgramOpenidRepo)
+	// 小程序云数据:五端点 user+agent(agent 换算 owner)。
+	miniProgramDataRepo := repository.NewMiniProgramDataRepo(db)
+	storageHandler := handler.NewMiniProgramStorageHandler(miniProgramDataRepo, miniProgramRepo, miniProgramOpenidRepo, cfg.MiniProgram, h.SendMpDataUpdate)
+	// 云数据写限流:60/min/user+appid(防 shared_write 滥刷),读端点不限。
+	storageWriteLimiter := ratelimit.New(ratelimit.Options{
+		Window:  time.Minute,
+		Max:     60,
+		KeyFunc: func(c *gin.Context) string { return c.GetString("userID") + ":" + c.Param("appid") },
+		Redis:   rdb,
+		Prefix:  "rl:mp_storage:",
+	})
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
-	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
+	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry, miniProgramRepo)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
 
 	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)
@@ -397,6 +408,13 @@ func main() {
 		mpAuth.GET("/api/mini-programs", miniProgramHandler.List)
 		mpAuth.GET("/api/mini-programs/:id/package", miniProgramHandler.DownloadPackage)
 		mpAuth.GET("/api/mini-programs/:id/icon", miniProgramHandler.GetIcon)
+		// 小程序云数据五端点:独立前缀避开 /api/mini-programs/:id 的 Gin 同段参数名冲突;
+		// 写端点(PUT/DELETE)挂限流,读端点不限。
+		mpAuth.GET("/api/mini-program-storage/:appid/entries", storageHandler.ListEntries)
+		mpAuth.GET("/api/mini-program-storage/:appid/entries/:key", storageHandler.GetEntry)
+		mpAuth.GET("/api/mini-program-storage/:appid/quota", storageHandler.GetQuota)
+		mpAuth.PUT("/api/mini-program-storage/:appid/entries/:key", storageWriteLimiter, storageHandler.PutEntry)
+		mpAuth.DELETE("/api/mini-program-storage/:appid/entries/:key", storageWriteLimiter, storageHandler.DeleteEntry)
 	}
 
 	// 平台管理员(ADMIN_USERNAMES 命中登录签发):小程序审核(全量列表 + publish/disable)。
