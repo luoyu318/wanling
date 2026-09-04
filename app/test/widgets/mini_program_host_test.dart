@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:app/pages/mini_program_launch_page.dart';
+import 'package:app/pages/mini_program_page.dart';
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/router.dart' show routerProvider;
 import 'package:app/services/mini_program_launcher.dart';
@@ -24,6 +25,30 @@ import 'package:app/services/mini_program_manager.dart';
 import 'package:app/widgets/mini_program_float_ball.dart';
 import 'package:app/widgets/mini_program_host.dart';
 import 'package:app/widgets/mini_program_task_view.dart';
+import 'package:wanling_core/providers/mini_programs_provider.dart';
+
+/// 有状态替身视图:initState 计数,验证 keep-alive(元素树不被 diff 重建)。
+class _StubView extends StatefulWidget {
+  const _StubView({super.key, required this.appid});
+
+  final String appid;
+
+  @override
+  State<_StubView> createState() => _StubViewState();
+}
+
+class _StubViewState extends State<_StubView> {
+  int initCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    initCount++;
+  }
+
+  @override
+  Widget build(BuildContext context) => Text('mp-${widget.appid}');
+}
 
 /// 测试脚手架:真实 manager + 最小真实路由(含 live 壳) + Host 接线
 /// (与 main.dart 的 MaterialApp.builder 同构,替身视图替代 WebView)。
@@ -32,7 +57,11 @@ class _Harness {
   late final GoRouter router;
   late final ProviderContainer container;
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    bool useRealEmbeddedPage = false,
+    Widget Function(BuildContext, MiniProgramInstance)? instanceViewBuilder,
+  }) async {
     router = GoRouter(
       initialLocation: '/',
       routes: [
@@ -54,6 +83,9 @@ class _Harness {
     container = ProviderContainer(overrides: [
       miniProgramManagerProvider.overrideWith((ref) => manager),
       routerProvider.overrideWithValue(router),
+      // 真实 embedded 页用:小程序列表返空 → 页渲染「不存在」静态文案,
+      // 不触 WebView 平台通道,也不会有 loading 态无限动画干扰 pumpAndSettle
+      miniProgramsProvider.overrideWith((ref) async => const []),
     ]);
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
@@ -61,13 +93,19 @@ class _Harness {
       child: MaterialApp.router(
         routerConfig: router,
         builder: (context, child) => MiniProgramHost(
-          child: child ?? const SizedBox.shrink(),
           // 替身视图:替代真实 MiniProgramPage(WebView 需平台通道,测试不可用)
-          instanceViewBuilder: (context, inst) =>
-              Text('mp-${inst.appid}'),
+          instanceViewBuilder: useRealEmbeddedPage
+              ? null
+              : instanceViewBuilder ??
+                  (context, inst) => Text('mp-${inst.appid}'),
+          child: child ?? const SizedBox.shrink(),
         ),
       ),
     ));
+    // 先 pump 两帧让 FutureProvider 的 loading 微任务落地(loading 态的
+    // 无限旋转动画会让 pumpAndSettle 挂起),再 settle
+    await tester.pump();
+    await tester.pump();
     await tester.pumpAndSettle();
   }
 }
@@ -213,5 +251,69 @@ void main() {
     expect(find.byType(MiniProgramTaskView), findsNothing);
     expect(find.text('mp-a'), findsOneWidget);
     expect(_offstageOf(tester, 'a').offstage, isFalse);
+  });
+
+  testWidgets('先开 a 后开 b:a 的实例状态不重建(Offstage 按 appid 键控)', (tester) async {
+    final h = _Harness();
+    await h.pump(
+      tester,
+      instanceViewBuilder: (context, inst) => _StubView(
+        key: ValueKey('stub-${inst.appid}'),
+        appid: inst.appid,
+      ),
+    );
+
+    h.manager.open('a');
+    await tester.pumpAndSettle();
+    _StubViewState stateOf(String appid) => tester.state<_StubViewState>(
+        find.byKey(ValueKey('stub-$appid'), skipOffstage: false));
+    final aStateBefore = stateOf('a');
+    expect(aStateBefore.initCount, 1);
+    h.manager.open('b'); // 前插,list 从 [a] 变 [b, a],a 槽位后移
+    await tester.pumpAndSettle();
+
+    // 无 key 时槽位被 b 原位复用,a 子树重建:新 State 也是 initCount=1,
+    // 必须用跨前后的 State 同一性判别
+    expect(identical(stateOf('a'), aStateBefore), isTrue);
+
+    h.manager.close('b'); // a 从槽位 0 移除,位移回头部
+    await tester.pumpAndSettle();
+
+    expect(stateOf('a').initCount, 1);
+    expect(identical(stateOf('a'), aStateBefore), isTrue);
+  });
+
+  testWidgets('embedded 回调接线:onMinimize 保最小化,onClose 销毁(壳路由随动)', (tester) async {
+    // 真实 embedded 页(列表返空 → 「不存在」静态文案),不经替身,
+    // 从树上捕获页配置直接调回调——onMinimize/onClose 参数交换会被区分
+    final h = _Harness();
+    await h.pump(tester, useRealEmbeddedPage: true);
+
+    openMiniProgramWith(h.container, 'a');
+    await tester.pumpAndSettle();
+    expect(find.byType(MiniProgramLiveShellPage), findsOneWidget);
+
+    final page = tester.widget<MiniProgramPage>(find.byType(MiniProgramPage));
+
+    // 页内最小化(浮窗/入口页返回/openPage home 同一回调)
+    page.onMinimize!();
+    await tester.pumpAndSettle();
+    expect(h.manager.foregroundAppid, isNull);
+    expect(h.manager.instances.containsKey('a'), isTrue); // minimize 保留实例
+    expect(find.byType(MiniProgramLiveShellPage), findsNothing); // minimize→弹壳
+
+    // 恢复走宿主 TaskView 链路:浮球 → 点卡片 onRestore(壳压回)
+    await tester.tap(find.byType(MiniProgramFloatBall));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('mp-task-card-a')));
+    await tester.pumpAndSettle();
+    expect(h.manager.foregroundAppid, 'a');
+    expect(find.byType(MiniProgramLiveShellPage), findsOneWidget);
+
+    // 页内关闭(胶囊 ◉ / JS wanlingClose 同一回调)
+    page.onClose!();
+    await tester.pumpAndSettle();
+    expect(h.manager.instances.containsKey('a'), isFalse); // close 销毁实例
+    expect(find.byType(MiniProgramLiveShellPage), findsNothing);
   });
 }

@@ -36,6 +36,7 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
     ref.read(miniProgramManagerProvider).close(appid);
     syncLiveRouteWith(ProviderScope.containerOf(context));
     if (ref.read(miniProgramManagerProvider).list.isEmpty) {
+      // 不 setState:上一步 close 已 notifyListeners,同帧重建即按此值渲染
       _showTaskView = false;
     }
   }
@@ -46,9 +47,13 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
     return Stack(
       children: [
         widget.child,
-        // 实例视图:全部常驻,Offstage 保活(JS/游戏继续跑)
+        // 实例视图:全部常驻,Offstage 保活(JS/游戏继续跑)。
+        // Offstage 必须按 appid 键控:list 前插/淘汰会引起槽位位移,无 key 时
+        // updateChildren 把新实例原位复用进旧槽,内层 key 不匹配 → 旧实例整棵
+        // 子树 deactivate 重建(WebView 状态/JS 上下文全丢),keep-alive 被击穿
         for (final inst in manager.list)
           Offstage(
+            key: ValueKey('mp-inst-${inst.appid}'),
             offstage: manager.foregroundAppid != inst.appid,
             child: widget.instanceViewBuilder?.call(context, inst) ??
                 MiniProgramPage.embedded(
@@ -64,7 +69,9 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
             instances: manager.list,
             onTap: () => setState(() => _showTaskView = true),
           ),
-        // 卡片多任务视图
+        // 卡片多任务视图。视图为全屏遮罩,展开期间盖住一切入口,外部
+        // openMiniProgramWith 置前台不可达,故不在此收起 _showTaskView;
+        // 若未来出现绕过遮罩的打开入口,需在置前台处同步收起本视图。
         if (_showTaskView)
           MiniProgramTaskView(
             instances: manager.list,
