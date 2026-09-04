@@ -27,6 +27,17 @@ curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh 
 
 安装完成即自动注册并启动 systemd 用户级服务（默认 `opencode-wanling`，`ocwl-restart` / `ocwl-logs` 运维），之后连 TUI 用快捷命令 `ocwl` 即可。
 
+### 更新到新版本
+
+`--version` 换成新 release tag 并加 `--update`：下载新版二进制原地覆盖、自动重启服务，已有配置（凭据/端口）不动。
+
+```bash
+curl -fsSL https://gitee.com/luoyu318/wanling/raw/main/plugin/install-remote.sh | \
+  bash -s -- --plugin=opencode-plugin --version=<新tag> --update --server=https://your.server.com
+```
+
+源码方式则重跑 `./install.sh --update`（只同步代码/产物，不动配置）。
+
 ## 快速开始（源码方式）
 
 ### 1. 扫码配对（推荐）
