@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wanling/server/internal/config"
+	logpkg "github.com/wanling/server/internal/log"
 	"github.com/wanling/server/internal/miniprogram"
 	"github.com/wanling/server/internal/model"
 	"github.com/wanling/server/internal/repository"
@@ -21,17 +22,22 @@ import (
 // storageKeyRe 云数据 key 白名单(设计 §7):字母/数字/_ . : @ -,1-128 位。
 var storageKeyRe = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,128}$`)
 
+// mpFanout 云数据变更 fanout 接口(测试 seam):
+// 生产传 hub.SendMpDataUpdate,测试传记录闭包;nil 时跳过(未接线场景)。
+type mpFanout func(appid, coll, key string, value json.RawMessage, deleted bool, version int64, writerOpenID string)
+
 // MiniProgramStorageHandler 小程序云数据 KV 五端点。
 // agent 角色换算 ownerID 同 GetIcon 先例(agent 用其服务用户的槽位)。
 type MiniProgramStorageHandler struct {
 	dataRepo   *repository.MiniProgramDataRepo
 	mpRepo     *repository.MiniProgramRepo
-	openidRepo *repository.MiniProgramOpenidRepo // Task 5 fanout 用,本 task 注入备用
+	openidRepo *repository.MiniProgramOpenidRepo // 写路径 fanout 时投影 writer openid
+	fanout     mpFanout                          // 落库成功后广播 MP_DATA_UPDATE
 	cfg        config.MiniProgramConfig
 }
 
-func NewMiniProgramStorageHandler(dataRepo *repository.MiniProgramDataRepo, mpRepo *repository.MiniProgramRepo, openidRepo *repository.MiniProgramOpenidRepo, cfg config.MiniProgramConfig) *MiniProgramStorageHandler {
-	return &MiniProgramStorageHandler{dataRepo: dataRepo, mpRepo: mpRepo, openidRepo: openidRepo, cfg: cfg}
+func NewMiniProgramStorageHandler(dataRepo *repository.MiniProgramDataRepo, mpRepo *repository.MiniProgramRepo, openidRepo *repository.MiniProgramOpenidRepo, cfg config.MiniProgramConfig, fanout mpFanout) *MiniProgramStorageHandler {
+	return &MiniProgramStorageHandler{dataRepo: dataRepo, mpRepo: mpRepo, openidRepo: openidRepo, fanout: fanout, cfg: cfg}
 }
 
 // storageEntryDTO 单行 DTO;value 透传 jsonb 读回的规范化字节
@@ -152,6 +158,22 @@ func (h *MiniProgramStorageHandler) mapRepoErr(c *gin.Context, err error) {
 	}
 }
 
+// fanoutUpdate 落库成功后的 MP_DATA_UPDATE 广播:writer 投影 openid,
+// 失败仅 Warn 不阻断 HTTP 响应(写已成功,推送是增值路径)。
+func (h *MiniProgramStorageHandler) fanoutUpdate(c *gin.Context, appid, coll, key string, value json.RawMessage, deleted bool, version int64, writerID string) {
+	if h.fanout == nil {
+		return
+	}
+	writerOpenID, err := h.openidRepo.GetOrCreateOpenid(c.Request.Context(), writerID, appid)
+	if err != nil {
+		logpkg.FromCtx(c.Request.Context()).WarnContext(c.Request.Context(),
+			"MP_DATA_UPDATE 投影 writer openid 失败,置空继续广播",
+			"appid", appid, "writer_id", writerID, "err", err)
+		writerOpenID = ""
+	}
+	h.fanout(appid, coll, key, value, deleted, version, writerOpenID)
+}
+
 // getEntryChecked 单键读:shared 档走全局行查询(跨 owner 可见),
 // private 档走请求者槽位(仅本人行)。
 func (h *MiniProgramStorageHandler) getEntryChecked(c *gin.Context, sc *storageCtx, key string) (*model.MiniProgramData, error) {
@@ -209,6 +231,8 @@ func (h *MiniProgramStorageHandler) PutEntry(c *gin.Context) {
 		h.mapRepoErr(c, err)
 		return
 	}
+	// 落库成功 → fanout 值事件(同步执行,失败 Warn 不阻断 HTTP 响应)
+	h.fanoutUpdate(c, sc.mp.Appid, sc.coll, e.Key, json.RawMessage(e.Value), false, e.Version, sc.actor)
 	Ok(c, toStorageEntryDTO(e))
 }
 
@@ -228,17 +252,22 @@ func (h *MiniProgramStorageHandler) DeleteEntry(c *gin.Context) {
 		}
 		expected = &v
 	}
+	var deleted *model.MiniProgramData
 	var err error
 	if isSharedMode(sc.mode) {
-		_, err = h.dataRepo.DeleteEntryShared(c.Request.Context(), sc.mp.Appid, sc.coll,
+		deleted, err = h.dataRepo.DeleteEntryShared(c.Request.Context(), sc.mp.Appid, sc.coll,
 			c.Param("key"), expected)
 	} else {
-		_, err = h.dataRepo.DeleteEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
+		deleted, err = h.dataRepo.DeleteEntry(c.Request.Context(), sc.mp.Appid, sc.actor, sc.coll,
 			c.Param("key"), expected)
 	}
 	if err != nil {
 		h.mapRepoErr(c, err)
 		return
+	}
+	// 行确实删除(幂等 no-op 删除无变更不广播)→ fanout deleted 事件,value 为 null
+	if deleted != nil {
+		h.fanoutUpdate(c, sc.mp.Appid, sc.coll, deleted.Key, nil, true, deleted.Version, sc.actor)
 	}
 	Ok(c, nil)
 }

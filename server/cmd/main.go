@@ -129,7 +129,7 @@ func main() {
 	miniProgramHandler := handler.NewMiniProgramHandler(miniProgramRepo, signingKeyRepo, fileRepo, store, cfg.MiniProgram.MaxZipBytes, miniProgramOpenidRepo)
 	// 小程序云数据:五端点 user+agent(agent 换算 owner)。
 	miniProgramDataRepo := repository.NewMiniProgramDataRepo(db)
-	storageHandler := handler.NewMiniProgramStorageHandler(miniProgramDataRepo, miniProgramRepo, miniProgramOpenidRepo, cfg.MiniProgram)
+	storageHandler := handler.NewMiniProgramStorageHandler(miniProgramDataRepo, miniProgramRepo, miniProgramOpenidRepo, cfg.MiniProgram, h.SendMpDataUpdate)
 	// 云数据写限流:60/min/user+appid(防 shared_write 滥刷),读端点不限。
 	storageWriteLimiter := ratelimit.New(ratelimit.Options{
 		Window:  time.Minute,
@@ -139,7 +139,7 @@ func main() {
 		Prefix:  "rl:mp_storage:",
 	})
 	userHandler := handler.NewUserHandler(userRepo, tokenStore, cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
-	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry)
+	wsHandler := handler.NewWSHandler(h, cfg.JWT.Secret, cfg.WS.AllowedOrigins, processor.HandleIncoming, rpcRegistry, miniProgramRepo)
 	rpcHandler := handler.NewRPCHandler(agentRepo, h, rpcRegistry, capabilityRegistry, convRepo)
 
 	msgHandler := handler.NewMessageHandler(msgRepo, convRepo, participantRepo, userRepo, agentRepo, h)

@@ -85,7 +85,7 @@ func newStorageEnv(t *testing.T, cfg config.MiniProgramConfig) *mpStorageEnv {
 		t.Fatalf("NewLocalStorage: %v", err)
 	}
 	return &mpStorageEnv{
-		sh:     NewMiniProgramStorageHandler(dataRepo, mpRepo, openidRepo, cfg),
+		sh:     NewMiniProgramStorageHandler(dataRepo, mpRepo, openidRepo, cfg, nil),
 		mpH:    NewMiniProgramHandler(mpRepo, skr, fr, st, cfg.MaxZipBytes, openidRepo),
 		ur:     ur,
 		mpRepo: mpRepo,
@@ -554,4 +554,62 @@ func TestStorage_AgentOwnerWrite(t *testing.T) {
 	s.as(owner.ID, "user")
 	data2 := AssertOk(t, s.do(stGet(appid, "k1", "notes")), http.StatusOK)
 	stValueEqual(t, data2["value"], `{"from":"agent"}`)
+}
+
+// 用例 15:写路径 fanout — PUT 落库成功广播值事件(deleted=false + 新值 + version),
+// DELETE 广播 deleted 事件(value=nil);writer_openid 已投影非空。
+// fanout 经注入的记录闭包断言(测试 seam,生产传 hub 实现)。
+func TestStorage_PutFansOutMpDataUpdate(t *testing.T) {
+	e := newStorageEnv(t, storageCfg(100<<20))
+	s := e.newSrv(t)
+	owner := e.user(t, "st15")
+	s.as(owner.ID, "user")
+	appid := stAppid()
+	s.seedApp(t, appid, true)
+
+	type fanoutCall struct {
+		appid, coll, key string
+		value            json.RawMessage
+		deleted          bool
+		version          int64
+		writerOpenID     string
+	}
+	var calls []fanoutCall
+	e.sh.fanout = func(appid, coll, key string, value json.RawMessage, deleted bool, version int64, writerOpenID string) {
+		calls = append(calls, fanoutCall{appid: appid, coll: coll, key: key, value: value,
+			deleted: deleted, version: version, writerOpenID: writerOpenID})
+	}
+
+	// PUT shared_write 档:恰一次值事件 fanout
+	AssertOk(t, s.do(stPut(appid, "k1", "board", `{"value":{"w":"a"}}`)), http.StatusOK)
+	if len(calls) != 1 {
+		t.Fatalf("PUT 后应恰一次 fanout,实际 %d 次", len(calls))
+	}
+	if c := calls[0]; c.appid != appid || c.coll != "board" || c.key != "k1" || c.deleted {
+		t.Errorf("值事件频道/键/deleted 不符: %+v", c)
+	} else {
+		if c.version != 1 {
+			t.Errorf("值事件 version 应 1: %+v", c)
+		}
+		if c.writerOpenID == "" {
+			t.Error("值事件 writer_openid 应已投影非空")
+		}
+		stValueEqual(t, json.RawMessage(c.value), `{"w":"a"}`)
+	}
+
+	// DELETE:恰一次 deleted 事件,value nil,version 为被删行版本
+	AssertOk(t, s.do(httptest.NewRequest("DELETE", stEntryURL(appid, "k1", "board"), nil)), http.StatusOK)
+	if len(calls) != 2 {
+		t.Fatalf("DELETE 后应累计两次 fanout,实际 %d 次", len(calls))
+	}
+	if d := calls[1]; !d.deleted || d.key != "k1" || d.value != nil {
+		t.Errorf("deleted 事件形状不符: %+v", d)
+	} else {
+		if d.version != 1 {
+			t.Errorf("deleted 事件 version 应为被删行版本 1: %+v", d)
+		}
+		if d.writerOpenID == "" {
+			t.Error("deleted 事件 writer_openid 应已投影非空")
+		}
+	}
 }
