@@ -39,6 +39,26 @@ git clone https://gitee.com/luoyu318/wanling.git
 - **演示的 API**：不调用 JSBridge，专注 custom 形态的容器适配；页面内设置 `document.title`
 - **源码**：[在 Gitee 打开 header 目录](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-header)
 
+## storage-demo — 云数据私有档记账
+
+- **目录**：`scripts/examples/miniprogram-storage-demo/`（appid `storage-demo`）
+- **一句话**：`private` 档最小演示——按日整键读写记账、`items` 按月前缀翻页、`quota()` 双层配额展示
+- **演示的 API**：
+  - `wanling.storage.set` / `get`——读-改-写整键模式
+  - `wanling.storage.items`——前缀 + cursor 翻页
+  - `wanling.storage.quota`——应用层/我的 双层用量
+- **源码**：[在 Gitee 打开 storage-demo 目录](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-storage-demo)
+
+## todo-board — 云数据共享档多人实时
+
+- **目录**：`scripts/examples/miniprogram-todo-board/`（appid `todo-board`）
+- **一句话**：`shared_write` 档多人协作清单——订阅推送实时同步、checkbox 翻转带乐观锁、409 冲突重读重试
+- **演示的 API**：
+  - `wanling.storage.subscribe` / `on`——实时订阅与事件增量更新（version 丢旧）
+  - `wanling.storage.set` 带 `expectedVersion`——乐观锁与「已被他人更新」处理
+  - `wanling.storage.items`——全量拉取兜底
+- **源码**：[在 Gitee 打开 todo-board 目录](https://gitee.com/luoyu318/wanling/tree/master/scripts/examples/miniprogram-todo-board)
+
 ## 容器适配约定
 
 示例中体现的两条容器约定，所有小程序都建议遵循，详见[页面与导航](/docs/guides/navigation/)：

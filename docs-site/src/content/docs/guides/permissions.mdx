@@ -11,6 +11,7 @@ description: 声明式权限与调用式授权的工作方式
 | 权限 | 授权方式 | 说明 |
 | --- | --- | --- |
 | `wanling.api` | 声明即静默生效，无弹窗 | 不涉及用户会话数据，manifest 声明后即可调用 `wanling.request` |
+| `wanling.storage` | 声明即静默生效，无弹窗 | 云数据是小程序自己的数据区（不读取用户资产），声明后即可调用 `wanling.storage.*`，详见[云数据](/docs/guides/cloud-storage/) |
 | `wanling.chat.read` | 首次运行弹窗 | 弹窗文案「读取当前会话 ID（用于关联你正在看的会话）」 |
 | `wanling.chat.share` | 首次运行弹窗 | 弹窗文案「向你选择的好友/群聊分享小程序卡片」 |
 | `wanling.nav` | 首次运行弹窗 | 跳转动作不涉及用户数据读取，但宿主导航属可感知行为，需用户知情同意 |

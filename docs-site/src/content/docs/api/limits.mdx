@@ -27,4 +27,13 @@ description: 容器对页面能力与 API 路径的约束
 - `manifest.json` ≤1MB
 - 包内条目名含 `../`、绝对路径或反斜杠的一律拒绝（防路径穿越）
 
+## 云数据限制
+
+`wanling.storage`（见[云数据](/docs/guides/cloud-storage/)）受以下约束：
+
+- key：`^[A-Za-z0-9_.:@-]{1,128}$`；集合名：`^[a-z0-9_-]{1,32}$`，须在 manifest `collections` 声明（`default` 除外）
+- 单值 ≤256KB（JSON 序列化后）；`items` 单页 limit 钳制 1..500（缺省 100）
+- 双层配额：当前用户 20MB/5000 条，小程序整池 100MB/50000 条，超限返回 413 `quota exceeded`
+- 写操作限流 60 次/分钟/用户/小程序；换版本重传不可变更同名集合档位
+
 完整包格式与上传校验规则见[包格式规范](/docs/guides/manifest/)。
