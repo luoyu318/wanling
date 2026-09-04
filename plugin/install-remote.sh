@@ -119,6 +119,8 @@ if [[ "$PLUGIN_NAME" == "opencode-plugin" ]]; then
     if [[ "$REMOTE_DRY_RUN" != "true" ]]; then
         chmod +x "$TMP_DIR/$bin_name"
     fi
+    # 注入 --binary:install.sh 依赖该参数进入免 NodeJS 二进制模式,缺省会退化成源码编译
+    PASSTHROUGH_ARGS+=("--binary=$TMP_DIR/$bin_name")
 else
     # hermes 插件(默认):5 个文件(aggregate_card.py 为聚合卡迁移引入)
     PLUGIN_FILES=(adapter.py aggregate_card.py __init__.py plugin.yaml install.sh)
