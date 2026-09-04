@@ -18,6 +18,7 @@ import 'package:wanling_core/services/api_response.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 import 'package:wanling_core/theme/app_colors.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
@@ -36,6 +37,17 @@ class MiniProgramListPage extends ConsumerStatefulWidget {
 
 class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
   bool _uploading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 进入页面静默刷新:provider 被底栏槽等常驻 watch 缓存可能陈旧。
+    // 路由版每次 push 新实例必触发;embedded 版随 home_page 切 tab
+    // invalidate 兜底,此处幂等无害。skipLoadingOnRefresh 保旧数据。
+    Future.microtask(() {
+      if (mounted) ref.invalidate(miniProgramsProvider);
+    });
+  }
 
   Future<void> _upload() async {
     if (_uploading) return;
@@ -58,8 +70,7 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       ref.invalidate(miniProgramsProvider);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('上传失败: $e')));
+        showAppSnackBar(context, '上传失败: $e', type: SnackBarType.error);
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -84,8 +95,7 @@ class _MiniProgramListPageState extends ConsumerState<MiniProgramListPage> {
       return true;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('删除失败: $e')));
+        showAppSnackBar(context, '删除失败: $e', type: SnackBarType.error);
       }
       return false;
     }

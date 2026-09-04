@@ -138,7 +138,14 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _onPageChanged(int page) {
     if (page < 0 || page >= _pages.length) return;
-    setState(() => _activeTabId = _pages[page]);
+    final id = _pages[page];
+    setState(() => _activeTabId = id);
+    // 切进小程序 tab 时静默刷新列表:provider 被底栏槽等常驻 watch,
+    // autoDispose 名存实亡,切回命中缓存直接回旧数据;invalidate 后由
+    // 列表页 skipLoadingOnRefresh 保旧数据换新,不闪 loading。
+    if (id == kNavTabMiniProgram) {
+      ref.invalidate(miniProgramsProvider);
+    }
   }
 
   /// 底栏选中态:激活 tab 在可见槽中的位置;溢出 agent 归更多槽。

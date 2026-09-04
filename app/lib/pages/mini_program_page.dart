@@ -33,6 +33,7 @@ import 'package:wanling_core/services/api_service.dart';
 import 'package:wanling_core/services/mini_program_service.dart';
 import 'package:wanling_core/services/secure_storage.dart';
 import 'package:wanling_core/services/websocket_service.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
 
@@ -444,16 +445,19 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 胶囊入口的分享:与 bridge shareToChat 同规则(仅公开+已声明 share 权限)。
   Future<void> _shareFromCapsule(MiniProgramInfo info, bool canShare) async {
-    final messenger = ScaffoldMessenger.of(context);
     try {
       if (!canShare) {
         throw StateError('该小程序未申请分享权限(wanling.chat.share)');
       }
       await _shareToChat(info, {'title': info.name});
     } catch (e) {
-      messenger.showSnackBar(SnackBar(
-          content: Text(
-              '$e'.replaceFirst(RegExp(r'^(Bad state|StateError): '), ''))));
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          '$e'.replaceFirst(RegExp(r'^(Bad state|StateError): '), ''),
+          type: SnackBarType.error,
+        );
+      }
     }
   }
 
@@ -640,6 +644,8 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         'icon': info.icon,
       },
     });
+    if (!mounted) return null;
+    showAppSnackBar(context, '已分享到会话', type: SnackBarType.success);
     return {'message_id': result.messageId};
   }
 
