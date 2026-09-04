@@ -1,0 +1,86 @@
+---
+title: 云数据
+description: wanling.storage 档位模型、实时协作与配额
+---
+
+
+`wanling.storage` 提供服务端托管的文档型 KV 存储：数据跨设备同步、不随页面存储重置丢失，并支持多用户共享与实时协作。API 签名见 [JSBridge 参考](/docs/api/bridge/)。
+
+## 与本地 storage 的关系
+
+本地 `localStorage` / `IndexedDB` 按 origin 隔离，存在被重置的风险（见[存储与更新](/docs/guides/storage/)）；云数据存在服务端，不随设备与页面存储变化。**关键业务数据一律写云数据**，本地 storage 只作缓存。
+
+## 集合与档位
+
+数据按「集合（coll）」组织，每个集合在 manifest `collections` 中声明并指定档位：
+
+```json
+{
+  "permissions": ["wanling.storage"],
+  "collections": [
+    { "name": "records", "mode": "private" },
+    { "name": "questions", "mode": "shared_read" },
+    { "name": "board", "mode": "shared_write" }
+  ]
+}
+```
+
+| 档位 | 写 | 读 | 典型场景 |
+| --- | --- | --- | --- |
+| `private`（缺省档，未声明的集合等同此档） | 仅本人 | 仅本人 | 记账、todo、游戏进度 |
+| `shared_read` | 仅小程序作者（含作者侧 agent） | 所有人 | 题库、榜单、公告 |
+| `shared_write` | 所有人 | 所有人 | 共享清单、留言板、协作状态 |
+
+要点：
+
+- 每条数据归属「最后写者」（shared 档行亦然），配额计入写者名下
+- **档位是安全属性**：同 appid 换版本重传时，同名集合的档位不可变更（上传返回 400），换名即天然隔离新旧数据
+- 未在 manifest 声明的集合名（`default` 除外）调用返回 400
+
+## 实时订阅（多人协作）
+
+shared 集合配合订阅可做多端实时同步：
+
+```js
+await wanling.storage.subscribe(['board']);
+const off = wanling.storage.on((ev) => { /* 增量更新视图 */ });
+```
+
+- 推送经宿主长连接下发，**写入落库即达**，在线用户毫秒级收到；断线重连后宿主自动重放订阅
+- 推送为尽力而为：丢帧或重进页面时，用 `items()` 全量拉取兜底（建议首屏与手动刷新时各拉一次）
+- 离开页面调用 `unsubscribe()`（页面关闭时宿主也会自动退订）
+
+## 乐观锁（防并发覆盖）
+
+shared 集合多人同写一个 key 时，用 `expectedVersion` 防止互相覆盖：
+
+```js
+try {
+  await wanling.storage.set({ key, value: newValue, expectedVersion: cur.version, coll: 'board' });
+} catch (e) {
+  if (String(e.message).includes('版本冲突')) {
+    const fresh = await wanling.storage.get({ key, coll: 'board' }); // 重读最新
+    // 基于最新值合并后重试一次,仍失败则提示用户
+  }
+}
+```
+
+不带 `expectedVersion` 的写入是 last-write-wins（后写覆盖先写），适合单人私有数据。
+
+## 配额
+
+双层配额防滥用，超限时写入返回 `quota exceeded`（HTTP 413）：
+
+| 维度 | 默认上限 |
+| --- | --- |
+| 单值大小 | 256KB |
+| 当前用户（每小程序） | 20MB / 5000 条 |
+| 整个小程序（全体用户共享池） | 100MB / 50000 条 |
+
+写入前可用 `quota()` 查询用量；整池用量会随所有用户的写入增长，内容型小程序（如题库）建议关注 `app_used_*`。管理员可按小程序调整池上限。
+
+## 最佳实践
+
+- **整键读写模式**：KV 没有查询语言，按业务键设计（如 `YYYY-MM-DD` 存当天记录，`items({ prefix: '2026-09' })` 拉当月），写入是读-改-写整键覆盖
+- **用户归属用 openid**：需要区分「是谁写的」时，用 `writer_openid`（推送事件）或让用户先 `getProfile()` 后把 openid 写进 value
+- **不要存敏感凭证**：小程序包与 shared 数据对所有用户可见，token 类凭证永不落云数据

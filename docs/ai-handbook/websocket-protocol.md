@@ -17,6 +17,8 @@
 | 12 | PluginCall | S→C | server → plugin RPC 请求(JSON-RPC 2.0,详见 rpc-protocol.md) |
 | 13 | PluginResult | C→S | plugin → server RPC 响应(JSON-RPC 2.0,详见 rpc-protocol.md) |
 | 14 | Stream | plugin→server→APP | 流式输出全量快照(plugin→server),server 按 activeConvID 过滤转发给正在看该会话的 user。绕过 dispatchBuffer/不落库/不带 seq/不计未读/不补发。见「流式输出(op=14 Stream)」节 |
+| 15 | MpSubscribe | C→S | 小程序云数据订阅,`d:{appid, colls:[...]}`。仅 user 角色;小程序须 published 或请求者是 owner;colls 逐个校验须 manifest 声明或 `default`,未声明频道跳过。通过后登记 hub 频道表,写路径落库成功即 fanout `MP_DATA_UPDATE` |
+| 16 | MpUnsubscribe | C→S | 退订该连接全部小程序云数据频道(`d:{}`;断连时 hub 自动全清)。变更推送走 op=0 `t:"MP_DATA_UPDATE"`,`d:{appid, coll, key, value\|nil, deleted, version, writer_openid}`,详见 [miniprogram.md](./miniprogram.md)「云数据」 |
 
 **消息创建 Dispatch 事件**（opcode 同为 0）：
 - `MESSAGE_CREATE` — 新消息推送。payload：`{id, conversation_id, sender_type, sender_id, sender_role, sender_name, sender_avatar_url, conversation_type, conversation_title, content, parent_msg_id?, root_msg_id?, created_at}`。`sender_name` / `sender_avatar_url` 由 server processor 在 dispatch 前查 user/agent 表填入，bg-service 直接读这两个字段渲染通知（替代原依赖 UI IPC 同步的链路，让首次接收消息也能拿到正确头像）。`conversation_type` / `conversation_title` 让 bg-service 区分单聊/群聊通知格式（群聊场景 title=群名，body=「${sender}：${内容}」），单聊场景维持 sender 作 title。dispatch 给所有 participants（含 sender 自己，多端同步 + HTTP 发送场景按 message_id 去重）。

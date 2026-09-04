@@ -30,6 +30,12 @@ type AdminConfig struct {
 // MiniProgramConfig 小程序容器配置。
 type MiniProgramConfig struct {
 	MaxZipBytes int64 // 单包上限(字节),上传用 MaxBytesReader 拦截
+	// 云数据配额默认值(单小程序可用 quota_bytes 覆盖 AppBytes/AppEntries)
+	StorageAppBytes      int64
+	StorageAppEntries    int64
+	StorageMyBytes       int64
+	StorageMyEntries     int64
+	StorageMaxValueBytes int64
 }
 
 type ServerConfig struct {
@@ -149,7 +155,12 @@ func Load() (*Config, error) {
 			Usernames: parseCSV(getEnv("ADMIN_USERNAMES", "")),
 		},
 		MiniProgram: MiniProgramConfig{
-			MaxZipBytes: getEnvInt64("MINIPROGRAM_MAX_ZIP_BYTES", 20<<20),
+			MaxZipBytes:          getEnvInt64("MINIPROGRAM_MAX_ZIP_BYTES", 20<<20),
+			StorageAppBytes:      getEnvInt64("MINIPROGRAM_STORAGE_APP_BYTES", 100<<20),
+			StorageAppEntries:    getEnvInt64("MINIPROGRAM_STORAGE_APP_ENTRIES", 50000),
+			StorageMyBytes:       getEnvInt64("MINIPROGRAM_STORAGE_MY_BYTES", 20<<20),
+			StorageMyEntries:     getEnvInt64("MINIPROGRAM_STORAGE_MY_ENTRIES", 5000),
+			StorageMaxValueBytes: getEnvInt64("MINIPROGRAM_STORAGE_MAX_VALUE_BYTES", 256<<10),
 		},
 	}, nil
 }

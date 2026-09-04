@@ -10,6 +10,7 @@ import 'package:wanling_core/models/admin_mini_program_info.dart';
 import 'package:wanling_core/providers/admin_mini_programs_provider.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/services/api_response.dart';
+import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
@@ -153,19 +154,21 @@ class _MpList extends ConsumerWidget {
       await ref.read(apiProvider).setMiniProgramStatus(mp.id, target);
       ref.invalidate(adminMiniProgramsProvider);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('操作成功')));
+      showAppSnackBar(context, '操作成功', type: SnackBarType.success);
     } catch (e) {
       // fail fast 不吞异常:错误透传到 UI 反馈,由用户重试或反馈
       // 拦截器把 ApiException 包在 DioException.error 里,先解包再分流
       final api = _asApiError(e);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(api == null
-              ? '操作失败: $e'
-              : api.statusCode == 403
-                  ? '无权限操作'
-                  : '操作失败: ${api.message}')));
+      showAppSnackBar(
+        context,
+        api == null
+            ? '操作失败: $e'
+            : api.statusCode == 403
+                ? '无权限操作'
+                : '操作失败: ${api.message}',
+        type: SnackBarType.error,
+      );
     }
   }
 }

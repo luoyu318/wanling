@@ -15,6 +15,7 @@ import (
 	"github.com/wanling/server/internal/auth"
 	"github.com/wanling/server/internal/hub"
 	"github.com/wanling/server/internal/model"
+	"github.com/wanling/server/internal/repository"
 )
 
 // WS 限流参数
@@ -31,6 +32,7 @@ type WSHandler struct {
 	onMessage      func(ctx context.Context, senderType, senderID string, msg *model.WSMessage)
 	msgLimiter     *ratelimit.Limiter
 	rpcRegistry    *hub.RPCRegistry
+	mpRepo         *repository.MiniProgramRepo // 小程序注册表,OpMpSubscribe 可见性校验用
 }
 
 // NewWSHandler 创建新的 WSHandler 实例。
@@ -38,7 +40,8 @@ type WSHandler struct {
 // onMessage 接 per-conn ctx,processor 用此 ctx 做 repo 调用,client 断开时进行中查询自动中止。
 // 内部创建 msgLimiter 对业务消息限流（每客户端 10 msg/s），防洪水消息 DoS。
 // rpcRegistry 为 RPC pending map,OpPluginResult 响应在此查找匹配并投递给等待方。
-func NewWSHandler(h *hub.Hub, jwtSecret string, allowedOrigins []string, onMessage func(context.Context, string, string, *model.WSMessage), rpcRegistry *hub.RPCRegistry) *WSHandler {
+// mpRepo 供 OpMpSubscribe 校验小程序可见性(published 或 owner),防 private 数据泄漏。
+func NewWSHandler(h *hub.Hub, jwtSecret string, allowedOrigins []string, onMessage func(context.Context, string, string, *model.WSMessage), rpcRegistry *hub.RPCRegistry, mpRepo *repository.MiniProgramRepo) *WSHandler {
 	return &WSHandler{
 		hub:            h,
 		jwtSecret:      jwtSecret,
@@ -46,6 +49,7 @@ func NewWSHandler(h *hub.Hub, jwtSecret string, allowedOrigins []string, onMessa
 		onMessage:      onMessage,
 		msgLimiter:     ratelimit.NewLimiter(wsMsgRateWindow, wsMsgRateMax),
 		rpcRegistry:    rpcRegistry,
+		mpRepo:         mpRepo,
 	}
 }
 
@@ -237,6 +241,22 @@ func (h *WSHandler) readPump(client *hub.Client) {
 			// role 门禁 + IDOR 校验集中在 handleOpStream(提取出来便于单测)。
 			h.handleOpStream(client, msg.D)
 
+		case model.OpMpSubscribe:
+			// 小程序云数据订阅。role=user(含 admin 归一);校验小程序可见性
+			// (published 或请求者是 owner)后才登记,防 private 小程序变更泄漏。
+			var sub struct {
+				Appid string   `json:"appid"`
+				Colls []string `json:"colls"`
+			}
+			if len(msg.D) > 0 {
+				_ = json.Unmarshal(msg.D, &sub)
+			}
+			h.handleMpSubscribe(client, sub.Appid, sub.Colls)
+
+		case model.OpMpUnsubscribe:
+			// 退订该连接的全部小程序云数据频道(断连时 hub.Run 也会全清,此帧供客户端主动退订)。
+			h.hub.UnsubscribeMp(client)
+
 		default:
 			if msg.Op == model.OpDispatch || msg.T != "" {
 				if h.msgLimiter != nil && !h.msgLimiter.Allow(client.ID) {
@@ -327,4 +347,61 @@ func (h *WSHandler) handleOpStream(client *hub.Client, data []byte) {
 		return
 	}
 	h.hub.SendStreamToConvViewers(stream.ConversationID, data)
+}
+
+// handleMpSubscribe 处理 OpMpSubscribe(op=15)小程序云数据订阅,门禁链:
+//  1. role != user → 拒绝(云数据仅 user 端消费;admin 已在 Identify 归一为 user)
+//  2. mpRepo 未注入 → fail-closed 拒绝(生产 main.go 必注入)
+//  3. 小程序不存在 / (status!=published 且请求者非 owner) → 拒绝(防 private 数据泄漏)
+//  4. colls 逐个校验:manifest 声明集合名或 "default",未声明拒(防订阅未授权频道)
+//
+// 通过者登记进 hub 频道表,写路径 fanout MP_DATA_UPDATE。从 readPump 提取出来
+// 便于单测(对称 handleOpStream)。
+func (h *WSHandler) handleMpSubscribe(client *hub.Client, appid string, colls []string) {
+	if client.Role != "user" {
+		logpkg.FromCtx(client.Ctx()).WarnContext(client.Ctx(),
+			"非 user 尝试订阅小程序云数据,拒绝",
+			"client_id", client.ID, "role", client.Role, "appid", appid)
+		return
+	}
+	if h.mpRepo == nil {
+		logpkg.FromCtx(client.Ctx()).WarnContext(client.Ctx(),
+			"mpRepo 未注入,拒绝小程序订阅(fail-closed)",
+			"client_id", client.ID, "appid", appid)
+		return
+	}
+	mp, err := h.mpRepo.GetByAppid(client.Ctx(), appid)
+	if err != nil {
+		logpkg.FromCtx(client.Ctx()).WarnContext(client.Ctx(),
+			"查询小程序失败,拒绝订阅",
+			"client_id", client.ID, "appid", appid, "err", err)
+		return
+	}
+	if mp == nil || (mp.Status != "published" && mp.OwnerID != client.ID) {
+		logpkg.FromCtx(client.Ctx()).WarnContext(client.Ctx(),
+			"小程序不存在或不可见,拒绝订阅",
+			"client_id", client.ID, "appid", appid)
+		return
+	}
+	// colls 逐个校验:manifest 声明集合名或 "default"(default 恒 private,免声明)
+	var m model.MiniprogramManifest
+	_ = json.Unmarshal(mp.ManifestJSON, &m)
+	declared := make(map[string]bool, len(m.Collections))
+	for _, cl := range m.Collections {
+		declared[cl.Name] = true
+	}
+	allowed := make([]string, 0, len(colls))
+	for _, coll := range colls {
+		if coll != "default" && !declared[coll] {
+			logpkg.FromCtx(client.Ctx()).WarnContext(client.Ctx(),
+				"collection 未在 manifest 声明,拒绝订阅该频道",
+				"client_id", client.ID, "appid", appid, "coll", coll)
+			continue
+		}
+		allowed = append(allowed, coll)
+	}
+	if len(allowed) == 0 {
+		return
+	}
+	h.hub.SubscribeMp(client, appid, allowed)
 }

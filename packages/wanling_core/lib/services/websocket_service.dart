@@ -50,6 +50,12 @@ class WebSocketService {
   // 防 onError+onDone 双触发让 _reconnect 重复调度（吃两次 backoff attempt）。
   bool _reconnectScheduled = false;
 
+  /// 最近一次 mp 云数据订阅(appid + colls)。断线重连后 server 端是新 client
+  /// (旧订阅随旧连接销毁,不在 mpChannels),不重放则 MP_DATA_UPDATE 推送
+  /// 静默失效直到重开小程序页(spec §5 重连重订阅)。
+  String? _mpSubAppid;
+  List<String>? _mpSubColls;
+
   final _messageController = StreamController<WSMessage>.broadcast();
   Stream<WSMessage> get messages => _messageController.stream;
 
@@ -113,6 +119,14 @@ class WebSocketService {
   Stream<WSMessage> get sessionMetaUpdates =>
       _sessionMetaUpdateController.stream;
 
+  /// MP_DATA_UPDATE 事件流(小程序云数据变更推送)。
+  /// 小程序容器页(Task 8)订阅某 appid 的 collections 后,云端写入触发的
+  /// 变更推送经此流分发,容器侧按 coll 拉增量。单列流,不进 messages 流。
+  /// 非 final:F1 修复要求 disconnect→connect 复用时由 _ensureControllers 重建。
+  StreamController<WSMessage> _mpStorageController =
+      StreamController<WSMessage>.broadcast();
+  Stream<WSMessage> get mpStorageUpdates => _mpStorageController.stream;
+
   /// op=14 STREAM 流式输出流(plugin→server→正在观看的 user)。
   /// delta 不入库(_persistToStore 仅在 dispatch 分支调用),不带 seq,
   /// 不推进 _lastSeq。非 final:F1 修复要求 disconnect→connect 复用时
@@ -141,6 +155,9 @@ class WebSocketService {
   @visibleForTesting
   bool get isSessionMetaUpdateControllerClosed =>
       _sessionMetaUpdateController.isClosed;
+
+  @visibleForTesting
+  bool get isMpStorageControllerClosed => _mpStorageController.isClosed;
 
   @visibleForTesting
   bool get isStreamControllerClosed => _streamController.isClosed;
@@ -221,6 +238,9 @@ class WebSocketService {
     if (_streamController.isClosed) {
       _streamController = StreamController<Map<String, dynamic>>.broadcast();
     }
+    if (_mpStorageController.isClosed) {
+      _mpStorageController = StreamController<WSMessage>.broadcast();
+    }
   }
 
   Future<void> connect() async {
@@ -298,6 +318,17 @@ class WebSocketService {
         }
         if (resumeSeq != null) {
           send(WSMessage(op: OpCodes.resume, d: {'last_seq': resumeSeq}));
+        }
+
+        // 云数据订阅重放:重连后 server 是新 client,旧 mpChannels 订阅已随旧
+        // 连接销毁,此处按最近一次订阅重放(须在 Identify/Resume 之后,server
+        // ws_handler 要求首条消息必须是 Identify)。
+        final subAppid = _mpSubAppid;
+        if (subAppid != null) {
+          send(WSMessage(
+            op: OpCodes.mpSubscribe,
+            d: {'appid': subAppid, 'colls': _mpSubColls ?? const []},
+          ));
         }
 
         final interval = (msg.d as Map)['heartbeat_interval'] as int;
@@ -381,6 +412,13 @@ class WebSocketService {
           _sessionMetaUpdateController.add(msg);
           return;
         }
+        // MP_DATA_UPDATE 分流:小程序云数据变更推送。容器页监听本流按 coll
+        // 拉增量,seq 同步逻辑共用(_lastSeq 推进保证 Resume 不漏)。
+        if (msg.t == 'MP_DATA_UPDATE') {
+          if (msg.s != null) _lastSeq = msg.s;
+          _mpStorageController.add(msg);
+          return;
+        }
         if (msg.s != null) _lastSeq = msg.s;
         _messageController.add(msg);
         break;
@@ -420,6 +458,27 @@ class WebSocketService {
   /// ChatPage initState 调 setActiveConv(convId)，dispose 调 setActiveConv(null)。
   void setActiveConv(String? convId) {
     send(WSMessage(op: OpCodes.setActiveConv, d: {'conv_id': convId ?? ''}));
+  }
+
+  /// 订阅小程序云数据变更(op=15)。容器页打开且 manifest 声明 collections
+  /// 时发送,之后该 appid 这些 coll 的云端写入触发 MP_DATA_UPDATE 推送。
+  /// 同时记录最近一次订阅,供断线重连(hello 分支)重放。
+  void sendMpSubscribe(String appid, List<String> colls) {
+    _mpSubAppid = appid;
+    _mpSubColls = List.of(colls);
+    send(WSMessage(
+      op: OpCodes.mpSubscribe,
+      d: {'appid': appid, 'colls': colls},
+    ));
+  }
+
+  /// 退订小程序云数据变更(op=16)。容器页关闭时发送;
+  /// d 为空对象,server 按 conn 粒度清掉全部小程序订阅。
+  /// 同时清空最近订阅记录,重连后不再重放。
+  void sendMpUnsubscribe() {
+    _mpSubAppid = null;
+    _mpSubColls = null;
+    send(WSMessage(op: OpCodes.mpUnsubscribe, d: {}));
   }
 
   void _reconnect() {
@@ -472,6 +531,7 @@ class WebSocketService {
     _messageReadController.close();
     _sessionMetaUpdateController.close();
     _streamController.close();
+    _mpStorageController.close();
   }
 
   /// F4: 把 dispatch 事件持久化到 LocalMessageStore。

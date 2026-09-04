@@ -31,4 +31,6 @@ class OpCodes {
   static const hello = 10;
   static const heartbeatAck = 11;
   static const stream = 14; // 流式输出快照(plugin→server→正在观看的 user)
+  static const mpSubscribe = 15; // 小程序云数据订阅 d:{appid, colls:[...]}
+  static const mpUnsubscribe = 16; // 小程序云数据退订 d:{}
 }

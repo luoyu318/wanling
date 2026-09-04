@@ -69,6 +69,13 @@ type Hub struct {
 	seq              int64         // Hub 直发 dispatch 的序号分配器
 	heartbeatTimeout time.Duration // 心跳超时,gcStaleClients 用
 	rpcRegistry      *RPCRegistry  // RPC pending map;agent 断线时 CancelAllForAgent fail-fast
+
+	// 小程序云数据订阅频道表(MP_DATA_UPDATE fanout 路由):
+	// 正向 = channel key → 订阅 client 集合;反向 = client → 已订阅 key 集合,
+	// 断连时按自身频道 O(1) 定位清理(见 mp_channels.go)。
+	mpMu          sync.Mutex
+	mpChannels    map[string]map[*Client]struct{}
+	mpClientChans map[*Client]map[string]struct{}
 }
 
 // NextSeq 是唯一的 dispatch seq 分配器。
@@ -87,6 +94,8 @@ func NewHub(p *presence.Presence, agentRepo *repository.AgentRepo, participantRe
 		participantRepo:  participantRepo,
 		heartbeatTimeout: defaultHeartbeatTimeout,
 		rpcRegistry:      rpcRegistry,
+		mpChannels:       make(map[string]map[*Client]struct{}),
+		mpClientChans:    make(map[*Client]map[string]struct{}),
 	}
 }
 
@@ -165,6 +174,10 @@ func (h *Hub) Run(ctx context.Context) {
 			if client.Role == "agent" && h.rpcRegistry != nil {
 				h.rpcRegistry.CancelAllForAgent(client.ID)
 			}
+
+			// 小程序云数据订阅清理:断连全清该 client 的全部频道,
+			// 防已关闭连接滞留订阅表(连接已关既收不到帧,也再无机会主动退订)。
+			h.UnsubscribeMp(client)
 
 			client.Close()
 

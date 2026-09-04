@@ -28,4 +28,4 @@ description: storage 隔离矩阵、静默更新与版本重传语义
 
 ## 数据重置场景
 
-宿主升级可能变更虚拟域名的 origin 结构（例如引入账号段实现按账号隔离）。origin 一旦变化，旧 storage 不再可达，**等同数据重置**。重要数据不要只存在 localStorage / IndexedDB 里——小程序页面可直接 fetch 外部网络，应把关键数据持久化到你自己的后端，本地 storage 仅作缓存。
+宿主升级可能变更虚拟域名的 origin 结构（例如引入账号段实现按账号隔离）。origin 一旦变化，旧 storage 不再可达，**等同数据重置**。重要数据不要只存在 localStorage / IndexedDB 里——用宿主提供的云数据（`wanling.storage`，见[云数据](/docs/guides/cloud-storage/)）做持久化，本地 storage 仅作缓存。

@@ -36,6 +36,12 @@ class MiniProgramBridge {
   /// profile 授权弹窗;null 视作拒绝(防御未接线场景)。
   final Future<bool> Function()? requestProfilePermission;
 
+  /// 云数据订阅接线(容器页传 WS 实现桥接;null 时 subscribe 返回错误)
+  final void Function(String appid, List<String> colls)? onMpSubscribe;
+
+  /// 云数据退订接线(容器页传 WS 实现;未接线时 no-op,unsubscribe 仍 ok)
+  final Future<void> Function()? onMpUnsubscribe;
+
   MiniProgramBridge({
     required this.permissions,
     required this.proxy,
@@ -49,6 +55,8 @@ class MiniProgramBridge {
     this.isProfileGranted,
     this.persistProfileGrant,
     this.requestProfilePermission,
+    this.onMpSubscribe,
+    this.onMpUnsubscribe,
   });
 
   /// JSBridge 分发唯一出口:先经 [_dispatch] 跑各 case 原逻辑,回传 JS 前把
@@ -224,6 +232,16 @@ class MiniProgramBridge {
             default:
               return {'ok': false, 'error': '未知页面: $page'};
           }
+        case 'wanlingStorageGet':
+        case 'wanlingStorageSet':
+        case 'wanlingStorageRemove':
+        case 'wanlingStorageItems':
+        case 'wanlingStorageQuota':
+        case 'wanlingStorageSubscribe':
+        case 'wanlingStorageUnsubscribe':
+          // 显式 await:return 异步调用不加 await 时,完成等待发生在
+          // try 动态作用域之外,proxy 抛出的异常会绕过外层 catch 逃逸
+          return await _dispatchStorage(handlerName, args);
         default:
           return {'ok': false, 'error': 'unknown method: $handlerName'};
       }
@@ -231,6 +249,115 @@ class MiniProgramBridge {
       // 仅把错误转成 JS 可读 envelope,不吞栈(原生日志由调用方记)
       return {'ok': false, 'error': e.toString()};
     }
+  }
+
+  /// 小程序云数据 wanlingStorage* 方法族(七 case 统一入口):
+  /// - wanling.storage 权限门禁([_storageAllowed]),声明缺失全拒
+  /// - key/coll 客户端预校验(与 server 正则一致),不符不触 proxy
+  /// - get/set/remove/items/quota 经既有 proxy 调 /api/mini-program-storage,
+  ///   server 4xx 抛 ApiException → 外层 catch 转 envelope
+  ///   ('version conflict'/'quota exceeded' 文案在 server message 内,JS 可按子串分流)
+  /// - subscribe/unsubscribe 经容器页注入回调接 WS,bridge 不感知连接层
+  Future<Object?> _dispatchStorage(String handlerName, List<dynamic> args) async {
+    final denied = _storageAllowed();
+    if (denied != null) return denied;
+    // unsubscribe 纯本地退订不依赖 appid;其余 case 拼 URL/回调都需宿主注入 appid,
+    // 缺失属容器页接线缺陷,复用 'storage unavailable' 防御性拒绝(fail fast)
+    if (handlerName != 'wanlingStorageUnsubscribe' &&
+        (appid == null || appid!.isEmpty)) {
+      return {'ok': false, 'error': 'storage unavailable'};
+    }
+    final opts = (args.isNotEmpty ? args.first : null) as Map? ?? const {};
+    if (handlerName == 'wanlingStorageSubscribe') {
+      // 未接线(宿主无 WS 桥接)→ 显式错误,不静默降级
+      if (onMpSubscribe == null) {
+        return {'ok': false, 'error': 'storage unavailable'};
+      }
+      final colls =
+          ((opts['colls'] as List?) ?? const []).whereType<String>().toList();
+      onMpSubscribe!(appid!, colls);
+      return {'ok': true};
+    }
+    if (handlerName == 'wanlingStorageUnsubscribe') {
+      await onMpUnsubscribe?.call();
+      return {'ok': true};
+    }
+    if (handlerName == 'wanlingStorageQuota') {
+      return {
+        'ok': true,
+        'data': await proxy(
+            '/api/mini-program-storage/$appid/quota', 'GET', null),
+      };
+    }
+    // get/set/remove 单条访问需 key(items 列举无 key 维度);不符不触 proxy
+    if (handlerName != 'wanlingStorageItems') {
+      final key = opts['key'] as String?;
+      if (key == null || !_storageKeyPattern.hasMatch(key)) {
+        return {'ok': false, 'error': 'invalid key'};
+      }
+    }
+    // coll 缺省 'default';非空须匹配白名单(与 server 校验一致)
+    final collRaw = opts['coll'] as String? ?? '';
+    if (collRaw.isNotEmpty && !_storageCollPattern.hasMatch(collRaw)) {
+      return {'ok': false, 'error': 'invalid coll'};
+    }
+    final coll = collRaw.isEmpty ? 'default' : collRaw;
+    final base = '/api/mini-program-storage/$appid/entries';
+    switch (handlerName) {
+      case 'wanlingStorageGet':
+        return {
+          'ok': true,
+          'data': await proxy(
+              '$base/${Uri.encodeComponent(opts['key'] as String)}?coll=$coll',
+              'GET',
+              null),
+        };
+      case 'wanlingStorageSet':
+        // body {value, expected_version}:expectedVersion 传时才带(乐观锁)
+        final body = <String, dynamic>{'value': opts['value']};
+        final ev = opts['expectedVersion'];
+        if (ev != null) body['expected_version'] = ev;
+        return {
+          'ok': true,
+          'data': await proxy(
+              '$base/${Uri.encodeComponent(opts['key'] as String)}?coll=$coll',
+              'PUT',
+              body),
+        };
+      case 'wanlingStorageRemove':
+        // server DELETE 的乐观锁走 query 参数(非 body)
+        final ev = opts['expectedVersion'];
+        final path = ev == null
+            ? '$base/${Uri.encodeComponent(opts['key'] as String)}?coll=$coll'
+            : '$base/${Uri.encodeComponent(opts['key'] as String)}?coll=$coll&expected_version=$ev';
+        return {'ok': true, 'data': await proxy(path, 'DELETE', null)};
+      case 'wanlingStorageItems':
+        // limit 钳 1..500:<1 视作缺省 100,>500 截到 500(与 server 校验对齐)
+        final raw = (opts['limit'] as num?)?.toInt();
+        final limit = (raw == null || raw < 1) ? 100 : (raw > 500 ? 500 : raw);
+        var path = '$base?coll=$coll&limit=$limit';
+        final prefix = opts['prefix'] as String?;
+        if (prefix != null && prefix.isNotEmpty) {
+          path += '&prefix=${Uri.encodeComponent(prefix)}';
+        }
+        final cursor = opts['cursor'] as String?;
+        if (cursor != null && cursor.isNotEmpty) {
+          path += '&cursor=${Uri.encodeComponent(cursor)}';
+        }
+        // 透传 server 形状 data:{items,next_cursor}(游标 body 携带,
+        // proxy 链路只透 body,响应头到不了 JS 侧;末页 next_cursor 为 null)
+        return {'ok': true, 'data': await proxy(path, 'GET', null)};
+      default:
+        return {'ok': false, 'error': 'unknown method: $handlerName'};
+    }
+  }
+
+  /// 云数据权限门禁:manifest 未声明 wanling.storage → 全拒(fail fast)。
+  Map<String, dynamic>? _storageAllowed() {
+    if (!permissions.contains('wanling.storage')) {
+      return {'ok': false, 'error': 'permission denied: wanling.storage'};
+    }
+    return null;
   }
 
   /// 归一化待请求路径:剥离 query/fragment,对路径段做 URI 解码 + 点段清理
@@ -279,6 +406,10 @@ String normalizeBridgeError(dynamic error) {
 /// openPage 白名单:agentDetail 的 agentId 参数校验(UUID,与 server 侧 id 类型一致)。
 final _agentIdPattern =
     RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+
+/// 云数据 key/coll 白名单(与 server storageKeyRe/coll 校验一致,客户端预校验)。
+final _storageKeyPattern = RegExp(r'^[A-Za-z0-9_.:@-]{1,128}$');
+final _storageCollPattern = RegExp(r'^[a-z0-9_-]{1,32}$');
 
 /// 需用户弹窗授权的权限:chat 类(涉及用户会话数据)与 nav(涉及宿主页面跳转)。
 /// 其余(如 wanling.api)不涉及用户数据,声明即生效。
