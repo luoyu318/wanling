@@ -147,6 +147,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (page < 0 || page >= _pages.length) return;
     final id = _pages[page];
     setState(() => _activeTabId = id);
+    // 横滑已被 _kPageViewPhysics 禁用(底栏点按切换),正常路径到不了这里;
+    // 防御性兜底:任何未来切页路径(物理放开/程序跳页)都不得把面板完成态
+    // 的收起底栏带到其他 tab。PullScope 监听 notifier 外部复位,会跟手收回。
+    if (_msgPanelOpen.value) _msgPanelOpen.value = false;
     // 切进小程序 tab 时静默刷新列表:provider 被底栏槽等常驻 watch,
     // autoDispose 名存实亡,切回命中缓存直接回旧数据;invalidate 后由
     // 列表页 skipLoadingOnRefresh 保旧数据换新,不闪 loading。
@@ -287,6 +291,8 @@ class _HomePageState extends ConsumerState<HomePage> {
             // 底栏随消息页面板完成态收缩(高度 64→0,mockup 对齐);Clip 防止
             // 收缩过程内容溢出。_navBarHeight = NavTabBar 自然高(SafeArea 底部
             // + 56),非完成态与原布局一致。
+            // OverflowBox:收缩动画期间 NavTabBar 保持自然高、贴底锚定,由容器
+            // 裁剪——直接给 NavTabBar 施压会把它内部 icon+label Column 压溢出。
             bottomNavigationBar: ValueListenableBuilder<bool>(
               valueListenable: _msgPanelOpen,
               builder: (context, panelOpen, _) => AnimatedContainer(
@@ -295,7 +301,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                 height: panelOpen ? 0 : _navBarHeight,
                 clipBehavior: Clip.hardEdge,
                 decoration: const BoxDecoration(),
-                child: NavTabBar(
+                child: OverflowBox(
+                  minHeight: 0,
+                  maxHeight: _navBarHeight,
+                  alignment: Alignment.bottomCenter,
+                  child: NavTabBar(
                   currentIndex: _currentNavIndex,
                   slots: [
                     for (final id in _visibleSlots)
@@ -340,6 +350,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     if (_moreSheetOpen) _closeMoreSheet();
                     context.push('/nav-edit');
                   },
+                  ),
                 ),
               ),
             ),

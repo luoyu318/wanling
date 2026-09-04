@@ -10,6 +10,7 @@
 //   （导航序列用 `nav_order_{ownerId}` 预种；旧 `nav_pins_{ownerId}` 预种
 //   顺带覆盖首读迁移路径）
 import 'package:wanling_core/models/agent.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/user.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
@@ -18,6 +19,7 @@ import 'package:wanling_core/providers/saved_logins_provider.dart';
 import 'package:app/pages/nav_edit_page.dart';
 import 'package:app/router.dart';
 import 'package:app/widgets/nav_tab_bar.dart';
+import 'package:nested_scroll_views/widgets.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -71,6 +73,7 @@ void main() {
     WidgetTester tester, {
     required Map<String, Object> prefsSeed,
     required List<Agent> agents,
+    List<Conversation> conversations = const [],
   }) async {
     SharedPreferences.setMockInitialValues(prefsSeed);
     final api = MockApi();
@@ -78,7 +81,7 @@ void main() {
     final ws = FakeWS();
     when(() => api.getMe()).thenAnswer((_) async => _testUser);
     when(() => api.getAgents()).thenAnswer((_) async => agents);
-    when(() => api.getConversations()).thenAnswer((_) async => []);
+    when(() => api.getConversations()).thenAnswer((_) async => conversations);
     when(() => api.getAgentSessions(any())).thenAnswer((_) async => []);
     // 三固定后 miniapps 平铺页常驻 PageView,effectiveNavOrder 亦 watch
     // miniProgramsProvider → 全用例统一 stub 空列表。
@@ -835,6 +838,49 @@ void main() {
       await tester.tap(find.text('编辑'));
       await tester.pumpAndSettle();
       expect(find.text('编辑底栏'), findsOneWidget);
+    });
+  });
+
+  group('消息页下拉面板完成态', () {
+    testWidgets('横滑不切 tab(物理禁横滑),面板完成态与收起底栏不被带偏', (tester) async {
+      // 定性用例:NestedPageView 物理=NeverScrollable(本 App 底栏点按切换),
+      // 完成态横滑必须不产生任何切页;若物理放开,HomePage._onPageChanged 的
+      // 复位兜底负责把面板/底栏收回(见 pull panel 外部复位用例)。
+      final conv = Conversation(
+        id: 'c1',
+        type: 'user_user',
+        title: '对话一',
+        participants: const [],
+        lastMessageContent: null,
+        lastMessageAt: DateTime.parse('2026-07-10T10:00:00Z'),
+        createdAt: DateTime.parse('2026-07-10T09:00:00Z'),
+      );
+      await pumpNavHome(
+        tester,
+        prefsSeed: {'token': 'fake-token'},
+        agents: [],
+        conversations: [conv],
+      );
+
+      // 列表顶部下拉 240px 松手 → 补完完成态(页头贴底)
+      final g = await tester.startGesture(const Offset(400, 300));
+      await g.moveBy(const Offset(0, 240));
+      await tester.pump();
+      await g.up();
+      await tester.pumpAndSettle();
+      double headerTop() =>
+          tester.getTopLeft(find.byType(AppBar).first).dy;
+      expect(headerTop(), greaterThan(400), reason: '完成态页头贴底');
+
+      // 完成态横滑(命中底层面板,其仅注册纵向手势)
+      await tester.drag(
+        find.byType(NestedPageView),
+        const Offset(-300, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('暂无 Agent'), findsNothing, reason: '横滑不得切到万灵页');
+      expect(headerTop(), greaterThan(400), reason: '完成态不被横滑破坏');
     });
   });
 }

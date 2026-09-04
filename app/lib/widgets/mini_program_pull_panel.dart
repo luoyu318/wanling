@@ -107,10 +107,35 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
             (to - _animFrom) * Curves.easeOutCubic.transform(_settle.value);
       });
     });
+    // settle 完成帧直接贴合实时目标位:解除「settle 300ms > 底栏收缩 250ms」
+    // 的时序假设,底栏先/后收完,末帧都精确落到最终贴底位
+    _settle.addStatusListener((status) {
+      if (status != AnimationStatus.completed) return;
+      setState(() => _pull = _panelOpen ? _tMax : _animTo);
+    });
+    // notifier 双向同步:宿主(HomePage 切页 onPageChanged 兜底)可外部复位,
+    // 本地完成态跟随收回/打开,保持单源一致。内部变更经 _setPanelOpen 写入
+    // 相同值,ValueNotifier 不重复通知,无回环。
+    widget.panelOpenNotifier.addListener(_onExternalNotifier);
+  }
+
+  /// 外部(宿主)修改 notifier 时同步本地状态:置 false 收回面板(动画回弹),
+  /// 置 true 直接进完成态并补完到贴底位。
+  void _onExternalNotifier() {
+    if (!mounted) return;
+    final external = widget.panelOpenNotifier.value;
+    if (external == _panelOpen) return;
+    if (external) {
+      _panelOpen = true;
+      _animatePullTo(_tMax);
+    } else {
+      _closePanel();
+    }
   }
 
   @override
   void dispose() {
+    widget.panelOpenNotifier.removeListener(_onExternalNotifier);
     _settle.dispose();
     super.dispose();
   }
@@ -153,6 +178,9 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
 
   bool _onScrollEnd(ScrollEndNotification n) {
     if (_panelOpen || _refreshing || _settle.isAnimating) return false;
+    // 安全前提:本回调对通知源不作源校验,依赖 _pull 只能经 _onOverscroll
+    // 累积(该处已过滤横向/非顶部 overscroll),嵌套滚动源(横幅轮播等)的
+    // ScrollEnd 在 _pull==0 时全部落入末尾 no-op 分支,无副作用。
     _segment = 0;
     if (_pull >= _panelThreshold) {
       HapticFeedback.mediumImpact();

@@ -250,6 +250,25 @@ void main() {
     expect(openNotifier.value, isFalse);
   });
 
+  testWidgets('外部复位 notifier(宿主切页兜底):面板收回、状态同步、可再开', (tester) async {
+    await pump(tester);
+    await _completeOpen(tester);
+    expect(openNotifier.value, isTrue);
+
+    // 宿主(HomePage 切页 onPageChanged)直接复位 notifier:
+    // 本地完成态必须跟随收回,不能只改信号量把页面停在半推位
+    openNotifier.value = false;
+    await tester.pumpAndSettle();
+    expect(_cardOffsetDy(tester), 0);
+    expect(_panelOpacity(tester).opacity, 0);
+
+    // 内部状态已同步:复位后再下拉仍能正常补完打开
+    await _pullDown(tester, 240, release: true);
+    await tester.pumpAndSettle();
+    expect(_panelOpacity(tester).opacity, 1);
+    expect(openNotifier.value, isTrue);
+  });
+
   testWidgets('面板内容:最近/常用两组 4 列网格,图标 Avatar radius 14', (tester) async {
     final manager = MiniProgramManager()
       ..open('a1', name: '跳跳球', iconUrl: '')
