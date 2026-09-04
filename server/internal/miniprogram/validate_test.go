@@ -3,6 +3,7 @@ package miniprogram
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -240,5 +241,50 @@ func TestValidatePackage_Icon超大小上限(t *testing.T) {
 	_, _, err := ValidatePackage(zipBytes, 4<<20)
 	if err == nil || !strings.Contains(err.Error(), "icon") {
 		t.Fatalf("icon 超 256KB 应报错, got %v", err)
+	}
+}
+
+func TestValidatePackage_Collections(t *testing.T) {
+	// 合法:三个档位 + 默认 default 不必声明
+	mk := func(colls string) map[string]string {
+		return map[string]string{
+			"appid": "test-app", "name": "t", "version": "1",
+			"index.html":    "<html></html>",
+			"manifest.json": fmt.Sprintf(`{"appid":"test-app","name":"t","version":1,"permissions":["wanling.storage"],"collections":%s}`, colls),
+		}
+	}
+	if _, _, err := ValidatePackage(buildZip(t, mk(`[{"name":"records","mode":"private"},{"name":"questions","mode":"shared_read"},{"name":"room","mode":"shared_write"}]`)), 20<<20); err != nil {
+		t.Fatalf("合法 collections 应通过: %v", err)
+	}
+	for bad, why := range map[string]string{
+		`[{"name":"x","mode":"public"}]`:                                     "非法 mode",
+		`[{"name":"Bad","mode":"private"}]`:                                  "name 大写",
+		`[{"name":"a b","mode":"private"}]`:                                  "name 带空格",
+		`[{"name":"","mode":"private"}]`:                                     "name 空",
+		`[{"name":"default","mode":"private"}]`:                              "保留名 default",
+		`[{"name":"a","mode":"private"},{"name":"a","mode":"shared_write"}]`: "重名",
+	} {
+		if _, _, err := ValidatePackage(buildZip(t, mk(bad)), 20<<20); err == nil {
+			t.Fatalf("%s 应被拒绝", why)
+		}
+	}
+	// 17 个超限(≤16)
+	var many []string
+	for i := 0; i < 17; i++ {
+		many = append(many, fmt.Sprintf(`{"name":"c%d","mode":"private"}`, i))
+	}
+	if _, _, err := ValidatePackage(buildZip(t, mk("["+strings.Join(many, ",")+"]")), 20<<20); err == nil {
+		t.Fatal("collections 超 16 个应被拒绝")
+	}
+}
+
+func TestValidatePackage_StoragePermission(t *testing.T) {
+	files := map[string]string{
+		"appid": "test-app", "name": "t", "version": "1",
+		"index.html":    "<html></html>",
+		"manifest.json": `{"appid":"test-app","name":"t","version":1,"permissions":["wanling.storage"]}`,
+	}
+	if _, _, err := ValidatePackage(buildZip(t, files), 20<<20); err != nil {
+		t.Fatalf("wanling.storage 应在白名单: %v", err)
 	}
 }
