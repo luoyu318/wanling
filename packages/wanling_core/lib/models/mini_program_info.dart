@@ -26,6 +26,20 @@ class MiniProgramNavigationBar {
   }
 }
 
+/// manifest.collections 声明的云数据档位。
+/// mode: private(owner 独占读写) / shared_write(会话内共享读写)。
+class MpCollection {
+  final String name;
+  final String mode;
+
+  const MpCollection({required this.name, required this.mode});
+
+  static MpCollection fromJson(Map<String, dynamic> json) => MpCollection(
+        name: json['name'] as String,
+        mode: json['mode'] as String,
+      );
+}
+
 class MiniProgramInfo {
   final String id;
   final String appid;
@@ -35,6 +49,7 @@ class MiniProgramInfo {
   final String entry;
   final String icon;
   final List<String> permissions;
+  final List<MpCollection> collections;
   final MiniProgramNavigationBar? navigationBar;
   final String status;
   final String sha256;
@@ -52,6 +67,7 @@ class MiniProgramInfo {
     this.entry = 'index.html',
     this.icon = '',
     this.permissions = const [],
+    this.collections = const [],
     this.navigationBar,
     required this.status,
     required this.sha256,
@@ -69,6 +85,10 @@ class MiniProgramInfo {
         icon: json['icon'] as String? ?? '',
         permissions:
             (json['permissions'] as List?)?.cast<String>() ?? const [],
+        collections: (json['collections'] as List?)
+                ?.map((e) => MpCollection.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
         navigationBar:
             MiniProgramNavigationBar.fromJson(json['navigation_bar'] as Map<String, dynamic>?),
         status: json['status'] as String,
