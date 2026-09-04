@@ -151,6 +151,9 @@ class WebSocketService {
       _sessionMetaUpdateController.isClosed;
 
   @visibleForTesting
+  bool get isMpStorageControllerClosed => _mpStorageController.isClosed;
+
+  @visibleForTesting
   bool get isStreamControllerClosed => _streamController.isClosed;
 
   /// 重建已关闭的 controller。connect() 入口自动调；测试直接调以验证行为。
