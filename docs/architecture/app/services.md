@@ -127,3 +127,11 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 小程序 JSBridge 门禁（app/lib，纯逻辑可单测）。安全基线：token 不进 JS（所有万灵 API 经 proxy 原生代理）；权限 fail fast（manifest 未声明 `wanling.api` 直接拒绝）；路径白名单（仅放行 `/api/` 前缀，`Uri.normalizePath` 归一化后复检防 `/api/../xxx` 绕过）。`handle('wanlingRequest'|'wanlingClose')` 返 `{ok, data|error}` envelope 供 JS 侧 then/throw
 
 **M2 会话上下文 4 handler**：`wanlingGetChatContext`（须 `wanling.chat.read`，经容器页注入的 `onChatContext` 回调返 `{conversation_id}`，未接来源会话返 null）+ `wanlingShareToChat`（须 `wanling.chat.share`，经 `onShare` 回调弹会话选择器 → 以 `mini_program_card` 发消息，返 `{message_id}`；用户取消返 cancelled）。`onChatContext`/`onShare` 由容器页构造注入（bridge 不感知 KVS/UI）。**`effectivePermissions(declared, granted)` 纯函数**：非 `wanling.chat.` 前缀权限（如 `wanling.api`）不涉及用户会话数据直接生效，`wanling.chat.*` 须在 granted 授权集中；只收窄不放大（granted 多余项不生效）
+
+## mini_program_manager.dart
+
+**小程序保活管理器**（多任务，纯状态 ChangeNotifier，WebView 由 Host 层持有）。多实例 Map（上限 `maxInstances = 5`）+ 前台 appid + `open/minimize/restore/close`；`open` 超上限按 `lastForegroundAt` 淘汰最久未前台者并返回被淘汰 appid（LRU），`list` 按打开时间倒序。全局单例 `miniProgramManagerProvider`（ChangeNotifierProvider）。宿主层/浮球/多任务视图消费，详见 [mini-program.md](./mini-program.md)
+
+## mini_program_launcher.dart
+
+**小程序统一打开入口 + live 壳路由同步**（模块级纯函数，无资源骨架）。`openMiniProgramWith(container, appid)` = manager.open + 保证 `/mini-program-live/:appid` 壳在栈上（壳在栈时系统返回键=最小化）；`bindLiveRoute()`（launch/live 壳页自报占位防重复压栈）、`syncLiveRouteWith(container)`（Host 最小化/恢复/关闭后同步壳有无，弹出壳返 true 供壳页残余兜底自弹判断）。所有打开路径（深链/聊天卡片/列表/底栏/下拉面板）必须经此文件，保证「manager 前台状态」与「live 壳路由有无」一致，详见 [mini-program.md](./mini-program.md)

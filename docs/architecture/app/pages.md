@@ -1,6 +1,6 @@
 # APP Pages
 
-lib/pages/ 目录下的 31 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
+lib/pages/ 目录下的 32 个 page(含 `pages/chat/` 子目录;TextPreviewPage 实现在 wanling_core/widgets)。
 
 ## SplashPage
 
@@ -104,7 +104,13 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## MiniProgramPage
 
-**小程序 WebView 容器页**（路由 `/mini-program/:appid`，M2 起可选 query `conv`（来源会话）与 `launch`（卡片 params，URL 编码 JSON））。origin 隔离：每小程序独立虚拟域名 `https://<appid>.<user_id>.mini.wanling.local`（host 含账号段，隔离多账号 storage）。启动流程：TokenVault 取 token → `MiniProgramService.installedDir` 命中即用 / 未装或版本旧则 `install`（下载 → sha256 校验 fail-fast → 解压到 `documents/miniprograms/<appid>/<version>/` 原子替换）→ **`_ensurePermissions` chat 权限授权流程**：KVS `getMpPerms` 读已授权集 → 未决 `wanling.chat.*` 逐个弹权限确认框（拒绝/点遮罩视为拒绝）→ `putMpPerms` 持久化增量 → `effectivePermissions(declared, granted)` 算有效权限集（非 chat 权限不弹窗直接生效）；拒绝项不进 granted，bridge 持续拒绝。`shouldInterceptRequest`：`/api/` 路径经 `proxyApiResource` 用宿主 ApiService 带登录态代理回源（仅 GET，非 GET 405 / 上游失败 502 / 点段归一化防路径混淆），其余从本地包读文件（`resolveLocalFile` 包根越界 403 / 缺失 404 + MIME 映射）；`shouldOverrideUrlLoading` 仅放行本 appid 虚拟 origin，外链一律拦截。JS 侧经注入的 `window.wanling.request/close/getChatContext/shareToChat` 四桥 → `MiniProgramBridge` 门禁（token 不进 JS，权限/`/api/` 路径白名单）→ `apiProvider.proxyRequest` 原生代理；**conv/launch 注入**：conv 经 `onChatContext` 回调供 getChatContext，launch 透传入口 URL query（H5 URLSearchParams 自取，不进 bridge）；**shareToChat** 校验仅 published 可分享 → 弹会话选择器 → `mini_program_card` 发消息。disabled 状态渲染「已被管理员停用」，appid 不存在/已下架返提示
+**小程序 WebView 容器页**（路由 `/mini-program/:appid` 现为入口壳，本页实际由全局 Host 层以嵌入模式渲染，见 [mini-program.md](./mini-program.md)；M2 起可选 query `conv`（来源会话）与 `launch`（卡片 params，URL 编码 JSON））。origin 隔离：每小程序独立虚拟域名 `https://<appid>.<user_id>.mini.wanling.local`（host 含账号段，隔离多账号 storage）。启动流程：TokenVault 取 token → `MiniProgramService.installedDir` 命中即用 / 未装或版本旧则 `install`（下载 → sha256 校验 fail-fast → 解压到 `documents/miniprograms/<appid>/<version>/` 原子替换）→ **`_ensurePermissions` chat 权限授权流程**：KVS `getMpPerms` 读已授权集 → 未决 `wanling.chat.*` 逐个弹权限确认框（拒绝/点遮罩视为拒绝）→ `putMpPerms` 持久化增量 → `effectivePermissions(declared, granted)` 算有效权限集（非 chat 权限不弹窗直接生效）；拒绝项不进 granted，bridge 持续拒绝。`shouldInterceptRequest`：`/api/` 路径经 `proxyApiResource` 用宿主 ApiService 带登录态代理回源（仅 GET，非 GET 405 / 上游失败 502 / 点段归一化防路径混淆），其余从本地包读文件（`resolveLocalFile` 包根越界 403 / 缺失 404 + MIME 映射）；`shouldOverrideUrlLoading` 仅放行本 appid 虚拟 origin，外链一律拦截。JS 侧经注入的 `window.wanling.request/close/getChatContext/shareToChat` 四桥 → `MiniProgramBridge` 门禁（token 不进 JS，权限/`/api/` 路径白名单）→ `apiProvider.proxyRequest` 原生代理；**conv/launch 注入**：conv 经 `onChatContext` 回调供 getChatContext，launch 透传入口 URL query（H5 URLSearchParams 自取，不进 bridge）；**shareToChat** 校验仅 published 可分享 → 弹会话选择器 → `mini_program_card` 发消息。disabled 状态渲染「已被管理员停用」，appid 不存在/已下架返提示
+
+**嵌入模式（多任务保活）**：`MiniProgramPage.embedded` 工厂（必传 `onMinimize`/`onClose` 回调，由 Host 注入）。差异点：系统返回键 WebView 有历史 → history 回退，入口页 → `onMinimize` 最小化到浮球（不再退出）；胶囊 ⋯ 菜单新增「浮窗」瓦片（仅嵌入模式，路由模式无 Host 层无最小化去处）= 主动最小化；胶囊 ◉ / JS `wanling.close()` → `onClose` 真正销毁实例；`wanling.openPage('home')` 同样转最小化到浮球
+
+## MiniProgramLaunchPage / MiniProgramLiveShellPage
+
+**小程序壳路由页**（页面自身无 UI，WebView 由全局 Host 层渲染；详见 [mini-program.md](./mini-program.md)）。`MiniProgramLaunchPage`（`/mini-program/:appid`）：initState `bindLiveRoute()` 自报壳占位 → 读列表元信息（name/icon）→ `openMiniProgramWith` 拉起保活实例。`MiniProgramLiveShellPage`（`/mini-program-live/:appid`）：仅由 launcher 压栈/弹出，拦截系统返回键。两页共用 `MiniProgramBackScope`（`PopScope(canPop:false)`）：返回 = minimize + live 壳同步弹出；残余壳兜底（sync 未弹壳且已无前台时 `Navigator.pop` 自弹）防双入口压栈场景卡死空屏
 
 ## AdminMiniProgramPage
 

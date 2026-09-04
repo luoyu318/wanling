@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 20 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core)。
+状态管理 21 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core) / miniProgramManager(本包 providers/)。
 
 ## authProvider
 
@@ -81,3 +81,7 @@ pinned agent tab 未读角标（`Provider.family<int, String>` by agentId，wanl
 ## 好友 / 用户搜索 provider（UI 未开放，代码保留）
 
 `friendProvider`（好友聚合三列表 + WS 事件同步）+ `userSearchProvider`（username 模糊搜索 500ms 防抖）代码完整保留，但好友/群组 UI 入口已下线，当前无页面可达。详见 [pages.md](./pages.md)「好友 / 群组页面」节
+
+## miniProgramManagerProvider
+
+小程序保活管理器单例（多任务，`ChangeNotifierProvider<MiniProgramManager>`，应用生命周期常驻）。多实例上限 5 + LRU 淘汰 + 前台切换，`open/minimize/restore/close`；MiniProgramHost / 浮球 / 多任务视图 / 消息页下拉面板共同消费。详见 [mini-program.md](./mini-program.md) 与 [services.md](./services.md#mini_program_managerdart)

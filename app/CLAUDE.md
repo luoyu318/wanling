@@ -36,10 +36,10 @@ flutter test test/providers/...    # 运行指定目录测试
 flowchart TB
     MAIN[main.dart<br/>async main]
     ROUTER[router.dart<br/>动态 tab 保活]
-        PAGES[29 个 pages]
+        PAGES[32 个 pages]
     PROVIDERS[Riverpod providers]
-    SERVICES[services<br/>api/ws/bg/notif]
-    WIDGETS[widgets/<br/>gallery+feedback+chat]
+    SERVICES[services<br/>api/ws/bg/notif<br/>mp_manager+launcher]
+    WIDGETS[widgets/<br/>gallery+feedback+chat<br/>mp_host/float/task/pull_panel]
     RENDER[rendering/<br/>消息内容注册表]
     
     MAIN --> ROUTER --> PAGES
