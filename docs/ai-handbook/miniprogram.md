@@ -16,7 +16,7 @@ manifest.json 全字段:
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
 | icon | string | 否 | 图标**包内相对路径**,扩展名 png/jpg/jpeg/webp,≤256KB;上传时校验存在+魔数(fail fast);列表 DTO 下发为相对 URL `/api/mini-programs/{id}/icon?v={版本}`(无 icon 空串,APP 用首字哈希色块 fallback) |
 | permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`,未知值拒绝 |
-| collections | object[] | 否 | 云数据集合声明 `[{name, mode}]`(≤16 个);name `^[a-z0-9_-]{1,32}$` 且 `default` 保留、重名拒;mode ∈ private/shared_read/shared_write;规则详见 §8 |
+| collections | object[] | 否 | 云数据集合声明 `[{name, mode}]`(≤16 个);name `^[a-z0-9_-]{1,32}$` 且 `default` 保留、重名拒;mode ∈ private/shared_read/shared_write;换版本时同名 coll 档位不可变更(400,新增/删除 coll 允许);规则详见 §8 |
 | navigationBar | object | 否 | 导航栏声明:`{style, backgroundColor, foregroundColor}`;style ∈ `default`(缺省,宿主原生 AppBar)/`custom`(隐藏 AppBar 全屏,SafeArea 避让状态栏);颜色 `#RRGGBB`,非法值 400 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
 
@@ -154,6 +154,12 @@ data: { appid: string, title: string, icon?: string, params?: any }
 - 配额:appid 层默认 100MB/5万条(`MINIPROGRAM_STORAGE_APP_BYTES`/`_APP_ENTRIES`)+ 单用户 20MB/5000条(`_MY_BYTES`/`_MY_ENTRIES`)+ 单值 256KB(`_MAX_VALUE_BYTES`);`mini_programs.quota_bytes` 非 NULL 时覆盖 appid 字节总帽(管理员可调)
 - WS 订阅:op=15 `d:{appid,colls:[...]}`(仅 user;小程序须 published 或请求者 owner;colls 逐个校验须 manifest 声明或 default,未声明频道跳过);op=16 `d:{}` 退订该连接全部频道(断连自动清理)。变更推送 op=0 `t:"MP_DATA_UPDATE"` `d:{appid,coll,key,value|nil,deleted,version,writer_openid}`(writer_openid=写者在本 appid 的 openid 投影);delete 事件 value=null、version=被删行旧值(非递增),消费方按到达序应用;瞬态可丢(发送满则丢,按 version 兜底重拉)
 - JS 桥(须声明 `wanling.storage`):`wanling.storage.get({key,coll?})` / `set({key,value,expectedVersion?,coll?})` / `remove({key,expectedVersion?,coll?})` / `items({coll?,prefix?,cursor?,limit?})`(limit 桥侧钳 1-500,<1 视 100)/ `quota()` / `subscribe(colls)` / `unsubscribe()` / `on(cb)`(返回 off 函数;回调参数即 MP_DATA_UPDATE 的 d)
+
+### 已知限制
+
+- 多容器页同连接并发时,unsubscribe 为连接级语义(op16 清该连接全部 mp 订阅,会连带清掉同连接其他页的订阅)
+- subscribe 传空 colls 数组返回 ok 但零登记(server 不视为错误)
+- op15/16 订阅帧不计入 WS 消息限流(走 op 通道非 dispatch)
 
 ## 组件清单
 

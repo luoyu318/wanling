@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -216,6 +217,12 @@ func (h *MiniProgramStorageHandler) PutEntry(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Err(c, http.StatusBadRequest, "bad_request", "body 需为 {\"value\":any,\"expected_version\":int?}")
+		return
+	}
+	// 显式拒 null value:binding required 对 RawMessage 字面 "null" 不生效
+	// (len=4 非空即过校验),放行会落库 value=JSON null 的行。
+	if len(req.Value) == 0 || bytes.Equal(bytes.TrimSpace(req.Value), []byte("null")) {
+		Err(c, http.StatusBadRequest, "bad_request", "value 不能为 null")
 		return
 	}
 	var e *model.MiniProgramData

@@ -267,6 +267,21 @@ func TestStorage_PutGet_Roundtrip(t *testing.T) {
 	}
 }
 
+// 用例 1b:set 显式 null value / 缺 value 字段 → 400:
+// binding required 对 json.RawMessage 字面 null 不生效,handler 显式守卫,
+// 防止 JSON null 落库成 value=null 行。
+func TestStorage_PutNullValue_Rejected(t *testing.T) {
+	e := newStorageEnv(t, storageCfg(100<<20))
+	s := e.newSrv(t)
+	owner := e.user(t, "stnv")
+	s.as(owner.ID, "user")
+	appid := stAppid()
+	s.seedApp(t, appid, true)
+
+	AssertErr(t, s.do(stPut(appid, "k1", "", `{"value":null}`)), http.StatusBadRequest, "bad_request")
+	AssertErr(t, s.do(stPut(appid, "k2", "", `{"expected_version":1}`)), http.StatusBadRequest, "bad_request")
+}
+
 // 用例 2:private 档用户隔离——B 读不到 A 的 key(data:null),B 写自己槽位成功,
 // A 的行不被 B 的同名 key 覆盖。
 func TestStorage_PrivateMode_UserIsolation(t *testing.T) {

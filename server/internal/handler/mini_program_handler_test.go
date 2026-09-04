@@ -53,6 +53,30 @@ func mpUserName(tag string) string {
 	return tag + "_" + uuid.NewString()[:8]
 }
 
+// buildCollZip 构造带指定 collections 档位声明的 zip(换版本档位校验测试用)。
+func buildCollZip(t *testing.T, appid string, version int, collections string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	files := map[string]string{
+		"manifest.json": fmt.Sprintf(`{"appid":%q,"name":"Colls","version":%d,"entry":"index.html","permissions":["wanling.storage"],"collections":%s}`, appid, version, collections),
+		"index.html":    "<html><body>colls</body></html>",
+	}
+	for name, content := range files {
+		fw, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := fw.Write([]byte(content)); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
 // mpEnv 小程序 handler 测试环境(独立测试库 + 本地临时存储)。
 type mpEnv struct {
 	h          *MiniProgramHandler
@@ -232,6 +256,43 @@ func TestMiniProgramHandler_Upload_InvalidZip_400(t *testing.T) {
 	u := e.user(t, "mud")
 	s.as(u.ID, "user")
 	AssertErr(t, s.do(mpUploadReq(t, []byte("not a zip"))), http.StatusBadRequest, "invalid_package")
+}
+
+// TestMiniProgramHandler_Upload_ReplaceVersion_CollectionModeImmutable
+// 换版本禁改同名 coll 档位(阻断档位翻转越权面:如 private→shared_read 后
+// GetEntryShared 无 owner 过滤命中他人历史私有行):
+//   - 翻转同名 coll 档位 → 400 bad_request
+//   - 保持旧档位 + 新增 coll → 201
+//   - 删除 coll → 201(旧行按原档位不可达或仅 owner 可见,无越权面)
+//   - 首次上传带 collections 不受换版本校验影响(v1 即首次上传)
+func TestMiniProgramHandler_Upload_ReplaceVersion_CollectionModeImmutable(t *testing.T) {
+	e := newMPEnv(t)
+	s := e.newSrv(t)
+	u := e.user(t, "mcm")
+	s.as(u.ID, "user")
+	appid := "mp-" + uuid.NewString()[:8]
+
+	// 首次上传:records=private + notes=shared_read(带 collections 的新建不受影响)
+	v1 := buildCollZip(t, appid, 1, `[{"name":"records","mode":"private"},{"name":"notes","mode":"shared_read"}]`)
+	if w := s.do(mpUploadReq(t, v1)); w.Code != http.StatusCreated {
+		t.Fatalf("首次上传应 201: %d %s", w.Code, w.Body.String())
+	}
+
+	// 换版本翻转 records 档位 → 400
+	v2 := buildCollZip(t, appid, 2, `[{"name":"records","mode":"shared_read"},{"name":"notes","mode":"shared_read"}]`)
+	AssertErr(t, s.do(mpUploadReq(t, v2)), http.StatusBadRequest, "bad_request")
+
+	// 换版本保持旧档位 + 新增 extra coll → 201
+	v3 := buildCollZip(t, appid, 2, `[{"name":"records","mode":"private"},{"name":"notes","mode":"shared_read"},{"name":"extra","mode":"shared_write"}]`)
+	if w := s.do(mpUploadReq(t, v3)); w.Code != http.StatusCreated {
+		t.Fatalf("新增 coll 换版本应 201: %d %s", w.Code, w.Body.String())
+	}
+
+	// 换版本删除 notes/extra coll(仅留 records 原档位)→ 201
+	v4 := buildCollZip(t, appid, 3, `[{"name":"records","mode":"private"}]`)
+	if w := s.do(mpUploadReq(t, v4)); w.Code != http.StatusCreated {
+		t.Fatalf("删除 coll 换版本应 201: %d %s", w.Code, w.Body.String())
+	}
 }
 
 // TestMiniProgramHandler_StatusTransition_InvalidTransition409_ThenPublish200

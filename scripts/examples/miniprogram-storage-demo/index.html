@@ -97,11 +97,13 @@ function fmtBytes(n){
 function storage(){ return window.wanling && window.wanling.storage; }
 
 /* =============== 初始化 =============== */
-function ym(d){ return d.toISOString().slice(0,7); }
+// 月份/日期用本地时区拼(toISOString 是 UTC,东八区晚间会前移一天)
+function ym(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1); }
 (function init(){
   if (!storage()){ $('list').innerHTML = '<div class="empty">wanling.storage 不可用：请在万灵 APP 中打开本小程序</div>'; return; }
-  $('month').value = ym(new Date());
-  $('fDate').value = new Date().toISOString().slice(0,10);
+  const now = new Date();
+  $('month').value = ym(now);
+  $('fDate').value = ym(now)+'-'+String(now.getDate()).padStart(2,'0');
   reload();
 })();
 
