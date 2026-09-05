@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/providers/mini_program_manager_provider.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 
 /// 非小程序路由 didPush 时,若有前台实例 → 最小化 + 实例视图 Offstage,
 /// 被 push 页面同帧可见(无黑洞帧)。
@@ -37,8 +38,12 @@ class MiniProgramAutoMinimizeObserver extends NavigatorObserver {
     // didPush 发生在 widget build 期,直接 minimize 会同步通知 Host 重建,
     // 触发「modify a provider while the widget tree was building」;
     // 推迟到本帧绘制完成后执行(push 转场首帧内实例已收起,无可感知黑洞帧)。
-    // manager 在 didPush 同步读取,回调里不再碰 container(防容器已销毁)。
-    WidgetsBinding.instance.addPostFrameCallback((_) => manager.minimize());
+    // manager 在 didPush 同步读取;container 同步捕获传给统一收起路径
+    // (抓帧 + 最小化,fail-safe),回调里不再碰 ProviderScope。
+    final captured = container;
+    WidgetsBinding.instance.addPostFrameCallback((_) =>
+        // syncRoute=false:栈顶刚被本次 push 占据,弹壳会弹错路由
+        minimizeWithSnapshot(captured, syncRoute: false));
     // 不在此弹 live 壳:此刻栈顶刚被本次 push 占据,router.pop() 会弹错路由;
     // 壳保留在栈下,由壳页既有「残余壳兜底」在返回链路上自清。
   }

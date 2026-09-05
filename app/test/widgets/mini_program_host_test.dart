@@ -6,12 +6,17 @@
 // 5. close 后实例视图从树上消失
 // 6. 上滑关闭最后一个实例:任务视图自动关闭(不悬在空列表上)
 // 7. 宿主回调联动 live 壳路由:上滑关闭弹壳 / 点卡片恢复压回
+// 8. 最小化前抓 WebView 快照:registry 有 controller → 帧写入实例;
+//    抓帧抛异常 → 最小化照常完成不崩(fail-safe)
 //
 // Mock 策略:manager 用真实例(纯状态);routerProvider 覆盖为真实 GoRouter
 // (带 /mini-program-live/:appid 壳路由);WebView 不触平台通道——
 // instanceViewBuilder 注入替身视图 Text('mp-<appid>')。
 // 注:skipOffstage=false 断言「是否仍在树上」(保活视图默认 finder 会跳过)。
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +30,7 @@ import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/router.dart' show routerProvider;
 import 'package:app/services/mini_program_launcher.dart';
 import 'package:app/services/mini_program_manager.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 import 'package:app/widgets/mini_program_float_ball.dart';
 import 'package:app/widgets/mini_program_host.dart';
 import 'package:app/widgets/mini_program_task_view.dart';
@@ -438,4 +444,53 @@ void main() {
     expect(page.conversationId, 'c1');
     expect(page.launchParams, '{"x":1}');
   });
+
+  group('最小化前抓 WebView 快照(E)', () {
+    setUp(() => resetMiniProgramControllersForTest());
+
+    testWidgets('registry 有 controller → onMinimize 抓帧写入实例', (tester) async {
+      final h = _Harness();
+      await h.pump(tester, useRealEmbeddedPage: true);
+
+      openMiniProgramWith(h.container, 'a');
+      await tester.pumpAndSettle();
+
+      // 嵌入页测试不触 WebView 平台通道 → 手动注册替身 controller 模拟页面注册
+      final fake = _MockShotController();
+      final frame = Uint8List.fromList([7, 7, 7]);
+      when(() => fake.takeScreenshot()).thenAnswer((_) async => frame);
+      registerMiniProgramController('a', fake);
+
+      final page = tester.widget<MiniProgramPage>(find.byType(MiniProgramPage));
+      page.onMinimize!();
+      await tester.pumpAndSettle();
+
+      verify(() => fake.takeScreenshot()).called(1);
+      expect(h.manager.foregroundAppid, isNull);
+      expect(h.manager.instances['a']!.snapshot, same(frame));
+    });
+
+    testWidgets('抓帧抛异常 → 最小化照常完成,不崩(fail-safe)', (tester) async {
+      final h = _Harness();
+      await h.pump(tester, useRealEmbeddedPage: true);
+
+      openMiniProgramWith(h.container, 'a');
+      await tester.pumpAndSettle();
+
+      final fake = _MockShotController();
+      when(() => fake.takeScreenshot()).thenThrow(Exception('crash'));
+      registerMiniProgramController('a', fake);
+
+      final page = tester.widget<MiniProgramPage>(find.byType(MiniProgramPage));
+      page.onMinimize!();
+      await tester.pumpAndSettle();
+
+      expect(h.manager.foregroundAppid, isNull);
+      expect(h.manager.instances.containsKey('a'), isTrue);
+      expect(find.byType(MiniProgramFloatBall), findsOneWidget);
+    });
+  });
 }
+
+/// 快照抓帧用替身 controller(只 stub takeScreenshot)。
+class _MockShotController extends Mock implements InAppWebViewController {}

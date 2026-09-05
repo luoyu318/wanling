@@ -7,11 +7,14 @@
 // 壳路由识别:router.dart 给两类壳路由显式 name=state.matchedLocation
 // (go_router push 场景 pageKey 是唯一 id 而非路径,不能复用)。
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mocktail/mocktail.dart';
 
 import 'package:app/pages/mini_program_launch_page.dart';
 import 'package:app/providers/mini_program_manager_provider.dart';
@@ -19,7 +22,11 @@ import 'package:app/router.dart' show routerProvider;
 import 'package:app/services/mini_program_launcher.dart';
 import 'package:app/services/mini_program_manager.dart';
 import 'package:app/services/mini_program_nav_observer.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 import 'package:app/widgets/mini_program_host.dart';
+
+/// 快照抓帧用替身 controller(E)。
+class _MockShotController extends Mock implements InAppWebViewController {}
 
 /// 测试脚手架:真实 manager + 真实 GoRouter(壳路由带 name,对齐 router.dart
 /// 定义)+ observer 挂载 + Host 接线(替身实例视图)。
@@ -115,6 +122,28 @@ void main() {
           .isNotEmpty,
       isTrue,
     );
+  });
+
+  testWidgets('收起路径抓帧:push 非小程序路由收起前抓帧存实例(E)', (tester) async {
+    resetMiniProgramControllersForTest();
+    final h = _Harness();
+    await h.pump(tester);
+
+    openMiniProgramWith(h.container, 'a');
+    await tester.pumpAndSettle();
+
+    // 替身 controller 模拟嵌入页注册(测试环境无 WebView 平台通道)
+    final fake = _MockShotController();
+    final frame = Uint8List.fromList([4, 5, 6]);
+    when(() => fake.takeScreenshot()).thenAnswer((_) async => frame);
+    registerMiniProgramController('a', fake);
+
+    unawaited(h.router.push('/other'));
+    await tester.pumpAndSettle();
+
+    verify(() => fake.takeScreenshot()).called(1);
+    expect(h.manager.foregroundAppid, isNull);
+    expect(h.manager.instances['a']!.snapshot, same(frame));
   });
 
   testWidgets('push 小程序壳路由(live 壳/入口壳) → 不触发最小化(排除生效)',

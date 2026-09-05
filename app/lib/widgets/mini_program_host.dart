@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,6 +7,7 @@ import 'package:app/pages/mini_program_page.dart';
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_launcher.dart';
 import 'package:app/services/mini_program_manager.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 import 'package:app/widgets/mini_program_float_ball.dart';
 import 'package:app/widgets/mini_program_overlay.dart';
 import 'package:app/widgets/mini_program_task_view.dart';
@@ -64,8 +67,9 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
   }
 
   void _minimize() {
-    ref.read(miniProgramManagerProvider).minimize();
-    syncLiveRouteWith(ProviderScope.containerOf(context));
+    // 统一收起路径(E):先抓 WebView 真实帧(此刻 Offstage 未置,帧有效),
+    // 再最小化;抓帧失败由编排层 fail-safe 吞掉,不阻断最小化
+    unawaited(minimizeWithSnapshot(ProviderScope.containerOf(context)));
   }
 
   void _close(String appid) {
