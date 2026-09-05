@@ -68,6 +68,10 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
             )
           : SlidableAutoCloseBehavior(
               child: ListView.builder(
+                // T7 后 Scaffold 无 appBar,body 保留状态栏 inset;ScrollView
+                // padding 为 null 时隐式取 MediaQuery.paddingOf → 顶部多出
+                // 一段状态栏高度的空白。顶部 inset 由宿主页头消费,这里显式归零。
+                padding: EdgeInsets.zero,
                 physics: const AlwaysScrollableScrollPhysics(),
                 itemCount: list.length,
                 itemBuilder: (_, i) {
@@ -195,6 +199,8 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      // 同主列表:显式零 padding,不吃 body 保留的状态栏 inset
+      padding: EdgeInsets.zero,
       children: const [
         SizedBox(height: 200),
         Center(
