@@ -5,8 +5,10 @@
 // go_router 用 mocktail spy(真实 GoRouter 的 push 在 testWidgets 下不前进,见
 // launcher 单测文件头说明)。
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -17,9 +19,12 @@ import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/router.dart' show routerProvider;
 import 'package:app/services/mini_program_launcher.dart';
 import 'package:app/services/mini_program_manager.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 
 class _MockGoRouter extends Mock implements GoRouter {}
+
+class _MockShotController extends Mock implements InAppWebViewController {}
 
 void main() {
   late _MockGoRouter router;
@@ -158,5 +163,38 @@ void main() {
     expect(inst!.conversationId, 'c1');
     expect(inst.launchParams, '{"x":1}'); // URL 编码 JSON 解码无损
     expect(manager.foregroundAppid, 'a');
+  });
+
+  testWidgets('返回键最小化走统一收起编排:抓帧写入实例(返回键也有快照)', (tester) async {
+    final fake = _MockShotController();
+    when(() => fake.takeScreenshot()).thenAnswer((_) async => Uint8List.fromList([1, 2, 3]));
+    registerMiniProgramController('a', fake);
+    addTearDown(resetMiniProgramControllersForTest);
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(
+        home: Scaffold(
+          body: Center(child: Text('HOME', textDirection: TextDirection.ltr)),
+        ),
+      ),
+    ));
+    final nav = tester.state<NavigatorState>(find.byType(Navigator));
+    bindLiveRoute();
+    unawaited(nav.push(MaterialPageRoute<void>(
+      builder: (_) => const MiniProgramBackScope(key: Key('ONLY')),
+    )));
+    await tester.pumpAndSettle();
+    container.read(miniProgramManagerProvider).open('a');
+
+    // 返回键:先抓帧(写入实例快照)再最小化;sync 弹壳由 mock router 承接
+    await tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pumpAndSettle();
+
+    final inst = container.read(miniProgramManagerProvider).instances['a'];
+    expect(inst, isNotNull);
+    expect(inst!.snapshot, isNotNull);
+    verify(() => fake.takeScreenshot()).called(1);
+    expect(container.read(miniProgramManagerProvider).hasForeground, isFalse);
   });
 }

@@ -6,13 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_launcher.dart';
+import 'package:app/services/mini_program_snapshot.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 
-/// 小程序壳层返回键拦截:返回 = 最小化(前台清空 + live 路由同步)。
-/// 残余壳兜底:sync 未弹壳(它已弹则本回调直接结束,不会双弹)且已无前台时,
-/// 自弹本页(Navigator.pop 不受 PopScope 门控)——防双入口压栈等场景下
-/// 残余壳以 canPop:false 拦死系统返回,用户卡空屏。
+/// 小程序壳层返回键拦截:返回 = 最小化。走统一收起编排
+/// (先抓帧再最小化,任务视图才有真实快照;缺抓帧则卡片显示占位渐变),
+/// 之后 live 路由同步。残余壳兜底:sync 未弹壳(它已弹则本回调直接结束,
+/// 不会双弹)且已无前台时,自弹本页(Navigator.pop 不受 PopScope 门控)——
+/// 防双入口压栈等场景下残余壳以 canPop:false 拦死系统返回,用户卡空屏。
 class MiniProgramBackScope extends StatelessWidget {
   const MiniProgramBackScope({super.key});
 
@@ -20,13 +22,13 @@ class MiniProgramBackScope extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
+      onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final container = ProviderScope.containerOf(context);
         final manager = container.read(miniProgramManagerProvider);
-        manager.minimize();
-        final popped = syncLiveRouteWith(container);
-        if (popped) return;
+        final r = await minimizeWithSnapshot(container);
+        if (!context.mounted) return;
+        if (r.popped) return;
         if (!manager.hasForeground && Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
         }

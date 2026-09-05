@@ -39,14 +39,18 @@ Future<Uint8List?> captureSnapshot(String appid) async {
   }
 }
 
-/// 最小化 + 抓帧统一收起路径:先抓帧(此刻 WebView 仍前台,Offstage 未置,
-/// 帧有内容),再最小化置 Offstage。收起语义(fail-safe)不变:
-/// 抓帧失败不影响最小化。返回抓到的帧(测试断言用,生产忽略)。
+/// 最小化 + 抓帧统一收起路径:**所有**收起入口都必须走它(BackScope 返回键 /
+/// Host._minimize 浮窗等 / AutoMinimizeObserver 外部导航),保证任何方式最小化
+/// 都先抓帧(此刻 WebView 仍前台,Offstage 未置,帧有内容),再最小化置 Offstage。
+/// 收起语义(fail-safe)不变:抓帧失败不影响最小化。
 ///
-/// [syncRoute]:是否同步 live 壳路由(Host 路径需要)。Observer 的 didPush
-/// 路径必须传 false——此刻栈顶刚被新路由占据,pop 会弹错路由,残余壳由
+/// [syncRoute]:是否同步 live 壳路由(Host 路径与 BackScope 需要)。Observer 的
+/// didPush 路径必须传 false——此刻栈顶刚被新路由占据,pop 会弹错路由,残余壳由
 /// 壳页「残余壳兜底」在返回链路上自清(原 observer 语义)。
-Future<Uint8List?> minimizeWithSnapshot(
+///
+/// 返回 [popped]:sync 弹壳分支是否弹出了壳页(BackScope 据此决定残余壳兜底
+/// 自弹,防双入口压栈卡死);[frame]:抓到的帧(测试断言用,生产忽略)。
+Future<({Uint8List? frame, bool popped})> minimizeWithSnapshot(
   ProviderContainer container, {
   bool syncRoute = true,
 }) async {
@@ -58,6 +62,6 @@ Future<Uint8List?> minimizeWithSnapshot(
     if (frame != null) manager.updateSnapshot(appid, frame);
   }
   manager.minimize();
-  if (syncRoute) syncLiveRouteWith(container);
-  return frame;
+  final popped = syncRoute ? syncLiveRouteWith(container) : false;
+  return (frame: frame, popped: popped);
 }

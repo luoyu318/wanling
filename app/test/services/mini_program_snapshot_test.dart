@@ -94,9 +94,10 @@ void main() {
       registerMiniProgramController('a', c);
       when(() => c.takeScreenshot()).thenAnswer((_) async => frame);
 
-      final got = await minimizeWithSnapshot(h.container);
+      final r = await minimizeWithSnapshot(h.container);
 
-      expect(got, same(frame));
+      expect(r.frame, same(frame));
+      expect(r.popped, isFalse);
       expect(h.manager.foregroundAppid, isNull);
       expect(h.manager.instances['a']!.snapshot, same(frame));
     });
@@ -105,9 +106,10 @@ void main() {
       final h = _Harness()..pump();
       h.manager.open('a');
 
-      final got = await minimizeWithSnapshot(h.container);
+      final r = await minimizeWithSnapshot(h.container);
 
-      expect(got, isNull);
+      expect(r.frame, isNull);
+      expect(r.popped, isFalse);
       expect(h.manager.foregroundAppid, isNull);
       expect(h.manager.instances['a']!.snapshot, isNull);
     });
@@ -119,9 +121,10 @@ void main() {
       registerMiniProgramController('a', c);
       when(() => c.takeScreenshot()).thenThrow(Exception('crash'));
 
-      final got = await minimizeWithSnapshot(h.container);
+      final r = await minimizeWithSnapshot(h.container);
 
-      expect(got, isNull);
+      expect(r.frame, isNull);
+      expect(r.popped, isFalse);
       expect(h.manager.foregroundAppid, isNull);
       expect(h.manager.instances.containsKey('a'), isTrue);
     });
@@ -129,9 +132,10 @@ void main() {
     test('无前台实例:直接最小化 no-op 语义,不抓帧', () async {
       final h = _Harness()..pump();
 
-      final got = await minimizeWithSnapshot(h.container);
+      final r = await minimizeWithSnapshot(h.container);
 
-      expect(got, isNull);
+      expect(r.frame, isNull);
+      expect(r.popped, isFalse);
       expect(h.manager.hasForeground, isFalse);
     });
   });
