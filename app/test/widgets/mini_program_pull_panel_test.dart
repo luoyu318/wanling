@@ -5,10 +5,11 @@
 // - 完成态上滑跟手恢复(未拖过半弹回完成态,拖过半松手收回);点页头收回
 // - 面板内容:最近使用(manager)/常用(miniProgramsProvider 前 8)两组 4 列网格
 //
-// 几何口径(默认测试面 800x600,无系统 inset):
-//   tMax = 600 - 26(点指示器) - 0(状态栏) - 56(AppBar) - 0(手势条) = 518
-//   触摸 slop 18px:拖 240px 实际 overscroll 222(>190 补完段)
+// 几何口径(默认测试面 800x600,无系统 inset;dots 不占布局空间):
+//   tMax = 600 - 0(状态栏) - 56(AppBar) - 0(手势条) = 544
+//   触摸 slop 18px:拖 240px 实际 overscroll 222(>190 补完段,p≈0.41 dots 已淡出)
 //   拖 100px 实际 82(60~190 刷新段);拖 30px 实际 12(<60 弹回段)
+//   拖 60px 实际 42(p≈0.08 dots 渐显窗口内);拖 45px 实际 27(p≈0.05 半透明)
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
@@ -63,6 +64,15 @@ Opacity _panelOpacity(WidgetTester tester) => tester.widget<Opacity>(
         matching: find.byType(Opacity),
       ),
     );
+
+/// 揭示带 dots 指示器的透明度;未渲染返回 null(不渲染 ≠ 透明)。
+Opacity? _dotsOpacity(WidgetTester tester) {
+  final f = find.byKey(const ValueKey('pull-dots'));
+  if (f.evaluate().isEmpty) return null;
+  return tester.widget<Opacity>(
+    find.descendant(of: f, matching: find.byType(Opacity)).first,
+  );
+}
 
 Future<void> _pumpScope(
   WidgetTester tester, {
@@ -166,15 +176,74 @@ void main() {
     expect(openNotifier.value, isFalse);
   });
 
-  testWidgets('顶部下拉跟手:页面位移>0,面板淡入,点指示器出现', (tester) async {
+  testWidgets('顶部下拉跟手:页面位移>0,面板淡入;深拉(p>0.35)dots 已淡出',
+      (tester) async {
     await pump(tester);
 
     final g = await _pullDown(tester, 240);
 
     expect(_cardOffsetDy(tester), greaterThan(0));
     expect(_panelOpacity(tester).opacity, greaterThan(0));
-    expect(find.byKey(const ValueKey('pull-dots')), findsOneWidget);
+    // p = 222/544 ≈ 0.41 > 0.35:dots 已淡出交接面板
+    expect(find.byKey(const ValueKey('pull-dots')), findsNothing);
 
+    await g.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('dots 重做:揭示带内居中不占布局,浅拉渐显(p≈0.08)',
+      (tester) async {
+    await pump(tester);
+
+    // 拖 60px(实际 42,p≈0.08):dots 渲染且半透明(淡入窗口内)
+    final g = await _pullDown(tester, 60);
+    await tester.pump();
+
+    final dotsOpacity = _dotsOpacity(tester);
+    expect(dotsOpacity, isNotNull, reason: '浅拉时 dots 应渲染');
+    expect(dotsOpacity!.opacity, greaterThan(0));
+    expect(dotsOpacity.opacity, lessThan(1), reason: '渐显窗口内为半透明');
+
+    // 不占布局:覆盖元素,垂直居中于揭示带([0, t],t = 卡片下推量)
+    final dots =
+        tester.widget<Positioned>(find.byKey(const ValueKey('pull-dots')));
+    expect(dots.top, 0);
+    expect(dots.height, _cardOffsetDy(tester));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('pull-dots')),
+        matching: find.byType(Center),
+      ),
+      findsOneWidget,
+      reason: 'dots 在揭示带内垂直居中',
+    );
+    // 不占布局铁证:页头仍紧贴屏幕顶(若 dots 在 Column 占 26px 则页头顶缘 = 26)
+    final headerTop = tester.getTopLeft(find.byKey(_headerKey)).dy;
+    expect(headerTop, _cardOffsetDy(tester));
+
+    await g.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('dots 渐显窗口:p≈0.05 半透明起步,p=0 不渲染,交接面板后不可见',
+      (tester) async {
+    await pump(tester);
+
+    // p≈0.05(拖 27px,27/544≈0.0496):淡入起步,半透明
+    var g = await _pullDown(tester, 27);
+    var opacity = _dotsOpacity(tester);
+    expect(opacity, isNotNull);
+    expect(opacity!.opacity, greaterThan(0));
+    expect(opacity.opacity, lessThan(0.6), reason: 'p≈0.05 应为半透明');
+    await g.up();
+    await tester.pumpAndSettle();
+
+    // p=0(静止):不渲染
+    expect(find.byKey(const ValueKey('pull-dots')), findsNothing);
+
+    // p>0.35(拖 240px,实际 222):淡出完毕,不可见
+    g = await _pullDown(tester, 240);
+    expect(_dotsOpacity(tester), isNull, reason: 'p>0.35 后 dots 不渲染');
     await g.up();
     await tester.pumpAndSettle();
   });
@@ -188,8 +257,8 @@ void main() {
     expect(_panelOpacity(tester).opacity, 1);
     expect(openNotifier.value, isTrue, reason: '宿主据 notifier 收缩底栏');
     expect(openedApps, isEmpty);
-    // 卡片停在完成态页头贴底位置
-    expect(_cardOffsetDy(tester), 518);
+    // 卡片停在完成态页头贴底位置(dots 不占布局,落位 = body - 页头)
+    expect(_cardOffsetDy(tester), 544);
   });
 
   testWidgets('拖 100px(60~190)松手:onRefresh 被调用,不进完成态', (tester) async {
@@ -218,17 +287,17 @@ void main() {
     await pump(tester);
     await _completeOpen(tester);
 
-    // 小拖:未拖过半(tMax*0.5=259),松手弹回完成态
+    // 小拖:未拖过半(tMax*0.5=272),松手弹回完成态
     final g = await tester.startGesture(const Offset(400, 300));
     await g.moveBy(const Offset(0, -100));
     await tester.pump();
-    expect(_cardOffsetDy(tester), 418, reason: '上滑跟手减小');
+    expect(_cardOffsetDy(tester), 444, reason: '上滑跟手减小');
     await g.up();
     await tester.pumpAndSettle();
-    expect(_cardOffsetDy(tester), 518);
+    expect(_cardOffsetDy(tester), 544);
     expect(openNotifier.value, isTrue);
 
-    // 大拖:拖过半(pull 118 < 259),松手收回且面板消失
+    // 大拖:拖过半(pull 144 < 272),松手收回且面板消失
     final g2 = await tester.startGesture(const Offset(400, 300));
     await g2.moveBy(const Offset(0, -400));
     await tester.pump();

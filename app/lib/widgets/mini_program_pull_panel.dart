@@ -59,7 +59,6 @@ class MiniProgramPullScope extends StatefulWidget {
 
 class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
     with SingleTickerProviderStateMixin {
-  static const double _dotsH = 26; // 顶部点指示器高度
   static const double _headerH = kToolbarHeight; // 页头(AppBar)高度
   static const double _panelThreshold = 190; // 松手补完打开阈值
   static const double _refreshThreshold = 60; // 轻拉刷新阈值
@@ -85,10 +84,11 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
     return v.padding.bottom / v.devicePixelRatio;
   }
 
-  /// 完成态下移量:点指示器 26 + 状态栏 + 页头正好推到屏幕底(手势条上方)。
+  /// 完成态下移量:状态栏 + 页头正好推到屏幕底(手势条上方)。
+  /// dots 不占布局空间(改揭示带覆盖),完成态落位只由页头决定。
   double get _tMax {
     final padTop = MediaQuery.paddingOf(context).top;
-    return (_bodyH - _dotsH - padTop - _headerH - _systemPadBottom).clamp(
+    return (_bodyH - padTop - _headerH - _systemPadBottom).clamp(
       0.0,
       double.infinity,
     );
@@ -279,30 +279,22 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
                     borderRadius: BorderRadius.vertical(
                       top: Radius.circular(18 * p),
                     ),
-                    child: Stack(
-                      children: [
-                        Column(
-                          children: [
-                            // 完成态整条页头(点指示器+页头)是返回条:
-                            // 点击收回,AbsorbPointer 屏蔽 AppBar 内部按钮
-                            if (_panelOpen)
-                              GestureDetector(
-                                onTap: _closePanel,
-                                child: AbsorbPointer(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      _dotsIndicator(p),
-                                      widget.header,
-                                    ],
+                      child: Stack(
+                        children: [
+                          Column(
+                            children: [
+                              // 完成态整条页头是返回条:点击收回,
+                              // AbsorbPointer 屏蔽 AppBar 内部按钮
+                              if (_panelOpen)
+                                GestureDetector(
+                                  onTap: _closePanel,
+                                  child: AbsorbPointer(
+                                    child: widget.header,
                                   ),
-                                ),
-                              )
-                            else ...[
-                              _dotsIndicator(p),
-                              widget.header,
-                            ],
-                            Expanded(
+                                )
+                              else
+                                widget.header,
+                              Expanded(
                               child:
                                   NotificationListener<ScrollEndNotification>(
                                     onNotification: _onScrollEnd,
@@ -330,6 +322,32 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
                   ),
                 ),
               ),
+              // 揭示带 dots:不占布局空间,覆盖元素垂直居中于「屏幕顶到
+              // 下推卡片顶缘」的带内(与下方刷新 spinner 同层方式);
+              // p 0.02→0.10 跟手淡入,0.10→0.35 跟手淡出交接面板,背景透明
+              if (!_panelOpen && _dotsOpacityOf(p) > 0)
+                Positioned(
+                  key: const ValueKey('pull-dots'),
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: t,
+                  child: Center(
+                    child: Opacity(
+                      opacity: _dotsOpacityOf(p),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const _Dot(),
+                          SizedBox(width: 4.0 + p * 26.0),
+                          const _Dot(),
+                          SizedBox(width: 4.0 + p * 26.0),
+                          const _Dot(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               // 轻拉刷新:页面下移留出的顶部条带中央转圈
               if (_refreshing)
                 const Positioned(
@@ -352,30 +370,12 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
     );
   }
 
-  /// 顶部点指示器:静止不显示,下拉时三点分离并渐隐(p>0.35 前消失)。
-  Widget _dotsIndicator(double p) {
-    if (p <= 0.02) return const SizedBox.shrink();
-    final fade = (1 - ((p - 0.05) / 0.3)).clamp(0.0, 1.0);
-    final gap = 4.0 + p * 26.0;
-    return SizedBox(
-      key: const ValueKey('pull-dots'),
-      height: _dotsH,
-      child: Center(
-        child: Opacity(
-          opacity: fade,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const _Dot(),
-              SizedBox(width: gap),
-              const _Dot(),
-              SizedBox(width: gap),
-              const _Dot(),
-            ],
-          ),
-        ),
-      ),
-    );
+  /// 揭示带 dots 透明度:p≤0.02 或 p≥0.35 时 0;0.02→0.10 淡入、
+  /// 0.10→0.35 淡出(交接底层面板),两段都跟手。
+  double _dotsOpacityOf(double p) {
+    final fadeIn = ((p - 0.02) / 0.08).clamp(0.0, 1.0);
+    final fadeOut = (1 - ((p - 0.10) / 0.25)).clamp(0.0, 1.0);
+    return fadeIn < fadeOut ? fadeIn : fadeOut;
   }
 }
 
