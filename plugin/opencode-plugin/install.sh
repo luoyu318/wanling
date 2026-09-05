@@ -173,12 +173,13 @@ interactive_config() {
 }
 
 # ─── 安装依赖 ──────────────────────────────────────────────────────────────
+# 子 shell 内 cd:不改变全局 cwd,后续步骤(如 setup_shell_aliases)的相对
+# 路径解析不受影响
 install_deps() {
     info "安装 npm 依赖..."
-    cd "$PLUGIN_DIR"
     local npm_log
     # --include=dev:全局 omit=dev 时缺省装不上 tsc,显式带上
-    if npm_log=$(npm install --include=dev 2>&1); then
+    if npm_log=$(cd "$PLUGIN_DIR" && npm install --include=dev 2>&1); then
         ok "npm 依赖已就绪"
     else
         die "npm install 失败:${npm_log:+ $npm_log}"
@@ -203,11 +204,10 @@ install_binary_artifact() {
 # ─── 构建 ──────────────────────────────────────────────────────────────────
 build_code() {
     info "编译 TypeScript..."
-    cd "$PLUGIN_DIR"
-    if [[ ! -x node_modules/.bin/tsc ]]; then
+    if [[ ! -x "$PLUGIN_DIR/node_modules/.bin/tsc" ]]; then
         die "未找到 tsc 编译器，请先运行 npm install 安装依赖"
     fi
-    node_modules/.bin/tsc || die "TypeScript 编译失败"
+    (cd "$PLUGIN_DIR" && node_modules/.bin/tsc) || die "TypeScript 编译失败"
     ok "编译完成"
 }
 
@@ -274,9 +274,10 @@ setup_shell_aliases() {
     local bin_dir="${HOME}/.local/bin"
     mkdir -p "$bin_dir"
 
-    # 脚本自包含(无 profile 硬编码),覆盖安全
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
+    # 脚本自包含(无 profile 硬编码),覆盖安全;SCRIPT_DIR 启动时已解析为
+    # 绝对路径——不要用 BASH_SOURCE 重新推导:全局 cwd 可能已被改(且远程
+    # 相对调用时 cd 相对路径会炸,2026-09-05 事故)
+    local script_dir="${SCRIPT_DIR}/scripts"
 
     for script in ocwl ocwl-restart ocwl-logs; do
         local src="${script_dir}/${script}"
