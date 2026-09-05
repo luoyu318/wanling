@@ -44,6 +44,10 @@ class MiniProgramOverlayHost extends StatelessWidget {
 /// (携带关闭结果)。[bottomSheet]=true 时内容贴底(会话选择器/更多抽屉),
 /// 否则居中(AlertDialog 自带 Material,直接居中放置)。
 ///
+/// [sheetBackgroundColor]/[sheetTopRadius]:贴底形态的视觉壳(底色 + 顶部
+/// 圆角),对齐 showModalBottomSheet 在路由模式提供的观感——嵌入分支的
+/// Material(transparency) 只提供墨水反馈,不带底色,缺壳会透出被压暗的页面。
+///
 /// [context] 须为嵌入页面(ProviderScope 内)的 context:用于读取 manager
 /// 前台快照,供前台变化时批量关闭(见 dismissMiniProgramOverlaysOnForegroundChange)。
 Future<T?> showMiniProgramOverlay<T>({
@@ -54,6 +58,8 @@ Future<T?> showMiniProgramOverlay<T>({
   )
   builder,
   bool bottomSheet = false,
+  Color sheetBackgroundColor = const Color(0xFFF7F7F7),
+  double sheetTopRadius = 12,
   bool barrierDismissible = true,
 }) {
   final overlayState = miniProgramOverlayKey.currentState;
@@ -93,7 +99,15 @@ Future<T?> showMiniProgramOverlay<T>({
               alignment: Alignment.bottomLeft,
               child: Material(
                 type: MaterialType.transparency,
-                child: builder(overlayCtx, close),
+                // 视觉壳:底色 + 顶部圆角(ClipRRect 防内容溢出圆角外)
+                child: ClipRRect(
+                  borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(sheetTopRadius)),
+                  child: ColoredBox(
+                    color: sheetBackgroundColor,
+                    child: builder(overlayCtx, close),
+                  ),
+                ),
               ),
             )
           else

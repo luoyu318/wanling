@@ -22,6 +22,8 @@ Future<String?> showMiniProgramConversationPicker({
     return showMiniProgramOverlay<String>(
       context: context,
       bottomSheet: true,
+      // 与路由模式 showModalBottomSheet 的白底同观感
+      sheetBackgroundColor: Colors.white,
       builder: (sheetCtx, close) => Material(
         child: SafeArea(
           child: _PickerGrid(onPick: (convId) => close(convId)),
