@@ -1,5 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:app/services/mini_program_manager.dart';
+
+MiniProgramInfo _mp(String appid, String name, String icon) =>
+    MiniProgramInfo(
+      id: 'id-$appid',
+      appid: appid,
+      ownerId: 'u1',
+      name: name,
+      version: 1,
+      status: 'published',
+      sha256: 'x',
+      size: 1,
+      icon: icon,
+    );
 
 void main() {
   late MiniProgramManager m;
@@ -123,5 +137,51 @@ void main() {
     m.addListener(() => notified++);
     m.open('a');
     expect(notified, 1);
+  });
+
+  group('resolveInstanceMeta 实例元数据回填(D)', () {
+    test('实例快照 name/iconUrl 非空:快照优先,不查 provider', () {
+      m.open('a', name: '快照名', iconUrl: 'http://snap.local/icon.png');
+      final inst = m.instances['a']!;
+
+      final meta = resolveInstanceMeta(inst, [_mp('a', '注册名', '/reg.png')],
+          'http://base.local');
+
+      expect(meta.name, '快照名');
+      expect(meta.iconUrl, 'http://snap.local/icon.png');
+    });
+
+    test('实例 name/iconUrl 为空 + provider 有数据:回填真名与 baseUrl 拼接的 icon',
+        () {
+      m.open('a'); // 打开瞬间无元信息(面板路径只传 appid)
+      final inst = m.instances['a']!;
+
+      final meta = resolveInstanceMeta(
+          inst, [_mp('a', '跳跳球大冒险', '/api/files/icon.png')], 'http://base.local');
+
+      expect(meta.name, '跳跳球大冒险');
+      expect(meta.iconUrl, 'http://base.local/api/files/icon.png');
+    });
+
+    test('provider 无该 appid 数据:name 回退 appid,iconUrl 回退空', () {
+      m.open('ghost-app');
+      final inst = m.instances['ghost-app']!;
+
+      final meta =
+          resolveInstanceMeta(inst, [_mp('a', '别的', '/x.png')], 'http://b.local');
+
+      expect(meta.name, 'ghost-app');
+      expect(meta.iconUrl, '');
+    });
+
+    test('provider 未加载(空列表)同样回退快照/appid', () {
+      m.open('a');
+      final inst = m.instances['a']!;
+
+      final meta = resolveInstanceMeta(inst, const [], 'http://b.local');
+
+      expect(meta.name, 'a');
+      expect(meta.iconUrl, '');
+    });
   });
 }

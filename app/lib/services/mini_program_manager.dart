@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'package:wanling_core/models/mini_program_info.dart';
+
 /// 一个保活中的小程序实例(纯状态,WebView 由 Host 层持有)。
 class MiniProgramInstance {
   MiniProgramInstance({required this.appid, required this.openedAt});
@@ -17,6 +19,29 @@ class MiniProgramInstance {
 
   /// 卡片 launch 参数(已解码 params JSON,透传入口 URL query)。
   String? launchParams;
+}
+
+/// 实例展示元数据解析(纯函数,任务视图/浮球/面板统一走它):
+/// 打开瞬间的快照 name/iconUrl 常为空(面板路径只传 appid),此时回退查
+/// [programs](miniProgramsProvider 注册列表)取最新 name 与 iconUrlFor(baseUrl)
+/// 拼接的完整 URL;provider 也无该 appid 时再回退快照/appid(首字母色块)。
+({String name, String iconUrl}) resolveInstanceMeta(
+  MiniProgramInstance inst,
+  List<MiniProgramInfo> programs,
+  String baseUrl,
+) {
+  MiniProgramInfo? mp;
+  for (final m in programs) {
+    if (m.appid == inst.appid) {
+      mp = m;
+      break;
+    }
+  }
+  final name = inst.name.isNotEmpty ? inst.name : (mp?.name ?? inst.appid);
+  final iconUrl = inst.iconUrl.isNotEmpty
+      ? inst.iconUrl
+      : (mp?.iconUrlFor(baseUrl) ?? '');
+  return (name: name, iconUrl: iconUrl);
 }
 
 /// 小程序保活管理器:多实例 + 前台切换 + LRU 上限。

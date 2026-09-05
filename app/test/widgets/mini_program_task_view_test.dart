@@ -4,11 +4,34 @@
 // 3. 卡片上滑(Dismissible up) → onClose(appid)
 // 4. 点卡片外空白 → onCloseView
 // 5. 系统返回(PopScope) → onCloseView
+// 6. 实例元数据回填(D):name 空 + provider 有数据 → 显示真名真 icon URL;
+//    provider 无数据 → 回退 appid
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/services/mini_program_manager.dart';
+import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/mini_program_task_view.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/mini_programs_provider.dart';
+import 'package:wanling_core/services/api_service.dart';
+import 'package:mocktail/mocktail.dart';
+
+class MockApi extends Mock implements ApiService {}
+
+MiniProgramInfo _mp(String appid, String name, String icon) =>
+    MiniProgramInfo(
+      id: 'id-$appid',
+      appid: appid,
+      ownerId: 'u1',
+      name: name,
+      version: 1,
+      status: 'published',
+      sha256: 'x',
+      size: 1,
+      icon: icon,
+    );
 
 /// 回调记录器
 class _Recorder {
@@ -23,10 +46,17 @@ MiniProgramInstance _inst(String appid, String name) =>
 /// 测试宿主:持有实例列表,close 时移除对应实例(模拟 Host 监听 manager 重建)。
 /// Avatar 是 ConsumerWidget,需要 ProviderScope。
 class _Host extends StatefulWidget {
-  const _Host({required this.initial, required this.rec});
+  const _Host({
+    required this.initial,
+    required this.rec,
+    this.programs = const [],
+  });
 
   final List<MiniProgramInstance> initial;
   final _Recorder rec;
+
+  /// 注册列表(供 TaskView 元数据回填 watch;默认空挡掉真请求)。
+  final List<MiniProgramInfo> programs;
 
   @override
   State<_Host> createState() => _HostState();
@@ -37,7 +67,13 @@ class _HostState extends State<_Host> {
 
   @override
   Widget build(BuildContext context) {
+    final api = MockApi();
+    when(() => api.baseUrl).thenReturn('http://test.local');
     return ProviderScope(
+      overrides: [
+        apiProvider.overrideWithValue(api),
+        miniProgramsProvider.overrideWith((ref) async => widget.programs),
+      ],
       child: MaterialApp(
         home: MiniProgramTaskView(
           instances: _instances,
@@ -131,5 +167,37 @@ void main() {
     await tester.pump();
     expect(rec.viewClosed, 1);
     expect(rec.restored, isEmpty);
+  });
+
+  group('实例元数据回填(D)', () {
+    testWidgets('实例 name 空 + provider 有数据 → 显示真名真 icon URL',
+        (tester) async {
+      await tester.pumpWidget(_Host(
+        initial: [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
+        rec: _Recorder(),
+        programs: [_mp('a', '跳跳球大冒险', '/api/files/icon-a.png')],
+      ));
+      await tester.pump();
+
+      // 打开瞬间快照为空(常为 appid),TaskView 必须显示 provider 真名
+      expect(find.text('a'), findsNothing);
+      expect(find.text('跳跳球大冒险'), findsWidgets);
+      // icon 用 baseUrl 拼接的完整 URL
+      final avatars = tester.widgetList<Avatar>(find.byType(Avatar)).toList();
+      expect(avatars, isNotEmpty);
+      for (final a in avatars) {
+        expect(a.url, 'http://test.local/api/files/icon-a.png');
+      }
+    });
+
+    testWidgets('provider 无数据 → 回退 appid', (tester) async {
+      await tester.pumpWidget(_Host(
+        initial: [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
+        rec: _Recorder(),
+      ));
+      await tester.pump();
+
+      expect(find.text('a'), findsWidgets);
+    });
   });
 }

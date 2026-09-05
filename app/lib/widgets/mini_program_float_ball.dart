@@ -1,12 +1,15 @@
 // 小程序多任务浮球:吸附态贴边半透明(露 1/3),点击直达多任务视图;
 // 长按拖拽,松手就近吸附。由 Host 放在根 Stack 顶层(需要 Stack 父级)。
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/mini_program_manager.dart';
+import 'package:app/services/mini_program_manager.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'avatar.dart';
 
 /// 小程序多任务浮球。
-class MiniProgramFloatBall extends StatefulWidget {
+class MiniProgramFloatBall extends ConsumerStatefulWidget {
   const MiniProgramFloatBall({
     super.key,
     required this.instances,
@@ -20,10 +23,11 @@ class MiniProgramFloatBall extends StatefulWidget {
   final VoidCallback onTap;
 
   @override
-  State<MiniProgramFloatBall> createState() => _MiniProgramFloatBallState();
+  ConsumerState<MiniProgramFloatBall> createState() =>
+      _MiniProgramFloatBallState();
 }
 
-class _MiniProgramFloatBallState extends State<MiniProgramFloatBall> {
+class _MiniProgramFloatBallState extends ConsumerState<MiniProgramFloatBall> {
   static const double _size = 56;
   static const double _reveal = _size / 3; // 吸附态露出宽度
   static const double _edgePad = 4; // 拖拽贴边留缝
@@ -64,7 +68,15 @@ class _MiniProgramFloatBallState extends State<MiniProgramFloatBall> {
     }
     final recent = widget.instances.first;
     final count = widget.instances.length;
-    final color = Avatar.colorFor(recent.name);
+    // 实例元数据回填(D):快照常为空,按 appid 查注册列表取最新 name/iconUrl
+    final programs =
+        ref.watch(miniProgramsProvider).valueOrNull ?? const [];
+    final meta = resolveInstanceMeta(
+      recent,
+      programs,
+      ref.watch(apiProvider).baseUrl,
+    );
+    final color = Avatar.colorFor(meta.name);
 
     final ball = Container(
       width: _size,
@@ -82,15 +94,15 @@ class _MiniProgramFloatBallState extends State<MiniProgramFloatBall> {
       child: Stack(
         children: [
           Center(
-            child: recent.iconUrl.isNotEmpty
+            child: meta.iconUrl.isNotEmpty
                 ? Avatar(
-                    name: recent.name,
-                    url: recent.iconUrl,
+                    name: meta.name,
+                    url: meta.iconUrl,
                     size: 40,
                     radius: 12,
                   )
                 : Text(
-                    _initial(recent.name),
+                    _initial(meta.name),
                     style: const TextStyle(fontSize: 26, color: Colors.white),
                   ),
           ),

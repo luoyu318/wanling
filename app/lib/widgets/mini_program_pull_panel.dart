@@ -18,6 +18,7 @@ import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 
 import 'package:app/providers/mini_program_manager_provider.dart';
+import 'package:app/services/mini_program_manager.dart' show resolveInstanceMeta;
 import 'avatar.dart';
 
 /// 面板网格项(最近/常用统一视图模型)。
@@ -420,9 +421,17 @@ class MiniProgramPanel extends ConsumerWidget {
     final all =
         ref.watch(miniProgramsProvider).valueOrNull ??
         const <MiniProgramInfo>[];
-    final recent = [
+    // 实例元数据回填(D)统一走 resolveInstanceMeta(与任务视图/浮球共用)
+    final recent = <_MpEntry>[
       for (final inst in ref.watch(miniProgramManagerProvider).list)
-        _lookupEntry(inst.appid, inst.name, inst.iconUrl, all, baseUrl),
+        () {
+          final meta = resolveInstanceMeta(inst, all, baseUrl);
+          return (
+            appid: inst.appid,
+            name: meta.name,
+            iconUrl: meta.iconUrl,
+          );
+        }(),
     ];
     final common = [
       for (final mp in all.take(8))
@@ -500,28 +509,6 @@ class MiniProgramPanel extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  /// 实例元信息(name/iconUrl)为空时回退查 miniProgramsProvider 注册条目。
-  _MpEntry _lookupEntry(
-    String appid,
-    String instName,
-    String instIconUrl,
-    List<MiniProgramInfo> all,
-    String baseUrl,
-  ) {
-    MiniProgramInfo? mp;
-    for (final m in all) {
-      if (m.appid == appid) {
-        mp = m;
-        break;
-      }
-    }
-    final name = instName.isNotEmpty ? instName : (mp?.name ?? appid);
-    final iconUrl = instIconUrl.isNotEmpty
-        ? instIconUrl
-        : (mp?.iconUrlFor(baseUrl) ?? '');
-    return (appid: appid, name: name, iconUrl: iconUrl);
   }
 
   Widget _iconGrid(List<_MpEntry> items) {

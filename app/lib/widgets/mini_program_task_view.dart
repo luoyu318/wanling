@@ -2,8 +2,11 @@
 // (PageView 横滑),顶部实例 tab;点卡片恢复、上滑关闭实例,
 // 点空白遮罩 / 系统返回关闭视图。由 Host 挂在根 Stack 顶层(Task 6 接线)。
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/mini_program_manager.dart';
+import 'package:app/services/mini_program_manager.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'avatar.dart';
 
 /// 卡片布局计算(纯函数,便于确定性测试):
@@ -20,12 +23,10 @@ import 'avatar.dart';
   );
 }
 
-/// 展示名:name 为空 fallback appid。
-String mpDisplayName(MiniProgramInstance inst) =>
-    inst.name.isNotEmpty ? inst.name : inst.appid;
+/// 展示名与图标已由 [resolveInstanceMeta] 解析后传入(快照空时回填注册列表)。
 
 /// 小程序卡片多任务视图(全屏遮罩)。
-class MiniProgramTaskView extends StatefulWidget {
+class MiniProgramTaskView extends ConsumerStatefulWidget {
   const MiniProgramTaskView({
     super.key,
     required this.instances,
@@ -47,10 +48,11 @@ class MiniProgramTaskView extends StatefulWidget {
   final VoidCallback onCloseView;
 
   @override
-  State<MiniProgramTaskView> createState() => _MiniProgramTaskViewState();
+  ConsumerState<MiniProgramTaskView> createState() =>
+      _MiniProgramTaskViewState();
 }
 
-class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
+class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView> {
   PageController? _pageCtrl;
 
   /// 恢复实例到前台,随后任务视图自身关闭(mockup 语义)。
@@ -72,6 +74,14 @@ class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
     final instances = widget.instances;
     // 首帧按当前屏宽建 controller(屏转场少见,不做动态重建)
     _pageCtrl ??= PageController(viewportFraction: layout.viewportFraction);
+
+    // 实例元数据回填(D):快照常为空,按 appid 查注册列表取最新 name/iconUrl
+    final programs =
+        ref.watch(miniProgramsProvider).valueOrNull ?? const [];
+    final baseUrl = ref.watch(apiProvider).baseUrl;
+    final metas = [
+      for (final inst in instances) resolveInstanceMeta(inst, programs, baseUrl),
+    ];
 
     // 挂在 Host Stack 顶层时无 Material 祖先,Text 会画黄色双下划线;
     // 根部自包透明 Material 保持组件自洽(不在 Host 侧修)
@@ -103,7 +113,8 @@ class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
                       itemBuilder: (context, i) {
                         final inst = instances[i];
                         return _TabItem(
-                          instance: inst,
+                          name: metas[i].name,
+                          iconUrl: metas[i].iconUrl,
                           // 恢复后任务视图自身关闭(与点卡片同语义)
                           onTap: () => _restore(inst.appid),
                         );
@@ -121,7 +132,9 @@ class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
                           itemBuilder: (context, i) => _TaskCard(
                             key: ValueKey(
                                 'mp-task-card-${instances[i].appid}'),
-                            instance: instances[i],
+                            appid: instances[i].appid,
+                            name: metas[i].name,
+                            iconUrl: metas[i].iconUrl,
                             onRestore: () => _restore(instances[i].appid),
                             onClose: () =>
                                 widget.onClose(instances[i].appid),
@@ -143,14 +156,18 @@ class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
 
 /// 顶部实例 tab:圆角矩形图标 + 名字。
 class _TabItem extends StatelessWidget {
-  const _TabItem({required this.instance, required this.onTap});
+  const _TabItem({
+    required this.name,
+    required this.iconUrl,
+    required this.onTap,
+  });
 
-  final MiniProgramInstance instance;
+  final String name;
+  final String iconUrl;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final name = mpDisplayName(instance);
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -158,7 +175,7 @@ class _TabItem extends StatelessWidget {
         child: Column(
           children: [
             // 与小程序列表一致的圆角矩形图标(40 / r12)
-            Avatar(name: name, url: instance.iconUrl, size: 40, radius: 12),
+            Avatar(name: name, url: iconUrl.isEmpty ? null : iconUrl, size: 40, radius: 12),
             const SizedBox(height: 4),
             SizedBox(
               width: 56,
@@ -180,24 +197,27 @@ class _TabItem extends StatelessWidget {
 class _TaskCard extends StatelessWidget {
   const _TaskCard({
     super.key,
-    required this.instance,
+    required this.appid,
+    required this.name,
+    required this.iconUrl,
     required this.onRestore,
     required this.onClose,
   });
 
-  final MiniProgramInstance instance;
+  final String appid;
+  final String name;
+  final String iconUrl;
   final VoidCallback onRestore;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final name = mpDisplayName(instance);
     final color = Avatar.colorFor(name);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       // 上滑 = 关闭该实例(主流 IM 小程序同款交互)
       child: Dismissible(
-        key: ValueKey('dismiss-${instance.appid}'),
+        key: ValueKey('dismiss-$appid'),
         direction: DismissDirection.up,
         onDismissed: (_) => onClose(),
         background: Container(
@@ -238,7 +258,7 @@ class _TaskCard extends StatelessWidget {
                         children: [
                           Avatar(
                               name: name,
-                              url: instance.iconUrl,
+                              url: iconUrl.isEmpty ? null : iconUrl,
                               size: 40,
                               radius: 12),
                           const SizedBox(width: 8),

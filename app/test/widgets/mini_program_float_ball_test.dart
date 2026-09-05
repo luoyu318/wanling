@@ -1,16 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/services/mini_program_manager.dart';
 import 'package:app/widgets/avatar.dart';
 import 'package:app/widgets/mini_program_float_ball.dart';
+import 'package:wanling_core/models/mini_program_info.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/mini_programs_provider.dart';
+import 'package:wanling_core/services/api_service.dart';
 
-Widget _host(List<MiniProgramInstance> instances, {VoidCallback? onTap}) {
-  return MaterialApp(
-    home: Stack(children: [
-      const SizedBox.expand(),
-      MiniProgramFloatBall(instances: instances, onTap: onTap ?? () {}),
-    ]),
+class MockApi extends Mock implements ApiService {}
+
+MiniProgramInfo _mp(String appid, String name, String icon) =>
+    MiniProgramInfo(
+      id: 'id-$appid',
+      appid: appid,
+      ownerId: 'u1',
+      name: name,
+      version: 1,
+      status: 'published',
+      sha256: 'x',
+      size: 1,
+      icon: icon,
+    );
+
+/// 测试宿主:默认 override 小程序注册列表(空)与 api(测试环境无网,
+/// FloatBall watch miniProgramsProvider 未挡会发真请求挂 pending timer)。
+Widget _host(
+  List<MiniProgramInstance> instances, {
+  VoidCallback? onTap,
+  List<MiniProgramInfo> programs = const [],
+  String baseUrl = 'http://test.local',
+}) {
+  final api = MockApi();
+  when(() => api.baseUrl).thenReturn(baseUrl);
+  return ProviderScope(
+    overrides: [
+      apiProvider.overrideWithValue(api),
+      miniProgramsProvider.overrideWith((ref) async => programs),
+    ],
+    child: MaterialApp(
+      home: Stack(children: [
+        const SizedBox.expand(),
+        MiniProgramFloatBall(instances: instances, onTap: onTap ?? () {}),
+      ]),
+    ),
   );
 }
 
@@ -22,31 +59,28 @@ Positioned _ballPositioned(WidgetTester tester) {
 }
 
 void main() {
+  setUp(() {
+    // Avatar 内部 watch settingsProvider/authProvider(直连 SharedPreferences
+    // 与 secure storage),不 mock 会在 flutter test 环境挂起
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+  });
+
   // 默认测试 surface 800x600,_size=56,_reveal=56/3≈18.67。
   testWidgets('点击浮球触发 onTap', (tester) async {
     var tapped = false;
-    await tester.pumpWidget(MaterialApp(
-      home: Stack(children: [
-        const SizedBox.expand(),
-        MiniProgramFloatBall(
-          instances: [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
-          onTap: () => tapped = true,
-        ),
-      ]),
+    await tester.pumpWidget(_host(
+      [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
+      onTap: () => tapped = true,
     ));
     await tester.tap(find.byType(MiniProgramFloatBall));
     expect(tapped, isTrue);
   });
 
   testWidgets('长按进入拖拽(半透明解除),松手回吸附态', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Stack(children: [
-        const SizedBox.expand(),
-        MiniProgramFloatBall(
-          instances: [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
-          onTap: () {},
-        ),
-      ]),
+    await tester.pumpWidget(_host(
+      [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
+      onTap: () {},
     ));
     final center = tester.getCenter(find.byType(MiniProgramFloatBall));
     final gesture = await tester.startGesture(center);
@@ -126,7 +160,32 @@ void main() {
     final inst = MiniProgramInstance(appid: 'a', openedAt: DateTime.now())
       ..name = '测试'
       ..iconUrl = 'https://example.com/icon.png';
-    await tester.pumpWidget(ProviderScope(child: _host([inst])));
+    await tester.pumpWidget(_host([inst]));
     expect(find.byType(Avatar), findsOneWidget);
+  });
+
+  testWidgets('实例 name/iconUrl 空 + provider 有数据 → 渲染注册名与完整 icon URL(D)',
+      (tester) async {
+    await tester.pumpWidget(_host(
+      [MiniProgramInstance(appid: 'a', openedAt: DateTime.now())],
+      programs: [_mp('a', '跳跳球大冒险', '/api/files/icon-a.png')],
+    ));
+    await tester.pump();
+
+    // 打开瞬间快照为空:浮球必须显示 provider 回填的真名/真 URL
+    final avatar = tester.widget<Avatar>(find.byType(Avatar));
+    expect(avatar.name, '跳跳球大冒险');
+    expect(avatar.url, 'http://test.local/api/files/icon-a.png');
+  });
+
+  testWidgets('provider 未加载(空列表)→ 回退快照/首字母色块(D)', (tester) async {
+    await tester.pumpWidget(_host(
+      [MiniProgramInstance(appid: 'ghost-app', openedAt: DateTime.now())],
+    ));
+    await tester.pump();
+
+    // 无 icon URL → Avatar 不渲染(首字母色块分支,名字回退 appid 取首字母)
+    expect(find.byType(Avatar), findsNothing);
+    expect(find.text('G'), findsOneWidget);
   });
 }
