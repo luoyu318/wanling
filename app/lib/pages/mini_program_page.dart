@@ -37,6 +37,7 @@ import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/mini_program_overlay.dart';
+import '../services/mini_program_snapshot.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
 /// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
@@ -653,6 +654,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     // no-op 不抛异常),再取消流订阅防泄漏。
     _ws?.sendMpUnsubscribe();
     _mpEventSub?.cancel();
+    unregisterMiniProgramController(widget.appid);
     super.dispose();
   }
 
@@ -830,6 +832,9 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             },
             onWebViewCreated: (controller) {
               _controller = controller;
+              // 快照抓帧编排层按 appid 注册 controller(dispose 注销),
+              // 缺注册则 minimizeWithSnapshot 拿不到 controller 永远走占位
+              registerMiniProgramController(widget.appid, controller);
               controller.addJavaScriptHandler(
                 handlerName: 'wanlingRequest',
                 callback: (args) async =>
