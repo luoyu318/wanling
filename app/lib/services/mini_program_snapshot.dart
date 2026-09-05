@@ -11,7 +11,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_launcher.dart';
-import 'package:app/services/mini_program_manager.dart';
 
 /// 按 appid 注册的 WebView controller(小程序嵌入页生命周期内有效)。
 final Map<String, InAppWebViewController> miniProgramControllerRegistry = {};

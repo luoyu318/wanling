@@ -261,7 +261,7 @@ class _TaskCard extends StatelessWidget {
                             fit: BoxFit.cover,
                             // 解码宽度限 ~400:任务卡片视觉够用,防多实例大帧爆内存
                             cacheWidth: 400,
-                            errorBuilder: (_, __, ___) => _placeholder(color),
+                            errorBuilder: (_, _, _) => _placeholder(color),
                           ),
                           _cardOverlay(),
                         ],
