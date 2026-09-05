@@ -190,7 +190,7 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## MiniProgramConversationPicker
 
-小程序分享目标会话选择器（M2）。`showMiniProgramConversationPicker({context, ref}) → Future<String?>` 底部弹层：watch `conversationProvider` 渲染头像首字母 + 名称列表，点击返回 convId；取消/点遮罩返回 null（调用方 bridge 转 cancelled）；空列表显示「暂无会话」
+小程序分享目标会话选择器（M2）。`showMiniProgramConversationPicker({context, ref}) → Future<String?>` 底部弹层：watch `conversationProvider` 渲染头像首字母 + 名称列表，点击返回 convId；取消/点遮罩返回 null（调用方 bridge 转 cancelled）；空列表显示「暂无会话」。小程序多任务保活组件（Host/浮球/多任务视图/下拉面板）详见 [mini-program.md](./mini-program.md)
 
 ## v1.0.9+ 新增组件
 

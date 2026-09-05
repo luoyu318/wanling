@@ -19,8 +19,8 @@ import 'pages/edit_profile_page.dart';
 import 'pages/friends_list_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/mini_program_launch_page.dart';
 import 'pages/mini_program_list_page.dart';
-import 'pages/mini_program_page.dart';
 import 'pages/nav_edit_page.dart';
 import 'pages/pair_select_agent_page.dart';
 import 'pages/scan_pair_page.dart';
@@ -32,6 +32,7 @@ import 'pages/subagent_detail_page.dart';
 import 'pages/user_detail_page.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/services/notification_service.dart';
+import 'services/mini_program_nav_observer.dart';
 
 /// 全局 navigator key：通知点击回调需要拿到 navigator 做 push（无 BuildContext）。
 final navigatorKey = GlobalKey<NavigatorState>();
@@ -78,12 +79,18 @@ Widget _slideTransition(
 /// 不同，Flutter 才会销毁旧 page 的 State 并重建新 page（触发 initState）。
 /// 缺 key 时 Flutter 会复用旧 State，导致 initState 不重跑——表现为 ChatPage
 /// 切换会话时 markRead / setActiveConv 等初始化逻辑失效（未读不清等 bug）。
+///
+/// [name]：RouteSettings.name，仅小程序两类壳路由显式传入
+/// （state.matchedLocation，go_router push 场景 pageKey 是唯一 id 非路径），
+/// 供 MiniProgramAutoMinimizeObserver 识别壳路由；其余路由保持 null。
 CustomTransitionPage<void> _cupertinoPage({
   required Widget child,
   required ValueKey<String> key,
+  String? name,
 }) {
   return CustomTransitionPage<void>(
     key: key,
+    name: name,
     child: child,
     transitionDuration: const Duration(milliseconds: 200),
     reverseTransitionDuration: const Duration(milliseconds: 200),
@@ -102,6 +109,9 @@ final routerProvider = Provider<GoRouter>((ref) {
   final auth = ref.watch(authProvider);
   return GoRouter(
     navigatorKey: navigatorKey,
+    // C2 修复:非小程序路由压栈时自动最小化前台实例(去别处=收起),
+    // 覆盖 openPage/通知点击/深链等全部 push 来源
+    observers: [MiniProgramAutoMinimizeObserver()],
     initialLocation: '/',
     redirect: (ctx, state) {
       // 切换账号(isSwitching)期间视同已登录:logout→login 中间态不让 router 误跳 /login。
@@ -415,15 +425,28 @@ final routerProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
         ),
       ),
+      // 入口壳:经 launcher 归一(manager 置前台 + live 壳同步),WebView 由宿主层渲染。
+      // name 显式传 matchedLocation:MiniProgramAutoMinimizeObserver 依此排除壳路由
       GoRoute(
         path: '/mini-program/:appid',
         pageBuilder: (context, state) => _cupertinoPage(
-          child: MiniProgramPage(
+          child: MiniProgramLaunchPage(
             appid: state.pathParameters['appid']!,
             conversationId: state.uri.queryParameters['conv'],
             launchParams: state.uri.queryParameters['launch'],
           ),
           key: state.pageKey,
+          name: state.matchedLocation,
+        ),
+      ),
+      // live 壳:仅拦截系统返回键(返回 = 最小化),由 launcher 压栈/弹出。
+      // name 同上(observer 排除依据)
+      GoRoute(
+        path: '/mini-program-live/:appid',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const MiniProgramLiveShellPage(),
+          key: state.pageKey,
+          name: state.matchedLocation,
         ),
       ),
       // 扫码配对：hermes 终端扫码授权连接 Agent。

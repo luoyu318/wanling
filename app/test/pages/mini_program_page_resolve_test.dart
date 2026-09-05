@@ -46,4 +46,19 @@ void main() {
     expect(resolveLocalFile(root, '/../../etc/passwd'), isNull);
     expect(resolveLocalFile(root, '/pages/../..'), isNull);
   });
+
+  // —— 嵌入模式构造面:路由模式默认无回调;嵌入构造双回调齐备 ——
+  test('路由模式默认构造 isEmbedded=false(回调未接)', () {
+    const page = MiniProgramPage(appid: 'showcase');
+    expect(page.isEmbedded, isFalse);
+  });
+
+  test('embedded 构造 isEmbedded=true(最小化/关闭回调接入)', () {
+    final page = MiniProgramPage.embedded(
+      appid: 'showcase',
+      onMinimize: () {},
+      onClose: () {},
+    );
+    expect(page.isEmbedded, isTrue);
+  });
 }

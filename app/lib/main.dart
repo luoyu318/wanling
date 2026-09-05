@@ -17,6 +17,7 @@ import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
 import 'widgets/chat/builtin_renderers.dart'
     show registerMixedContentRenderer;
+import 'widgets/mini_program_host.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';
 import 'package:wanling_core/services/notification_service.dart';
@@ -260,6 +261,11 @@ class _MyAppState extends ConsumerState<MyApp> {
         ),
       ),
       routerConfig: router,
+      // 全局小程序保活层:实例视图常驻覆盖在 Navigator 之上,
+      // 默认无实例时只透传 child,不影响既有页面行为。
+      builder: (context, child) => MiniProgramHost(
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }
