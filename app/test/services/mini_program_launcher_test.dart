@@ -3,6 +3,7 @@
 // framework Router 的事务机制在 testWidgets 下会丢弃 go_router push 的
 // 异步更新(currentConfiguration 不前进),故不对接真实导航,只验证
 // launcher 对 router 的调用契约与 manager 状态迁移。
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -106,6 +107,26 @@ void main() {
     verify(() => router.push('/mini-program-live/a')).called(2);
   });
 
+  test('push 失败输出日志不再静默(D4)', () async {
+    final logs = <String>[];
+    final original = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) logs.add(message);
+    };
+    addTearDown(() => debugPrint = original);
+    when(() => router.push(any<String>()))
+        .thenAnswer((_) async => throw Exception('路由未注册'));
+
+    openMiniProgramWith(container, 'a');
+    await Future<void>.delayed(Duration.zero);
+
+    // 修复前:onError 只复位占位零日志,现场无从排查
+    expect(
+      logs.any((m) => m.contains('[mini-program] live 壳 push 失败')),
+      isTrue,
+    );
+  });
+
   test('无前台且壳在栈上但 canPop=false 时 sync 只复位不 pop', () {
     bindLiveRoute();
     when(() => router.canPop()).thenReturn(false);
@@ -117,5 +138,14 @@ void main() {
     // 复位后再 open 会正常压壳(状态已清)
     openMiniProgramWith(container, 'a');
     verify(() => router.push('/mini-program-live/a')).called(1);
+  });
+
+  test('openMiniProgramWith 透传 conv/launch 参数到 manager.open(I2)', () {
+    openMiniProgramWith(container, 'a',
+        conversationId: 'c1', launchParams: '{"x":1}');
+
+    final inst = container.read(miniProgramManagerProvider).instances['a']!;
+    expect(inst.conversationId, 'c1');
+    expect(inst.launchParams, '{"x":1}');
   });
 }

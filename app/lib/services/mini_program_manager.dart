@@ -11,6 +11,12 @@ class MiniProgramInstance {
   /// 展示元信息(浮球/多任务视图用),打开时若调用方提供则更新。
   String name = '';
   String iconUrl = '';
+
+  /// 来源会话(getChatContext 返回 conversation_id;I2 恢复 M2 契约)。
+  String? conversationId;
+
+  /// 卡片 launch 参数(已解码 params JSON,透传入口 URL query)。
+  String? launchParams;
 }
 
 /// 小程序保活管理器:多实例 + 前台切换 + LRU 上限。
@@ -36,9 +42,31 @@ class MiniProgramManager extends ChangeNotifier {
 
   /// 打开(或恢复)并置前台。超上限时按 lastForegroundAt 淘汰最久未前台者,
   /// 返回被淘汰的 appid(无淘汰返回 null)。
-  String? open(String appid, {String name = '', String iconUrl = ''}) {
+  ///
+  /// [conversationId]/[launchParams]:入口元数据(I2)。重复打开且新参数
+  /// 非空且与现值不同 → 销毁重建实例(卡片语境正确性优先;重建丢 JS 状态
+  /// 是可接受代价,Host 按 openedAt 键控,WebView 整棵换新带上新参数)。
+  String? open(
+    String appid, {
+    String name = '',
+    String iconUrl = '',
+    String? conversationId,
+    String? launchParams,
+  }) {
     assert(appid.isNotEmpty);
     String? evicted;
+    final existing = _instances[appid];
+    // 参数变化检测:提供(null=未提供不参与)且非空且与现值不同即重建
+    final paramsChanged = existing != null &&
+        ((conversationId != null &&
+                conversationId.isNotEmpty &&
+                conversationId != existing.conversationId) ||
+            (launchParams != null &&
+                launchParams.isNotEmpty &&
+                launchParams != existing.launchParams));
+    if (paramsChanged) {
+      _instances.remove(appid);
+    }
     if (!_instances.containsKey(appid) && _instances.length >= maxInstances) {
       MiniProgramInstance? oldest;
       for (final i in _instances.values) {
@@ -54,6 +82,8 @@ class MiniProgramManager extends ChangeNotifier {
         appid, () => MiniProgramInstance(appid: appid, openedAt: DateTime.now()));
     if (name.isNotEmpty) inst.name = name;
     if (iconUrl.isNotEmpty) inst.iconUrl = iconUrl;
+    if (conversationId != null) inst.conversationId = conversationId;
+    if (launchParams != null) inst.launchParams = launchParams;
     _foregroundAppid = appid;
     inst.lastForegroundAt = DateTime.now();
     notifyListeners();
@@ -78,6 +108,16 @@ class MiniProgramManager extends ChangeNotifier {
   void close(String appid) {
     _instances.remove(appid);
     if (_foregroundAppid == appid) _foregroundAppid = null;
+    notifyListeners();
+  }
+
+  /// 清空全部实例 + 前台(登出/切账号):WebView 随实例视图卸载销毁,
+  /// JS 状态/登录态内存一并丢弃,防旧账号实例恢复或 WebView 盖住登录页。
+  /// 已空时 no-op 不通知(幂等,防登出风暴下的空重建)。
+  void closeAll() {
+    if (_instances.isEmpty && _foregroundAppid == null) return;
+    _instances.clear();
+    _foregroundAppid = null;
     notifyListeners();
   }
 }

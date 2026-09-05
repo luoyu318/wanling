@@ -17,15 +17,23 @@ bool _liveActive = false;
 void resetLauncherForTest() => _liveActive = false;
 
 /// 统一小程序打开入口:置前台 + 保证 live 壳在栈上(系统返回键=最小化)。
+/// [conversationId]/[launchParams] 透传 manager.open(参数变化触发实例重建,
+/// 见 I2)。
 void openMiniProgramWith(
   ProviderContainer container,
   String appid, {
   String name = '',
   String iconUrl = '',
+  String? conversationId,
+  String? launchParams,
 }) {
-  container
-      .read(miniProgramManagerProvider)
-      .open(appid, name: name, iconUrl: iconUrl);
+  container.read(miniProgramManagerProvider).open(
+        appid,
+        name: name,
+        iconUrl: iconUrl,
+        conversationId: conversationId,
+        launchParams: launchParams,
+      );
   _ensureLiveRouteWith(container);
 }
 
@@ -56,8 +64,10 @@ void _ensureLiveRouteWith(ProviderContainer container) {
   container
       .read(routerProvider)
       .push('/mini-program-live/$appid')
-      .then((_) {}, onError: (Object _) {
-    // push 失败(如路由未注册):复位壳占位,下次打开可重试,避免壳状态卡死
+      .then((_) {}, onError: (Object e) {
+    // push 失败(如路由未注册):复位壳占位,下次打开可重试,避免壳状态卡死;
+    // 补日志防静默失败无从排查(D4)
+    debugPrint('[mini-program] live 壳 push 失败: $e');
     _liveActive = false;
   });
 }

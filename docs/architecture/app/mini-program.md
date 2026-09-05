@@ -15,16 +15,25 @@ flowchart LR
     H --> O[Offstage 实例视图<br/>前台切可见性]
 ```
 
-- **launcher 不变式**：`_liveActive`（模块级布尔）保证「manager 有前台 ⇔ live 壳在栈」；壳在栈时系统返回键被壳页消费=最小化。`syncLiveRouteWith` 在 Host 最小化/恢复/关闭后同步壳有无，弹出壳返 true 供壳页残余兜底判断
-- **MiniProgramHost**（`mini_program_host.dart`）：包在 `MaterialApp.builder`，永远盖在 Navigator 之上。Stack 三层：全部实例视图（`Offstage` 按 `ValueKey('mp-inst-<appid>')` 键控——无 key 时列表前插/淘汰引发槽位位移，元素树 diff 原位复用会整棵重建子树击穿保活）→ 浮球（有后台实例且无前台时）→ 卡片多任务视图。Host 提供 `instanceViewBuilder` 注入点（测试替身用）
-- **MiniProgramManager**（`mini_program_manager.dart`）：纯状态 ChangeNotifier（`maxInstances = 5`），`open` 返回被淘汰 appid（无淘汰 null）；`lastForegroundAt` 驱动 LRU。WebView 生命周期由 Offstage 可见性之外的 Host 挂载策略保证——实例在 `manager.list` 即挂载
+- **launcher 不变式**：`_liveActive`（模块级布尔）保证「manager 有前台 ⇔ live 壳在栈」；壳在栈时系统返回键被壳页消费=最小化。`syncLiveRouteWith` 在 Host 最小化/恢复/关闭后同步壳有无，弹出壳返 true 供壳页残余兜底判断。push 失败时复位占位并 debugPrint（不静默）
+- **MiniProgramAutoMinimizeObserver**（`mini_program_nav_observer.dart`）：挂 `routerProvider` 的 `GoRouter.observers`，非小程序路由 didPush → 帧末最小化前台实例（微信语义「去别处=收起」，覆盖 openPage/通知点击/深链全部 push 来源）。壳路由识别靠 `route.settings.name`：router.dart 仅给两类壳路由显式 `name: state.matchedLocation`（go_router push 场景 pageKey 是唯一 id 非路径）；`/mini-programs` 列表页 name 为 null 照常收起。观察者不弹壳——此刻栈顶刚被本次 push 占据，`router.pop()` 会弹错路由，壳留栈下由残余壳兜底自清（返回链路多一次空白壳页按键，与双入口压栈场景同款语义）
+- **MiniProgramHost**（`mini_program_host.dart`）：包在 `MaterialApp.builder`，永远盖在 Navigator 之上。Stack 四层：全部实例视图（`Offstage` 按 `ValueKey('mp-inst-<appid>-<openedAt 微秒>')` 键控——appid 维度防 list 前插/淘汰的槽位位移原位复用击穿保活；openedAt 维度区分参数变化销毁重建的新实例，WebView 整棵换新）→ 弹层宿主（见下节）→ 浮球（有后台实例且无前台时）→ 卡片多任务视图。Host 提供 `instanceViewBuilder` 注入点（测试替身用）
+- **MiniProgramManager**（`mini_program_manager.dart`）：纯状态 ChangeNotifier（`maxInstances = 5`），`open` 返回被淘汰 appid（无淘汰 null）；`lastForegroundAt` 驱动 LRU；`open` 携带 `conversationId`/`launchParams` 元数据，重复打开且新参数非空且与现值不同 → 销毁重建实例（卡片语境正确性优先，重建丢 JS 状态可接受）；`closeAll` 清空全部实例+前台（幂等），由 Host 监听 `authProvider` 认证态从有到无时调用（登出/401 踢出/切换账号统一收敛），同时复位任务视图展开标志
+
+## 嵌入模式弹层宿主（C1）
+
+嵌入页面与 Navigator 是 Host Stack 的兄弟分支，context 向上无 NavigatorState，`showDialog`/`showModalBottomSheet` 必崩（debug 抛 FlutterError）。`mini_program_overlay.dart` 在 Host Stack 顶端挂专用全局 Overlay 作弹层宿主：
+
+- `showMiniProgramOverlay`：插入带 barrier 的弹层条目（150ms 淡入），barrier 点击关闭，Future 在关闭时完成；`bottomSheet` 形态内容贴底。宿主未挂载 fail-fast 抛 StateError
+- 4 处弹层接线（仅嵌入模式走宿主 Overlay，路由模式行为逐字不变）：胶囊 ⋯「更多」抽屉（`_buildMoreSheetContent` 与路由模式共享内容）→ `showAppDialog(embedded:)` 的 profile 授权/权限申请 → `showMiniProgramConversationPicker(embedded:)` 会话选择器
+- 前台实例变化（最小化/切实例/关闭/登出）→ Host 监听 manager 批量关闭弹层（`dismissMiniProgramOverlaysOnForegroundChange`），防 barrier 悬浮在非小程序页面拦死宿主导航
 
 ## 返回键与关闭语义（嵌入模式）
 
 - **WebView 有历史** → `goBack()` 逐级回退（`onUpdateVisitedHistory` 同步 `_canGoBack`，含 hash 同文档导航）
 - **入口页返回** → `onMinimize`（前台清空 + live 壳弹出，实例保留）
 - **胶囊 ⋯ 菜单「浮窗」**（仅嵌入模式）→ 主动最小化；**胶囊 ◉ / JS `wanling.close()`** → `onClose` 销毁实例（WebView 释放、壳弹出）
-- **`wanling.openPage('home')`** → 转最小化到浮球
+- **`wanling.openPage('home')`** → 转最小化到浮球；`openPage('miniPrograms'/'agentDetail')` 等宿主页跳转 → 观察者收起实例（push 的页面同帧可见），返回键可逐级回到小程序
 - **残余壳兜底**（`MiniProgramBackScope`）：双入口压栈等场景下壳以 `canPop:false` 残留会拦死系统返回，回调内 sync 未弹壳且已无前台时 `Navigator.pop` 自弹
 
 ## 浮球 / 多任务视图

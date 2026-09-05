@@ -42,6 +42,55 @@ void main() {
     expect(m.hasForeground, isFalse);
   });
 
+  test('closeAll 清空全部实例+前台,登出/切账号用', () async {
+    m.open('a');
+    await Future.delayed(const Duration(milliseconds: 5));
+    m.open('b');
+    m.minimize();
+
+    m.closeAll();
+    expect(m.instances, isEmpty);
+    expect(m.hasForeground, isFalse);
+    expect(m.list, isEmpty);
+  });
+
+  test('closeAll 幂等:已空时重复调用不再通知', () {
+    var notified = 0;
+    m.addListener(() => notified++);
+    m.closeAll();
+    m.closeAll();
+    expect(notified, 0); // 无状态变化不触发空通知
+  });
+
+  test('open 带 conv/launch 参数 → 存入实例元数据(I2)', () {
+    m.open('a', conversationId: 'c1', launchParams: '{"x":1}');
+    expect(m.instances['a']!.conversationId, 'c1');
+    expect(m.instances['a']!.launchParams, '{"x":1}');
+  });
+
+  test('重复打开参数相同/为空 → 实例复用不重建(I2)', () {
+    m.open('a', conversationId: 'c1', launchParams: '{"x":1}');
+    final first = m.instances['a']!;
+    m.open('a', conversationId: 'c1', launchParams: '{"x":1}');
+    expect(identical(m.instances['a'], first), isTrue);
+    // 参数未提供(null)=不更新不重建(列表入口重开场景)
+    m.open('a');
+    expect(identical(m.instances['a'], first), isTrue);
+    expect(m.instances['a']!.conversationId, 'c1');
+  });
+
+  test('重复打开参数变化 → 销毁重建实例(卡片语境正确性优先,I2)', () {
+    m.open('a', conversationId: 'c1', launchParams: '{"x":1}');
+    final first = m.instances['a']!;
+    final evicted = m.open('a', conversationId: 'c2', launchParams: '{"x":2}');
+    expect(evicted, isNull); // 重建不是 LRU 淘汰
+    expect(identical(m.instances['a'], first), isFalse); // 新实例
+    expect(m.instances['a']!.conversationId, 'c2');
+    expect(m.instances['a']!.launchParams, '{"x":2}');
+    expect(m.foregroundAppid, 'a');
+    expect(m.instances.length, 1); // 无多余实例残留
+  });
+
   test('list 按打开时间倒序', () async {
     m.open('a');
     await Future.delayed(const Duration(milliseconds: 5));

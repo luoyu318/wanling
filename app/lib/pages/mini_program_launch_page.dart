@@ -81,6 +81,9 @@ class _MiniProgramLaunchPageState extends ConsumerState<MiniProgramLaunchPage> {
             ? ''
             // 列表已加载说明 api 已就绪,读 baseUrl 拼 icon 完整 URL
             : info.iconUrlFor(container.read(apiProvider).baseUrl),
+        // I2:conv/launch 参数透传链路(参数变化 → 实例重建,卡片语境正确)
+        conversationId: widget.conversationId,
+        launchParams: widget.launchParams,
       );
     });
   }

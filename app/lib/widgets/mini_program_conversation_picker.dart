@@ -6,12 +6,29 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
     show conversationProvider;
 import 'avatar.dart';
+import 'mini_program_overlay.dart';
 
 /// 弹出会话选择器(宫格式)。选中返回 convId;取消/点遮罩返回 null。
+///
+/// [embedded]=true:小程序嵌入模式,经宿主顶端专用 Overlay 呈现
+/// (嵌入页面 context 向上无 Navigator,showModalBottomSheet 必崩);
+/// 路由模式行为不变。
 Future<String?> showMiniProgramConversationPicker({
   required BuildContext context,
   required WidgetRef ref,
+  bool embedded = false,
 }) {
+  if (embedded) {
+    return showMiniProgramOverlay<String>(
+      context: context,
+      bottomSheet: true,
+      builder: (sheetCtx, close) => Material(
+        child: SafeArea(
+          child: _PickerGrid(onPick: (convId) => close(convId)),
+        ),
+      ),
+    );
+  }
   return showModalBottomSheet<String>(
     context: context,
     backgroundColor: Colors.white,
@@ -25,7 +42,11 @@ Future<String?> showMiniProgramConversationPicker({
 }
 
 class _PickerGrid extends ConsumerWidget {
-  const _PickerGrid();
+  const _PickerGrid({this.onPick});
+
+  /// 点选回调:嵌入模式经 Overlay close 回传 convId;null=路由模式走
+  /// Navigator.pop(行为不变)。
+  final void Function(String convId)? onPick;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -66,6 +87,7 @@ class _PickerGrid extends ConsumerWidget {
                       convId: conv.id,
                       name: conv.displayName,
                       avatarUrl: conv.displayAvatarUrl,
+                      onPick: onPick,
                     ),
                 ],
               ),
@@ -77,21 +99,26 @@ class _PickerGrid extends ConsumerWidget {
 }
 
 class _PickerItem extends StatelessWidget {
-  final String convId;
-  final String name;
-  final String? avatarUrl;
-
   const _PickerItem({
     super.key,
     required this.convId,
     required this.name,
     this.avatarUrl,
+    this.onPick,
   });
+
+  final String convId;
+  final String name;
+  final String? avatarUrl;
+
+  /// 非 null 时点选走此回调(嵌入 Overlay 模式),否则 Navigator.pop。
+  final void Function(String convId)? onPick;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () => Navigator.pop(context, convId),
+      onTap: () =>
+          onPick != null ? onPick!(convId) : Navigator.pop(context, convId),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [

@@ -16,6 +16,8 @@ import 'package:app/pages/mini_program_launch_page.dart';
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/router.dart' show routerProvider;
 import 'package:app/services/mini_program_launcher.dart';
+import 'package:app/services/mini_program_manager.dart';
+import 'package:wanling_core/providers/mini_programs_provider.dart';
 
 class _MockGoRouter extends Mock implements GoRouter {}
 
@@ -105,5 +107,56 @@ void main() {
     expect(find.byKey(const Key('ONLY')), findsOneWidget);
     verify(() => router.pop()).called(1);
     expect(container.read(miniProgramManagerProvider).hasForeground, isFalse);
+  });
+
+  testWidgets('launch 页把 query conv/launch 透传给实例元数据(I2)', (tester) async {
+    final manager = MiniProgramManager();
+    final realRouter = GoRouter(
+      initialLocation: '/mini-program/a?conv=c1&launch=%7B%22x%22%3A1%7D',
+      routes: [
+        GoRoute(
+          path: '/mini-program/:appid',
+          pageBuilder: (context, state) => NoTransitionPage<void>(
+            key: state.pageKey,
+            child: MiniProgramLaunchPage(
+              appid: state.pathParameters['appid']!,
+              conversationId: state.uri.queryParameters['conv'],
+              launchParams: state.uri.queryParameters['launch'],
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/mini-program-live/:appid',
+          pageBuilder: (context, state) => NoTransitionPage<void>(
+            key: state.pageKey,
+            child: const MiniProgramLiveShellPage(),
+          ),
+        ),
+      ],
+    );
+    final realContainer = ProviderContainer(overrides: [
+      miniProgramManagerProvider.overrideWith((ref) => manager),
+      routerProvider.overrideWithValue(realRouter),
+      // 列表未加载 → name/iconUrl 空,仅 appid 拉起(深链常态)
+      miniProgramsProvider.overrideWith((ref) async => const []),
+    ]);
+    addTearDown(realContainer.dispose);
+    resetLauncherForTest();
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: realContainer,
+      child: MaterialApp.router(routerConfig: realRouter),
+    ));
+    await tester.pump();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    // 修复前:launch 页收下 conversationId/launchParams 后零消费,
+    // embedded 恒收 null → getChatContext 返 null、卡片启动参数失效
+    final inst = manager.instances['a'];
+    expect(inst, isNotNull);
+    expect(inst!.conversationId, 'c1');
+    expect(inst.launchParams, '{"x":1}'); // URL 编码 JSON 解码无损
+    expect(manager.foregroundAppid, 'a');
   });
 }

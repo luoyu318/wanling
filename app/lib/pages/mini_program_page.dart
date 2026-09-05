@@ -36,6 +36,7 @@ import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
+import '../widgets/mini_program_overlay.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
 /// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
@@ -255,10 +256,16 @@ String _mimeOf(String path) {
 
 /// profile 授权弹窗(wanlingGetProfile 首次调用时经 bridge 回调触发,
 /// 调用式授权,不在 M2 启动弹序列)。返回 true=允许;拒绝/点遮罩均视为拒绝。
-Future<bool> showProfileConsentDialog(BuildContext context) async {
+///
+/// [embedded]=true:小程序嵌入模式,经宿主顶端专用 Overlay 呈现
+/// (嵌入页面 context 向上无 Navigator,showAppDialog 的 Navigator.of 必崩);
+/// 路由模式行为不变。
+Future<bool> showProfileConsentDialog(BuildContext context,
+    {bool embedded = false}) async {
   var allowed = false;
   await showAppDialog(
     context: context,
+    embedded: embedded,
     title: '身份信息授权',
     content: const Text('将向该小程序提供你的昵称、头像与用户标识'),
     confirmText: '允许',
@@ -278,13 +285,16 @@ class MiniProgramPage extends ConsumerStatefulWidget {
         onClose = null;
 
   /// 嵌入模式:挂全局 Host 层,退出动作交给回调(live 路由壳负责返回键)。
+  /// conv/launch 参数由 Host 从实例元数据注入(I2 恢复 getChatContext 契约
+  /// 与入口 URL query 链路)。
   const MiniProgramPage.embedded({
     super.key,
     required this.appid,
     required this.onMinimize,
     required this.onClose,
-  })  : conversationId = null,
-        launchParams = null;
+    this.conversationId,
+    this.launchParams,
+  });
 
   final String appid;
 
@@ -382,17 +392,43 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   /// 胶囊「更多」菜单抽屉:信息头(图标+名称) + 方形圆角功能瓦片(刷新/分享,
   /// 图标在上文字在下) + 细线分隔 + 底部整行「关闭」(仅收起抽屉;
   /// 关闭小程序走胶囊 ◉,不再放抽屉里)。
+  ///
+  /// 路由模式走 showModalBottomSheet(行为不变);嵌入模式页面 context 向上
+  /// 无 Navigator(Host Stack 兄弟分支,Navigator.of 必崩),改走宿主顶端
+  /// 专用 Overlay(showMiniProgramOverlay),内容由 [_buildMoreSheetContent] 共享。
   Future<void> _showMoreSheet(MiniProgramInfo info) async {
     final canShare = info.permissions.contains('wanling.chat.share');
     final iconUrl =
         info.iconUrlFor(ref.read(apiProvider).baseUrl);
+    if (widget.isEmbedded) {
+      await showMiniProgramOverlay<void>(
+        context: context,
+        bottomSheet: true,
+        builder: (sheetCtx, close) =>
+            _buildMoreSheetContent(info, canShare, iconUrl, close),
+      );
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFFF7F7F7),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
-      builder: (sheetCtx) => SafeArea(
+      builder: (sheetCtx) => _buildMoreSheetContent(
+        info, canShare, iconUrl, () => Navigator.of(sheetCtx).pop()),
+    );
+  }
+
+  /// 「更多」抽屉内容(路由/嵌入两模式共享)。[close]=关闭弹层:路由模式
+  /// 传 Navigator pop,嵌入模式传 Overlay close。
+  Widget _buildMoreSheetContent(
+    MiniProgramInfo info,
+    bool canShare,
+    String iconUrl,
+    void Function() close,
+  ) {
+    return SafeArea(
         top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -436,7 +472,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                       iconColor: const Color(0xFFFF9500),
                       label: '浮窗',
                       onTap: () {
-                        Navigator.of(sheetCtx).pop();
+                        close();
                         widget.onMinimize!();
                       },
                     ),
@@ -447,7 +483,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                     iconColor: const Color(0xFF07C160),
                     label: '刷新',
                     onTap: () {
-                      Navigator.of(sheetCtx).pop();
+                      close();
                       _controller?.reload();
                     },
                   ),
@@ -457,7 +493,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                     iconColor: const Color(0xFF5B8BF7),
                     label: '分享到会话',
                     onTap: () {
-                      Navigator.of(sheetCtx).pop();
+                      close();
                       _shareFromCapsule(info, canShare);
                     },
                   ),
@@ -479,14 +515,13 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                   textStyle: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.w500),
                 ),
-                onPressed: () => Navigator.of(sheetCtx).pop(),
+                onPressed: () => close(),
                 child: const Text('关闭'),
               ),
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   /// 胶囊入口的分享:与 bridge shareToChat 同规则(仅公开+已声明 share 权限)。
@@ -570,7 +605,12 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             (await store?.getMpPerms(uid, info.appid) ?? <String>{})
                 .contains(_profilePermKey),
         requestProfilePermission: () async =>
-            mounted && await showProfileConsentDialog(context),
+            mounted &&
+            await showProfileConsentDialog(
+              context,
+              // 嵌入模式弹层走宿主顶端专用 Overlay(见 showAppDialog embedded)
+              embedded: widget.isEmbedded,
+            ),
         persistProfileGrant: () async {
           final granted =
               await store?.getMpPerms(uid, info.appid) ?? <String>{};
@@ -646,6 +686,8 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     var allowed = false;
     await showAppDialog(
       context: context,
+      // 嵌入模式 context 向上无 Navigator,弹层走宿主顶端专用 Overlay
+      embedded: widget.isEmbedded,
       title: '权限申请',
       content: Text('${info.name} 申请以下权限：\n${_permDesc[perm] ?? perm}'),
       confirmText: '允许',
@@ -678,8 +720,12 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     if (info.status != 'published') {
       throw StateError('仅公开小程序可分享到会话');
     }
-    final convId =
-        await showMiniProgramConversationPicker(context: context, ref: ref);
+    final convId = await showMiniProgramConversationPicker(
+      context: context,
+      ref: ref,
+      // 嵌入模式 context 向上无 Navigator,选择器走宿主顶端专用 Overlay
+      embedded: widget.isEmbedded,
+    );
     if (convId == null) return null;
     final result = await ref.read(apiProvider).sendMessage(convId, {
       'msg_type': 'mini_program_card',

@@ -13,8 +13,11 @@
 // 注:skipOffstage=false 断言「是否仍在树上」(保活视图默认 finder 会跳过)。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:app/pages/mini_program_launch_page.dart';
 import 'package:app/pages/mini_program_page.dart';
@@ -25,7 +28,20 @@ import 'package:app/services/mini_program_manager.dart';
 import 'package:app/widgets/mini_program_float_ball.dart';
 import 'package:app/widgets/mini_program_host.dart';
 import 'package:app/widgets/mini_program_task_view.dart';
+import 'package:wanling_core/models/user.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider, authProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
+import 'package:wanling_core/services/api_service.dart';
+
+/// I1 联动测试用 Mock API(restoreSession 建登录态 / logout 清理)
+class _MockApi extends Mock implements ApiService {}
+
+final _testUser = User(
+  id: 'u1',
+  username: 'kira',
+  avatarUrl: null,
+  createdAt: DateTime.utc(2026, 6, 13),
+);
 
 /// 有状态替身视图:initState 计数,验证 keep-alive(元素树不被 diff 重建)。
 class _StubView extends StatefulWidget {
@@ -61,6 +77,7 @@ class _Harness {
     WidgetTester tester, {
     bool useRealEmbeddedPage = false,
     Widget Function(BuildContext, MiniProgramInstance)? instanceViewBuilder,
+    List<Override> overrides = const [],
   }) async {
     router = GoRouter(
       initialLocation: '/',
@@ -86,6 +103,7 @@ class _Harness {
       // 真实 embedded 页用:小程序列表返空 → 页渲染「不存在」静态文案,
       // 不触 WebView 平台通道,也不会有 loading 态无限动画干扰 pumpAndSettle
       miniProgramsProvider.overrideWith((ref) async => const []),
+      ...overrides,
     ]);
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
@@ -127,6 +145,10 @@ void main() {
   setUp(() {
     // launcher 的 live 壳占位是模块级状态,用例间复位
     resetLauncherForTest();
+    // Host initState 的 authProvider 监听会实例化 auth/api/settings provider 链,
+    // settingsProvider.load() 读 SharedPreferences,测试环境需 mock
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
   });
 
   testWidgets('无实例:只渲染 child,无浮球/任务视图', (tester) async {
@@ -315,5 +337,105 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.manager.instances.containsKey('a'), isFalse); // close 销毁实例
     expect(find.byType(MiniProgramLiveShellPage), findsNothing);
+  });
+
+  testWidgets('logout/切账号 → closeAll 清空保活实例,浮球/任务视图消失(I1)',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({'token': 'fake-token'});
+    final api = _MockApi();
+    when(() => api.baseUrl).thenReturn('http://test.local');
+    when(() => api.getMe()).thenAnswer((_) async => _testUser);
+    when(() => api.logout()).thenAnswer((_) async {});
+    final h = _Harness();
+    await h.pump(tester, overrides: [apiProvider.overrideWithValue(api)]);
+
+    // 建立登录态(restoreSession 走真实 auth notifier,Mock API 供数据)
+    await h.container.read(authProvider.notifier).restoreSession();
+    expect(h.container.read(authProvider).isAuthenticated, isTrue);
+
+    // 保活实例 a 最小化挂后台,浮球出现
+    openMiniProgramWith(h.container, 'a');
+    h.manager.minimize();
+    await tester.pumpAndSettle();
+    expect(find.byType(MiniProgramFloatBall), findsOneWidget);
+
+    // 登出(手动登出/401 踢出/切换账号的 logout 段同一状态流转)
+    await h.container.read(authProvider.notifier).logout();
+    await tester.pumpAndSettle();
+
+    // 修复前:实例残留,前台 WebView 盖住登录页;重登后旧实例直接恢复
+    expect(h.container.read(miniProgramManagerProvider).list, isEmpty);
+    expect(find.byType(MiniProgramFloatBall), findsNothing);
+    expect(_mountedOnTree(tester, 'a'), isFalse);
+  });
+
+  testWidgets('logout 时任务视图展开中 → 一并收起,不悬在空列表上(I1)',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({'token': 'fake-token'});
+    final api = _MockApi();
+    when(() => api.baseUrl).thenReturn('http://test.local');
+    when(() => api.getMe()).thenAnswer((_) async => _testUser);
+    when(() => api.logout()).thenAnswer((_) async {});
+    final h = _Harness();
+    await h.pump(tester, overrides: [apiProvider.overrideWithValue(api)]);
+    await h.container.read(authProvider.notifier).restoreSession();
+
+    openMiniProgramWith(h.container, 'a');
+    h.manager.minimize();
+    await tester.pumpAndSettle();
+    // 展开任务视图
+    await tester.tap(find.byType(MiniProgramFloatBall));
+    await tester.pumpAndSettle();
+    expect(find.byType(MiniProgramTaskView), findsOneWidget);
+
+    await h.container.read(authProvider.notifier).logout();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MiniProgramTaskView), findsNothing);
+    expect(h.container.read(miniProgramManagerProvider).list, isEmpty);
+  });
+
+  testWidgets('参数变化重开 → 实例销毁重建,嵌入视图整棵换新(I2)', (tester) async {
+    final h = _Harness();
+    await h.pump(
+      tester,
+      instanceViewBuilder: (context, inst) => _StubView(
+        key: ValueKey('stub-${inst.appid}'),
+        appid: inst.appid,
+      ),
+    );
+
+    openMiniProgramWith(h.container, 'a', conversationId: 'c1');
+    await tester.pumpAndSettle();
+    _StubViewState stateOf() => tester.state<_StubViewState>(
+        find.byKey(const ValueKey('stub-a'), skipOffstage: false));
+    final first = stateOf();
+
+    // 同 appid 换参数重开(卡片语境):销毁重建,WebView/JS 状态随子树换新
+    openMiniProgramWith(h.container, 'a', conversationId: 'c2');
+    await tester.pumpAndSettle();
+
+    expect(identical(stateOf(), first), isFalse);
+    expect(h.manager.instances['a']!.conversationId, 'c2');
+    expect(h.manager.foregroundAppid, 'a');
+  });
+
+  testWidgets('embedded 页收到 conv/launch 元数据,恢复 getChatContext 契约(I2)',
+      (tester) async {
+    final h = _Harness();
+    await h.pump(tester, useRealEmbeddedPage: true);
+
+    openMiniProgramWith(
+      h.container,
+      'a',
+      conversationId: 'c1',
+      launchParams: '{"x":1}',
+    );
+    await tester.pumpAndSettle();
+
+    // 修复前:embedded 构造恒传 null → wanlingGetChatContext 返 null
+    final page = tester.widget<MiniProgramPage>(find.byType(MiniProgramPage));
+    expect(page.conversationId, 'c1');
+    expect(page.launchParams, '{"x":1}');
   });
 }
