@@ -121,31 +121,6 @@ check_node() {
     info "Node.js 版本: $ver"
 }
 
-# ─── 确保 SDK 构建产物就绪 ─────────────────────────────────────────────────
-# wanling-sdk 以 file: symlink 引用仓内 sdk/ts,而 dist 被 gitignore——
-# 全新 clone 后缺 dist,tsc 会因找不到 wanling-sdk 类型声明而失败。
-# 兜底:缺产物就在 sdk/ts 就地 npm install + build,仍失败则报清晰错误。
-ensure_sdk_dist() {
-    local sdk_dir
-    sdk_dir="$(cd "$SCRIPT_DIR/../../sdk/ts" 2>/dev/null && pwd)" \
-        || die "未找到 SDK 源目录: $SCRIPT_DIR/../../sdk/ts(请在本仓 plugin/opencode-plugin/ 下运行 install.sh)"
-    if [[ -f "$sdk_dir/dist/index.js" && -f "$sdk_dir/dist/index.d.ts" ]]; then
-        return 0
-    fi
-    info "wanling-sdk 缺少 dist 构建产物,开始在 $sdk_dir 就地构建..."
-    local npm_log
-    # npm ci --include=dev:按 lock 全量重建(先清 node_modules),可自愈脏状态;
-    # 显式带 dev 是因为 tsc 属 devDependencies,用户全局 omit=dev 时缺省装不上
-    if ! npm_log=$(cd "$sdk_dir" && npm ci --include=dev 2>&1); then
-        die "SDK npm ci 失败:${npm_log:+ $npm_log}"
-    fi
-    if ! npm_log=$(cd "$sdk_dir" && npm run build 2>&1); then
-        die "SDK 构建失败(npm run build):${npm_log:+ $npm_log}"
-    fi
-    [[ -f "$sdk_dir/dist/index.js" ]] || die "SDK 构建后仍缺 dist/index.js,请检查 SDK 工程"
-    ok "wanling-sdk 构建产物已就绪"
-}
-
 # ─── 配置读写 ──────────────────────────────────────────────────────────────
 read_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -202,7 +177,7 @@ install_deps() {
     info "安装 npm 依赖..."
     cd "$PLUGIN_DIR"
     local npm_log
-    # --include=dev:全局 omit=dev 时缺省装不上 tsc(与 ensure_sdk_dist 同因,显式带上)
+    # --include=dev:全局 omit=dev 时缺省装不上 tsc,显式带上
     if npm_log=$(npm install --include=dev 2>&1); then
         ok "npm 依赖已就绪"
     else
@@ -210,11 +185,25 @@ install_deps() {
     fi
 }
 
+# ─── 二进制产物落位(持久化) ────────────────────────────────────────────────
+# 远程安装时 install.sh 在 /tmp 临时目录执行,临时目录随时可能被清理——
+# 产物必须复制到 $CONFIG_DIR/bin(随配置目录持久,且按实例隔离),systemd
+# 引用该持久路径。幂等:同路径跳过复制。
+install_binary_artifact() {
+    mkdir -p "$CONFIG_DIR/bin"
+    local target_bin="$CONFIG_DIR/bin/wanling-opencode-plugin"
+    if [[ "$PLUGIN_BIN" != "$target_bin" ]]; then
+        cp "$PLUGIN_BIN" "$target_bin"
+        chmod +x "$target_bin"
+    fi
+    PLUGIN_BIN="$target_bin"
+    ok "二进制产物已就位: $target_bin"
+}
+
 # ─── 构建 ──────────────────────────────────────────────────────────────────
 build_code() {
     info "编译 TypeScript..."
     cd "$PLUGIN_DIR"
-    ensure_sdk_dist
     if [[ ! -x node_modules/.bin/tsc ]]; then
         die "未找到 tsc 编译器，请先运行 npm install 安装依赖"
     fi
@@ -245,12 +234,16 @@ setup_systemd() {
     info "探测到 opencode 二进制: ${opencode_bin}"
     mkdir -p "$(dirname "$service_file")"
 
-    # ExecStart:二进制模式直接用产物(免 NodeJS);源码模式 node dist/index.js
-    local exec_start
+    # ExecStart:二进制模式直接用产物(免 NodeJS,持久路径见 install_binary_artifact);
+    # 源码模式 node dist/index.js。WorkingDirectory 同理:二进制用配置目录
+    # (远程安装时 PLUGIN_DIR 是临时目录,不可引用),源码用插件目录。
+    local exec_start work_dir
     if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
         exec_start="${PLUGIN_BIN}"
+        work_dir="${CONFIG_DIR}"
     else
         exec_start="$(which node) ${PLUGIN_DIR}/dist/index.js"
+        work_dir="${PLUGIN_DIR}"
     fi
 
     cat > "$service_file" <<EOF
@@ -261,7 +254,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=${exec_start}
-WorkingDirectory=${PLUGIN_DIR}
+WorkingDirectory=${work_dir}
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
@@ -572,8 +565,15 @@ print(d.get('owner_user_id',''))
         [[ "$PORT_PROXY_SET" != true && -n "$old_proxy" ]] && PROXY_PORT="$old_proxy"
     fi
     write_config
-    install_deps
-    build_code
+    if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
+        # 二进制模式:产物落位持久目录,免 NodeJS,跳过 npm install/编译
+        # (远程安装时 PLUGIN_DIR 是临时目录,无 package.json,npm install 必炸)
+        info "使用单文件二进制产物: $PLUGIN_BIN"
+        install_binary_artifact
+    else
+        install_deps
+        build_code
+    fi
     setup_systemd
     setup_shell_aliases
     check_skills_hint
@@ -605,15 +605,8 @@ do_install() {
 
     write_config
     if [[ "$USE_BIN" == "true" ]]; then
-        # 二进制模式:复制产物到插件目录(systemd 引用固定路径,防临时目录被清)。
-        # 产物已在插件目录(幂等重装)时跳过复制。
-        mkdir -p "$PLUGIN_DIR"
-        local target_bin="$PLUGIN_DIR/wanling-opencode-plugin"
-        if [[ "$PLUGIN_BIN" != "$target_bin" ]]; then
-            cp "$PLUGIN_BIN" "$target_bin"
-            chmod +x "$target_bin"
-        fi
-        PLUGIN_BIN="$target_bin"
+        # 二进制模式:产物落位持久目录(systemd 引用该路径,免 NodeJS)
+        install_binary_artifact
     else
         install_deps
         build_code
@@ -633,14 +626,8 @@ do_update() {
     if [[ -n "$PLUGIN_BIN" && -x "$PLUGIN_BIN" ]]; then
         USE_BIN=true
         info "使用单文件二进制产物: $PLUGIN_BIN"
-        # 复制产物到插件目录覆盖旧版(已在插件目录则跳过)
-        mkdir -p "$PLUGIN_DIR"
-        local target_bin="$PLUGIN_DIR/wanling-opencode-plugin"
-        if [[ "$PLUGIN_BIN" != "$target_bin" ]]; then
-            cp "$PLUGIN_BIN" "$target_bin"
-            chmod +x "$target_bin"
-        fi
-        PLUGIN_BIN="$target_bin"
+        # 复制产物到持久目录覆盖旧版(systemd 引用该路径)
+        install_binary_artifact
     else
         check_node
         install_deps

@@ -418,9 +418,11 @@ write_wanling_block() {
 }
 
 # ─── 确保 wanling_sdk 已装入 Hermes venv ───────────────────────────────────
-# aggregate_card.py 依赖 sdk/python 的 wanling_sdk 包（8/26 聚合卡迁移引入）。
-# 该包不发布 PyPI，必须从仓库本地安装。缺失时 adapter 导入链断裂、gateway
-# 起不来（2026-08-27 真实事故：另一台机器 --update 后 ModuleNotFoundError）。
+# aggregate_card.py 依赖 wanling_sdk 包（8/26 聚合卡迁移引入）。
+# 安装源分流：仓内 sdk/python 存在（本仓开发场景）→ 本地路径安装；
+# 否则（远程 curl 安装，临时目录无仓库）→ PyPI 线上包 wanling-sdk。
+# 缺失时 adapter 导入链断裂、gateway 起不来（2026-08-27 真实事故：另一台
+# 机器 --update 后 ModuleNotFoundError）。
 # 幂等：已可导入则跳过。uv 优先（hermes venv 自带），无 uv 回退 venv pip。
 ensure_wanling_sdk_installed() {
     local hermes_venv="$HERMES_HOME/hermes-agent/venv"
@@ -439,15 +441,21 @@ ensure_wanling_sdk_installed() {
         return
     fi
 
-    if [[ ! -d "$src_dir" ]]; then
-        die "wanling_sdk 源目录不存在：$src_dir（请在本仓 plugin/hermes-plugin/ 下运行 install.sh）"
-    fi
-
-    info "Hermes venv 缺少 wanling_sdk，开始安装（源：$src_dir）"
-    if command -v uv >/dev/null 2>&1; then
-        run "uv pip install --python '$python_bin' '$src_dir'"
+    if [[ -d "$src_dir" ]]; then
+        info "Hermes venv 缺少 wanling_sdk，开始安装（源：本地仓库 $src_dir）"
+        if command -v uv >/dev/null 2>&1; then
+            run "uv pip install --python '$python_bin' '$src_dir'"
+        else
+            run "'$python_bin' -m pip install '$src_dir'"
+        fi
     else
-        run "'$python_bin' -m pip install '$src_dir'"
+        # 远程安装场景：临时目录没有仓库源码，从 PyPI 装线上包
+        info "Hermes venv 缺少 wanling_sdk，开始安装（源：PyPI 线上包 wanling-sdk）"
+        if command -v uv >/dev/null 2>&1; then
+            run "uv pip install --python '$python_bin' 'wanling-sdk'"
+        else
+            run "'$python_bin' -m pip install 'wanling-sdk'"
+        fi
     fi
     # 安装后复验：失败即 fail fast（防止静默半安装状态再次埋雷）。
     if ! "$python_bin" -c 'import wanling_sdk' >/dev/null 2>&1; then
