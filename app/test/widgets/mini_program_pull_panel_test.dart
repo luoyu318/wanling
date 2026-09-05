@@ -7,9 +7,10 @@
 //
 // 几何口径(默认测试面 800x600,无系统 inset;dots 不占布局空间):
 //   tMax = 600 - 0(状态栏) - 56(AppBar) - 0(手势条) = 544
-//   触摸 slop 18px:拖 240px 实际 overscroll 222(>190 补完段,p≈0.41 dots 已淡出)
-//   拖 100px 实际 82(60~190 刷新段);拖 30px 实际 12(<60 弹回段)
-//   拖 60px 实际 42(p≈0.08 dots 渐显窗口内);拖 45px 实际 27(p≈0.05 半透明)
+//   单次 moveBy 距离整量下发(首事件越过 slop 即接受,不扣 slop):
+//   拖 240px → pull 240(>190 补完段,p≈0.44 dots 已淡出)
+//   拖 100px → 100(60~190 刷新段);拖 30px → 30(<60 弹回段)
+//   拖 60px → p≈0.11(dots 淡出窗口起步);拖 27px → p≈0.05(半透明)
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/mini_programs_provider.dart';
@@ -184,7 +185,7 @@ void main() {
 
     expect(_cardOffsetDy(tester), greaterThan(0));
     expect(_panelOpacity(tester).opacity, greaterThan(0));
-    // p = 222/544 ≈ 0.41 > 0.35:dots 已淡出交接面板
+    // p = 240/544 ≈ 0.44 > 0.35:dots 已淡出交接面板
     expect(find.byKey(const ValueKey('pull-dots')), findsNothing);
 
     await g.up();
@@ -195,7 +196,7 @@ void main() {
       (tester) async {
     await pump(tester);
 
-    // 拖 60px(实际 42,p≈0.08):dots 渲染且半透明(淡入窗口内)
+    // 拖 60px(p≈0.11):dots 渲染且半透明(淡出窗口起步)
     final g = await _pullDown(tester, 60);
     await tester.pump();
 
@@ -241,7 +242,7 @@ void main() {
     // p=0(静止):不渲染
     expect(find.byKey(const ValueKey('pull-dots')), findsNothing);
 
-    // p>0.35(拖 240px,实际 222):淡出完毕,不可见
+    // p>0.35(拖 240px):淡出完毕,不可见
     g = await _pullDown(tester, 240);
     expect(_dotsOpacity(tester), isNull, reason: 'p>0.35 后 dots 不渲染');
     await g.up();
@@ -281,6 +282,63 @@ void main() {
     expect(refreshCount, 0);
     expect(openNotifier.value, isFalse);
     expect(_cardOffsetDy(tester), 0);
+  });
+
+  testWidgets('拉动中反向上滑:页面跟手回退,列表内容刚性随动(方向锁)', (tester) async {
+    await pump(tester);
+
+    final textCenterBefore = tester.getCenter(find.text(_childText));
+    final g = await _pullDown(tester, 100); // 单事件整量下发,pull = 100
+    expect(_cardOffsetDy(tester), 100);
+
+    // 不松手反向上滑 40:页面跟手回退 100→60,列表不抢事件
+    await g.moveBy(const Offset(0, -40));
+    await tester.pump();
+    expect(_cardOffsetDy(tester), 60);
+
+    // 内容刚性随动:文本位移量 == 卡片位移量(列表未滚动)
+    final textCenterAfter = tester.getCenter(find.text(_childText));
+    expect(textCenterAfter.dy, textCenterBefore.dy + 60,
+        reason: '列表钉在顶部,内容应随卡片整体平移');
+
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(_cardOffsetDy(tester), 0);
+  });
+
+  testWidgets('拉动中上滑超过拉动量:回退到 0 后余量无缝交给列表滚动', (tester) async {
+    await pump(tester);
+
+    final textCenterBefore = tester.getCenter(find.text(_childText));
+    final g = await _pullDown(tester, 100); // 单事件整量下发,pull = 100
+    // 上滑 122 = 还账 100 + 余量 22
+    await g.moveBy(const Offset(0, -122));
+    await tester.pump();
+
+    expect(_cardOffsetDy(tester), 0, reason: '拉动量还完,页面回位');
+    final textCenterAfter = tester.getCenter(find.text(_childText));
+    expect(textCenterAfter.dy, textCenterBefore.dy - 22,
+        reason: '余量 22 放行给列表,内容相对屏幕上移');
+
+    await g.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('轻拉刷新:指示器为三点脉冲,无转圈,揭示带 dots 不重影', (tester) async {
+    await pump(tester);
+
+    await _pullDown(tester, 100, release: true);
+    await tester.pump();
+
+    expect(refreshCount, 1);
+    expect(find.byKey(const ValueKey('refresh-dots')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    // 刷新期揭示带 dots 隐藏,避免两套三点重影
+    expect(find.byKey(const ValueKey('pull-dots')), findsNothing);
+
+    await tester.pumpAndSettle();
+    // 刷新结束后指示器撤除
+    expect(find.byKey(const ValueKey('refresh-dots')), findsNothing);
   });
 
   testWidgets('完成态上滑:跟手减小;小拖松手回完成态,拖过半松手收回', (tester) async {

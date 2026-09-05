@@ -4,10 +4,16 @@
 // - 页面是顶层卡片:下拉全程跟手下推,顶缘圆角 18*p 渐现,随下拉压暗
 // - 面板是底层:8%~45% 区间淡入 + 0.96→1.0 微缩放,完成态才可交互
 // - 松手分档:>=190 震动补完打开 / >=60 轻拉刷新 / <60 弹回
+// - 轻拉刷新:页面保持 64px 下移,顶部条带三点脉冲(无转圈)
 // - 完成态:底栏由宿主按 panelOpenNotifier 收缩(高度 64→0),页头贴底成为
 //   返回条;上滑跟手恢复(拖过半松手收回),点页头/系统返回收回
-// - 注意:顶部下拉时 OverscrollNotification.overscroll 为负值(踩坑)
+// - 下拉驱动:ScrollConfiguration 给子列表注入方向锁 physics——列表在顶部
+//   的下拉增量、以及拉动中双向增量,都改喂页面位移(列表钉住不动);上滑
+//   回退到 0 后的余量原样放行,无缝过渡为列表滚动(解决拉动中反向上滑被
+//   列表抢事件的问题)。约束:子列表 physics 不得覆写
+//   applyPhysicsToUserOffset(如 Bouncing 会绕过分流),消息页两列表均满足
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,8 +32,9 @@ typedef _MpEntry = ({String appid, String name, String iconUrl});
 
 /// 消息页下拉手势作用域。
 ///
-/// 包在 `_MsgNavPage` 的 body 外层:[header] 为页头(随卡片下推,完成态
-/// 贴底作返回条),[child] 为页面内容(其内部滚动列表在顶部下拉时驱动手势)。
+/// 包在 `_MsgNavPage` 的 body 外层:[header] 为页头(消息页为 buildHomeAppBar
+/// 产物,随卡片下推,完成态贴底作返回条),[child] 为页面内容(其内部滚动
+/// 列表经 ScrollConfiguration 注入方向锁 physics,见文件头)。
 /// [panelOpenNotifier] 暴露完成态给宿主(HomePage 据此收缩底栏)。
 class MiniProgramPullScope extends StatefulWidget {
   const MiniProgramPullScope({
@@ -77,6 +84,10 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
   bool _refreshing = false;
   double _bodyH = 0;
   int _segment = 0; // 下拉跨段触感:0 无 / 1 刷新段 / 2 面板段
+
+  /// 方向锁 physics 行为:实例身份必须稳定(每帧新建会让子列表 Scrollable
+  /// 反复重建 physics 链),字段初始化一次即可。
+  late final _PanelPullBehavior _pullBehavior = _PanelPullBehavior(this);
 
   /// 系统底部手势条 inset:外层 Scaffold 带 bottomNavigationBar 时 body 的
   /// MediaQuery bottom 被剥掉,完成态贴底位置须从 View 层取真实 inset。
@@ -163,18 +174,39 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
     }
   }
 
-  bool _onOverscroll(OverscrollNotification n) {
-    if (_panelOpen || _refreshing || _settle.isAnimating) return false;
-    // 只认主列表(纵向)在顶部的下拉:顶部下拉 overscroll 为负值,正向
-    // (底部回弹)与横向轮播的 overscroll 一律忽略
-    if (n.metrics.axisDirection != AxisDirection.down) return false;
-    if (n.overscroll >= 0) return false;
-    if (n.metrics.pixels > n.metrics.minScrollExtent) return false;
-    setState(() {
-      _pull = (_pull - n.overscroll).clamp(0.0, _tMax);
-    });
+  /// 方向锁分流(由子列表 physics 的 applyPhysicsToUserOffset 调用):
+  /// 返回值 = 放行给列表的增量(0 表示列表不动,页面吃掉全部增量)。
+  /// 增量符号:正值 = 手指向下(scroll offset 越减越靠近 minScrollExtent)。
+  double consumeUserOffset(double offset, ScrollMetrics metrics) {
+    // 只分流纵向;横向(轮播/PageView)增量原样放行
+    if (metrics.axis != Axis.vertical) return offset;
+    if (_pull > 0) {
+      // 拉动中方向锁:双向增量都吃进页面位移,列表钉在顶部;
+      // 上滑把拉动量还完后的余量放行,无缝过渡为正常滚动
+      if (offset >= 0) {
+        _applyPullDelta(offset);
+        return 0;
+      }
+      final take = math.min(-offset, _pull);
+      _applyPullDelta(-take);
+      return offset + take;
+    }
+    // 未拉动:仅列表在顶部时的下拉触发拉动
+    if (!_panelOpen &&
+        !_refreshing &&
+        !_settle.isAnimating &&
+        _tMax > 0 &&
+        offset > 0 &&
+        metrics.pixels <= metrics.minScrollExtent) {
+      _applyPullDelta(offset);
+      return 0;
+    }
+    return offset;
+  }
+
+  void _applyPullDelta(double dy) {
+    setState(() => _pull = (_pull + dy).clamp(0.0, _tMax));
     _segmentHaptic();
-    return false;
   }
 
   bool _onScrollEnd(ScrollEndNotification n) {
@@ -195,7 +227,8 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
     return false;
   }
 
-  /// 轻拉刷新:页面保持 64px 下移转圈,与最短 900ms 展示并行(mockup 口径)。
+  /// 轻拉刷新:页面保持 64px 下移,顶部条带三点脉冲,与最短 900ms 展示
+  /// 并行(mockup 口径)。
   Future<void> _doRefresh() async {
     setState(() => _refreshing = true);
     _animatePullTo(0);
@@ -299,13 +332,10 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
                               child:
                                   NotificationListener<ScrollEndNotification>(
                                     onNotification: _onScrollEnd,
-                                    child:
-                                        NotificationListener<
-                                          OverscrollNotification
-                                        >(
-                                          onNotification: _onOverscroll,
-                                          child: widget.child,
-                                        ),
+                                    child: ScrollConfiguration(
+                                      behavior: _pullBehavior,
+                                      child: widget.child,
+                                    ),
                                   ),
                             ),
                           ],
@@ -324,9 +354,9 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
                 ),
               ),
               // 揭示带 dots:不占布局空间,覆盖元素垂直居中于「屏幕顶到
-              // 下推卡片顶缘」的带内(与下方刷新 spinner 同层方式);
-              // p 0.02→0.10 跟手淡入,0.10→0.35 跟手淡出交接面板,背景透明
-              if (!_panelOpen && _dotsOpacityOf(p) > 0)
+              // 下推卡片顶缘」的带内;p 0.02→0.10 跟手淡入,0.10→0.35 跟手
+              // 淡出交接面板,背景透明;刷新期隐藏(刷新有自己的三点指示)
+              if (!_panelOpen && !_refreshing && _dotsOpacityOf(p) > 0)
                 Positioned(
                   key: const ValueKey('pull-dots'),
                   left: 0,
@@ -349,20 +379,15 @@ class _MiniProgramPullScopeState extends State<MiniProgramPullScope>
                     ),
                   ),
                 ),
-              // 轻拉刷新:页面下移留出的顶部条带中央转圈
+              // 轻拉刷新:页面下移留出的顶部条带中央,三点脉冲(无转圈)
               if (_refreshing)
                 const Positioned(
+                  key: ValueKey('refresh-dots'),
                   left: 0,
                   right: 0,
                   top: 0,
                   height: _refreshHoldH,
-                  child: Center(
-                    child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                  ),
+                  child: Center(child: _RefreshingDots()),
                 ),
             ],
           ),
@@ -394,6 +419,91 @@ class _Dot extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 刷新态三点脉冲指示器:900ms 一轮,各点相位错开 0.18,
+/// 缩放 0.72→1.0→0.72、透明度 0.35→1.0→0.35 正弦波动。
+class _RefreshingDots extends StatefulWidget {
+  const _RefreshingDots();
+
+  @override
+  State<_RefreshingDots> createState() => _RefreshingDotsState();
+}
+
+class _RefreshingDotsState extends State<_RefreshingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _cycle = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _cycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _cycle,
+      builder: (context, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < 3; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            _PulsingDot(controllerValue: _cycle.value, phase: i * 0.18),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 单个脉冲点:按相位取正弦波,波动曲线 0→1→0。
+class _PulsingDot extends StatelessWidget {
+  const _PulsingDot({required this.controllerValue, required this.phase});
+
+  final double controllerValue;
+  final double phase;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = (controllerValue - phase) % 1.0;
+    final wave = math.sin(math.pi * t);
+    return Transform.scale(
+      scale: 0.72 + 0.28 * wave,
+      child: Opacity(opacity: 0.35 + 0.65 * wave, child: const _Dot()),
+    );
+  }
+}
+
+/// 下拉方向锁 physics 行为:给作用域内子滚动列表统一注入
+/// [_PanelPullPhysics],分流规则见 [consumeUserOffset] 与文件头。
+class _PanelPullBehavior extends ScrollBehavior {
+  const _PanelPullBehavior(this.scope);
+
+  final _MiniProgramPullScopeState scope;
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      _PanelPullPhysics(scope);
+}
+
+class _PanelPullPhysics extends ClampingScrollPhysics {
+  const _PanelPullPhysics(this.scope, {super.parent});
+
+  final _MiniProgramPullScopeState scope;
+
+  @override
+  _PanelPullPhysics applyTo(ScrollPhysics? ancestor) =>
+      _PanelPullPhysics(scope, parent: buildParent(ancestor));
+
+  // 子列表显式 physics(如消息页 AlwaysScrollable)经 applyTo 挂链后,
+  // 增量会委托到本方法,在此统一分流
+  @override
+  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) =>
+      scope.consumeUserOffset(offset, position);
 }
 
 /// 底层小程序面板:「最近使用」(保活实例,空则整段隐藏)+「常用的小程序」
