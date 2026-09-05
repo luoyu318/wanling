@@ -18,7 +18,6 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
-import 'package:app/services/mini_program_manager.dart';
 import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
@@ -343,37 +342,6 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 当前登录 user_id(_start 快照),进虚拟 host 账号段隔离多账号 storage。
   String? _uid;
-
-  /// 本页是否为前台实例(自持状态:ChangeNotifierProvider 的监听回调里
-  /// prev/next 是同一个可变对象,字段已就地变更,无法靠参数对比翻转)。
-  bool _isForeground = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _isForeground =
-        ref.read(miniProgramManagerProvider).foregroundAppid == widget.appid;
-    // 前后台翻转挂起/恢复 WebView(Android):实例被最小化(Offstage 保活)后
-    // 不再跑 JS 定时器/rAF/音频,恢复前台即续跑。所有收起路径统一走
-    // minimizeWithSnapshot(先 await 抓帧再 minimize),故本回调触发时快照已
-    // 抓完,pause 不影响抓帧。
-    ref.listenManual(miniProgramManagerProvider, _onManagerChanged);
-  }
-
-  /// manager 通知 → 与自持前台态对比,翻转时 pause/resume(实例级 API;
-  /// pauseTimers 是 Android 全局共享的会误伤其他保活实例,不可用;
-  /// iOS/桌面无此 API,守卫跳过,行为退化为保活不挂起)。
-  void _onManagerChanged(MiniProgramManager? prev, MiniProgramManager next) {
-    final isFg = next.foregroundAppid == widget.appid;
-    if (isFg == _isForeground) return;
-    _isForeground = isFg;
-    if (defaultTargetPlatform != TargetPlatform.android) return;
-    if (isFg) {
-      _controller?.resume();
-    } else {
-      _controller?.pause();
-    }
-  }
 
   /// WS 服务快照(_start 缓存,dispose 退订用;对齐 chat_page 缓存实例模式,
   /// dispose 内不碰 ref)。
@@ -868,10 +836,17 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               // 快照抓帧编排层按 appid 注册 controller(dispose 注销),
               // 缺注册则 minimizeWithSnapshot 拿不到 controller 永远走占位
               registerMiniProgramController(widget.appid, controller);
-              // 竞态兜底:WebView 就绪前实例已被最小化(打开即最小化),补挂起
-              if (defaultTargetPlatform == TargetPlatform.android &&
-                  !_isForeground) {
-                controller.pause();
+              // 竞态兜底:WebView 就绪前实例已被最小化(打开即最小化/登出等),
+              // Host 编排已跑过拿不到本 controller,这里补挂起(Android;
+              // hostpause 事件让合作页面停循环+静音,同 Host._syncSuspension)
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final mgr = ref.read(miniProgramManagerProvider);
+                if (!mgr.hasForeground || mgr.foregroundAppid != widget.appid) {
+                  unawaited(controller.evaluateJavascript(source:
+                      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()"));
+                  controller.pause();
+                  debugPrint('[mp-lifecycle] 创建兜底挂起 ${widget.appid}');
+                }
               }
               controller.addJavaScriptHandler(
                 handlerName: 'wanlingRequest',

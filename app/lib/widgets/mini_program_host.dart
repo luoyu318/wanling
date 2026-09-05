@@ -45,6 +45,8 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
     // 嵌入弹层生命周期:前台实例变化(最小化/切实例/关闭/登出清空)→
     // 批量关闭弹层,防 barrier 悬浮在非小程序页面上拦死宿主导航
     _manager.addListener(_dismissOverlaysOnForegroundChange);
+    // 保活实例挂起编排:前台实例变化 → 按需 pause/resume(见 _syncSuspension)
+    _manager.addListener(_onManagerChanged);
     // 登出/切账号联动(I1):认证态从有到无(手动登出/401 踢出/切换账号的
     // logout 段都收敛到 authProvider 状态流转)→ 清空保活实例。
     // 放 app 侧 Host 消费:core 不依赖 app,不能在 core 里调 app 的 manager。
@@ -67,26 +69,92 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _manager.removeListener(_dismissOverlaysOnForegroundChange);
+    _manager.removeListener(_onManagerChanged);
     super.dispose();
   }
 
-  /// 宿主 APP 生命周期:整体退后台 → 挂起全部保活 WebView(含前台实例,
-  /// 停 JS 定时器/rAF/音频);回前台 → 只恢复前台实例(后台实例仍 Offstage,
-  /// 由 page 层前台翻转逻辑管理)。与 page 层的 pause/resume 叠加是幂等的
-  /// (Android WebView onPause/onResume 可重入)。iOS/桌面无实例级 pause API,
-  /// 守卫跳过。
+  void _onManagerChanged() {
+    unawaited(_syncSuspension());
+  }
+
+  /// 向页面广播宿主挂起/恢复事件。实例级 onPause 停不掉 rAF 游戏循环与
+  /// WebAudio(Chromium 已知行为),合作页面(如游戏类小程序)监听本事件
+  /// 自行暂停+静音,是最精确的一层。
+  static const _jsPause =
+      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()";
+  static const _jsResume =
+      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostresume'))})()";
+
+  Future<void> _evaluate(String appid, String js, String what) async {
+    final c = miniProgramControllerRegistry[appid];
+    if (c == null) return;
+    try {
+      await c.evaluateJavascript(source: js);
+      debugPrint('[mp-lifecycle] $what → $appid ok');
+    } catch (e) {
+      // 页面销毁竞态等失败可忽略(挂起编排是保活增强,不阻断流程)
+      debugPrint('[mp-lifecycle] $what → $appid 失败(忽略): $e');
+    }
+  }
+
+  /// 挂起编排(集中在此,page 层不重复;幂等可重入)。三层叠加:
+  /// 1) hostpause/hostresume JS 事件(合作页面自行暂停+静音/恢复);
+  /// 2) 实例级 pause/resume(停 layout/parsing,无害兜底);
+  /// 3) 无前台实例时 pauseTimers 全局停 DOM 定时器,任一实例回前台
+  ///    resumeTimers——pauseTimers 是进程级共享(会波及全部 WebView),
+  ///    但"无前台=全部该停 / 有前台=全部该跑"的语义在此恰好成立。
+  Future<void> _syncSuspension() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final fg = _manager.foregroundAppid;
+    if (fg != null) {
+      debugPrint('[mp-lifecycle] 前台=$fg,恢复全局 timers');
+      await miniProgramControllerRegistry[fg]?.resumeTimers();
+      for (final appid in miniProgramControllerRegistry.keys) {
+        final c = miniProgramControllerRegistry[appid];
+        if (c == null) continue;
+        if (appid == fg) {
+          await c.resume();
+          await _evaluate(appid, _jsResume, 'hostresume');
+        } else {
+          await _evaluate(appid, _jsPause, 'hostpause');
+          unawaited(c.pause());
+        }
+      }
+    } else {
+      debugPrint('[mp-lifecycle] 无前台,全局停 timers + 全部挂起');
+      for (final appid in miniProgramControllerRegistry.keys) {
+        await _evaluate(appid, _jsPause, 'hostpause');
+        unawaited(miniProgramControllerRegistry[appid]?.pause());
+      }
+      // pauseTimers 全局生效,任一 WebView 调一次即可
+      if (miniProgramControllerRegistry.isNotEmpty) {
+        await miniProgramControllerRegistry.values.first.pauseTimers();
+      }
+    }
+  }
+
+  /// 宿主 APP 生命周期:整体退后台 → 全局停 timers + 广播 hostpause + 实例级
+  /// 挂起(含前台实例);回前台 → 有前台实例则恢复 timers 并 hostresume。
+  /// 与 _syncSuspension 共用同一套动作,叠加幂等(Android 可重入)。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     if (state == AppLifecycleState.paused) {
-      for (final c in miniProgramControllerRegistry.values) {
-        c.pause();
-      }
+      debugPrint('[mp-lifecycle] APP 退后台');
+      unawaited(_suspendAll());
     } else if (state == AppLifecycleState.resumed) {
-      final fg = _manager.foregroundAppid;
-      miniProgramControllerRegistry.forEach((appid, c) {
-        if (appid == fg) c.resume();
-      });
+      debugPrint('[mp-lifecycle] APP 回前台');
+      unawaited(_syncSuspension());
+    }
+  }
+
+  Future<void> _suspendAll() async {
+    for (final appid in miniProgramControllerRegistry.keys) {
+      await _evaluate(appid, _jsPause, 'hostpause(后台)');
+      unawaited(miniProgramControllerRegistry[appid]?.pause());
+    }
+    if (miniProgramControllerRegistry.isNotEmpty) {
+      await miniProgramControllerRegistry.values.first.pauseTimers();
     }
   }
 
