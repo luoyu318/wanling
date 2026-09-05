@@ -1,5 +1,5 @@
 // 小程序卡片多任务视图 widget 测试:
-// 1. 渲染每个实例一个卡片(tab 数=instances.length)
+// 1. 渲染每个实例一张卡片与卡外标题
 // 2. 点卡片 → onRestore(appid) 且 onCloseView 被调
 // 3. 卡片上滑(Dismissible up) → onClose(appid)
 // 4. 点卡片外空白 → onCloseView
@@ -103,7 +103,7 @@ void main() {
     });
   });
 
-  testWidgets('每个实例渲染一张卡片与一个 tab', (tester) async {
+  testWidgets('每个实例渲染一张卡片与卡外标题(无锁/无顶部tab)', (tester) async {
     final rec = _Recorder();
     await tester.pumpWidget(_Host(
       initial: [_inst('a', '跳跳球大冒险'), _inst('b', '消消乐星球')],
@@ -111,8 +111,10 @@ void main() {
     ));
     expect(find.byKey(const ValueKey('mp-task-card-a')), findsOneWidget);
     expect(find.byKey(const ValueKey('mp-task-card-b')), findsOneWidget);
-    // 卡片头显示 App 名
+    // 卡外标题行显示 App 名
     expect(find.text('跳跳球大冒险'), findsWidgets);
+    // 锁标识已移除(产品决策)
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
     expect(rec.viewClosed, 0);
   });
 

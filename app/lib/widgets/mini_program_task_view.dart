@@ -1,6 +1,7 @@
 // 小程序卡片多任务视图:全屏遮罩上按真实屏幕宽高比缩放实例卡片
-// (PageView 横滑),顶部实例 tab;点卡片恢复、上滑关闭实例,
-// 点空白遮罩 / 系统返回关闭视图。由 Host 挂在根 Stack 顶层(Task 6 接线)。
+// (PageView 横滑),标题(icon+名)在快照上方卡外(主流 IM 多任务样式);
+// 点卡片恢复、上滑关闭实例,点空白遮罩 / 系统返回关闭视图。
+// 由 Host 挂在根 Stack 顶层。
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -57,6 +58,9 @@ class MiniProgramTaskView extends ConsumerStatefulWidget {
 class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView> {
   PageController? _pageCtrl;
 
+  /// 快照上方标题行(icon+名)占高,PageView 槽高 = 卡高 + 标题行。
+  static const double _headerH = 34;
+
   /// 恢复实例到前台,随后任务视图自身关闭(mockup 语义)。
   void _restore(String appid) {
     widget.onRestore(appid);
@@ -102,52 +106,24 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView> {
           child: Container(
             color: const Color(0xE6141418),
             child: SafeArea(
-              child: Column(
-                children: [
-                  // 顶部实例 tab(圆角矩形图标横滑)
-                  SizedBox(
-                    height: 80,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      itemCount: instances.length,
-                      itemBuilder: (context, i) {
-                        final inst = instances[i];
-                        return _TabItem(
-                          name: metas[i].name,
-                          iconUrl: metas[i].iconUrl,
-                          // 恢复后任务视图自身关闭(与点卡片同语义)
-                          onTap: () => _restore(inst.appid),
-                        );
-                      },
+              // 卡片区:垂直居中(槽高 = 卡高 + 标题行)
+              child: Center(
+                child: SizedBox(
+                  height: layout.cardH + _headerH,
+                  child: PageView.builder(
+                    controller: _pageCtrl,
+                    itemCount: instances.length,
+                    itemBuilder: (context, i) => _TaskCard(
+                      key: ValueKey('mp-task-card-${instances[i].appid}'),
+                      appid: instances[i].appid,
+                      name: metas[i].name,
+                      iconUrl: metas[i].iconUrl,
+                      snapshot: instances[i].snapshot,
+                      onRestore: () => _restore(instances[i].appid),
+                      onClose: () => widget.onClose(instances[i].appid),
                     ),
                   ),
-                  // 卡片区:垂直居中
-                  Expanded(
-                    child: Center(
-                      child: SizedBox(
-                        height: layout.cardH,
-                        child: PageView.builder(
-                          controller: _pageCtrl,
-                          itemCount: instances.length,
-                          itemBuilder: (context, i) => _TaskCard(
-                            key: ValueKey(
-                                'mp-task-card-${instances[i].appid}'),
-                            appid: instances[i].appid,
-                            name: metas[i].name,
-                            iconUrl: metas[i].iconUrl,
-                            snapshot: instances[i].snapshot,
-                            onRestore: () => _restore(instances[i].appid),
-                            onClose: () =>
-                                widget.onClose(instances[i].appid),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                ),
               ),
             ),
           ),
@@ -157,47 +133,9 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView> {
   }
 }
 
-/// 顶部实例 tab:圆角矩形图标 + 名字。
-class _TabItem extends StatelessWidget {
-  const _TabItem({
-    required this.name,
-    required this.iconUrl,
-    required this.onTap,
-  });
-
-  final String name;
-  final String iconUrl;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 14),
-        child: Column(
-          children: [
-            // 与小程序列表一致的圆角矩形图标(40 / r12)
-            Avatar(name: name, url: iconUrl.isEmpty ? null : iconUrl, size: 40, radius: 12),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: 56,
-              child: Text(name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 10)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 单张实例卡片:整屏等比缩略,点按恢复,上滑关闭。
-/// 有快照帧时显示真实页面缩略(微信式),无帧回退占位渐变。
+/// 单张实例卡片:标题行(icon+名,卡外快照上方,无锁) + 整屏等比快照主体。
+/// 点按/点标题恢复,上滑关闭。
+/// 有快照帧时显示真实页面缩略,无帧回退占位渐变。
 class _TaskCard extends StatelessWidget {
   const _TaskCard({
     super.key,
@@ -222,54 +160,87 @@ class _TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = Avatar.colorFor(name);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-      // 上滑 = 关闭该实例(主流 IM 小程序同款交互)
-      child: Dismissible(
-        key: ValueKey('dismiss-$appid'),
-        direction: DismissDirection.up,
-        onDismissed: (_) => onClose(),
-        background: Container(
-          alignment: Alignment.bottomCenter,
-          padding: const EdgeInsets.only(bottom: 30),
-          child: const Icon(Icons.delete_outline,
-              color: Colors.white54, size: 32),
-        ),
-        child: GestureDetector(
-          // 点卡片恢复;消费点击,不冒泡到空白遮罩
-          onTap: onRestore,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      blurRadius: 24,
-                      offset: const Offset(0, 10)),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Column(
+        children: [
+          // 标题行(icon+名)在快照上方卡外(主流 IM 多任务样式),无锁;
+          // 点击标题同恢复语义
+          GestureDetector(
+            onTap: onRestore,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Avatar(
+                      name: name,
+                      url: iconUrl.isEmpty ? null : iconUrl,
+                      size: 22,
+                      radius: 7),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12)),
+                  ),
                 ],
-              ),
-              child: SizedBox(
-                height: double.infinity,
-                // 有帧 → 真实快照铺底(errorBuilder 兜底回退渐变);无帧 → 渐变占位
-                child: snapshot == null
-                    ? _placeholder(color)
-                    : Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.memory(
-                            snapshot!,
-                            fit: BoxFit.cover,
-                            // 解码宽度限 ~400:任务卡片视觉够用,防多实例大帧爆内存
-                            cacheWidth: 400,
-                            errorBuilder: (_, _, _) => _placeholder(color),
-                          ),
-                          _cardOverlay(),
-                        ],
-                      ),
               ),
             ),
           ),
-        ),
+          Expanded(
+            // 上滑 = 关闭该实例(主流 IM 小程序同款交互)
+            child: Dismissible(
+              key: ValueKey('dismiss-$appid'),
+              direction: DismissDirection.up,
+              onDismissed: (_) => onClose(),
+              background: Container(
+                alignment: Alignment.bottomCenter,
+                padding: const EdgeInsets.only(bottom: 30),
+                child: const Icon(Icons.delete_outline,
+                    color: Colors.white54, size: 32),
+              ),
+              child: GestureDetector(
+                // 点卡片恢复;消费点击,不冒泡到空白遮罩
+                onTap: onRestore,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            blurRadius: 24,
+                            offset: const Offset(0, 10)),
+                      ],
+                    ),
+                    child: SizedBox(
+                      height: double.infinity,
+                      // 有帧 → 真实快照铺底(errorBuilder 兜底回退渐变);无帧 → 渐变占位
+                      child: snapshot == null
+                          ? _placeholder(color)
+                          : Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.memory(
+                                  snapshot!,
+                                  fit: BoxFit.cover,
+                                  // 解码宽度限 ~400:任务卡片视觉够用,防多实例大帧爆内存
+                                  cacheWidth: 400,
+                                  errorBuilder: (_, _, _) => _placeholder(color),
+                                ),
+                                _cardOverlay(),
+                              ],
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -289,36 +260,10 @@ class _TaskCard extends StatelessWidget {
         ),
       );
 
-  /// 卡片内容层:头部(图标+名) + 保活提示 + 操作提示(真实快照上半透明压边)。
+  /// 卡片内容层:保活提示 + 操作提示(真实快照上半透明压边)。
+  /// 标题已移出卡外(快照上方),锁标识按产品决策移除。
   Widget _cardOverlay() => Column(
         children: [
-          // 卡片头:图标 + App 名
-          Container(
-            height: 48,
-            color: Colors.black.withValues(alpha: 0.18),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Avatar(
-                    name: name,
-                    url: iconUrl.isEmpty ? null : iconUrl,
-                    size: 40,
-                    radius: 12),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13)),
-                ),
-                const Icon(Icons.lock_outline,
-                    color: Colors.white54, size: 14),
-              ],
-            ),
-          ),
           // 保活提示(进度不丢的关键视觉)
           Expanded(
             child: Center(
