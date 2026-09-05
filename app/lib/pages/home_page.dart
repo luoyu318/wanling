@@ -12,12 +12,14 @@ import '../pages/agent_sessions_page.dart';
 import '../pages/messages_page.dart';
 import '../pages/mini_program_list_page.dart';
 import '../router_helpers.dart' show chatRoute, sessionsRoute;
+import '../services/mini_program_launcher.dart';
+import '../widgets/mini_program_pull_panel.dart';
 import 'package:wanling_core/providers/agent_provider.dart';
 import 'package:wanling_core/providers/agent_sessions_provider.dart'
     show agentTabUnreadProvider;
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/providers/conversation_provider.dart'
-    show convByIdProvider, totalUnreadProvider;
+    show conversationProvider, convByIdProvider, totalUnreadProvider;
 import 'package:wanling_core/providers/nav_order_provider.dart';
 import 'package:wanling_core/providers/mini_programs_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
@@ -62,6 +64,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _sidebarOpen = false; // 左侧切换账号面板开关
   int _jumpEpoch = 0; // 跳页纪元:新指令使旧补跳链失效,防并发链互相拉扯
 
+  /// 消息页小程序面板完成态:底栏按它收缩(高度 64→0),由 _MsgNavPage 的
+  /// MiniProgramPullScope 置位。
+  final ValueNotifier<bool> _msgPanelOpen = ValueNotifier(false);
+
   // build 时刷新,手势回调读取(避免回调里重复 watch)
   List<String> _effectiveOrder = const [];
   bool _showMore = false;
@@ -75,6 +81,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void dispose() {
     _pageCtrl.dispose();
+    _msgPanelOpen.dispose();
     super.dispose();
   }
 
@@ -140,6 +147,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (page < 0 || page >= _pages.length) return;
     final id = _pages[page];
     setState(() => _activeTabId = id);
+    // 横滑已被 _kPageViewPhysics 禁用(底栏点按切换),正常路径到不了这里;
+    // 防御性兜底:任何未来切页路径(物理放开/程序跳页)都不得把面板完成态
+    // 的收起底栏带到其他 tab。PullScope 监听 notifier 外部复位,会跟手收回。
+    if (_msgPanelOpen.value) _msgPanelOpen.value = false;
     // 切进小程序 tab 时静默刷新列表:provider 被底栏槽等常驻 watch,
     // autoDispose 名存实亡,切回命中缓存直接回旧数据;invalidate 后由
     // 列表页 skipLoadingOnRefresh 保旧数据换新,不闪 loading。
@@ -264,7 +275,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                   KeyedSubtree(
                     key: ValueKey('nav-tab-$id'),
                     child: switch (id) {
-                      kNavTabMsg => _MsgNavPage(onOpenSidebar: _openSidebar),
+                      kNavTabMsg => _MsgNavPage(
+                        onOpenSidebar: _openSidebar,
+                        panelOpenNotifier: _msgPanelOpen,
+                      ),
                       kNavTabWanling =>
                         _WanlingNavPage(onOpenSidebar: _openSidebar),
                       kNavTabMiniProgram =>
@@ -274,51 +288,71 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
               ],
             ),
-            bottomNavigationBar: NavTabBar(
-              currentIndex: _currentNavIndex,
-              slots: [
-                for (final id in _visibleSlots)
-                  if (id == kNavTabMsg)
-                    NavIconSlot(
-                        tabId: id,
-                        label: kNavTabMsgLabel,
-                        // 选中态用镂空 outline、未选中用 filled(用户偏好,与常规相反)
-                        icon: Icons.chat_bubble,
-                        activeIcon: Icons.chat_bubble_outline,
-                        badge: totalUnread)
-                  else if (id == kNavTabWanling)
-                    const NavIconSlot(
-                        tabId: kNavTabWanling,
-                        label: kNavTabWanlingLabel,
-                        icon: Icons.auto_awesome,
-                        activeIcon: Icons.auto_awesome_outlined)
-                  else if (id == kNavTabMiniProgram)
-                    const NavIconSlot(
-                        tabId: kNavTabMiniProgram,
-                        label: kNavTabMiniProgramLabel,
-                        icon: Icons.grid_view,
-                        activeIcon: Icons.grid_view_outlined)
-                  else if (isConvNavId(id))
-                    NavConvSlot(tabId: id, tab: _toNavConvTab(id))
-                  else if (isMpNavId(id))
-                    NavMpSlot(tabId: id, tab: _toNavMpTab(id))
-                  else
-                    NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
-              ],
-              showMore: _showMore,
-              moreTab: _overflowItems.contains(_activeTabId) &&
-                      !kNavFixedIds.contains(_activeTabId)
-                  ? _toNavAgentTab(_activeTabId)
-                  : null,
-              onSlotTap: _onNavTap,
-              onMoreTap: _openMoreSheet,
-              // 编辑入口:有更多槽时须先弹抽屉再长按(避免误触);无更多槽
-              // (项≤4,抽屉不可达)保留长按直进兜底。
-              onSlotLongPress: (_) {
-                if (_showMore && !_moreSheetOpen) return;
-                if (_moreSheetOpen) _closeMoreSheet();
-                context.push('/nav-edit');
-              },
+            // 底栏随消息页面板完成态收缩(高度 64→0,mockup 对齐);Clip 防止
+            // 收缩过程内容溢出。_navBarHeight = NavTabBar 自然高(SafeArea 底部
+            // + 56),非完成态与原布局一致。
+            // OverflowBox:收缩动画期间 NavTabBar 保持自然高、贴底锚定,由容器
+            // 裁剪——直接给 NavTabBar 施压会把它内部 icon+label Column 压溢出。
+            bottomNavigationBar: ValueListenableBuilder<bool>(
+              valueListenable: _msgPanelOpen,
+              builder: (context, panelOpen, _) => AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+                height: panelOpen ? 0 : _navBarHeight,
+                clipBehavior: Clip.hardEdge,
+                decoration: const BoxDecoration(),
+                child: OverflowBox(
+                  minHeight: 0,
+                  maxHeight: _navBarHeight,
+                  alignment: Alignment.bottomCenter,
+                  child: NavTabBar(
+                  currentIndex: _currentNavIndex,
+                  slots: [
+                    for (final id in _visibleSlots)
+                      if (id == kNavTabMsg)
+                        NavIconSlot(
+                            tabId: id,
+                            label: kNavTabMsgLabel,
+                            // 选中态用镂空 outline、未选中用 filled(用户偏好,与常规相反)
+                            icon: Icons.chat_bubble,
+                            activeIcon: Icons.chat_bubble_outline,
+                            badge: totalUnread)
+                      else if (id == kNavTabWanling)
+                        const NavIconSlot(
+                            tabId: kNavTabWanling,
+                            label: kNavTabWanlingLabel,
+                            icon: Icons.auto_awesome,
+                            activeIcon: Icons.auto_awesome_outlined)
+                      else if (id == kNavTabMiniProgram)
+                        const NavIconSlot(
+                            tabId: kNavTabMiniProgram,
+                            label: kNavTabMiniProgramLabel,
+                            icon: Icons.grid_view,
+                            activeIcon: Icons.grid_view_outlined)
+                      else if (isConvNavId(id))
+                        NavConvSlot(tabId: id, tab: _toNavConvTab(id))
+                      else if (isMpNavId(id))
+                        NavMpSlot(tabId: id, tab: _toNavMpTab(id))
+                      else
+                        NavAgentSlot(tabId: id, tab: _toNavAgentTab(id)),
+                  ],
+                  showMore: _showMore,
+                  moreTab: _overflowItems.contains(_activeTabId) &&
+                          !kNavFixedIds.contains(_activeTabId)
+                      ? _toNavAgentTab(_activeTabId)
+                      : null,
+                  onSlotTap: _onNavTap,
+                  onMoreTap: _openMoreSheet,
+                  // 编辑入口:有更多槽时须先弹抽屉再长按(避免误触);无更多槽
+                  // (项≤4,抽屉不可达)保留长按直进兜底。
+                  onSlotLongPress: (_) {
+                    if (_showMore && !_moreSheetOpen) return;
+                    if (_moreSheetOpen) _closeMoreSheet();
+                    context.push('/nav-edit');
+                  },
+                  ),
+                ),
+              ),
             ),
           ),
           // —— 「更多」抽屉层:遮罩+面板都在导航条上方,导航条不被遮挡可点 ——
@@ -800,10 +834,18 @@ class _MoreSheetMpItem extends ConsumerWidget {
 }
 
 /// 消息导航页:平铺后的独立 tab 页(原 A 组消息子页)。
+///
+/// 下拉入口:body 由 MiniProgramPullScope 承载——页头(appBar)移入页面卡片,
+/// 下拉整页推下露出底层小程序面板;完成态经 panelOpenNotifier 通知 HomePage
+/// 收缩底栏,页头贴底成为返回条。
 class _MsgNavPage extends ConsumerWidget {
-  const _MsgNavPage({required this.onOpenSidebar});
+  const _MsgNavPage({
+    required this.onOpenSidebar,
+    required this.panelOpenNotifier,
+  });
 
   final VoidCallback onOpenSidebar;
+  final ValueNotifier<bool> panelOpenNotifier;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -812,19 +854,28 @@ class _MsgNavPage extends ConsumerWidget {
       // 白底:dpr 非整数倍时 AppBar 底缘半覆盖行会透出 Scaffold 底色,
       // 全局灰底(#EDEDED)在此显成一条淡灰缝线,页面本身是白底列表,底色改白让缝隐形
       backgroundColor: Colors.white,
-      appBar: buildHomeAppBar(
-        isWanling: false,
-        user: user,
-        onScan: () => context.push('/pair/scan'),
-        onCreateAgent: () => showCreateAgentDialog(context, ref),
-        onAvatarTap: onOpenSidebar,
-      ),
-      body: const Column(
-        children: [
-          ConnectionBanner(),
-          LocalStoreBanner(),
-          Expanded(child: MessagesPage()),
-        ],
+      // appBar 交由 PullScope 页头承载(下拉入口),Scaffold 不再设 appBar
+      body: MiniProgramPullScope(
+        panelOpenNotifier: panelOpenNotifier,
+        header: buildHomeAppBar(
+          isWanling: false,
+          user: user,
+          onScan: () => context.push('/pair/scan'),
+          onCreateAgent: () => showCreateAgentDialog(context, ref),
+          onAvatarTap: onOpenSidebar,
+        ),
+        onRefresh: () => ref.read(conversationProvider.notifier).load(),
+        onOpenApp: (appid) => openMiniProgramWith(
+          ProviderScope.containerOf(context),
+          appid,
+        ),
+        child: const Column(
+          children: [
+            ConnectionBanner(),
+            LocalStoreBanner(),
+            Expanded(child: MessagesPage()),
+          ],
+        ),
       ),
     );
   }

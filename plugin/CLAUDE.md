@@ -19,7 +19,7 @@
   - **`plugin/install-remote.sh`** — 总入口引导脚本（被用户 curl），支持 `--plugin=<name>` 选插件（默认 hermes-plugin），下载后 exec 调用插件的 install.sh
   - **`plugin/hermes-plugin/install.sh`** — 实际安装脚本，四模式：默认安装 / `--update`（只同步代码）/ `--config`（只改配置）/ `--pair`（扫码配对，见扫码配对专题），支持 `--profile=<name>` 多 profile
 - **opencode-plugin**:
-  - `cd plugin/opencode-plugin && npm install && npx tsc` — 编译 TypeScript
+  - `cd plugin/opencode-plugin && npm install && npx tsc` — 编译 TypeScript（wanling-sdk 走 npm 线上包；本地改 sdk/ts 联调用 `npm install --no-save ../../sdk/ts` 临时切本地，勿提交）
   - `node dist/index.js` — 启动（自动拉起 OpenCode Serve :4096 + proxy :5096）
   - `opencode attach http://localhost:5096` — TUI 连接 proxy
   - systemd 服务 `opencode-wanling`（用户级，`systemctl --user restart opencode-wanling`）

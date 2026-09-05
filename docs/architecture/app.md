@@ -7,13 +7,14 @@ Flutter APP,动态底部 tab IM 风格(消息/万灵固定 + 可 pin 多会话 a
 ```mermaid
 flowchart TB
     MAIN[main.dart<br/>async main + locale]
-    ROUTER[router.dart<br/>平铺 GoRoute 25 条]
+    ROUTER[router.dart<br/>平铺 GoRoute 28 条]
 
     subgraph 服务层
         API[api_service<br/>Dio HTTP]
         WS[websocket_service<br/>WS 客户端]
         BGSVC[background_chat_service<br/>前台服务 isolate]
         NOTIF[notification_service<br/>本地通知]
+        MP[mini_program_manager + launcher<br/>小程序保活/入口归一]
     end
 
     subgraph 状态层
@@ -21,8 +22,8 @@ flowchart TB
     end
 
     subgraph 视图层
-        PAGES[29 个 pages]
-        WIDGETS[widgets/<br/>gallery+feedback+chat]
+        PAGES[32 个 pages]
+        WIDGETS[widgets/<br/>gallery+feedback+chat<br/>mp_host/float/task/pull_panel]
         RENDER[rendering/<br/>消息内容注册表]
     end
 
@@ -53,7 +54,7 @@ flowchart TB
 
 ### 入口与路由
 - `lib/main.dart` — 入口,runApp 前调 restoreSession(zh locale 固定)。详见 [entry.md](./app/entry.md#maindart)
-- `lib/router.dart` — GoRouter 平铺路由(25 条)+ 25 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
+- `lib/router.dart` — GoRouter 平铺路由(28 条)+ 路由统一横向平移转场;动态底栏由 HomePage 内嵌 NestedPageView 保活。详见 [entry.md](./app/entry.md#routerdart)
 - `lib/router_helpers.dart` — chatRoute 拼路径 + startChatAndPush 统一跳转。详见 [entry.md](./app/entry.md#router_helpersdart)
 
 ### Services
@@ -64,12 +65,14 @@ flowchart TB
 - `lib/services/notification_service.dart` — flutter_local_notifications 封装,后台收消息弹通知 + 智能单例跳转。详见 [services.md](./app/services.md#notification_servicedart)
 - `lib/services/file_download_service.dart` — 聊天文件下载管理器,进度流 + 取消 + fileId 校验(v1.0.6)。详见 [services.md](./app/services.md#file_download_servicedart)
 - `lib/services/mini_program_bridge.dart` — 小程序 JSBridge 门禁(token 不进 JS/权限 fail-fast/`/api/` 路径白名单),`wanling_core` 的 `MiniProgramService` 负责本地包管理(下载/sha256 校验/解压/原子替换)。详见 [services.md](./app/services.md#mini_program_servicedart)
+- `lib/services/mini_program_manager.dart` — 小程序保活管理器(多实例上限 5 + LRU 淘汰 + 前台切换,纯状态)。详见 [services.md](./app/services.md#mini_program_managerdart)
+- `lib/services/mini_program_launcher.dart` — 统一打开入口 + live 壳路由同步(壳在栈=系统返回键最小化)。详见 [services.md](./app/services.md#mini_program_launcherdart)
 
 ### Providers(Riverpod)
-- `lib/providers/` — 状态管理 20 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core)。详见 [providers.md](./app/providers.md)
+- `lib/providers/` — 状态管理 21 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core) / miniProgramManager(小程序保活管理器单例,本包 providers/)。详见 [providers.md](./app/providers.md)
 
 ### Pages
-- `lib/pages/` — 29 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About / MiniProgramList / MiniProgram / AdminMiniProgram(admin only)。详见 [pages.md](./app/pages.md)
+- `lib/pages/` — 32 个 page(含 `pages/chat/` 子目录),核心:Splash / Login / SelectAccount / Home / Messages / AgentList / AgentDetail / AgentSessions / Chat / SubagentDetail(v1.0.10) / ConversationDetail(v1.0.12,按 type 分流 agent_session/dm_user_agent) / chat/FileBrowser(单栏 iOS Files 风格) + chat/FilePreview(全屏文件预览) / SessionDiff / SessionDiffFile / UserDetail / FriendsList / AddFriend / ScanPair / PairSelectAgent / CreateGroup / EditProfile / CropAvatar / ChangePassword / About / MiniProgramList / MiniProgram(容器页,由 Host 以嵌入模式渲染) / MiniProgramLaunch + MiniProgramLiveShell(壳路由页) / AdminMiniProgram(admin only)。详见 [pages.md](./app/pages.md)
 
 ### Rendering
 - `lib/rendering/` — 消息内容渲染器体系(注册表模式):renderer 接口 + 内置(text/markdown/image/file/card) + Agent 过程渲染器(tuiUser/reasoning/toolCall/toolResult/toolError/subagent/question/stepFinish/fileDiff, v1.0.7) + tool_card_renderer(v1.0.10,工具调用统一卡片 + task 4 状态机 + read 高亮视图)。详见 [rendering.md](./app/rendering.md)
@@ -78,7 +81,7 @@ flowchart TB
 - `lib/theme/` — 设计 token 集合:app_colors(色板)/ app_menu_style(深色菜单)/ account_palette(8 色账号标记)。详见 [theme.md](./app/theme.md)
 
 ### Widgets
-- `lib/widgets/` — 组件库,含 Avatar / MarkdownView 等核心 widget + gallery/(画廊 + 内化 photo_view)+ feedback/(统一反馈组件)+ chat/(聊天页专属 widget + controller,详见 [chat-components.md](./app/chat-components.md))。v1.0.9+ 新增(目录面板/三体指示器/文件浏览/命令面板)详见 [chat-extras.md](./app/chat-extras.md)。详见 [widgets.md](./app/widgets.md)
+- `lib/widgets/` — 组件库,含 Avatar / MarkdownView 等核心 widget + gallery/(画廊 + 内化 photo_view)+ feedback/(统一反馈组件)+ chat/(聊天页专属 widget + controller,详见 [chat-components.md](./app/chat-components.md))。v1.0.9+ 新增(目录面板/三体指示器/文件浏览/命令面板)详见 [chat-extras.md](./app/chat-extras.md)。小程序多任务保活组件(mini_program_host 全局层/float_ball 浮球/task_view 卡片多任务/pull_panel 消息页下拉面板)详见 [mini-program.md](./app/mini-program.md)。详见 [widgets.md](./app/widgets.md)
 
 ### Utils
 - `lib/utils/` — 工具集合:app_lifecycle_observer / avatar_bitmap / diff_merge / dio_error / emoji_editing_controller / emoji_span / gallery_image / image_cache_key / image_normalizer / notification_payload / permission_helper / reconnect_backoff / secure_storage / snackbar / file_format(v1.0.6)。chat/ 子目录:gallery_opener / message_preview / render_box_utils / unread_tracker(ChatPage 抽离工具)。详见 [utils.md](./app/utils.md)

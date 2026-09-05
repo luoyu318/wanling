@@ -36,6 +36,8 @@ import 'package:wanling_core/services/websocket_service.dart';
 import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
+import '../widgets/mini_program_overlay.dart';
+import '../services/mini_program_snapshot.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
 /// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
@@ -255,10 +257,16 @@ String _mimeOf(String path) {
 
 /// profile 授权弹窗(wanlingGetProfile 首次调用时经 bridge 回调触发,
 /// 调用式授权,不在 M2 启动弹序列)。返回 true=允许;拒绝/点遮罩均视为拒绝。
-Future<bool> showProfileConsentDialog(BuildContext context) async {
+///
+/// [embedded]=true:小程序嵌入模式,经宿主顶端专用 Overlay 呈现
+/// (嵌入页面 context 向上无 Navigator,showAppDialog 的 Navigator.of 必崩);
+/// 路由模式行为不变。
+Future<bool> showProfileConsentDialog(BuildContext context,
+    {bool embedded = false}) async {
   var allowed = false;
   await showAppDialog(
     context: context,
+    embedded: embedded,
     title: '身份信息授权',
     content: const Text('将向该小程序提供你的昵称、头像与用户标识'),
     confirmText: '允许',
@@ -269,6 +277,26 @@ Future<bool> showProfileConsentDialog(BuildContext context) async {
 }
 
 class MiniProgramPage extends ConsumerStatefulWidget {
+  const MiniProgramPage({
+    super.key,
+    required this.appid,
+    this.conversationId,
+    this.launchParams,
+  })  : onMinimize = null,
+        onClose = null;
+
+  /// 嵌入模式:挂全局 Host 层,退出动作交给回调(live 路由壳负责返回键)。
+  /// conv/launch 参数由 Host 从实例元数据注入(I2 恢复 getChatContext 契约
+  /// 与入口 URL query 链路)。
+  const MiniProgramPage.embedded({
+    super.key,
+    required this.appid,
+    required this.onMinimize,
+    required this.onClose,
+    this.conversationId,
+    this.launchParams,
+  });
+
   final String appid;
 
   /// 从聊天卡片打开时的来源会话(getChatContext 返回 conversation_id)。
@@ -277,8 +305,13 @@ class MiniProgramPage extends ConsumerStatefulWidget {
   /// 卡片跳转携带的 launch 参数(已解码的 params JSON 字符串)。
   /// 透传到入口 URL query,H5 用 URLSearchParams 自取,不进 bridge。
   final String? launchParams;
-  const MiniProgramPage(
-      {super.key, required this.appid, this.conversationId, this.launchParams});
+
+  /// 嵌入模式退出回调:最小化(收进浮球保活)/关闭(销毁实例)。
+  final VoidCallback? onMinimize;
+  final VoidCallback? onClose;
+
+  /// 嵌入模式标志:true 时退出动作(返回/关闭/跳主页)交回调而非路由出栈。
+  bool get isEmbedded => onMinimize != null && onClose != null;
 
   @override
   ConsumerState<MiniProgramPage> createState() => _MiniProgramPageState();
@@ -325,7 +358,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   }
 
   /// 系统返回键语义:WebView 内有历史 → 回小程序上一页(history 路由);
-  /// 已在入口页 → 退出小程序回 APP。
+  /// 已在入口页 → 嵌入模式最小化(不退出),路由模式退出小程序回 APP。
   Future<void> _handleBack() async {
     if (_popping) return;
     _popping = true;
@@ -335,31 +368,68 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         await controller.goBack();
         return;
       }
-      if (mounted) context.pop();
+      if (mounted) {
+        if (widget.isEmbedded) {
+          widget.onMinimize!(); // 入口页返回 = 最小化(不再退出)
+        } else {
+          context.pop();
+        }
+      }
     } finally {
       _popping = false;
     }
   }
 
-  /// 退出小程序(胶囊 ◉ / 更多菜单关项目):直接出栈,不消费 WebView 历史。
+  /// 退出小程序(胶囊 ◉ / JS wanlingClose):嵌入模式交回调销毁实例,
+  /// 路由模式直接出栈,不消费 WebView 历史。
   void _close() {
-    if (mounted) context.pop();
+    if (widget.isEmbedded) {
+      widget.onClose!();
+    } else if (mounted) {
+      context.pop();
+    }
   }
 
   /// 胶囊「更多」菜单抽屉:信息头(图标+名称) + 方形圆角功能瓦片(刷新/分享,
   /// 图标在上文字在下) + 细线分隔 + 底部整行「关闭」(仅收起抽屉;
   /// 关闭小程序走胶囊 ◉,不再放抽屉里)。
+  ///
+  /// 路由模式走 showModalBottomSheet(行为不变);嵌入模式页面 context 向上
+  /// 无 Navigator(Host Stack 兄弟分支,Navigator.of 必崩),改走宿主顶端
+  /// 专用 Overlay(showMiniProgramOverlay),内容由 [_buildMoreSheetContent] 共享。
   Future<void> _showMoreSheet(MiniProgramInfo info) async {
     final canShare = info.permissions.contains('wanling.chat.share');
     final iconUrl =
         info.iconUrlFor(ref.read(apiProvider).baseUrl);
+    if (widget.isEmbedded) {
+      await showMiniProgramOverlay<void>(
+        context: context,
+        bottomSheet: true,
+        builder: (sheetCtx, close) =>
+            _buildMoreSheetContent(info, canShare, iconUrl, close),
+      );
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFFF7F7F7),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
-      builder: (sheetCtx) => SafeArea(
+      builder: (sheetCtx) => _buildMoreSheetContent(
+        info, canShare, iconUrl, () => Navigator.of(sheetCtx).pop()),
+    );
+  }
+
+  /// 「更多」抽屉内容(路由/嵌入两模式共享)。[close]=关闭弹层:路由模式
+  /// 传 Navigator pop,嵌入模式传 Overlay close。
+  Widget _buildMoreSheetContent(
+    MiniProgramInfo info,
+    bool canShare,
+    String iconUrl,
+    void Function() close,
+  ) {
+    return SafeArea(
         top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -396,12 +466,25 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
               child: Row(
                 children: [
+                  // 浮窗:仅嵌入模式提供(路由模式无 Host 层,无最小化去处)
+                  if (widget.isEmbedded) ...[
+                    _MoreSheetTile(
+                      icon: Icons.picture_in_picture_alt,
+                      iconColor: const Color(0xFFFF9500),
+                      label: '浮窗',
+                      onTap: () {
+                        close();
+                        widget.onMinimize!();
+                      },
+                    ),
+                    const SizedBox(width: 14),
+                  ],
                   _MoreSheetTile(
                     icon: Icons.refresh,
                     iconColor: const Color(0xFF07C160),
                     label: '刷新',
                     onTap: () {
-                      Navigator.of(sheetCtx).pop();
+                      close();
                       _controller?.reload();
                     },
                   ),
@@ -411,7 +494,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                     iconColor: const Color(0xFF5B8BF7),
                     label: '分享到会话',
                     onTap: () {
-                      Navigator.of(sheetCtx).pop();
+                      close();
                       _shareFromCapsule(info, canShare);
                     },
                   ),
@@ -433,14 +516,13 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                   textStyle: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.w500),
                 ),
-                onPressed: () => Navigator.of(sheetCtx).pop(),
+                onPressed: () => close(),
                 child: const Text('关闭'),
               ),
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   /// 胶囊入口的分享:与 bridge shareToChat 同规则(仅公开+已声明 share 权限)。
@@ -511,7 +593,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         permissions: effective,
         proxy: (path, method, body) =>
             ref.read(apiProvider).proxyRequest(path, method: method, body: body),
-        onClose: () => context.pop(),
+        onClose: _close,
         onChatContext: () => widget.conversationId,
         onShare: (payload) => _shareToChat(info, payload),
         onOpenPage: (route) => _openHostPage(route),
@@ -524,7 +606,12 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             (await store?.getMpPerms(uid, info.appid) ?? <String>{})
                 .contains(_profilePermKey),
         requestProfilePermission: () async =>
-            mounted && await showProfileConsentDialog(context),
+            mounted &&
+            await showProfileConsentDialog(
+              context,
+              // 嵌入模式弹层走宿主顶端专用 Overlay(见 showAppDialog embedded)
+              embedded: widget.isEmbedded,
+            ),
         persistProfileGrant: () async {
           final granted =
               await store?.getMpPerms(uid, info.appid) ?? <String>{};
@@ -567,6 +654,7 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     // no-op 不抛异常),再取消流订阅防泄漏。
     _ws?.sendMpUnsubscribe();
     _mpEventSub?.cancel();
+    unregisterMiniProgramController(widget.appid);
     super.dispose();
   }
 
@@ -600,6 +688,8 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     var allowed = false;
     await showAppDialog(
       context: context,
+      // 嵌入模式 context 向上无 Navigator,弹层走宿主顶端专用 Overlay
+      embedded: widget.isEmbedded,
       title: '权限申请',
       content: Text('${info.name} 申请以下权限：\n${_permDesc[perm] ?? perm}'),
       confirmText: '允许',
@@ -632,8 +722,12 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     if (info.status != 'published') {
       throw StateError('仅公开小程序可分享到会话');
     }
-    final convId =
-        await showMiniProgramConversationPicker(context: context, ref: ref);
+    final convId = await showMiniProgramConversationPicker(
+      context: context,
+      ref: ref,
+      // 嵌入模式 context 向上无 Navigator,选择器走宿主顶端专用 Overlay
+      embedded: widget.isEmbedded,
+    );
     if (convId == null) return null;
     final result = await ref.read(apiProvider).sendMessage(convId, {
       'msg_type': 'mini_program_card',
@@ -654,7 +748,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   void _openHostPage(Map<String, dynamic> route) {
     switch (route['route'] as String?) {
       case 'home':
-        context.pop(); // 小程序页出栈,回到宿主主页(消息页)
+        if (widget.isEmbedded) {
+          widget.onMinimize!(); // 跳宿主主页 = 最小化到浮球
+        } else {
+          context.pop(); // 小程序页出栈,回到宿主主页(消息页)
+        }
       case 'miniPrograms':
         context.push('/mini-programs');
       case 'agentDetail':
@@ -691,170 +789,182 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
             // info 未就绪(loading)时不放胶囊,防 _showMoreSheet 空引用
             actions: [if (info != null) capsule],
           );
+    final body = Scaffold(
+      appBar: appBar,
+      body: listAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('加载失败: $e')),
+        data: (_) {
+          if (_error != null) {
+            return _ErrorView(
+              message: _error!,
+              // 嵌入模式无路由可弹:启动失败「返回」= 关闭销毁该实例
+              onBack: widget.isEmbedded
+                  ? widget.onClose!
+                  : () => context.pop(),
+            );
+          }
+          if (info == null) {
+            return Center(child: Text('小程序 ${widget.appid} 不存在或已下架'));
+          }
+          if (info.status == 'disabled') {
+            return const Center(child: Text('该小程序已被管理员停用'));
+          }
+          final webView = InAppWebView(
+            initialSettings: InAppWebViewSettings(
+              allowFileAccess: false,
+              allowFileAccessFromFileURLs: false,
+              allowUniversalAccessFromFileURLs: false,
+              useHybridComposition: true,
+            ),
+            initialUserScripts: UnmodifiableListView([
+              UserScript(
+                source: _jsBridgeBootstrap,
+                injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+              ),
+            ]),
+            onTitleChanged: (controller, title) {
+              if (mounted) setState(() => _title = title);
+            },
+            onUpdateVisitedHistory: (controller, url, isMainFrame) {
+              // hash 同文档导航也会回调,驱动返回键显隐
+              unawaited(_syncCanGoBack());
+            },
+            onWebViewCreated: (controller) {
+              _controller = controller;
+              // 快照抓帧编排层按 appid 注册 controller(dispose 注销),
+              // 缺注册则 minimizeWithSnapshot 拿不到 controller 永远走占位
+              registerMiniProgramController(widget.appid, controller);
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingRequest',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingRequest', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingClose',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingClose', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingGetChatContext',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingGetChatContext', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingShareToChat',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingShareToChat', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingOpenPage',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingOpenPage', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingGetProfile',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingGetProfile', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageGet',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageGet', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageSet',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageSet', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageRemove',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageRemove', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageItems',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageItems', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageQuota',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageQuota', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageSubscribe',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageSubscribe', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingStorageUnsubscribe',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingStorageUnsubscribe', args),
+              );
+              unawaited(_start(info));
+            },
+            shouldOverrideUrlLoading: (controller, action) async {
+              // 只允许本小程序虚拟 origin 内导航,外链一律拦截
+              final uri = action.request.url;
+              if (uri != null && uri.host == _virtualHost) {
+                return NavigationActionPolicy.ALLOW;
+              }
+              return NavigationActionPolicy.CANCEL;
+            },
+            shouldInterceptRequest: (controller, request) async {
+              // 仅拦截本 appid 虚拟 origin,其余交给 WebView 原生处理
+              if (request.url.host != _virtualHost ||
+                  _pkgRoot == null ||
+                  _entryPath == null) {
+                return null;
+              }
+              // 虚拟域 /api/ 资源(头像等宿主资源相对路径引用)→ 宿主带登录态
+              // 代理回源,不经本地包文件;null 交还本地包文件逻辑
+              final proxied = await proxyApiResource(
+                ref.read(apiProvider),
+                request.url,
+                method: request.method ?? 'GET',
+              );
+              if (proxied != null) return proxied;
+              final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
+              // 越出包根(zip-slip 第二层防护) → 403
+              if (filePath == null) {
+                return _plainTextResponse('forbidden', 403, 'Forbidden');
+              }
+              final file = File(filePath);
+              // isFile 同时覆盖存在性 + 非目录(命中目录/缺失 → 404)
+              if (!await FileSystemEntity.isFile(filePath)) {
+                return _plainTextResponse('not found', 404, 'Not Found');
+              }
+              return WebResourceResponse(
+                contentType: _mimeOf(filePath),
+                data: await file.readAsBytes(),
+              );
+            },
+          );
+          // custom 形态:无 AppBar 全屏,WebView 仍避让状态栏(小程序免处理 inset);
+          // 胶囊悬浮右上角(小程序自绘头部须预留,见协议文档)
+          return isCustom
+              ? SafeArea(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: webView),
+                      Positioned(top: 6, right: 12, child: capsule),
+                    ],
+                  ),
+                )
+              : webView;
+        },
+      ),
+    );
+    // 嵌入模式无宿主路由可弹,不注册 PopScope;系统返回键由 live 壳路由处理。
+    if (widget.isEmbedded) return body;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         unawaited(_handleBack());
       },
-      child: Scaffold(
-        appBar: appBar,
-        body: listAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('加载失败: $e')),
-          data: (_) {
-            if (_error != null) {
-              return _ErrorView(message: _error!, onBack: () => context.pop());
-            }
-            if (info == null) {
-              return Center(child: Text('小程序 ${widget.appid} 不存在或已下架'));
-            }
-            if (info.status == 'disabled') {
-              return const Center(child: Text('该小程序已被管理员停用'));
-            }
-            final webView = InAppWebView(
-              initialSettings: InAppWebViewSettings(
-                allowFileAccess: false,
-                allowFileAccessFromFileURLs: false,
-                allowUniversalAccessFromFileURLs: false,
-                useHybridComposition: true,
-              ),
-              initialUserScripts: UnmodifiableListView([
-                UserScript(
-                  source: _jsBridgeBootstrap,
-                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                ),
-              ]),
-              onTitleChanged: (controller, title) {
-                if (mounted) setState(() => _title = title);
-              },
-              onUpdateVisitedHistory: (controller, url, isMainFrame) {
-                // hash 同文档导航也会回调,驱动返回键显隐
-                unawaited(_syncCanGoBack());
-              },
-              onWebViewCreated: (controller) {
-                _controller = controller;
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingRequest',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingRequest', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingClose',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingClose', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingGetChatContext',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingGetChatContext', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingShareToChat',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingShareToChat', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingOpenPage',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingOpenPage', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingGetProfile',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingGetProfile', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageGet',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageGet', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageSet',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageSet', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageRemove',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageRemove', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageItems',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageItems', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageQuota',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageQuota', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageSubscribe',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageSubscribe', args),
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'wanlingStorageUnsubscribe',
-                  callback: (args) async =>
-                      await _bridge?.handle('wanlingStorageUnsubscribe', args),
-                );
-                unawaited(_start(info));
-              },
-              shouldOverrideUrlLoading: (controller, action) async {
-                // 只允许本小程序虚拟 origin 内导航,外链一律拦截
-                final uri = action.request.url;
-                if (uri != null && uri.host == _virtualHost) {
-                  return NavigationActionPolicy.ALLOW;
-                }
-                return NavigationActionPolicy.CANCEL;
-              },
-              shouldInterceptRequest: (controller, request) async {
-                // 仅拦截本 appid 虚拟 origin,其余交给 WebView 原生处理
-                if (request.url.host != _virtualHost ||
-                    _pkgRoot == null ||
-                    _entryPath == null) {
-                  return null;
-                }
-                // 虚拟域 /api/ 资源(头像等宿主资源相对路径引用)→ 宿主带登录态
-                // 代理回源,不经本地包文件;null 交还本地包文件逻辑
-                final proxied = await proxyApiResource(
-                  ref.read(apiProvider),
-                  request.url,
-                  method: request.method ?? 'GET',
-                );
-                if (proxied != null) return proxied;
-                final filePath = resolveLocalFile(_pkgRoot!, request.url.path);
-                // 越出包根(zip-slip 第二层防护) → 403
-                if (filePath == null) {
-                  return _plainTextResponse('forbidden', 403, 'Forbidden');
-                }
-                final file = File(filePath);
-                // isFile 同时覆盖存在性 + 非目录(命中目录/缺失 → 404)
-                if (!await FileSystemEntity.isFile(filePath)) {
-                  return _plainTextResponse('not found', 404, 'Not Found');
-                }
-                return WebResourceResponse(
-                  contentType: _mimeOf(filePath),
-                  data: await file.readAsBytes(),
-                );
-              },
-            );
-            // custom 形态:无 AppBar 全屏,WebView 仍避让状态栏(小程序免处理 inset);
-            // 胶囊悬浮右上角(小程序自绘头部须预留,见协议文档)
-            return isCustom
-                ? SafeArea(
-                    child: Stack(
-                      children: [
-                        Positioned.fill(child: webView),
-                        Positioned(top: 6, right: 12, child: capsule),
-                      ],
-                    ),
-                  )
-                : webView;
-          },
-        ),
-      ),
+      child: body,
     );
   }
 }

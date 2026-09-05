@@ -125,4 +125,47 @@ void main() {
             const BoxConstraints.tightFor(height: 0.5));
     expect(hasHairline, isFalse);
   });
+
+  testWidgets('主列表显式 padding: EdgeInsets.zero(修 appbar 下隐式状态栏空白)',
+      (tester) async {
+    // T7 后 Scaffold 无 appBar,body 保留状态栏 inset;ListView padding 为 null
+    // 时隐式取 MediaQuery.paddingOf → 顶部多出状态栏高度的空白。
+    await _harness(tester);
+
+    expect(
+      tester.widget<ListView>(find.byType(ListView)).padding,
+      EdgeInsets.zero,
+      reason: '顶部 inset 由宿主页头(SafeArea)消费,列表不得再吃一遍',
+    );
+  });
+
+  testWidgets('空态 ListView 显式 padding: EdgeInsets.zero(同主列表)',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({'token': 'fake-token'});
+    final api = MockApi();
+    when(() => api.baseUrl).thenReturn('http://test.local');
+    when(() => api.getMe()).thenAnswer((_) async => _testUser);
+    when(() => api.getConversations()).thenAnswer((_) async => []);
+    when(() => api.getAgents()).thenAnswer((_) async => []);
+    final container = ProviderContainer(overrides: [
+      apiProvider.overrideWithValue(api),
+      wsProvider.overrideWithValue(FakeWS()),
+      sharedPrefsProvider
+          .overrideWithValue(await SharedPreferences.getInstance()),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(authProvider.notifier).restoreSession();
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: Scaffold(body: MessagesPage())),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂无对话，去和 Agent 聊聊吧'), findsOneWidget);
+    expect(
+      tester.widget<ListView>(find.byType(ListView)).padding,
+      EdgeInsets.zero,
+    );
+  });
 }
