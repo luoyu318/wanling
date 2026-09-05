@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -29,7 +30,8 @@ class MiniProgramHost extends ConsumerStatefulWidget {
   ConsumerState<MiniProgramHost> createState() => _MiniProgramHostState();
 }
 
-class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
+class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
+    with WidgetsBindingObserver {
   bool _showTaskView = false;
 
   /// manager 强引用(initState 捕获,dispose 移除监听用;dispose 内禁 ref)
@@ -39,6 +41,7 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
   void initState() {
     super.initState();
     _manager = ref.read(miniProgramManagerProvider);
+    WidgetsBinding.instance.addObserver(this);
     // 嵌入弹层生命周期:前台实例变化(最小化/切实例/关闭/登出清空)→
     // 批量关闭弹层,防 barrier 悬浮在非小程序页面上拦死宿主导航
     _manager.addListener(_dismissOverlaysOnForegroundChange);
@@ -62,8 +65,29 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _manager.removeListener(_dismissOverlaysOnForegroundChange);
     super.dispose();
+  }
+
+  /// 宿主 APP 生命周期:整体退后台 → 挂起全部保活 WebView(含前台实例,
+  /// 停 JS 定时器/rAF/音频);回前台 → 只恢复前台实例(后台实例仍 Offstage,
+  /// 由 page 层前台翻转逻辑管理)。与 page 层的 pause/resume 叠加是幂等的
+  /// (Android WebView onPause/onResume 可重入)。iOS/桌面无实例级 pause API,
+  /// 守卫跳过。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    if (state == AppLifecycleState.paused) {
+      for (final c in miniProgramControllerRegistry.values) {
+        c.pause();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      final fg = _manager.foregroundAppid;
+      miniProgramControllerRegistry.forEach((appid, c) {
+        if (appid == fg) c.resume();
+      });
+    }
   }
 
   void _minimize() {

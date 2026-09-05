@@ -18,6 +18,8 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
+import 'package:app/services/mini_program_manager.dart';
+import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:app/widgets/avatar.dart';
@@ -341,6 +343,31 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 当前登录 user_id(_start 快照),进虚拟 host 账号段隔离多账号 storage。
   String? _uid;
+
+  @override
+  void initState() {
+    super.initState();
+    // 前后台翻转挂起/恢复 WebView(Android):实例被最小化(Offstage 保活)后
+    // 不再跑 JS 定时器/rAF/音频,恢复前台即续跑。所有收起路径统一走
+    // minimizeWithSnapshot(先 await 抓帧再 minimize),故本回调触发时快照已
+    // 抓完,pause 不影响抓帧。
+    ref.listenManual(miniProgramManagerProvider, _onForegroundFlip);
+  }
+
+  /// manager 前台实例变化 → 本页前台态翻转时 pause/resume(实例级 API;
+  /// pauseTimers 是 Android 全局共享的会误伤其他保活实例,不可用;
+  /// iOS/桌面无此 API,守卫跳过,行为退化为保活不挂起)。
+  void _onForegroundFlip(MiniProgramManager? prev, MiniProgramManager next) {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final wasFg = prev != null && prev.foregroundAppid == widget.appid;
+    final isFg = next.foregroundAppid == widget.appid;
+    if (wasFg == isFg) return;
+    if (isFg) {
+      _controller?.resume();
+    } else {
+      _controller?.pause();
+    }
+  }
 
   /// WS 服务快照(_start 缓存,dispose 退订用;对齐 chat_page 缓存实例模式,
   /// dispose 内不碰 ref)。
