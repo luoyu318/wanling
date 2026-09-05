@@ -1,6 +1,8 @@
 // 小程序卡片多任务视图:全屏遮罩上按真实屏幕宽高比缩放实例卡片
 // (PageView 横滑),顶部实例 tab;点卡片恢复、上滑关闭实例,
 // 点空白遮罩 / 系统返回关闭视图。由 Host 挂在根 Stack 顶层(Task 6 接线)。
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -135,6 +137,7 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView> {
                             appid: instances[i].appid,
                             name: metas[i].name,
                             iconUrl: metas[i].iconUrl,
+                            snapshot: instances[i].snapshot,
                             onRestore: () => _restore(instances[i].appid),
                             onClose: () =>
                                 widget.onClose(instances[i].appid),
@@ -194,12 +197,14 @@ class _TabItem extends StatelessWidget {
 }
 
 /// 单张实例卡片:整屏等比缩略,点按恢复,上滑关闭。
+/// 有快照帧时显示真实页面缩略(微信式),无帧回退占位渐变。
 class _TaskCard extends StatelessWidget {
   const _TaskCard({
     super.key,
     required this.appid,
     required this.name,
     required this.iconUrl,
+    required this.snapshot,
     required this.onRestore,
     required this.onClose,
   });
@@ -207,6 +212,9 @@ class _TaskCard extends StatelessWidget {
   final String appid;
   final String name;
   final String iconUrl;
+
+  /// 最小化前抓取的 WebView 真实帧,null = 回退占位渐变。
+  final Uint8List? snapshot;
   final VoidCallback onRestore;
   final VoidCallback onClose;
 
@@ -233,11 +241,6 @@ class _TaskCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             child: Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [color, Color.lerp(color, Colors.black, 0.3)!],
-                ),
                 boxShadow: [
                   BoxShadow(
                       color: Colors.black.withValues(alpha: 0.5),
@@ -247,58 +250,22 @@ class _TaskCard extends StatelessWidget {
               ),
               child: SizedBox(
                 height: double.infinity,
-                child: Column(
-                  children: [
-                    // 卡片头:图标 + App 名(模拟截图快照头部)
-                    Container(
-                      height: 48,
-                      color: Colors.black.withValues(alpha: 0.18),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
+                // 有帧 → 真实快照铺底(errorBuilder 兜底回退渐变);无帧 → 渐变占位
+                child: snapshot == null
+                    ? _placeholder(color)
+                    : Stack(
+                        fit: StackFit.expand,
                         children: [
-                          Avatar(
-                              name: name,
-                              url: iconUrl.isEmpty ? null : iconUrl,
-                              size: 40,
-                              radius: 12),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13)),
+                          Image.memory(
+                            snapshot!,
+                            fit: BoxFit.cover,
+                            // 解码宽度限 ~400:任务卡片视觉够用,防多实例大帧爆内存
+                            cacheWidth: 400,
+                            errorBuilder: (_, __, ___) => _placeholder(color),
                           ),
-                          const Icon(Icons.lock_outline,
-                              color: Colors.white54, size: 14),
+                          _cardOverlay(),
                         ],
                       ),
-                    ),
-                    // 快照内容:保活提示(进度不丢的关键视觉)
-                    Expanded(
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Text('后台保活中 · 进度不丢',
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 11)),
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.only(bottom: 18),
-                      child: const Text('点击恢复 · 上滑关闭',
-                          style: TextStyle(color: Colors.white70, fontSize: 12)),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),
@@ -306,4 +273,72 @@ class _TaskCard extends StatelessWidget {
       ),
     );
   }
+
+  /// 占位渐变(快照缺失/解码失败兜底)。
+  Widget _placeholder(Color color) => ColoredBox(
+        color: color,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [color, Color.lerp(color, Colors.black, 0.3)!],
+            ),
+          ),
+          child: _cardOverlay(),
+        ),
+      );
+
+  /// 卡片内容层:头部(图标+名) + 保活提示 + 操作提示(真实快照上半透明压边)。
+  Widget _cardOverlay() => Column(
+        children: [
+          // 卡片头:图标 + App 名
+          Container(
+            height: 48,
+            color: Colors.black.withValues(alpha: 0.18),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Avatar(
+                    name: name,
+                    url: iconUrl.isEmpty ? null : iconUrl,
+                    size: 40,
+                    radius: 12),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
+                ),
+                const Icon(Icons.lock_outline,
+                    color: Colors.white54, size: 14),
+              ],
+            ),
+          ),
+          // 保活提示(进度不丢的关键视觉)
+          Expanded(
+            child: Center(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text('后台保活中 · 进度不丢',
+                    style: TextStyle(color: Colors.white, fontSize: 11)),
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: const Text('点击恢复 · 上滑关闭',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
+          ),
+        ],
+      );
 }

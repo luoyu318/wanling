@@ -6,6 +6,8 @@
 // 5. 系统返回(PopScope) → onCloseView
 // 6. 实例元数据回填(D):name 空 + provider 有数据 → 显示真名真 icon URL;
 //    provider 无数据 → 回退 appid
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -200,4 +202,44 @@ void main() {
       expect(find.text('a'), findsWidgets);
     });
   });
+
+  group('卡片真实快照渲染(E)', () {
+    testWidgets('实例带快照帧 → 卡片渲染 Image.memory(cacheWidth 400)',
+        (tester) async {
+      final inst = MiniProgramInstance(appid: 'a', openedAt: DateTime.now())
+        ..name = '跳跳球大冒险'
+        ..snapshot = _fakePng();
+      await tester.pumpWidget(_Host(initial: [inst], rec: _Recorder()));
+
+      final allImgs = tester
+          .widgetList<Image>(find.byType(Image, skipOffstage: false))
+          .toList();
+      // cacheWidth 会让 Image.memory 把 MemoryImage 包成 ResizeImage
+      final images = allImgs
+          .where((w) =>
+              w.image is ResizeImage &&
+              (w.image as ResizeImage).imageProvider is MemoryImage)
+          .toList();
+      expect(images, isNotEmpty);
+      // 内存约束:解码宽度限 ~400,防多实例大帧爆内存
+      for (final img in images) {
+        expect((img.image as ResizeImage).width, 400);
+      }
+    });
+
+    testWidgets('无快照帧 → 不渲染 Image(占位渐变兜底)', (tester) async {
+      await tester.pumpWidget(_Host(
+        initial: [_inst('a', '跳跳球大冒险')],
+        rec: _Recorder(),
+      ));
+
+      expect(
+        tester.widgetList<Image>(find.byType(Image)),
+        isEmpty,
+      );
+    });
+  });
 }
+
+/// 假帧字节(非真实 PNG,Image 走 errorBuilder 占位,断言只看 widget 存在性)。
+Uint8List _fakePng() => Uint8List.fromList([1, 2, 3, 4]);
