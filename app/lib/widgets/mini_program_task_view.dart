@@ -73,59 +73,66 @@ class _MiniProgramTaskViewState extends State<MiniProgramTaskView> {
     // 首帧按当前屏宽建 controller(屏转场少见,不做动态重建)
     _pageCtrl ??= PageController(viewportFraction: layout.viewportFraction);
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        widget.onCloseView();
-      },
-      child: GestureDetector(
-        // 点击空白遮罩关闭(卡片内点击被子 GestureDetector 消费,不冒泡)
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onCloseView,
-        child: Container(
-          color: const Color(0xE6141418),
-          child: SafeArea(
-            child: Column(
-              children: [
-                // 顶部实例 tab(圆角矩形图标横滑)
-                SizedBox(
-                  height: 80,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
-                    itemCount: instances.length,
-                    itemBuilder: (context, i) {
-                      final inst = instances[i];
-                      return _TabItem(
-                        instance: inst,
-                        // 恢复后任务视图自身关闭(与点卡片同语义)
-                        onTap: () => _restore(inst.appid),
-                      );
-                    },
+    // 挂在 Host Stack 顶层时无 Material 祖先,Text 会画黄色双下划线;
+    // 根部自包透明 Material 保持组件自洽(不在 Host 侧修)
+    return Material(
+      type: MaterialType.transparency,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          widget.onCloseView();
+        },
+        child: GestureDetector(
+          // 点击空白遮罩关闭(卡片内点击被子 GestureDetector 消费,不冒泡)
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onCloseView,
+          child: Container(
+            color: const Color(0xE6141418),
+            child: SafeArea(
+              child: Column(
+                children: [
+                  // 顶部实例 tab(圆角矩形图标横滑)
+                  SizedBox(
+                    height: 80,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      itemCount: instances.length,
+                      itemBuilder: (context, i) {
+                        final inst = instances[i];
+                        return _TabItem(
+                          instance: inst,
+                          // 恢复后任务视图自身关闭(与点卡片同语义)
+                          onTap: () => _restore(inst.appid),
+                        );
+                      },
+                    ),
                   ),
-                ),
-                // 卡片区:垂直居中
-                Expanded(
-                  child: Center(
-                    child: SizedBox(
-                      height: layout.cardH,
-                      child: PageView.builder(
-                        controller: _pageCtrl,
-                        itemCount: instances.length,
-                        itemBuilder: (context, i) => _TaskCard(
-                          key: ValueKey('mp-task-card-${instances[i].appid}'),
-                          instance: instances[i],
-                          onRestore: () => _restore(instances[i].appid),
-                          onClose: () => widget.onClose(instances[i].appid),
+                  // 卡片区:垂直居中
+                  Expanded(
+                    child: Center(
+                      child: SizedBox(
+                        height: layout.cardH,
+                        child: PageView.builder(
+                          controller: _pageCtrl,
+                          itemCount: instances.length,
+                          itemBuilder: (context, i) => _TaskCard(
+                            key: ValueKey(
+                                'mp-task-card-${instances[i].appid}'),
+                            instance: instances[i],
+                            onRestore: () => _restore(instances[i].appid),
+                            onClose: () =>
+                                widget.onClose(instances[i].appid),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-              ],
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           ),
         ),
