@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wanling_core/models/mini_program_info.dart';
 import 'package:app/services/mini_program_manager.dart';
@@ -182,6 +184,76 @@ void main() {
 
       expect(meta.name, 'a');
       expect(meta.iconUrl, '');
+    });
+  });
+
+  group('WebView 快照帧管理(E)', () {
+    test('updateSnapshot 写入帧并通知;实例不存在时 no-op', () {
+      m.open('a');
+      var notified = 0;
+      m.addListener(() => notified++);
+
+      final frame = Uint8List.fromList([1, 2, 3]);
+      m.updateSnapshot('a', frame);
+      expect(m.instances['a']!.snapshot, same(frame));
+      expect(notified, 1);
+
+      // 抓帧完成时实例可能已被关闭(竞态):静默丢弃,不得重建实例
+      m.close('a');
+      notified = 0;
+      m.updateSnapshot('a', frame);
+      expect(m.instances.containsKey('a'), isFalse);
+      expect(notified, 0);
+    });
+
+    test('takeScreenshot 返回 null → 清空帧回退占位', () {
+      m.open('a');
+      m.updateSnapshot('a', Uint8List.fromList([1]));
+      m.updateSnapshot('a', null);
+      expect(m.instances['a']!.snapshot, isNull);
+    });
+
+    test('restore 置前台清空旧帧(前台实时渲染,帧只在后台态有意义)', () {
+      m.open('a');
+      m.updateSnapshot('a', Uint8List.fromList([1]));
+      m.minimize();
+      m.updateSnapshot('a', Uint8List.fromList([2]));
+      m.restore('a');
+      expect(m.instances['a']!.snapshot, isNull);
+    });
+
+    test('close/closeAll 释放帧引用', () {
+      final frame = Uint8List.fromList([1]);
+      m.open('a');
+      m.updateSnapshot('a', frame);
+      final instA = m.instances['a']!;
+      m.close('a');
+      expect(instA.snapshot, isNull, reason: '关闭先断帧引用再移除实例');
+
+      m.open('b');
+      m.updateSnapshot('b', frame);
+      m.closeAll();
+      expect(m.list, isEmpty);
+    });
+
+    test('LRU 淘汰:被淘汰实例帧引用断开', () async {
+      final frame = Uint8List.fromList([1]);
+      for (final id in ['a', 'b', 'c', 'd', 'e']) {
+        m.open(id);
+        m.updateSnapshot(id, frame);
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      m.restore('b');
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+
+      final evicted = m.open('f');
+      expect(evicted, 'a');
+      // 实例已移除;帧字段随实例对象可 GC,manager 不再持有
+      expect(m.instances.containsKey('a'), isFalse);
+      // b 曾被 restore 置前台 → 旧帧已按「前台实时渲染」语义清空
+      expect(m.instances['b']!.snapshot, isNull);
+      // 未被动过的后台实例帧仍在
+      expect(m.instances['c']!.snapshot, same(frame));
     });
   });
 }

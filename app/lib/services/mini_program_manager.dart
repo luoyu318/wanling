@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:wanling_core/models/mini_program_info.dart';
@@ -19,6 +21,10 @@ class MiniProgramInstance {
 
   /// 卡片 launch 参数(已解码 params JSON,透传入口 URL query)。
   String? launchParams;
+
+  /// 最小化前抓取的 WebView 真实帧(任务视图卡片显示用,增强非关键路径)。
+  /// 只在后台态有意义:恢复前台即清空(前台实时渲染)。
+  Uint8List? snapshot;
 }
 
 /// 实例展示元数据解析(纯函数,任务视图/浮球/面板统一走它):
@@ -101,6 +107,7 @@ class MiniProgramManager extends ChangeNotifier {
         }
       }
       evicted = oldest!.appid;
+      oldest.snapshot = null; // 淘汰即断帧引用
       _instances.remove(evicted);
     }
     final inst = _instances.putIfAbsent(
@@ -115,6 +122,15 @@ class MiniProgramManager extends ChangeNotifier {
     return evicted;
   }
 
+  /// 写入实例快照帧(最小化前抓取)。实例已不存在(抓帧期间被关闭的竞态)时
+  /// 静默丢弃:快照是增强非关键路径,不重建实例。[bytes] 传 null 即清空回退占位。
+  void updateSnapshot(String appid, Uint8List? bytes) {
+    final inst = _instances[appid];
+    if (inst == null) return;
+    inst.snapshot = bytes;
+    notifyListeners();
+  }
+
   /// 前台置空,实例保留(保活)。
   void minimize() {
     _foregroundAppid = null;
@@ -126,11 +142,15 @@ class MiniProgramManager extends ChangeNotifier {
     if (inst == null) return;
     _foregroundAppid = appid;
     inst.lastForegroundAt = DateTime.now();
+    // 前台实时渲染,快照只在后台态有意义:置前台即释放旧帧
+    inst.snapshot = null;
     notifyListeners();
   }
 
   /// 销毁实例;关的是前台则前台清空。
   void close(String appid) {
+    // 先断帧引用再移除:实例对象若被外部临时持有,字节也尽早可回收
+    _instances[appid]?.snapshot = null;
     _instances.remove(appid);
     if (_foregroundAppid == appid) _foregroundAppid = null;
     notifyListeners();
@@ -141,6 +161,9 @@ class MiniProgramManager extends ChangeNotifier {
   /// 已空时 no-op 不通知(幂等,防登出风暴下的空重建)。
   void closeAll() {
     if (_instances.isEmpty && _foregroundAppid == null) return;
+    for (final inst in _instances.values) {
+      inst.snapshot = null;
+    }
     _instances.clear();
     _foregroundAppid = null;
     notifyListeners();
