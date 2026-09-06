@@ -100,36 +100,34 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
   /// 挂起编排(集中在此,page 层不重复;幂等可重入)。三层叠加:
   /// 1) hostpause/hostresume JS 事件(合作页面自行暂停+静音/恢复);
   /// 2) 实例级 pause/resume(停 layout/parsing,无害兜底);
-  /// 3) 无前台实例时 pauseTimers 全局停 DOM 定时器,任一实例回前台
-  ///    resumeTimers——pauseTimers 是进程级共享(会波及全部 WebView),
-  ///    但"无前台=全部该停 / 有前台=全部该跑"的语义在此恰好成立。
+  /// 3) pauseTimers 全局停 DOM 定时器——它是进程级共享(波及全部 WebView),
+  ///    只在"无前台=全部该停"时停;恢复时机不能依赖前台实例的 controller
+  ///    已注册(打开新实例时它常还没建,查不到会导致全局 timers 永久暂停、
+  ///    新页面 JS 假死),有前台即对 registry 内任意存活实例恢复。
   Future<void> _syncSuspension() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
+    final registry = miniProgramControllerRegistry;
+    if (registry.isEmpty) return;
     final fg = _manager.foregroundAppid;
     if (fg != null) {
-      debugPrint('[mp-lifecycle] 前台=$fg,恢复全局 timers');
-      await miniProgramControllerRegistry[fg]?.resumeTimers();
-      for (final appid in miniProgramControllerRegistry.keys) {
-        final c = miniProgramControllerRegistry[appid];
-        if (c == null) continue;
-        if (appid == fg) {
-          await c.resume();
-          await _evaluate(appid, _jsResume, 'hostresume');
+      unawaited(registry.values.first.resumeTimers());
+      for (final e in registry.entries) {
+        final c = e.value;
+        if (e.key == fg) {
+          unawaited(c.resume());
+          await _evaluate(e.key, _jsResume, 'hostresume');
         } else {
-          await _evaluate(appid, _jsPause, 'hostpause');
+          await _evaluate(e.key, _jsPause, 'hostpause');
           unawaited(c.pause());
         }
       }
     } else {
-      debugPrint('[mp-lifecycle] 无前台,全局停 timers + 全部挂起');
-      for (final appid in miniProgramControllerRegistry.keys) {
+      for (final appid in registry.keys) {
         await _evaluate(appid, _jsPause, 'hostpause');
-        unawaited(miniProgramControllerRegistry[appid]?.pause());
+        unawaited(registry[appid]!.pause());
       }
       // pauseTimers 全局生效,任一 WebView 调一次即可
-      if (miniProgramControllerRegistry.isNotEmpty) {
-        await miniProgramControllerRegistry.values.first.pauseTimers();
-      }
+      unawaited(registry.values.first.pauseTimers());
     }
   }
 
