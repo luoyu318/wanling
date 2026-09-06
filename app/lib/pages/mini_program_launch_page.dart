@@ -26,6 +26,15 @@ class MiniProgramBackScope extends StatelessWidget {
         if (didPop) return;
         final container = ProviderScope.containerOf(context);
         final manager = container.read(miniProgramManagerProvider);
+        // WebView 有历史先回小程序上一页(hash/history 路由),入口页才最小化
+        // (多任务 spec 决策 3;嵌入模式返回键由本壳统一拦截,goBack 分支
+        // 须在此消费,壳留在栈上返回链不破)
+        final fg = manager.foregroundAppid;
+        final controller = fg == null ? null : miniProgramControllerRegistry[fg];
+        if (controller != null && await controller.canGoBack()) {
+          await controller.goBack();
+          return;
+        }
         final r = await minimizeWithSnapshot(container);
         if (!context.mounted) return;
         if (r.popped) return;
