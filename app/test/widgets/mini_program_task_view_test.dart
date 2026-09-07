@@ -246,8 +246,8 @@ void main() {
       final front =
           tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
       // 惯性钳制在 fan=1(队列模型):前台卡左缘 = base + (n-1)*step
-      // = 0.16*800 + 0.84*448 = 128 + 376.32 = 504.32
-      expect(front.dx, closeTo(504.32, 1));
+      // = 0.16*800 + 0.70*448 = 128 + 313.6 = 441.6
+      expect(front.dx, closeTo(441.6, 1));
       expect(rec.viewClosed, 0);
     });
 
@@ -319,7 +319,7 @@ void main() {
       expect(deckScale(tester, 'd'), closeTo(0.85, 0.001));
     });
 
-    testWidgets('前快后慢:同一拖动距离,前台/次卡/末卡位移依次递减且幅度悬殊',
+    testWidgets('统一插值展开:前台/次卡/末卡位移依次递减,相邻卡间距不超卡宽(无断裂缝隙)',
         (tester) async {
       final rec = _Recorder();
       await tester.pumpWidget(_Host(
@@ -334,7 +334,8 @@ void main() {
           .getTopLeft(find.byKey(ValueKey('mp-task-card-$id')))
           .dx;
       final aBefore = dx('a'), bBefore = dx('b'), cBefore = dx('c');
-      // 滞后指数幂:p_i = fan^(1+i·γ),前台 1:1 跟手,越老起步越慢
+      // 全程 dx = clamp(2*313.6*0.5, 280, 520) = 313.6,拖 240:
+      // 统一 fan 插值,位移 ∝ 行程(前台 > 次卡 > 末卡,右大左小)
       await tester.drag(
           find.byKey(const ValueKey('mp-task-card-a')), const Offset(240, 0));
       await tester.pumpAndSettle();
@@ -344,9 +345,9 @@ void main() {
       expect(aMoved, greaterThan(bMoved));
       expect(bMoved, greaterThan(cMoved));
       expect(cMoved, greaterThan(0));
-      // 悬殊度:拖动中段次卡位移不足前台一半,末卡不足次卡一半
-      expect(bMoved, lessThan(aMoved * 0.5));
-      expect(cMoved, lessThan(bMoved * 0.5));
+      // 任意时刻相邻卡间距 ≤ step(0.84 卡宽),队列紧密衔接不露背景
+      expect(dx('a') - dx('b'), lessThan(448 * 0.70 + 1));
+      expect(dx('b') - dx('c'), lessThan(448 * 0.70 + 1));
       expect(rec.viewClosed, 0);
     });
 
@@ -379,18 +380,18 @@ void main() {
       expect(iconOp('b'), 0.0);
       expect(nameOp('消消乐星球'), 0.0);
 
-      // n=3 全程 dx=376.32,拖 200(扣 slop 后 fan≈0.44~0.48):
-      // p_i = fan^(1+1.2i):次卡 p≈0.16~0.20 → icon=3p 先现、名称=1.5p 随后;
-      // 末卡 p≈0.06~0.09 基本未动 → 名称几乎不可见。相对关系断言容忍 slop。
+      // n=3 全程 dx=376.32,拖 200(扣 slop 后 fan≈0.52~0.57):
+      // 波前 w=fan*n≈1.3~1.45:次卡(i=1)名称半透、icon 已满;
+      // 末卡(i=2)名称未到、icon 提前一级微显(参考图 3 最左窄条只 icon)。
+      // 区间断言容忍 touch slop 误差。
       await tester.drag(
           find.byKey(const ValueKey('mp-task-card-a')), const Offset(200, 0));
       await tester.pumpAndSettle();
       final icon = iconOp('b'), name = nameOp('消消乐星球');
-      expect(icon, inInclusiveRange(0.4, 0.7));
-      expect(name, inInclusiveRange(0.15, 0.4));
-      expect(icon, greaterThan(name));
-      expect(nameOp('万灵日历'), lessThan(0.2));
-      expect(iconOp('c'), lessThan(0.35));
+      expect(icon, 1.0);
+      expect(name, inInclusiveRange(0.5, 0.8));
+      expect(iconOp('c'), inInclusiveRange(0.5, 0.8));
+      expect(nameOp('万灵日历'), 0.0);
       expect(rec.viewClosed, 0);
     });
 

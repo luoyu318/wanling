@@ -3,7 +3,6 @@
 // 右滑跟手展开(统一插值,行程右大左小、连续无阈值)/ 左滑跟手折叠(松手停留),
 // 点卡片打开对应实例,上滑关闭单实例;底部 X 清空全部任务;
 // 点空白遮罩 / 系统返回关闭视图。由 Host 挂在根 Stack 顶层。
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 
@@ -82,17 +81,13 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView>
   static const double _stackShrink = 0.05;
   static const double _stackShrinkFloor = 0.85;
 
-  /// 前快后慢滞后指数:卡 i 的跟随进度 p_i = fan^(1+i·γ)。
-  /// 前台(i=0)1:1 跟手,越老起步越慢、后段追上,fan=1 全部到位;
-  /// 同一拖动距离下右侧卡位移显著大于左侧(澎湃 OS 手感)。
-  static const double _lagExponent = 1.2;
-
   /// 队列基准左缘(×屏宽):堆叠态前台卡位 = 拖到底最老卡位。
   /// 二者共用 → 任意 fan 下屏上恒留至少一个可见视图(最老卡)。
   static const double _baseLeftFactor = 0.16;
 
-  /// 全展开相邻卡间距(×卡宽,参考图实测 ≈0.47 屏宽 / 卡宽 0.56 ≈ 0.84)。
-  static const double _stepFactor = 0.84;
+  /// 全展开相邻卡左缘差(×卡宽):参考图实测 ≈0.47 屏宽 / 卡宽 0.56 ≈ 0.70,
+  /// 相邻卡重叠 ≈0.3 卡宽——前台卡左缘始终压着次卡右缘(参考图 2/5)。
+  static const double _stepFactor = 0.70;
 
   /// 卡框高度:优先按快照真实宽高比(w/h)等比缩放(瘦长,消除快照与
   /// 整屏比例差导致的 contain 上下黑边),无快照/比例回退整屏等比。
@@ -239,7 +234,8 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView>
   /// AnimatedBuilder 只重建卡组,拖拽手势由上层全屏 GestureDetector 驱动。
   /// 卡 i 左缘的 Transform 偏移(相对 Stack 居中位):
   /// 堆叠位(前台 base / 后卡贴左缘微错开)与展开位(base+(n-1-i)*step)
-  /// 按该卡的跟随进度 [_cardProgress] 插值——前快后慢(滞后指数幂)。
+  /// 按统一 [fan] 插值(参考图 2-5:任意时刻相邻卡左缘差恒定,紧密衔接)。
+  /// 位移右大左小来自行程差:前台行程 ≈ base+(n-1)*step,越老越小。
   /// 纯函数,便于确定性测试。
   double _cardTranslateDx({
     required double screenW,
@@ -253,21 +249,15 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView>
     final center = (screenW - cardW) / 2;
     final stackedLeft = i == 0 ? base : -(i - 1) * _stackStagger;
     final expandedLeft = base + (n - 1 - i) * step;
-    final p = _cardProgress(i, fan);
-    return stackedLeft + (expandedLeft - stackedLeft) * p - center;
+    return stackedLeft + (expandedLeft - stackedLeft) * fan - center;
   }
 
-  /// 卡 i 跟随进度 [0,1]:fan 的滞后指数幂(纯函数)。
-  double _cardProgress(int i, double fan) =>
-      math.pow(fan, 1.0 + i * _lagExponent).toDouble();
-
   /// 卡 i 缩放(近大远小层次感):堆叠态每深一层缩 5%(下限 0.85),
-  /// 随自身跟随进度回到 1(参考图 2-5 展开态各卡等大)。纯函数。
+  /// 展开过程回到 1(参考图 2-5 展开态各卡等大)。纯函数。
   double _cardScale(int i, double fan) {
     if (i == 0) return 1.0;
     final stacked = (1 - i * _stackShrink).clamp(_stackShrinkFloor, 1.0);
-    final p = _cardProgress(i, fan);
-    return stacked + (1.0 - stacked) * p;
+    return stacked + (1.0 - stacked) * fan;
   }
 
   Widget _buildDeck(
@@ -311,15 +301,13 @@ class _MiniProgramTaskViewState extends ConsumerState<MiniProgramTaskView>
                     snapshot: instances[i].snapshot,
                     cardW: layout.cardW,
                     cardH: _cardHeightFor(size, layout.cardW, instances[i]),
-                    // 标题随卡被推动渐显:icon 提前(3×自身进度)、
-                    // 名称随后(1.5×);前台卡恒显;
-                    // 拖到底各卡进度=1 → 全队可见(参考图 5)
+                    // 标题随卡移动:波前(fan*n)从新卡往老卡扫,
+                    // 扫过的卡名称显现、icon 提前一级显现(icon 恒先于名称);
+                    // 前台卡恒显;拖到底(fan=1)全队可见(参考图 5)
                     iconOpacity: i == 0
                         ? 1.0
-                        : (_cardProgress(i, fan) * 3).clamp(0.0, 1.0),
-                    nameOpacity: i == 0
-                        ? 1.0
-                        : (_cardProgress(i, fan) * 1.5).clamp(0.0, 1.0),
+                        : (fan * n - i + 1).clamp(0.0, 1.0),
+                    nameOpacity: i == 0 ? 1.0 : (fan * n - i).clamp(0.0, 1.0),
                     onRestore: () => _restore(instances[i].appid),
                     onClose: () => widget.onClose(instances[i].appid),
                   ),
