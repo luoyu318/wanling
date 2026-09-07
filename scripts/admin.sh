@@ -215,8 +215,12 @@ menu_build_apk() {
     pause
 }
 
+# dev server 二进制/日志放 XDG 用户目录（重启不丢；/tmp 会被 systemd-tmpfiles 清理，
+# 曾导致 unit ExecStart 指向的二进制消失、服务起不来）
 DEV_SERVER_UNIT="wanling-server-dev.service"
 DEV_UNIT_FILE="$HOME/.config/systemd/user/$DEV_SERVER_UNIT"
+DEV_SERVER_BIN="$HOME/.local/bin/wanling-server-dev"
+DEV_LOG_FILE="$HOME/.local/state/wanling/wanling-server-dev.log"
 
 menu_restart_local_server() {
     info "重启本地服务..."
@@ -225,13 +229,13 @@ menu_restart_local_server() {
     port=$(grep -E '^SERVER_PORT=' "$SERVER_DIR/.env" 2>/dev/null | cut -d= -f2)
     port="${port:-18008}"
 
-    # 首次运行：写 systemd user unit（脱离 agent 所在 cgroup）。
+    # 写 systemd user unit（脱离 agent 所在 cgroup）。
     # 根因：AI agent 跑在 opencode-wanling-prod.service cgroup 里，若 dev server 用 nohup
     # 启动会继承同一 cgroup，prod-ctl restart 时被 systemd KillMode=control-group 一并 SIGTERM。
-    if [[ ! -f "$DEV_UNIT_FILE" ]]; then
-        info "首次运行：写 $DEV_SERVER_UNIT..."
-        mkdir -p "$(dirname "$DEV_UNIT_FILE")"
-        cat > "$DEV_UNIT_FILE" <<EOF
+    # unit 由本脚本全量生成（幂等重写 + daemon-reload），脚本即事实源，
+    # 模板变更自动传播，不会出现老 unit 指向失效路径。
+    mkdir -p "$HOME/.local/bin" "$(dirname "$DEV_LOG_FILE")"
+    cat > "$DEV_UNIT_FILE" <<EOF
 [Unit]
 Description=Wanling Server (dev :$port)
 After=network.target
@@ -240,18 +244,16 @@ After=network.target
 Type=simple
 WorkingDirectory=$SERVER_DIR
 EnvironmentFile=$SERVER_DIR/.env
-ExecStart=/tmp/wanling-server
+ExecStart=$DEV_SERVER_BIN
 Restart=on-failure
 RestartSec=5
-StandardOutput=append:/tmp/wanling-server.log
-StandardError=append:/tmp/wanling-server.log
+StandardOutput=append:$DEV_LOG_FILE
+StandardError=append:$DEV_LOG_FILE
 
 [Install]
 WantedBy=default.target
 EOF
-        systemctl --user daemon-reload
-        ok "  unit 已写入：$DEV_UNIT_FILE"
-    fi
+    systemctl --user daemon-reload
 
     # 兼容老启动方式：先尝试 stop systemd unit + 清理 nohup 残留进程。
     systemctl --user stop "$DEV_SERVER_UNIT" 2>/dev/null || true
@@ -269,7 +271,7 @@ EOF
     (cd "$SERVER_DIR" && go build \
         -ldflags "-X github.com/wanling/server/internal/version.Version=$ver \
                   -X github.com/wanling/server/internal/version.BuildCommit=$commit" \
-        -o /tmp/wanling-server ./cmd/main.go) || die "编译失败"
+        -o "$DEV_SERVER_BIN" ./cmd/main.go) || die "编译失败"
 
     # 用 systemd 启动：独立 cgroup，prod-ctl 操作不再误杀。
     systemctl --user start "$DEV_SERVER_UNIT"
@@ -277,10 +279,10 @@ EOF
     # 用 health 端点轮询判定「真正可用」，而非仅看端口在。
     # 端口在但进程秒崩（如 DB 连不上）也能被抓到。
     if wait_health "http://localhost:$port/health" 15; then
-        ok "服务已启动 (systemd $DEV_SERVER_UNIT, PID $(pgrep -f /tmp/wanling-server | head -1))"
+        ok "服务已启动 (systemd $DEV_SERVER_UNIT, PID $(pgrep -f "$DEV_SERVER_BIN" | head -1))"
     else
-        warn "服务未在 15s 内就绪，看 /tmp/wanling-server.log"
-        tail -15 /tmp/wanling-server.log 2>/dev/null
+        warn "服务未在 15s 内就绪，看 $DEV_LOG_FILE"
+        tail -15 "$DEV_LOG_FILE" 2>/dev/null
     fi
     pause
 }
