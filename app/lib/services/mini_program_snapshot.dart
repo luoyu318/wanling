@@ -5,6 +5,8 @@
 // 直达。页面 onWebViewCreated 时按 appid 注册、dispose 时注销,本模块提供
 // 注册表与「抓帧 + 最小化」统一编排,Host._minimize 与 AutoMinimizeObserver
 // 两条收起路径都走它。抓帧必须发生在实例视图 Offstage 之前(Hidden 后无内容)。
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,6 +27,24 @@ void registerMiniProgramController(String appid, InAppWebViewController c) =>
     miniProgramControllerRegistry[appid] = c;
 void unregisterMiniProgramController(String appid) =>
     miniProgramControllerRegistry.remove(appid);
+
+/// 测帧真实宽高比(w/h):ImageDescriptor 只解析图片头,不解码像素,
+/// 成本极低。失败返回 null(卡框回退整屏比例)。
+Future<double?> _readAspect(Uint8List bytes) async {
+  ui.ImmutableBuffer? buffer;
+  ui.ImageDescriptor? descriptor;
+  try {
+    buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    descriptor = await ui.ImageDescriptor.encoded(buffer);
+    return descriptor.width / descriptor.height;
+  } catch (e) {
+    debugPrint('[mini-program] 快照测比失败(回退整屏比例): $e');
+    return null;
+  } finally {
+    descriptor?.dispose();
+    buffer?.dispose();
+  }
+}
 
 /// 抓帧(尽力而为):返回帧字节,任何失败(无 controller/null/异常)返回 null,
 /// 调用方保留占位渐变。
@@ -59,7 +79,10 @@ Future<({Uint8List? frame, bool popped})> minimizeWithSnapshot(
   Uint8List? frame;
   if (appid != null) {
     frame = await captureSnapshot(appid);
-    if (frame != null) manager.updateSnapshot(appid, frame);
+    if (frame != null) {
+      final aspect = await _readAspect(frame);
+      manager.updateSnapshot(appid, frame, aspect: aspect);
+    }
   }
   manager.minimize();
   final popped = syncRoute ? syncLiveRouteWith(container) : false;

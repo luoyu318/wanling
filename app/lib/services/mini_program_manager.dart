@@ -23,6 +23,11 @@ class MiniProgramInstance {
   /// 最小化前抓取的 WebView 真实帧(任务视图卡片显示用,增强非关键路径)。
   /// 只在后台态有意义:恢复前台即清空(前台实时渲染)。
   Uint8List? snapshot;
+
+  /// 快照帧真实宽高比(w/h,抓帧时解码缩略图测得)。任务视图卡框按它
+  /// 等比缩放,避免快照与整屏比例差导致 contain 上下留黑边;
+  /// snapshot 为 null 时忽略(回退整屏比例)。
+  double? snapshotAspect;
 }
 
 /// 实例展示元数据解析(纯函数,任务视图/浮球/面板统一走它):
@@ -121,11 +126,13 @@ class MiniProgramManager extends ChangeNotifier {
   }
 
   /// 写入实例快照帧(最小化前抓取)。实例已不存在(抓帧期间被关闭的竞态)时
-  /// 静默丢弃:快照是增强非关键路径,不重建实例。[bytes] 传 null 即清空回退占位。
-  void updateSnapshot(String appid, Uint8List? bytes) {
+  /// 静默丢弃:快照是增强非关键路径,不重建实例。[bytes] 传 null 即清空回退占位;
+  /// [aspect] 为帧真实宽高比(w/h),null 时保留旧值(比例不变场景无需重测)。
+  void updateSnapshot(String appid, Uint8List? bytes, {double? aspect}) {
     final inst = _instances[appid];
     if (inst == null) return;
     inst.snapshot = bytes;
+    if (aspect != null) inst.snapshotAspect = aspect;
     notifyListeners();
   }
 

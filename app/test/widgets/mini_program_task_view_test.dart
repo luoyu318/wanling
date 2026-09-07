@@ -1,11 +1,14 @@
 // 小程序卡片多任务视图 widget 测试:
-// 1. 渲染每个实例一张卡片与卡外标题
+// 1. 渲染每个实例一张卡片与卡外标题(队列卡组)
 // 2. 点卡片 → onRestore(appid) 且 onCloseView 被调
 // 3. 卡片上滑(Dismissible up) → onClose(appid)
 // 4. 点卡片外空白 → onCloseView
 // 5. 系统返回(PopScope) → onCloseView
 // 6. 实例元数据回填(D):name 空 + provider 有数据 → 显示真名真 icon URL;
 //    provider 无数据 → 回退 appid
+// 7. 右滑跟手展开(波传导:右侧卡先动行程大) / 左滑跟手折叠
+// 8. 堆叠态最多露 3 张,第 4 张起完全遮死;标题 icon 恒显、名称渐隐
+// 9. 卡高按快照真实宽高比(无留边);底部 X → onCloseAll + onCloseView
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -40,6 +43,7 @@ class _Recorder {
   final restored = <String>[];
   final closed = <String>[];
   int viewClosed = 0;
+  int allCleared = 0;
 }
 
 MiniProgramInstance _inst(String appid, String name) =>
@@ -85,6 +89,7 @@ class _HostState extends State<_Host> {
             _instances.removeWhere((i) => i.appid == appid);
           }),
           onCloseView: () => widget.rec.viewClosed++,
+          onCloseAll: () => widget.rec.allCleared++,
         ),
       ),
     );
@@ -93,11 +98,10 @@ class _HostState extends State<_Host> {
 
 void main() {
   group('taskCardLayout 布局纯函数', () {
-    test('卡片按屏幕宽高比等比缩放', () {
+    test('卡片宽 0.56 屏宽,高整屏等比', () {
       final layout = taskCardLayout(const Size(800, 600));
-      expect(layout.cardW, closeTo(800 * 0.74, 0.01));
-      expect(layout.cardH, closeTo(800 * 0.74 * 600 / 800, 0.01));
-      expect(layout.viewportFraction, closeTo((800 * 0.74 + 20) / 800, 0.01));
+      expect(layout.cardW, closeTo(800 * 0.56, 0.01));
+      expect(layout.cardH, closeTo(800 * 0.56 * 600 / 800, 0.01));
       // 卡片宽高比 = 屏幕宽高比
       expect(layout.cardH / layout.cardW, closeTo(600 / 800, 0.001));
     });
@@ -152,7 +156,7 @@ void main() {
       initial: [_inst('a', '跳跳球大冒险'), _inst('b', '消消乐星球')],
       rec: rec,
     ));
-    // 卡片垂直居中(下缘约 y=554),570 在卡片下方空白区
+    // 卡片垂直居中(下缘约 y=497),570 在卡片下方空白区
     await tester.tapAt(const Offset(20, 570));
     await tester.pump();
     expect(rec.viewClosed, 1);
@@ -171,6 +175,254 @@ void main() {
     await tester.pump();
     expect(rec.viewClosed, 1);
     expect(rec.restored, isEmpty);
+  });
+
+  group('堆叠卡组交互(澎湃 OS 样式)', () {
+    /// 卡组中卡 appid 的缩放系数(近大远小断言用):
+    /// 定位 child 为该卡 _TaskCard(带 mp-task-card key)的 Transform.scale,
+    /// 读矩阵 x 轴缩放分量(storage 列优先,[0] 即 scaleX)。
+    double deckScale(WidgetTester tester, String appid) {
+      final t = tester.widget<Transform>(find.byWidgetPredicate(
+        (w) => w is Transform && w.child?.key == ValueKey('mp-task-card-$appid'),
+      ));
+      return t.transform.storage[0];
+    }
+
+    testWidgets('右滑跟手展开:前台卡位移大于后层卡,松手停留', (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [_inst('a', '跳跳球大冒险'), _inst('b', '消消乐星球')],
+        rec: rec,
+      ));
+      final frontBefore =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
+      final backBefore =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-b')));
+      await tester.drag(
+          find.byKey(const ValueKey('mp-task-card-a')), const Offset(240, 0));
+      await tester.pumpAndSettle();
+      final frontAfter =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
+      final backAfter =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-b')));
+      // 前台卡右移最多,后层按比例递减
+      expect(frontAfter.dx - frontBefore.dx, greaterThan(0));
+      expect(frontAfter.dx - frontBefore.dx,
+          greaterThan(backAfter.dx - backBefore.dx));
+      // 松手停留:视图未关、未触发恢复
+      expect(rec.viewClosed, 0);
+      expect(rec.restored, isEmpty);
+    });
+
+    testWidgets('左滑跟手折叠:展开后再左滑回到原位', (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [_inst('a', '跳跳球大冒险'), _inst('b', '消消乐星球')],
+        rec: rec,
+      ));
+      final before =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
+      await tester.drag(
+          find.byKey(const ValueKey('mp-task-card-a')), const Offset(240, 0));
+      await tester.pumpAndSettle();
+      await tester.drag(
+          find.byKey(const ValueKey('mp-task-card-a')), const Offset(-240, 0));
+      await tester.pumpAndSettle();
+      final after =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
+      expect(after.dx, closeTo(before.dx, 0.5));
+      expect(rec.viewClosed, 0);
+    });
+
+    testWidgets('快速轻扫 → 惯性滑行收敛到全展开边界', (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [_inst('a', '跳跳球大冒险'), _inst('b', '消消乐星球')],
+        rec: rec,
+      ));
+      await tester.fling(find.byKey(const ValueKey('mp-task-card-a')),
+          const Offset(200, 0), 3000);
+      await tester.pumpAndSettle();
+      final front =
+          tester.getTopLeft(find.byKey(const ValueKey('mp-task-card-a')));
+      // 惯性钳制在 fan=1(队列模型):前台卡左缘 = base + (n-1)*step
+      // = 0.16*800 + 0.84*448 = 128 + 376.32 = 504.32
+      expect(front.dx, closeTo(504.32, 1));
+      expect(rec.viewClosed, 0);
+    });
+
+    testWidgets('底部 X → onCloseAll + onCloseView', (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [_inst('a', '跳跳球大冒险')],
+        rec: rec,
+      ));
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+      expect(rec.allCleared, 1);
+      expect(rec.viewClosed, 1);
+    });
+
+    testWidgets('卡体为整屏等比(卡宽 448 → 卡高 336)', (tester) async {
+      final inst = MiniProgramInstance(appid: 'a', openedAt: DateTime.now())
+        ..name = '跳跳球大冒险'
+        ..snapshot = _fakePng();
+      await tester.pumpWidget(_Host(initial: [inst], rec: _Recorder()));
+      final body =
+          tester.getSize(find.byKey(const ValueKey('mp-card-body-a')));
+      // 卡宽 0.56*800=448,高整屏等比 336
+      expect(body.width, closeTo(448, 0.5));
+      expect(body.height, closeTo(336, 0.5));
+    });
+
+    testWidgets('有快照真实宽高比 → 卡框按快照比例等比缩放(消除黑边)',
+        (tester) async {
+      // 竖屏 surface(对齐真机形态):卡高 = 卡宽/0.6 才放得下
+      tester.view.physicalSize = const Size(600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final inst = MiniProgramInstance(appid: 'a', openedAt: DateTime.now())
+        ..name = '跳跳球大冒险'
+        ..snapshot = _fakePng()
+        ..snapshotAspect = 0.6; // w/h,卡高 = 336/0.6 = 560
+      await tester.pumpWidget(_Host(initial: [inst], rec: _Recorder()));
+      final body =
+          tester.getSize(find.byKey(const ValueKey('mp-card-body-a')));
+      expect(body.width, closeTo(336, 0.5));
+      expect(body.height, closeTo(336 / 0.6, 0.5));
+    });
+
+    testWidgets('堆叠态:前台卡在基准位,后卡贴屏幕左缘微错开(参考图 1)',
+        (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [
+          _inst('a', '跳跳球大冒险'),
+          _inst('b', '消消乐星球'),
+          _inst('c', '万灵日历'),
+          _inst('d', '共享清单'),
+        ],
+        rec: rec,
+      ));
+      double dx(String id) => tester
+          .getTopLeft(find.byKey(ValueKey('mp-task-card-$id')))
+          .dx;
+      // 前台卡基准位 0.16*800=128;后卡全部贴左缘,相邻 12px 错开露层
+      expect(dx('a'), closeTo(128, 0.5));
+      expect(dx('b'), closeTo(0, 0.5));
+      expect(dx('c'), closeTo(-12, 0.5));
+      expect(dx('d'), closeTo(-24, 0.5));
+      // 近大远小:每深一层缩 5%,下限 0.85
+      expect(deckScale(tester, 'a'), closeTo(1.0, 0.001));
+      expect(deckScale(tester, 'b'), closeTo(0.95, 0.001));
+      expect(deckScale(tester, 'c'), closeTo(0.90, 0.001));
+      expect(deckScale(tester, 'd'), closeTo(0.85, 0.001));
+    });
+
+    testWidgets('前快后慢:同一拖动距离,前台/次卡/末卡位移依次递减且幅度悬殊',
+        (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [
+          _inst('a', '跳跳球大冒险'),
+          _inst('b', '消消乐星球'),
+          _inst('c', '万灵日历'),
+        ],
+        rec: rec,
+      ));
+      double dx(String id) => tester
+          .getTopLeft(find.byKey(ValueKey('mp-task-card-$id')))
+          .dx;
+      final aBefore = dx('a'), bBefore = dx('b'), cBefore = dx('c');
+      // 滞后指数幂:p_i = fan^(1+i·γ),前台 1:1 跟手,越老起步越慢
+      await tester.drag(
+          find.byKey(const ValueKey('mp-task-card-a')), const Offset(240, 0));
+      await tester.pumpAndSettle();
+      final aMoved = dx('a') - aBefore;
+      final bMoved = dx('b') - bBefore;
+      final cMoved = dx('c') - cBefore;
+      expect(aMoved, greaterThan(bMoved));
+      expect(bMoved, greaterThan(cMoved));
+      expect(cMoved, greaterThan(0));
+      // 悬殊度:拖动中段次卡位移不足前台一半,末卡不足次卡一半
+      expect(bMoved, lessThan(aMoved * 0.5));
+      expect(cMoved, lessThan(bMoved * 0.5));
+      expect(rec.viewClosed, 0);
+    });
+
+    testWidgets('标题行为:堆叠态次卡标题全隐;卡被推时 icon 先现、名称后现;前台恒显',
+        (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [
+          _inst('a', '跳跳球大冒险'),
+          _inst('b', '消消乐星球'),
+          _inst('c', '万灵日历'),
+        ],
+        rec: rec,
+      ));
+      double nameOp(String name) => tester
+          .widget<Opacity>(find.ancestor(
+              of: find.text(name), matching: find.byType(Opacity)))
+          .opacity;
+      double iconOp(String appid) => tester
+          .widget<Opacity>(find.ancestor(
+              of: find.descendant(
+                  of: find.byKey(ValueKey('mp-task-card-$appid')),
+                  matching: find.byType(Avatar)),
+              matching: find.byType(Opacity)))
+          .opacity;
+
+      // 堆叠态:前台标题完整,次卡/末卡标题全隐(卡未被动过)
+      expect(iconOp('a'), 1.0);
+      expect(nameOp('跳跳球大冒险'), 1.0);
+      expect(iconOp('b'), 0.0);
+      expect(nameOp('消消乐星球'), 0.0);
+
+      // n=3 全程 dx=376.32,拖 200(扣 slop 后 fan≈0.44~0.48):
+      // p_i = fan^(1+1.2i):次卡 p≈0.16~0.20 → icon=3p 先现、名称=1.5p 随后;
+      // 末卡 p≈0.06~0.09 基本未动 → 名称几乎不可见。相对关系断言容忍 slop。
+      await tester.drag(
+          find.byKey(const ValueKey('mp-task-card-a')), const Offset(200, 0));
+      await tester.pumpAndSettle();
+      final icon = iconOp('b'), name = nameOp('消消乐星球');
+      expect(icon, inInclusiveRange(0.4, 0.7));
+      expect(name, inInclusiveRange(0.15, 0.4));
+      expect(icon, greaterThan(name));
+      expect(nameOp('万灵日历'), lessThan(0.2));
+      expect(iconOp('c'), lessThan(0.35));
+      expect(rec.viewClosed, 0);
+    });
+
+    testWidgets('拖到底 fan=1:全部标题可见(含最老卡,参考图 5)', (tester) async {
+      final rec = _Recorder();
+      await tester.pumpWidget(_Host(
+        initial: [
+          _inst('a', '跳跳球大冒险'),
+          _inst('b', '消消乐星球'),
+        ],
+        rec: rec,
+      ));
+      double nameOp(String name) => tester
+          .widget<Opacity>(find.ancestor(
+              of: find.text(name), matching: find.byType(Opacity)))
+          .opacity;
+      double iconOp(String appid) => tester
+          .widget<Opacity>(find.ancestor(
+              of: find.descendant(
+                  of: find.byKey(ValueKey('mp-task-card-$appid')),
+                  matching: find.byType(Avatar)),
+              matching: find.byType(Opacity)))
+          .opacity;
+      // 快速轻扫 → 惯性到 fan=1,波前扫完全队;展开态各卡等大
+      await tester.fling(find.byKey(const ValueKey('mp-task-card-a')),
+          const Offset(200, 0), 3000);
+      await tester.pumpAndSettle();
+      expect(iconOp('b'), 1.0);
+      expect(nameOp('消消乐星球'), 1.0);
+      expect(deckScale(tester, 'b'), closeTo(1.0, 0.001));
+      expect(rec.viewClosed, 0);
+    });
   });
 
   group('实例元数据回填(D)', () {
@@ -223,10 +475,16 @@ void main() {
               (w.image as ResizeImage).imageProvider is MemoryImage)
           .toList();
       expect(images, isNotEmpty);
-      // 内存约束:解码宽度限 ~400,防多实例大帧爆内存
-      for (final img in images) {
-        expect((img.image as ResizeImage).width, 400);
-      }
+      // 内存约束:清晰层解码宽度限 ~400,防多实例大帧爆内存
+      expect(
+        images.any((img) => (img.image as ResizeImage).width == 400),
+        isTrue,
+      );
+      // letterbox 填充:模糊底层用 80 小图解码
+      expect(
+        images.any((img) => (img.image as ResizeImage).width == 80),
+        isTrue,
+      );
     });
 
     testWidgets('无快照帧 → 不渲染 Image(占位渐变兜底)', (tester) async {

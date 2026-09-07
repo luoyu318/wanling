@@ -6,7 +6,7 @@
 //
 // Mock 策略:InAppWebViewController 用 mocktail 替身(只 stub takeScreenshot);
 // manager 用真实例;live 壳同步走真实 launcher(routerProvider 覆盖为空壳路由)。
-import 'dart:typed_data';
+import 'dart:convert' show base64Decode;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -61,6 +61,10 @@ void main() {
     resetMiniProgramControllersForTest();
   });
 
+  /// 真实 PNG 字节(4×2 RGB,离线生成的最小合法 PNG)。
+  final realPng = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR4nGMQMgmDIwZkDgA9WgThy2nKhwAAAABJRU5ErkJggg==');
+
   group('注册表', () {
     test('register 写入 / unregister 移除 / reset 清空', () {
       final c = _MockController();
@@ -86,7 +90,7 @@ void main() {
       final c = _MockController();
       _stubLifecycle(c);
       registerMiniProgramController('a', c);
-      final frame = Uint8List.fromList([9, 9]);
+      final frame = realPng;
 
       when(() => c.takeScreenshot()).thenAnswer((_) async => frame);
       expect(await captureSnapshot('a'), same(frame));
@@ -103,7 +107,7 @@ void main() {
     test('抓帧成功:帧写入实例 + 前台清空(最小化完成)', () async {
       final h = _Harness()..pump();
       h.manager.open('a');
-      final frame = Uint8List.fromList([1, 2, 3]);
+      final frame = realPng;
       final c = _MockController();
       _stubLifecycle(c);
       registerMiniProgramController('a', c);

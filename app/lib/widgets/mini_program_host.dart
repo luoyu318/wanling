@@ -219,6 +219,8 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
             },
             onClose: _close,
             onCloseView: () => setState(() => _showTaskView = false),
+            onCloseAll: () =>
+                ref.read(miniProgramManagerProvider).closeAll(),
           ),
       ],
     );
