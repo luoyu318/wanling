@@ -18,6 +18,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
+import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:app/widgets/avatar.dart';
@@ -835,6 +836,18 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               // 快照抓帧编排层按 appid 注册 controller(dispose 注销),
               // 缺注册则 minimizeWithSnapshot 拿不到 controller 永远走占位
               registerMiniProgramController(widget.appid, controller);
+              // 竞态兜底:WebView 就绪前实例已被最小化(打开即最小化/登出等),
+              // Host 编排已跑过拿不到本 controller,这里补挂起(Android;
+              // hostpause 事件让合作页面停循环+静音,同 Host._syncSuspension)
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final mgr = ref.read(miniProgramManagerProvider);
+                if (!mgr.hasForeground || mgr.foregroundAppid != widget.appid) {
+                  unawaited(controller.evaluateJavascript(source:
+                      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()"));
+                  controller.pause();
+                  debugPrint('[mp-lifecycle] 创建兜底挂起 ${widget.appid}');
+                }
+              }
               controller.addJavaScriptHandler(
                 handlerName: 'wanlingRequest',
                 callback: (args) async =>

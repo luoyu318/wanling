@@ -26,6 +26,18 @@ class _MockGoRouter extends Mock implements GoRouter {}
 
 class _MockShotController extends Mock implements InAppWebViewController {}
 
+/// 挂起编排的 pause/resume 走 unawaited(生产签名 Future),替身默认返 null
+/// 会炸 unawaited 的类型校验,统一 stub 成 no-op Future。
+void _stubLifecycle(_MockShotController c) {
+  when(() => c.pause()).thenAnswer((_) async {});
+  when(() => c.resume()).thenAnswer((_) async {});
+  when(() => c.pauseTimers()).thenAnswer((_) async {});
+  when(() => c.resumeTimers()).thenAnswer((_) async {});
+  // 壳返回键先问 WebView 历史(false → 落到最小化,对齐既有断言语义)
+  when(() => c.canGoBack()).thenAnswer((_) async => false);
+  when(() => c.goBack()).thenAnswer((_) async {});
+}
+
 void main() {
   late _MockGoRouter router;
   late ProviderContainer container;
@@ -167,6 +179,7 @@ void main() {
 
   testWidgets('返回键最小化走统一收起编排:抓帧写入实例(返回键也有快照)', (tester) async {
     final fake = _MockShotController();
+    _stubLifecycle(fake);
     when(() => fake.takeScreenshot()).thenAnswer((_) async => Uint8List.fromList([1, 2, 3]));
     registerMiniProgramController('a', fake);
     addTearDown(resetMiniProgramControllersForTest);
