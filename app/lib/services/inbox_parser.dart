@@ -117,8 +117,9 @@ InboxParseResult ingestUpdate(
         final key = '$msgId:$eid';
         if (status != 'pending' && s.entries.containsKey(key)) {
           // 终态收敛出队；视图更新防后续重复。
+          // 内层视图整层重建：原地写会变异与旧 state 共享的内层 map，破坏不可变契约。
           final views = Map<String, Map<String, Map<String, dynamic>>>.from(s.aggregateViews);
-          views.putIfAbsent(msgId, () => {})[eid] = Map<String, dynamic>.from(patch);
+          views[msgId] = {...(views[msgId] ?? const {}), eid: Map<String, dynamic>.from(patch)};
           final entries = Map<String, InboxEntry>.from(s.entries)..remove(key);
           return InboxParseResult(
               InboxParserState(entries: entries, aggregateViews: views), const [], [key]);
@@ -159,8 +160,9 @@ InboxParseResult _ingestAggregateElement(InboxParserState s, String msgId,
   final status = elData['status'] as String? ?? 'pending';
 
   // 同步工作视图（无论 pending 与否，视图都要反映最新 data）。
+  // 内层视图整层重建：原地写会变异与旧 state 共享的内层 map，破坏不可变契约。
   final views = Map<String, Map<String, Map<String, dynamic>>>.from(s.aggregateViews);
-  views.putIfAbsent(msgId, () => {})[eid] = elData;
+  views[msgId] = {...(views[msgId] ?? const {}), eid: elData};
 
   final key = '$msgId:$eid';
   if (status != 'pending' || s.entries.containsKey(key)) {

@@ -129,6 +129,65 @@ void main() {
       expect(r2.added.single.entryKey, 'm1:perm_2');
     });
 
+    test('聚合卡 append 后旧 state 的 aggregateViews 不被新写入污染（不可变回归）', () {
+      final r1 = ingestCreate(empty, 'm1', 'c1', {
+        'msg_type': 'aggregate_card',
+        'data': {
+          'elements': [
+            {
+              'type': 'permission_card',
+              'element_id': 'perm_1',
+              'data': {'status': 'pending'},
+            },
+          ],
+        },
+      });
+      // 写入前基线：旧 state 的 m1 视图只有 perm_1。
+      expect(r1.state.aggregateViews['m1']!.keys, ['perm_1']);
+      final r2 = ingestUpdate(r1.state, 'm1', 'c1', {
+        'msg_type': 'aggregate_card',
+        'data': {
+          'op': 'append',
+          'element': {
+            'type': 'question_card',
+            'element_id': 'q_2',
+            'data': {'status': 'pending'},
+          },
+        },
+      });
+      expect(r2.added.single.entryKey, 'm1:q_2');
+      // 新 state 视图含新旧两个元素，旧 state 保持写入前内容（证明无共享可变内层 map）。
+      expect(r2.state.aggregateViews['m1']!.keys, ['perm_1', 'q_2']);
+      expect(r1.state.aggregateViews['m1']!.keys, ['perm_1']);
+    });
+
+    test('聚合卡 update op 同步视图后旧 state 不被污染（不可变回归）', () {
+      final r1 = ingestCreate(empty, 'm1', 'c1', {
+        'msg_type': 'aggregate_card',
+        'data': {
+          'elements': [
+            {
+              'type': 'permission_card',
+              'element_id': 'perm_1',
+              'data': {'status': 'pending'},
+            },
+          ],
+        },
+      });
+      final r2 = ingestUpdate(r1.state, 'm1', 'c1', {
+        'msg_type': 'aggregate_card',
+        'data': {
+          'op': 'update',
+          'element_id': 'perm_1',
+          'data': {'status': 'denied'},
+        },
+      });
+      expect(r2.removedKeys, ['m1:perm_1']);
+      // 新 state 视图已更新为终态，旧 state 仍是写入前的 pending。
+      expect(r2.state.aggregateViews['m1']!['perm_1']!['status'], 'denied');
+      expect(r1.state.aggregateViews['m1']!['perm_1']!['status'], 'pending');
+    });
+
     test('非聚合卡忽略未知 op / 非卡消息', () {
       final r = ingestUpdate(empty, 'm9', 'c1', {
         'msg_type': 'aggregate_card',
