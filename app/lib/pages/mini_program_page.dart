@@ -213,6 +213,18 @@ String? mpEventFilter(WSMessage msg, String appid) {
   return jsonEncode(d);
 }
 
+/// 实例级设备运动停推判定(公开顶层纯函数便于单测,对齐 mpEventFilter 模式)。
+/// 切后台 app 级停推已在容器页生命周期挂,此处为实例级:嵌入实例非 manager
+/// 前台(被最小化/被其他实例覆盖)即停推,防保活实例(Offstage JS 仍跑)
+/// 后台持续采传感器推帧;路由模式无实例编排,永不停推。
+bool motionSuspendedForInstance({
+  required bool embedded,
+  required bool hasForeground,
+  required String? foregroundAppid,
+  required String appid,
+}) =>
+    embedded && (!hasForeground || foregroundAppid != appid);
+
 /// 文本响应(403 越界 / 404 缺失 / 405 非 GET / 502 代理失败)。statusCode 需
 /// 同时带 headers + reasonPhrase(平台约定)。
 WebResourceResponse _plainTextResponse(
@@ -388,6 +400,17 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
 
   /// 设备运动订阅源(桥委托接线;dispose stop 退订,切后台 pause 停推)。
   final _motion = MiniProgramMotionSource();
+
+  /// 实例级停推跟踪(上次判定的挂起态),manager 前台切换监听做差量。
+  bool _motionInstanceSuspended = false;
+
+  /// 实例级停推判定(当前 manager 前台态),语义见 [motionSuspendedForInstance]。
+  bool get _motionSuspendedByInstance => motionSuspendedForInstance(
+        embedded: widget.isEmbedded,
+        hasForeground: ref.read(miniProgramManagerProvider).hasForeground,
+        foregroundAppid: ref.read(miniProgramManagerProvider).foregroundAppid,
+        appid: widget.appid,
+      );
 
   String get _virtualHost => virtualHostFor(widget.appid, _uid!);
 
@@ -675,7 +698,12 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
         onMpUnsubscribe: () async => ws.sendMpUnsubscribe(),
         // 设备运动订阅接线:桥门禁(wanling.device.motion)通过后回调到订阅源,
         // 节流帧经 _pushMotionFrame 推进 WebView
-        onMotionStart: (hz) => _motion.start(hz, _pushMotionFrame),
+        onMotionStart: (hz) {
+          _motion.start(hz, _pushMotionFrame);
+          // start 内部 stop 会复位停推标志:实例挂起态下(打开即最小化/运行中
+          // 被覆盖)保活实例 JS 仍可 start,按跟踪态重新施加停推
+          if (_motionInstanceSuspended) _motion.pause();
+        },
         onMotionStop: () => _motion.stop(),
       );
       // 云数据推送:订阅 MP_DATA_UPDATE 流,过滤本 appid 后转发进 WebView
@@ -708,6 +736,21 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 实例级停推接线(切后台 app 级已在 didChangeAppLifecycleState 挂,此处为
+    // 实例级):manager 前台切换(最小化/切实例/恢复)→ pause/resume,与
+    // Host._syncSuspension 的 hostpause/hostresume 同一信号源。listenManual
+    // 随元素销毁自动退订。
+    _motionInstanceSuspended = _motionSuspendedByInstance;
+    ref.listenManual(miniProgramManagerProvider, (_, _) {
+      final suspended = _motionSuspendedByInstance;
+      if (suspended == _motionInstanceSuspended) return;
+      _motionInstanceSuspended = suspended;
+      if (suspended) {
+        _motion.pause();
+      } else {
+        _motion.resume();
+      }
+    });
   }
 
   @override
@@ -716,7 +759,9 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
     if (state == AppLifecycleState.paused) {
       _motion.pause();
     } else if (state == AppLifecycleState.resumed) {
-      _motion.resume();
+      // APP 回前台仅前台实例续推:被最小化/覆盖实例维持实例级停推,
+      // 否则 app 级 resume 会击穿实例级挂起(两实例场景其一在后台被复活)
+      if (!_motionInstanceSuspended) _motion.resume();
     }
   }
 
@@ -918,6 +963,11 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
                   unawaited(controller.evaluateJavascript(source:
                       "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()"));
                   controller.pause();
+                  // 实例级停推同步兜底(打开即最小化路径):与 Host 兜底挂起
+                  // 同一判定,此刻订阅源尚无订阅,先对齐停推跟踪态,后续 JS
+                  // start 由桥回调按本标志重新施加停推
+                  _motion.pause();
+                  _motionInstanceSuspended = true;
                   debugPrint('[mp-lifecycle] 创建兜底挂起 ${widget.appid}');
                 }
               }
