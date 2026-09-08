@@ -239,4 +239,50 @@ void main() {
     // 队列保留语义（与「暂不处理」一致）：续弹重放队首 m1。
     expect(find.text('权限审批'), findsOneWidget);
   });
+
+  testWidgets('换卡收敛：旧 sheet 迟到 close 不误 suppress 新展示周期', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = makeContainer();
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
+    ));
+    // 两张卡同批入队，头条 m1 先弹，m2 在队列等待换卡。
+    ws.emit(_createPerm('m1', 'conv-9'));
+    ws.emit(_createPerm('m2', 'conv-8'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+    expect(find.text('会话 conv-9'), findsOneWidget); // m1 展示中
+
+    // m1 终态 UPDATE 收回 + 队列还有 m2：编排层同一 post-frame 内
+    // pop 旧 sheet（m1）并 _showSheet(m2)，_sheetSettled 被新周期重置 false。
+    ws.emitUpdate(WSMessage(op: 0, t: 'MESSAGE_UPDATE', d: {
+      'message_id': 'm1',
+      'conversation_id': 'conv-9',
+      'content': {
+        'msg_type': 'permission_card',
+        'data': {'status': 'approved', 'oc_request_id': 'oc1', 'action': 'bash'},
+      },
+    }));
+    await tester.pump(); // UPDATE 入队 → 状态变更触发 rebuild
+    await tester.pump(); // 编排 post-frame：pop 旧 sheet + push 新 sheet
+    await tester.pump(); // 新 sheet 路由 build 出内容
+    expect(find.text('会话 conv-8'), findsOneWidget); // 已换到 m2
+
+    // pump 越过旧 sheet 路由 dispose 触发 whenComplete 的迟到窗口。
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('会话 conv-9'), findsNothing); // 旧 sheet 已 dispose，迟到 close 已到
+
+    // 旧 sheet 的迟到 close 不得归入新周期：新头条不能被补发 dismissCurrent
+    // （否则 suppressed=true / exposing=false，队列剩余卡静默停摆）。
+    final state = container.read(approvalInboxProvider);
+    expect(state.suppressed, isFalse);
+    expect(state.exposing, isTrue);
+    expect(find.text('会话 conv-8'), findsOneWidget); // 新头条仍在展示
+  });
 }

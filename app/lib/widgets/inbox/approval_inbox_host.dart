@@ -47,9 +47,10 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   @override
   void initState() {
     super.initState();
-    // 覆盖注入 ④ 卡决策回调：ChatNotifier 构造时注入的是裸 decideApproval
-    // （chat_provider.dart:53-57），此处整体覆盖为「同款调用 + 成功后防重弹
-    // 标记」，两条链路语义等价（聊天页内决策成功也会顺带打标记，无害）。
+    // 注入 ④ 卡决策回调（所有权唯一化）：ChatNotifier 构造时经 ??= 兜底
+    // 安装裸 decideApproval（chat_provider.dart:56），仅在无人安装时生效、
+    // 不与 Host 抢；此处注册「同款调用 + 成功后防重弹标记」增强版，两条
+    // 链路语义等价（聊天页内决策成功也会顺带打标记，无害）。
     final api = ref.read(apiProvider);
     final inbox = ref.read(approvalInboxProvider.notifier);
     CardContentRenderer.onDecide = (approvalId, actionId, reason, answers) async {
@@ -164,6 +165,13 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   /// sheet 关闭统一收口（决策 pop / 暂不处理 / 手势下滑）：复位弹窗守卫，
   /// 让下一次 provider 驱动的 _orchestrate 能继续编排。
   void _onSheetClosed(String entryKey) {
+    // 归属判定：仅处理当前展示周期的关闭。收敛换卡在同一 post-frame 内
+    // pop 旧 sheet 并弹新卡（_sheetSettled 被新周期重置 false），旧 sheet
+    // 路由 dispose 的迟到 close 若不忽略，会对新头条误发 dismissCurrent
+    // （suppressed=true/exposing=false，队列剩余卡静默停摆），还会复位
+    // 新周期的 _modalOpen 守卫。非本周期关闭一律忽略（各发起方 pop 时
+    // 已自行复位守卫）。
+    if (_showing?.entryKey != entryKey) return;
     // 被动关闭（返回键/下滑/遮罩）≠ 决策收敛：补发 dismissCurrent，
     // 语义等同「暂不处理」（spec §6），防 exposing 泄漏导致旧卡未经
     // 新卡驱动的防抖就立即重弹。决策/拒绝成功路径已置位，跳过。
@@ -172,7 +180,7 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     }
     _sheetSettled = false;
     _modalOpen = false;
-    if (_showing?.entryKey == entryKey) _showing = null;
+    _showing = null;
   }
 
   void _openPermissionSheet(InboxEntry e, Widget header) {
