@@ -23,7 +23,7 @@ import zipfile
 
 MAX_ZIP_BYTES = 20 * 1024 * 1024
 MAX_FILES = 2000
-ALLOWED_PERMISSIONS = {"wanling.api", "wanling.chat.read", "wanling.chat.share", "wanling.nav", "wanling.storage"}
+ALLOWED_PERMISSIONS = {"wanling.api", "wanling.chat.read", "wanling.chat.share", "wanling.nav", "wanling.storage", "wanling.device.motion"}
 APPID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,31}$")
 # 以下与 server validate.go 对齐
 ICON_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
