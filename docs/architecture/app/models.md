@@ -26,3 +26,7 @@ lib/models/ 数据模型。
 ## 小程序 model
 
 - `MiniProgramInfo`（`mini_program_info.dart`，wanling_core）— `GET /api/mini-programs` 响应条目（id/appid/ownerId/name/version/entry/icon/permissions/status/sha256/size），列表页分组（published=公共库）与容器页安装/校验用
+
+## 收件箱 model
+
+- `InboxEntry`（`inbox_entry.dart`，2026-09-08）— 全局审批收件箱队列条目（entryKey/msgId/convId/kind/data，聚合元素多 `elementId`）。`InboxCardKind` 四类：ocPermission / ocQuestion / approvalCard / aggregateElement；entryKey 独立消息=msgId、聚合元素=`msgId:elementId`，是去重与收敛的唯一键。`inbox_parser.dart` 产出、`approvalInboxProvider` 队列消费

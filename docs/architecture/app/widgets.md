@@ -195,3 +195,6 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 ## v1.0.9+ 新增组件
 
 二级会话目录面板(DirectoryPanel/Tile/PickerSheet + directory_utils)、三体状态指示器(ThreeBodyPhysics/Indicator + ShimmerText)、文件浏览套件(FileEntryIcon + DiffPatchViewer,双栏时代的 SplitView/Breadcrumb/FileListAside/FileViewer 等已废弃)、命令面板(SlashHandle + SlashCommandSheet + ModelPickerSheet)、LocalStoreBanner / ConvActionMenu。详见 [chat-extras.md](./chat-extras.md)
+
+## inbox/
+审批收件箱组件（2026-09-08）：`ApprovalInboxHost` 挂 MaterialApp.builder 的常驻弹窗编排层（build 时 postFrame 跑 `_orchestrate`：展示中卡片收敛→pop+snackbar、条件满足→弹头条；`exposing && 队列非空 && 头条会话非当前浏览 && 未 suppressed` 才弹；initState 覆盖注入 `CardContentRenderer.onDecide` 让 ④ approvals 卡决策成功也打 awaiting 防重弹）+ `InboxSourceHeader` 来源条（会话头像/名称 + 进度 n/m + 「暂不处理」）。①②③ 卡复用 core `show*Sheet` 注入 header，④ 经 ContentRendererRegistry 渲染；状态源见 [providers.md](./providers.md#approvalinboxprovider)

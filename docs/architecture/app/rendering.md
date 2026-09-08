@@ -48,6 +48,8 @@
 - **PermissionCardRenderer**（msg_type=permission_card）— `#FFF8F0` pending 暖色卡片 + 底部抽屉 radio 三选项（仅本次/始终允许/拒绝）。`save_rules` 只读展示。终态（resolved）灰阶。用户决策通过 PATCH /api/messages/:id 回传 `permission_reply`。**终态(2026-08-08 起)外包无边框折叠外壳**(对齐折叠组风格):折叠时只显示标题行(图标 + 「权限审批 · label」+ 结果 + 箭头,结果如已批准/已拒绝/会话已结束),展开显示完整原卡(绿/红/灰背景 + 左边框样式不变);折叠展开接入 ToolGroupCard 同构滚动补偿
 - **QuestionCardRenderer**（msg_type=question_card）— TabBar 横向切换题目，radio/checkbox/custom 输入，已答题标记绿色小圆点。单题退化隐藏 TabBar。提交按钮汇总后 PATCH /api/messages/:id 回传 `question_reply`
 
+**回复抽屉可选参数**（2026-09-08，wanling_core）：`showPermissionReplySheet` / `showQuestionReplySheet` 增加可选 `header`（抽屉顶部来源条 widget）与 `onSettled`（决策提交成功回调），聊天页内原调用不传参行为不变；全局审批收件箱 ApprovalInboxHost 注入两参数复用同一抽屉（见 [widgets.md](./widgets.md#inbox)）
+
 **dm_user_agent 气泡宽度**: Agent 过程消息的 `widthRatio = 0.95`（两侧各 12px padding），渲染器不带自带 maxWidth。`BubbleWithTail` 颜色: `isMe ? #597BFF : #FFFFFF`
 
 ## tool_card_renderer（v1.0.10，工具调用统一卡片）
