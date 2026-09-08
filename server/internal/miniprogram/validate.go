@@ -29,6 +29,8 @@ var allowedPermissions = map[string]struct{}{
 	"wanling.chat.share": {},
 	"wanling.nav":        {},
 	"wanling.storage":    {},
+
+	"wanling.device.motion": {},
 }
 
 var collectionNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)

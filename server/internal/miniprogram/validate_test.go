@@ -288,3 +288,14 @@ func TestValidatePackage_StoragePermission(t *testing.T) {
 		t.Fatalf("wanling.storage 应在白名单: %v", err)
 	}
 }
+
+func TestValidatePackage_MotionPermission(t *testing.T) {
+	files := map[string]string{
+		"appid": "test-app", "name": "t", "version": "1",
+		"index.html":    "<html></html>",
+		"manifest.json": `{"appid":"test-app","name":"t","version":1,"permissions":["wanling.api","wanling.device.motion"]}`,
+	}
+	if _, _, err := ValidatePackage(buildZip(t, files), 20<<20); err != nil {
+		t.Fatalf("wanling.device.motion 应在白名单: %v", err)
+	}
+}
