@@ -14,7 +14,10 @@ import 'truncatable_text_block.dart';
 /// 公共入口：被 [PermissionCardRenderer]（独立审批卡渲染）和
 /// `_PendingApprovalChip`（task 卡片下挂的审批缩略条）共用。
 /// sheet widget [_PermissionReplySheet] 保持私有。
-void showPermissionReplySheet(
+///
+/// 返回抽屉关闭 Future（决策 pop / 手势下滑均触发 complete），
+/// 收件箱编排层据此复位弹窗守卫续弹下一条。
+Future<void> showPermissionReplySheet(
   BuildContext context, {
   required String convId,
   required String ocRequestId,
@@ -27,7 +30,7 @@ void showPermissionReplySheet(
   /// 确认（含拒绝）成功后、关抽屉前回调（收件箱用于防重弹标记）。
   VoidCallback? onSettled,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,

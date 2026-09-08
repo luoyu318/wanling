@@ -12,7 +12,10 @@ import 'message_content_renderer.dart';
 /// 公共入口：被 [QuestionCardRenderer]（独立选择题卡渲染）和
 /// `_PendingApprovalChip`（task 卡片下挂的审批缩略条）共用。
 /// sheet widget [_QuestionReplySheet] 保持私有。
-void showQuestionReplySheet(
+///
+/// 返回抽屉关闭 Future（提交/拒绝 pop / 手势下滑均触发 complete），
+/// 收件箱编排层据此复位弹窗守卫续弹下一条。
+Future<void> showQuestionReplySheet(
   BuildContext context, {
   required String convId,
   required String ocRequestId,
@@ -22,7 +25,7 @@ void showQuestionReplySheet(
   /// 提交/拒绝成功后、关抽屉前回调（收件箱用于防重弹标记）。
   VoidCallback? onSettled,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,
