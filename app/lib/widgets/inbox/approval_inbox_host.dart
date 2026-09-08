@@ -89,7 +89,9 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
         !inbox.suppressed &&
         queue.isNotEmpty) {
       final head = queue.first;
-      if (head.convId != activeConvId) {
+      // awaiting（已提交决策等收敛）的头条不重弹，防 MESSAGE_UPDATE 回流前闪现。
+      if (head.convId != activeConvId &&
+          !inbox.awaitingKeys.contains(head.entryKey)) {
         _showing = head;
         _showSheet(head, inbox.queue.indexOf(head) + 1, inbox.queue.length);
       }
@@ -164,8 +166,12 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
           : const <String, dynamic>{},
       save: (e.data['save'] as List?)?.cast<String>() ?? const [],
       header: header,
-      onSettled: () =>
-          ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey),
+      onSettled: () {
+        // 决策成功后 sheet 自行 pop；先复位弹窗守卫，防收敛 UPDATE 在
+        // pop 动画期间触发 _orchestrate 对底层路由的二次 pop。
+        _modalOpen = false;
+        ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey);
+      },
     ).whenComplete(() => _onSheetClosed(e.entryKey)));
   }
 
@@ -180,8 +186,12 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       ocRequestId: e.data['oc_request_id'] as String? ?? '',
       questions: questions,
       header: header,
-      onSettled: () =>
-          ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey),
+      onSettled: () {
+        // 决策成功后 sheet 自行 pop；先复位弹窗守卫，防收敛 UPDATE 在
+        // pop 动画期间触发 _orchestrate 对底层路由的二次 pop。
+        _modalOpen = false;
+        ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey);
+      },
     ).whenComplete(() => _onSheetClosed(e.entryKey)));
   }
 

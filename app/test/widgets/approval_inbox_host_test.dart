@@ -7,6 +7,7 @@ import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/services/api_service.dart';
 
+import 'package:app/providers/approval_inbox_provider.dart';
 import 'package:app/widgets/inbox/approval_inbox_host.dart';
 
 import '../helpers/fake_ws.dart';
@@ -84,5 +85,23 @@ void main() {
     await tester.tap(find.text('暂不处理'));
     await tester.pumpAndSettle();
     expect(find.text('权限审批'), findsNothing); // 抽屉已关
+  });
+
+  testWidgets('已提交决策（awaiting）的头条卡在收敛前不重弹', (tester) async {
+    final container = makeContainer();
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
+    ));
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    // 模拟决策已提交：标记 awaiting（MESSAGE_UPDATE 尚未回流）。
+    container.read(approvalInboxProvider.notifier).markAwaitingConfirm('m1');
+    await tester.pump(const Duration(milliseconds: 350)); // 过防抖
+    await tester.pumpAndSettle();
+
+    expect(find.text('权限审批'), findsNothing); // awaiting 头条不弹
   });
 }
