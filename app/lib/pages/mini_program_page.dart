@@ -41,8 +41,8 @@ import '../widgets/mini_program_overlay.dart';
 import '../services/mini_program_snapshot.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
-/// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
-/// flutter_inappwebview callHandler。
+/// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听) + deviceMotion
+/// 设备运动桥(start/stop 订阅式),底层走 flutter_inappwebview callHandler。
 const _jsBridgeBootstrap = """
 window.wanling = {
   request: function(opts) {
@@ -133,6 +133,40 @@ window.wanling = {
     });
   };
 })();
+
+// —— 设备运动桥(window.wanling.deviceMotion):陀螺仪+加速度计订阅 ——
+// onEvent 为 JS 本地回调不跨桥(函数不可过 callHandler);原生按 hz 推帧,
+// 经 _emitMpMotionEvent 转投最近一次 start 注册的 onEvent,stop 即清空。
+window.wanling.deviceMotion = {
+  _onEvent: null,
+  start: function(opts) {
+    opts = opts || {};
+    window.wanling.deviceMotion._onEvent =
+        typeof opts.onEvent === 'function' ? opts.onEvent : null;
+    return window.flutter_inappwebview
+        .callHandler('wanlingDeviceMotionStart', {hz: opts.hz})
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'deviceMotion start failed');
+        });
+  },
+  stop: function() {
+    window.wanling.deviceMotion._onEvent = null;
+    return window.flutter_inappwebview
+        .callHandler('wanlingDeviceMotionStop')
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'deviceMotion stop failed');
+        });
+  }
+};
+// 由原生 evaluateJavascript 调:无订阅回调/回调抛异常均静默(单消费方)
+window.wanling._emitMpMotionEvent = function(data) {
+  var cb = window.wanling.deviceMotion._onEvent;
+  if (typeof cb === 'function') {
+    try { cb(data); } catch (e) {}
+  }
+};
 """;
 
 /// 测试可见别名:bootstrap 源码包含性断言用(库私有 const 单测不可见)。
