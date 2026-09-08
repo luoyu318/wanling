@@ -17,6 +17,10 @@ void showQuestionReplySheet(
   required String convId,
   required String ocRequestId,
   required List<Map<String, dynamic>> questions,
+  /// 收件箱场景注入的来源条（把手下方、原头部之前）；聊天页内点击不传。
+  Widget? header,
+  /// 提交/拒绝成功后、关抽屉前回调（收件箱用于防重弹标记）。
+  VoidCallback? onSettled,
 }) {
   showModalBottomSheet(
     context: context,
@@ -29,6 +33,8 @@ void showQuestionReplySheet(
       convId: convId,
       ocRequestId: ocRequestId,
       questions: questions,
+      header: header,
+      onSettled: onSettled,
     ),
   );
 }
@@ -320,11 +326,15 @@ class _QuestionReplySheet extends ConsumerStatefulWidget {
   final String convId;
   final String ocRequestId;
   final List<Map<String, dynamic>> questions;
+  final Widget? header;
+  final VoidCallback? onSettled;
 
   const _QuestionReplySheet({
     required this.convId,
     required this.ocRequestId,
     required this.questions,
+    this.header,
+    this.onSettled,
   });
 
   @override
@@ -397,6 +407,11 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+            // 收件箱来源条（可选）：把手之下、原头部之上。
+            if (widget.header != null) ...[
+              widget.header!,
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            ],
             // 头部 + 进度
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -522,6 +537,7 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
         },
       };
       await ref.read(apiProvider).sendMessage(widget.convId, content);
+      widget.onSettled?.call();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {
@@ -547,6 +563,7 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
         },
       };
       await ref.read(apiProvider).sendMessage(widget.convId, content);
+      widget.onSettled?.call();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {
