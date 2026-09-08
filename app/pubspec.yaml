@@ -71,6 +71,9 @@ dependencies:
   # DirectoryTile 选中态目录名首尾连接无限滚动展示
   marquee: ^2.3.0
   flutter_inappwebview: ^6.1.5
+  # 设备运动桥(加速度计/陀螺仪三流订阅);overrides 段同版本钉死是为
+  # wechat_camera_picker 防 7.x(需 Kotlin 2.2),两处版本须同步
+  sensors_plus: ^6.1.1
   # 小程序包本地路径拼接(与 wanling_core 同版本)
   path: ^1.9.0
 

@@ -1,8 +1,6 @@
 import 'dart:async';
 
-// sensors_plus 仅在 pubspec 的 dependency_overrides 声明(压 wechat_camera_picker
-// 间接拉入的 7.x),lint 误报非直接依赖,此处行级豁免
-import 'package:sensors_plus/sensors_plus.dart'; // ignore: depend_on_referenced_packages
+import 'package:sensors_plus/sensors_plus.dart';
 
 /// 设备运动订阅源:封装加速度计/去重力加速度/陀螺仪三流订阅 + 按 hz 节流
 /// 拼包推送。桥(wanlingDeviceMotionStart/Stop)经容器页委托到此,本类不感知

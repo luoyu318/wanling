@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-// sensors_plus 仅在 pubspec 的 dependency_overrides 声明,lint 误报非直接依赖
-import 'package:sensors_plus/sensors_plus.dart'; // ignore: depend_on_referenced_packages
+import 'package:sensors_plus/sensors_plus.dart';
 import 'package:app/services/mini_program_motion.dart';
 
 void main() {
