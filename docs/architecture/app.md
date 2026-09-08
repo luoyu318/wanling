@@ -64,7 +64,7 @@ flowchart TB
 - `lib/services/secure_storage.dart` — TokenVault(flutter_secure_storage 封装,存 access/refresh token + 用户凭证)。详见 [services.md](./app/services.md#secure_storagedart)
 - `lib/services/notification_service.dart` — flutter_local_notifications 封装,后台收消息弹通知 + 智能单例跳转。详见 [services.md](./app/services.md#notification_servicedart)
 - `lib/services/file_download_service.dart` — 聊天文件下载管理器,进度流 + 取消 + fileId 校验(v1.0.6)。详见 [services.md](./app/services.md#file_download_servicedart)
-- `lib/services/mini_program_bridge.dart` — 小程序 JSBridge 门禁(token 不进 JS/权限 fail-fast/`/api/` 路径白名单),`wanling_core` 的 `MiniProgramService` 负责本地包管理(下载/sha256 校验/解压/原子替换)。详见 [services.md](./app/services.md#mini_program_servicedart)
+- `lib/services/mini_program_bridge.dart` — 小程序 JSBridge 门禁(token 不进 JS/权限 fail-fast/`/api/` 路径白名单),含设备运动订阅(`wanling.device.motion` 门禁 + `mini_program_motion.dart` 三流接线源)。`wanling_core` 的 `MiniProgramService` 负责本地包管理(下载/sha256 校验/解压/原子替换)。详见 [services.md](./app/services.md#mini_program_servicedart)
 - `lib/services/mini_program_manager.dart` — 小程序保活管理器(多实例上限 5 + LRU 淘汰 + 前台切换,纯状态)。详见 [services.md](./app/services.md#mini_program_managerdart)
 - `lib/services/mini_program_launcher.dart` — 统一打开入口 + live 壳路由同步(壳在栈=系统返回键最小化)。详见 [services.md](./app/services.md#mini_program_launcherdart)
 

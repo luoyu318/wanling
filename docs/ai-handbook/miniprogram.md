@@ -15,7 +15,7 @@ manifest.json 全字段:
 | version | int | 是 | 正整数,同 appid 单调递增;重传即换版本 |
 | entry | string | 否 | 入口 HTML,默认 `index.html`,必须存在于包内 |
 | icon | string | 否 | 图标**包内相对路径**,扩展名 png/jpg/jpeg/webp,≤256KB;上传时校验存在+魔数(fail fast);列表 DTO 下发为相对 URL `/api/mini-programs/{id}/icon?v={版本}`(无 icon 空串,APP 用首字哈希色块 fallback) |
-| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`,未知值拒绝 |
+| permissions | string[] | 否 | 白名单:`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage` / `wanling.device.motion`,未知值拒绝 |
 | collections | object[] | 否 | 云数据集合声明 `[{name, mode}]`(≤16 个);name `^[a-z0-9_-]{1,32}$` 且 `default` 保留、重名拒;mode ∈ private/shared_read/shared_write;换版本时同名 coll 档位不可变更(400,新增/删除 coll 允许);规则详见 §8 |
 | navigationBar | object | 否 | 导航栏声明:`{style, backgroundColor, foregroundColor}`;style ∈ `default`(缺省,宿主原生 AppBar)/`custom`(隐藏 AppBar 全屏,SafeArea 避让状态栏);颜色 `#RRGGBB`,非法值 400 |
 | minHostVersion | string | 否 | 宿主 APP 最低版本声明,server 当前不校验 |
@@ -75,6 +75,7 @@ private → published ⇄ disabled
 | `wanling.openPage({page, params?})` | wanling.nav | 跳宿主页面白名单:`home`(出栈回消息页)/`miniPrograms`(小程序列表)/`agentDetail`(params.agentId 必填且须 UUID);白名单外/非法参数 rejected |
 | `wanling.getProfile()` | 无(调用式授权) | 返回 `{openid, nickname, avatarUrl}`;授权键 `wanling.profile` 不进 manifest,首次调用弹授权对话框(拒绝不落痕,下次调用重弹),允许后 KVS 落痕;appid 由宿主注入,JS 不可传参 |
 | `wanling.close()` | 无 | 关闭小程序页 |
+| `wanling.deviceMotion.start({hz?, onEvent})` / `.stop()` | wanling.device.motion | 订阅式设备运动流(加速度计/陀螺仪);hz 缺省 10 钳 1-30,数据帧 `{accel:{x,y,z}, userAccel:{x,y,z}, gyro:{x,y,z}}`(m/s² 与 rad/s,三流取最新帧拼包,不做姿态融合);onEvent 为 JS 本地回调不跨桥,start 解析后帧经回调推送,stop 清空回调;重复 start 幂等替换;切后台宿主自动停推回前台恢复。注:Android WebView 引擎自身可能向页面派发 H5 `deviceorientation`/`devicemotion` 事件(引擎行为,宿主无开关可禁、不经权限门禁),官方桥为受门禁管控路径,小程序应统一走官方桥 |
 
 - envelope:原生返回 `{ok: true, data}` / `{ok: false, error}`,JS bootstrap 将 ok 转 resolve(data)/throw Error(error)
 - 权限 fail fast:未声明/未授权直接 reject `permission denied: <perm>`,不静默降级
@@ -87,6 +88,7 @@ private → published ⇄ disabled
 **声明式权限**(`manifest.permissions`,启动弹序列):
 - `wanling.api`:不涉及用户会话数据,manifest 声明即静默生效,无弹窗
 - `wanling.storage`:云数据 KV 读写(见 §8),manifest 声明即静默生效,无弹窗(档位级鉴权在 server 端做)
+- `wanling.device.motion`:设备运动订阅(加速度计/陀螺仪,见 §4),manifest 声明即静默生效,无弹窗(不含用户身份/会话数据,Android 系统层传感器免运行时权限)
 - `wanling.chat.*`(read/share):首次运行逐项弹授权对话框,拒绝 = 该项持续 reject;文案:read「读取当前会话 ID(用于关联你正在看的会话)」/ share「向你选择的好友/群聊分享小程序卡片」
 - `wanling.nav`:跳宿主页面白名单,首次运行弹授权对话框(跳转动作不涉及用户数据读取,但宿主导航属可感知行为需用户知情);拒绝 = 持续 reject
 
