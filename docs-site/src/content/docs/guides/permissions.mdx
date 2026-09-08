@@ -15,9 +15,10 @@ description: 声明式权限与调用式授权的工作方式
 | `wanling.chat.read` | 首次运行弹窗 | 弹窗文案「读取当前会话 ID（用于关联你正在看的会话）」 |
 | `wanling.chat.share` | 首次运行弹窗 | 弹窗文案「向你选择的好友/群聊分享小程序卡片」 |
 | `wanling.nav` | 首次运行弹窗 | 跳转动作不涉及用户数据读取，但宿主导航属可感知行为，需用户知情同意 |
+| `wanling.device.motion` | 声明即静默生效，无弹窗 | 设备运动订阅（加速度计/陀螺仪，不含用户身份与会话数据），声明后即可调用 `wanling.deviceMotion`，详见[JSBridge](/docs/api/bridge/) |
 | `wanling.profile` | 不在 manifest 声明，调用时弹窗 | 首次调用 `wanling.getProfile()` 时弹出，详见下文[调用式授权](#调用式授权getprofile) |
 
-`wanling.chat.read` / `wanling.chat.share` / `wanling.nav` 在小程序**首次运行时逐项弹窗**（允许 / 拒绝），授权结果本地持久化；`wanling.api` 不弹窗，声明即生效。
+`wanling.chat.read` / `wanling.chat.share` / `wanling.nav` 在小程序**首次运行时逐项弹窗**（允许 / 拒绝），授权结果本地持久化；`wanling.api` 与 `wanling.device.motion` 不弹窗，声明即生效。
 
 ## 有效权限公式
 
