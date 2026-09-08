@@ -459,7 +459,15 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
   void _pushMotionFrame(Map<String, dynamic> frame) {
     final controller = _controller;
     if (!mounted || controller == null) return;
-    final json = jsonEncode(frame);
+    final String json;
+    try {
+      json = jsonEncode(frame);
+    } catch (_) {
+      // NaN/Infinity 等不可序列化值会同步抛 JsonUnsupportedObjectError:
+      // 异常帧静默丢弃,对齐 JS 侧 _emitMpMotionEvent 静默语义,
+      // 防沿节流定时器进 zone 丢帧刷噪音
+      return;
+    }
     unawaited(controller
         .evaluateJavascript(source: 'window.wanling._emitMpMotionEvent($json)')
         .catchError((_) {}));
@@ -560,6 +568,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
                     label: '刷新',
                     onTap: () {
                       close();
+                      // reload 重置 JS 上下文(_onEvent 丢失),原生订阅+节流
+                      // 定时器会空转到 dispose:刷新前全量停推,JS 侧重新
+                      // start 才会再订阅
+                      _motion.stop();
                       _controller?.reload();
                     },
                   ),
