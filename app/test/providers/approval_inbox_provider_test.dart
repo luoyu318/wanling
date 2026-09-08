@@ -1,3 +1,7 @@
+// fake_async 是 flutter_test 的传递依赖（不允许为此新增 pubspec 依赖），
+// 仅测试文件使用，ignore 掉 depend_on_referenced_packages 提示。
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/providers/approval_inbox_provider.dart';
 import 'package:wanling_core/models/ws_message.dart';
@@ -75,20 +79,22 @@ void main() {
     expect(c.state.exposing, isTrue);
   });
 
-  test('防抖：连续入队只调度一次 exposing', () async {
-    final ws = FakeWS();
-    final c = ApprovalInboxController(ws);
-    addTearDown(c.dispose);
-    ws.emit(createMsg('m1', 'c1', {'status': 'pending'}));
-    await drain();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    ws.emit(createMsg('m2', 'c1', {'status': 'pending'}));
-    await drain();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    // 距首卡 300ms 但距 m2 仅 150ms：仍在防抖窗口
-    expect(c.state.exposing, isFalse);
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(c.state.exposing, isTrue);
-    expect(c.state.queue, hasLength(2));
+  test('防抖：连续入队只调度一次 exposing（fake_async 假时钟，免真实等待）', () {
+    fakeAsync((async) {
+      final ws = FakeWS();
+      final c = ApprovalInboxController(ws);
+      addTearDown(c.dispose);
+      ws.emit(createMsg('m1', 'c1', {'status': 'pending'}));
+      async.flushMicrotasks(); // FakeWS broadcast 流异步投递，刷微任务入队
+      async.elapse(const Duration(milliseconds: 150));
+      ws.emit(createMsg('m2', 'c1', {'status': 'pending'}));
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 150));
+      // 距首卡 300ms 但距 m2 仅 150ms：仍在防抖窗口
+      expect(c.state.exposing, isFalse);
+      async.elapse(const Duration(milliseconds: 200));
+      expect(c.state.exposing, isTrue);
+      expect(c.state.queue, hasLength(2));
+    });
   });
 }

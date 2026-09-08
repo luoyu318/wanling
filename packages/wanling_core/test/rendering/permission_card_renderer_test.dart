@@ -77,6 +77,41 @@ void main() {
     expect(api.sendMessageCalls, 1);
   });
 
+  testWidgets('showQuestionReplySheet 拒绝成功同样触发 onSettled', (tester) async {
+    final container = ProviderContainer(
+        overrides: [apiProvider.overrideWithValue(api)]);
+    addTearDown(container.dispose);
+    var settled = false;
+
+    await tester.pumpWidget(host((ctx) {
+      return Column(children: [
+        TextButton(
+          onPressed: () => showQuestionReplySheet(
+            ctx,
+            convId: 'c1',
+            ocRequestId: 'oc1',
+            questions: const [
+              {'question': '选一个', 'header': 'Q1', 'options': [
+                {'label': 'A'}, {'label': 'B'},
+              ]},
+            ],
+            onSettled: () => settled = true,
+          ),
+          child: const Text('open'),
+        ),
+      ]);
+    }, container));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // 拒绝不需要先作答，直接触发（收件箱依赖它置 markAwaitingConfirm 防重弹）。
+    await tester.tap(find.text('拒绝'));
+    await tester.pumpAndSettle();
+
+    expect(settled, isTrue);
+    expect(api.sendMessageCalls, 1);
+  });
+
   testWidgets('showPermissionReplySheet header 为 null 时行为不变，确认成功触发 onSettled',
       (tester) async {
     final container = ProviderContainer(

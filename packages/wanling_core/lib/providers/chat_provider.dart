@@ -48,7 +48,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ChatNotifier(this.api, this.ws, this.conversationId, this.agentId, this.currentUserId,
       {this.store, this.currentUser})
       : super(const ChatState()) {
-    CardContentRenderer.onDecide = (approvalId, actionId, reason, answers) {
+    // 回调所有权唯一化（F6 方案 B 收尾）：static onDecide 由首个安装方持有。
+    // APP 端 ApprovalInboxHost.initState 先注入收件箱增强版（带 awaiting 标记），
+    // 此处 ??= 不覆盖；桌面端无 Host 场景由 ??= 兜底安装裸版。旧实现无条件
+    // 覆盖 + dispose 置 null，「访问过聊天页 → 回到收件箱」会把回调清成 null，
+    // ④ 卡决策静默失效（乐观翻转、零 API 调用、无收敛回流）。
+    CardContentRenderer.onDecide ??= (approvalId, actionId, reason, answers) {
       return api.decideApproval(approvalId, actionId,
           reason: reason, answers: answers);
     };
@@ -68,11 +73,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _sessionMetaSub?.cancel();
     _streamSub?.cancel();
     _metaRefreshTimer?.cancel();
-    // F6: 清理 static 回调（方案 B 过渡实现）。
-    // 已知边界：多 ChatNotifier 并存时（如多 ChatPage 叠栈），后构造的覆盖
-    // 先构造的 closure；先构造的 dispose 会把当前 closure 清成 null，
-    // 让存活实例的审批按钮变 no-op。方案 A（实例字段）推迟到 F5 重构。
-    CardContentRenderer.onDecide = null;
+    // 回调所有权唯一化：onDecide 不随 ChatNotifier 生命周期清空，由 Host
+    // （收件箱增强版）或首个安装方持有；多实例并存也不会再互相清空回调。
+    // 旧 F6 过渡实现（dispose 置 null）已移除，见构造函数注释。
     super.dispose();
   }
 

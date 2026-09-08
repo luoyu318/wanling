@@ -38,6 +38,12 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   InboxEntry? _showing;
   bool _modalOpen = false;
 
+  /// 当前 sheet 是否已收敛（决策/拒绝成功，或编排层主动关闭）。
+  /// 被动关闭（返回键/手势下滑/点遮罩）不置位，_onSheetClosed 据此补发
+  /// dismissCurrent——与 spec §6「返回键等同暂不处理」对齐，防 exposing
+  /// 泄漏导致旧卡在新状态变化时未经防抖立即重弹。
+  bool _sheetSettled = false;
+
   @override
   void initState() {
     super.initState();
@@ -53,7 +59,11 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
         final key = _showing?.kind == InboxCardKind.approvalCard
             ? _showing!.entryKey
             : null;
-        if (key != null) inbox.markAwaitingConfirm(key);
+        if (key != null) {
+          inbox.markAwaitingConfirm(key);
+          // ④ 卡决策成功视为已收敛：后续被动关 sheet 不再补 dismiss。
+          _sheetSettled = true;
+        }
       }
       return err;
     };
@@ -100,6 +110,8 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
 
   void _popIfOpen() {
     if (_modalOpen) {
+      // 编排层主动关闭（收敛换卡/暂不处理）视为已收敛，_onSheetClosed 不补 dismiss。
+      _sheetSettled = true;
       Navigator.of(context, rootNavigator: true).pop();
       _modalOpen = false;
     }
@@ -130,6 +142,8 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       onDefer: _defer,
     );
     _modalOpen = true;
+    // 新 sheet 打开前重置收敛标记：本次展示周期的被动关闭才走补 dismiss。
+    _sheetSettled = false;
     switch (e.kind) {
       case InboxCardKind.ocPermission:
         _openPermissionSheet(e, header);
@@ -150,6 +164,13 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   /// sheet 关闭统一收口（决策 pop / 暂不处理 / 手势下滑）：复位弹窗守卫，
   /// 让下一次 provider 驱动的 _orchestrate 能继续编排。
   void _onSheetClosed(String entryKey) {
+    // 被动关闭（返回键/下滑/遮罩）≠ 决策收敛：补发 dismissCurrent，
+    // 语义等同「暂不处理」（spec §6），防 exposing 泄漏导致旧卡未经
+    // 新卡驱动的防抖就立即重弹。决策/拒绝成功路径已置位，跳过。
+    if (!_sheetSettled) {
+      ref.read(approvalInboxProvider.notifier).dismissCurrent();
+    }
+    _sheetSettled = false;
     _modalOpen = false;
     if (_showing?.entryKey == entryKey) _showing = null;
   }
@@ -169,6 +190,7 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       onSettled: () {
         // 决策成功后 sheet 自行 pop；先复位弹窗守卫，防收敛 UPDATE 在
         // pop 动画期间触发 _orchestrate 对底层路由的二次 pop。
+        _sheetSettled = true;
         _modalOpen = false;
         ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey);
       },
@@ -187,8 +209,9 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       questions: questions,
       header: header,
       onSettled: () {
-        // 决策成功后 sheet 自行 pop；先复位弹窗守卫，防收敛 UPDATE 在
+        // 决策/拒绝成功后 sheet 自行 pop；先复位弹窗守卫，防收敛 UPDATE 在
         // pop 动画期间触发 _orchestrate 对底层路由的二次 pop。
+        _sheetSettled = true;
         _modalOpen = false;
         ref.read(approvalInboxProvider.notifier).markAwaitingConfirm(e.entryKey);
       },
