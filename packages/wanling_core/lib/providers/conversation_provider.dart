@@ -37,6 +37,10 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   // 当前打开的 ChatPage convId。该会话收到的 agent 消息不计未读（用户正在看）。
   String? _activeConvId;
 
+  /// 当前正在浏览的会话 ID（null=不在任何聊天页）。
+  /// 供全局审批收件箱（ApprovalInboxHost）判断「头条卡所属会话正被浏览时不弹抽屉」。
+  String? get activeConvId => _activeConvId;
+
   ConversationListNotifier(
     this.api,
     this.ws,

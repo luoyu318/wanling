@@ -1012,4 +1012,15 @@ void main() {
           reason: '非卡片消息编辑不应触发 load()');
     });
   });
+
+  test('setActiveConv 后 activeConvId getter 返回当前会话，退出后为 null', () {
+    final container = makeContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(conversationProvider.notifier);
+    expect(notifier.activeConvId, isNull);
+    notifier.setActiveConv('conv-1');
+    expect(notifier.activeConvId, 'conv-1');
+    notifier.setActiveConv(null);
+    expect(notifier.activeConvId, isNull);
+  });
 }
