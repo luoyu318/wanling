@@ -38,6 +38,7 @@ import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/mini_program_overlay.dart';
+import '../services/mini_program_motion.dart';
 import '../services/mini_program_snapshot.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
@@ -352,7 +353,8 @@ class MiniProgramPage extends ConsumerStatefulWidget {
   ConsumerState<MiniProgramPage> createState() => _MiniProgramPageState();
 }
 
-class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
+class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
+    with WidgetsBindingObserver {
   /// wanlingGetProfile 调用式授权的 KVS 授权痕键(复用 mp_perm 集合语义,
   /// 随 deleteMpPerms 卸载清理)。
   static const _profilePermKey = 'wanling.profile';
@@ -383,6 +385,9 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 云数据推送流订阅(MP_DATA_UPDATE → mpEventFilter → evaluateJavascript)。
   StreamSubscription<WSMessage>? _mpEventSub;
+
+  /// 设备运动订阅源(桥委托接线;dispose stop 退订,切后台 pause 停推)。
+  final _motion = MiniProgramMotionSource();
 
   String get _virtualHost => virtualHostFor(widget.appid, _uid!);
 
@@ -423,6 +428,18 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     } else if (mounted) {
       context.pop();
     }
+  }
+
+  /// 设备运动帧推送:JSON 序列化后 evaluateJavascript 调 JS 侧
+  /// _emitMpMotionEvent。页面销毁/重载中注入可能失败,best-effort 丢弃
+  /// (同 storage 事件推送语义,单回调异常不阻断节流循环)。
+  void _pushMotionFrame(Map<String, dynamic> frame) {
+    final controller = _controller;
+    if (!mounted || controller == null) return;
+    final json = jsonEncode(frame);
+    unawaited(controller
+        .evaluateJavascript(source: 'window.wanling._emitMpMotionEvent($json)')
+        .catchError((_) {}));
   }
 
   /// 胶囊「更多」菜单抽屉:信息头(图标+名称) + 方形圆角功能瓦片(刷新/分享,
@@ -656,6 +673,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         // 容器页接 WS;appid 为 bridge 持有的宿主注入值,JS 不可传参
         onMpSubscribe: (mpAppid, colls) => ws.sendMpSubscribe(mpAppid, colls),
         onMpUnsubscribe: () async => ws.sendMpUnsubscribe(),
+        // 设备运动订阅接线:桥门禁(wanling.device.motion)通过后回调到订阅源,
+        // 节流帧经 _pushMotionFrame 推进 WebView
+        onMotionStart: (hz) => _motion.start(hz, _pushMotionFrame),
+        onMotionStop: () => _motion.stop(),
       );
       // 云数据推送:订阅 MP_DATA_UPDATE 流,过滤本 appid 后转发进 WebView
       // (JS 侧按到达序应用,version 语义见 bootstrap 注释)。
@@ -684,11 +705,29 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 切后台停推/回前台恢复(订阅保留,真正退订只在 dispose)
+    if (state == AppLifecycleState.paused) {
+      _motion.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      _motion.resume();
+    }
+  }
+
+  @override
   void dispose() {
     // 云数据退订闭环:best-effort 发 op=16(连接断开时 send 对 null channel
     // no-op 不抛异常),再取消流订阅防泄漏。
     _ws?.sendMpUnsubscribe();
     _mpEventSub?.cancel();
+    _motion.stop();
+    WidgetsBinding.instance.removeObserver(this);
     unregisterMiniProgramController(widget.appid);
     super.dispose();
   }
@@ -946,6 +985,16 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                 handlerName: 'wanlingStorageUnsubscribe',
                 callback: (args) async =>
                     await _bridge?.handle('wanlingStorageUnsubscribe', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingDeviceMotionStart',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingDeviceMotionStart', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingDeviceMotionStop',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingDeviceMotionStop', args),
               );
               unawaited(_start(info));
             },
