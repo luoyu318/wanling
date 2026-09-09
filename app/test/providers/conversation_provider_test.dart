@@ -6,6 +6,7 @@ import 'package:wanling_core/providers/chat_provider.dart' show wsProvider;
 import 'package:wanling_core/providers/conversation_provider.dart';
 import 'package:wanling_core/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
@@ -1024,14 +1025,51 @@ void main() {
     expect(notifier.activeConvId, isNull);
   });
 
-  test('setActiveConv 广播 state（进出聊天页驱动常驻层重新编排弹窗）', () {
+  test('setActiveConv 广播 state（进出聊天页驱动常驻层重新编排弹窗）', () async {
     final container = makeContainer();
     addTearDown(container.dispose);
     var notified = 0;
     container.listen(conversationProvider, (prev, next) => notified++);
     final base = notified; // 初始 listen 立即回调一次
     container.read(conversationProvider.notifier).setActiveConv('conv-1');
+    // 广播延迟到 microtask（initState/dispose 调用点不允许同步改 state）。
+    await Future<void>.delayed(Duration.zero);
     expect(notified, greaterThan(base),
         reason: 'setActiveConv 必须广播 state，否则常驻弹窗层收不到退出会话信号');
   });
+
+  testWidgets('ChatPage initState 生命周期内调用 setActiveConv 不触发 build 期修改异常',
+      (tester) async {
+    final container = makeContainer();
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const _SetActiveConvInInitState(convId: 'conv-1'),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull,
+        reason: 'setActiveConv 在 initState 内同步改 state 会抛 '
+            '"Tried to modify a provider while the widget tree was building"');
+  });
+}
+
+/// 复刻 ChatPage 的真实调用时机：initState 内调 setActiveConv。
+class _SetActiveConvInInitState extends ConsumerStatefulWidget {
+  final String convId;
+  const _SetActiveConvInInitState({required this.convId});
+  @override
+  ConsumerState<_SetActiveConvInInitState> createState() =>
+      _SetActiveConvInInitStateState();
+}
+
+class _SetActiveConvInInitStateState
+    extends ConsumerState<_SetActiveConvInInitState> {
+  @override
+  void initState() {
+    super.initState();
+    ref.read(conversationProvider.notifier).setActiveConv(widget.convId);
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

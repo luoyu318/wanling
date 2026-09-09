@@ -172,7 +172,13 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
     // 广播一次 state（内容不变的新实例）：activeConvId 不在 state 里，
     // Riverpod 只认 state 实例变化；不广播的话常驻弹窗层（ApprovalInboxHost）
     // 在退出聊天页后收不到信号，「退出会话后恢复可弹」永远不触发。
-    state = [...state];
+    // 调用点在 ChatPage initState/dispose（build 生命周期内），同步改 state
+    // 会抛 "Tried to modify a provider while the widget tree was building"，
+    // 故延迟到 microtask（本帧 build 结束后）。
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      state = [...state];
+    });
     // 同步给 bg-service(经桥接,桌面/测试为 no-op),用于本地通知过滤:
     // 前台且正在看该会话时不弹通知（用户已直接看到）。
     notifyService('setActiveConv', {
