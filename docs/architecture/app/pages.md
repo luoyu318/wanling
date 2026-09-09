@@ -75,7 +75,7 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 ## AboutPage
 
-关于（用 `package_info_plus` 取版本号）。**`SettingsPage` 已移除**（服务器地址配置内页废弃），设置入口在侧滑栏主面板(SidebarProfilePanel)；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
+关于（用 `package_info_plus` 取版本号）。旧 SettingsPage（服务器地址配置内页）已废弃,与上节设置菜单页无关，设置入口在侧滑栏主面板(SidebarProfilePanel)；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
 
 ## ConversationDetailPage
 
