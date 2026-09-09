@@ -109,6 +109,7 @@ void main() {
         overrides: [
           savedLoginsProvider.overrideWith((ref) => notifier),
           authProvider.overrideWith((ref) => authNotifier),
+          sharedPrefsProvider.overrideWithValue(prefs),
         ],
       );
     });
@@ -153,8 +154,9 @@ void main() {
     });
 
     testWidgets('空列表:竖条只有添加按钮 + 主面板菜单仍在', (tester) async {
+      final prefs = await SharedPreferences.getInstance();
       final emptyNotifier = SavedLoginsNotifier(
-        prefs: await SharedPreferences.getInstance(),
+        prefs: prefs,
         storage: SecureStorage(deviceId: 'test-device'),
         onBaseUrlChange: (_) {},
         onLogout: ({bool silent = false}) async {},
@@ -162,7 +164,10 @@ void main() {
         onSwitchingChange: (_) {},
       );
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => emptyNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => emptyNotifier),
+          sharedPrefsProvider.overrideWithValue(prefs),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -197,7 +202,10 @@ void main() {
       await failNotifier.add('http://b', 'u2', 'p2', label: '账号B');
       failNotifier.select(0);
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => failNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => failNotifier),
+          sharedPrefsProvider.overrideWithValue(prefs),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -231,7 +239,10 @@ void main() {
       await slowNotifier.add('http://b', 'u2', 'p2', label: '账号B');
       slowNotifier.select(0);
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => slowNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => slowNotifier),
+          sharedPrefsProvider.overrideWithValue(prefs),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -332,6 +343,28 @@ void main() {
       await pumpSidebar(tester);
       // 版本号显示在关于行 trailing
       expect(find.text('v1.2.3+45'), findsOneWidget);
+    });
+
+    testWidgets('自动弹出审批/问答开关:渲染默认开,整行与开关均可切换并落盘', (tester) async {
+      await pumpSidebar(tester);
+      expect(find.text('自动弹出审批/问答'), findsOneWidget);
+      expect(find.text('关闭后卡片仍在会话内，需进入会话处理'), findsOneWidget);
+      // 默认开(ownerId u1 无存量)
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+
+      // 整行点击(SettingsTile InkWell)切换
+      await tester.ensureVisible(find.text('自动弹出审批/问答'));
+      await tester.tap(find.text('自动弹出审批/问答'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+      // 落盘(u1 key)
+      expect((await SharedPreferences.getInstance())
+          .getBool('inbox_auto_popup_u1'), isFalse);
+
+      // 点开关本体恢复 true
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
     });
   });
 }

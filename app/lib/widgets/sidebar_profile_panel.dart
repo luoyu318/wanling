@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
+import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import '../utils/permission_helper.dart';
 import '../widgets/avatar.dart';
@@ -115,6 +116,24 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 showDivider: false,
                 showChevron: false,
                 onTap: () => context.push('/profile/edit'),
+              ),
+              // 审批/问答抽屉自动弹出开关:纯本地偏好,只拦全局抽屉自动弹,
+              // 卡片仍进消息流与收件箱队列(spec 2026-09-09-inbox-auto-popup-toggle)。
+              SettingsTile(
+                icon: Icons.inbox,
+                iconColor: const Color(0xFF5AC8FA),
+                label: '自动弹出审批/问答',
+                subtitle: '关闭后卡片仍在会话内，需进入会话处理',
+                showDivider: false,
+                showChevron: false,
+                trailing: Switch(
+                  value: ref.watch(inboxPopupPrefProvider),
+                  onChanged: (v) =>
+                      ref.read(inboxPopupPrefProvider.notifier).set(v),
+                ),
+                onTap: () => ref
+                    .read(inboxPopupPrefProvider.notifier)
+                    .set(!ref.read(inboxPopupPrefProvider)),
               ),
               SettingsTile(
                 icon: Icons.notifications,
