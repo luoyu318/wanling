@@ -1,6 +1,6 @@
 # APP Riverpod Providers
 
-状态管理 21 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core) / miniProgramManager(本包 providers/)。
+状态管理 22 个 provider:auth / agentList / conversation / chat / settings / savedLogins / typing / agentSessions / agentTabUnread / navOrder / inboxPopupPref(wanling_core) / agentStatus / fileBrowser / friend / participant / sessionDiff / userSearch / localMessageStore / draft / miniPrograms(connState 定义在 chat_provider 内,非独立文件) / adminMiniPrograms(wanling_core) / miniProgramManager(本包 providers/)。
 
 ## authProvider
 
@@ -89,3 +89,7 @@ pinned agent tab 未读角标（`Provider.family<int, String>` by agentId，wanl
 ## approvalInboxProvider
 
 全局审批收件箱状态机（`StateNotifierProvider<ApprovalInboxController, ApprovalInboxState>`，非 autoDispose 常驻跟随 WS 生命周期）。State 四字段：`queue`（待决策队列，入队序）+ `exposing`（新卡入队后 300ms 防抖置真的「允许弹窗」信号，防瞬时连弹）+ `suppressed`（「暂不处理」后暂停自动弹，新卡入队自动重置）+ `awaitingKeys`（已提交决策、等 MESSAGE_UPDATE 收敛的 entryKey 集，防同卡重弹）。Controller 订阅 `ws.messages` + `ws.messageUpdates`，把消息 content 喂给 `inbox_parser.dart` 纯函数解析（自身不解析、不写任何消息状态），按返回的 added/removed 增量维护 queue 与 awaitingKeys；队列清空即撤 exposing。方法：`dismissCurrent()`（暂不处理，置 suppressed）/ `markAwaitingConfirm(key)`（决策提交成功打标）。消费方仅 `ApprovalInboxHost`（见 [widgets.md](./widgets.md#inbox)）
+
+## inboxPopupPrefProvider
+
+审批/问答抽屉自动弹出开关（`StateNotifierProvider<InboxPopupPrefNotifier, bool>`，wanling_core）。纯本地偏好 SharedPreferences `inbox_auto_popup_{ownerId}` 按 ownerId 隔离，空 ownerId（登出中间态）恒 true 不落盘，ownerId 变化随 authProvider 重建重读。`set` 同值幂等，写失败抛 StateError（fail fast）。语义只管「自动弹」：关闭后卡片照常进收件箱队列与消息流，进会话页仍可处理。消费方 `ApprovalInboxHost`（弹窗守卫）+ `SidebarProfilePanel`（开关项）
