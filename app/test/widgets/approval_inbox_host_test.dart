@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/message.dart' show ChatMessage;
 import 'package:wanling_core/models/unread_info.dart' show UnreadInfo;
@@ -9,6 +10,9 @@ import 'package:wanling_core/models/ws_message.dart';
 import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
 import 'package:wanling_core/providers/chat_provider.dart'
     show ChatNotifier, wsProvider;
+import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart'
+    show sharedPrefsProvider;
 import 'package:wanling_core/rendering/builtin_renderers.dart'
     show registerBuiltinRenderers;
 import 'package:wanling_core/rendering/card_renderer.dart'
@@ -101,10 +105,29 @@ void main() {
     });
   });
 
-  ProviderContainer makeContainer() {
+  /// 默认容器:inboxPopupPrefProvider 走真实实现(注入空 mock prefs;
+  /// 未登录 ownerId 空 → 匿名态恒 true = 现有默认行为)。
+  Future<ProviderContainer> makeContainer() async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
     return ProviderContainer(overrides: [
       apiProvider.overrideWithValue(api),
       wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider.overrideWithValue(prefs),
+    ]);
+  }
+
+  /// 开关行为用例专用:同 [makeContainer],另用真实 pref notifier 覆盖
+  /// inboxPopupPrefProvider(SharedPreferences mock 存量种子,ownerId u1)。
+  Future<ProviderContainer> makeContainerWithPref(bool seed) async {
+    SharedPreferences.setMockInitialValues({'inbox_auto_popup_u1': seed});
+    final prefs = await SharedPreferences.getInstance();
+    return ProviderContainer(overrides: [
+      apiProvider.overrideWithValue(api),
+      wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider.overrideWithValue(prefs),
+      inboxPopupPrefProvider.overrideWith(
+          (ref) => InboxPopupPrefNotifier(prefs: prefs, ownerId: 'u1')),
     ]);
   }
 
@@ -137,7 +160,7 @@ void main() {
       (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -156,7 +179,7 @@ void main() {
   testWidgets('点暂不处理 → 抽屉关闭且不自动续弹', (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -172,7 +195,7 @@ void main() {
   });
 
   testWidgets('已提交决策（awaiting）的头条卡在收敛前不重弹', (tester) async {
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -198,7 +221,7 @@ void main() {
             reason: any(named: 'reason'), answers: any(named: 'answers')))
         .thenAnswer((_) async => null);
 
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -234,7 +257,7 @@ void main() {
       (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -270,7 +293,7 @@ void main() {
   testWidgets('换卡收敛：旧 sheet 迟到 close 不误 suppress 新展示周期', (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -314,7 +337,7 @@ void main() {
       (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     // 复现真实挂载结构：Host 在 MaterialApp.builder 层（Navigator 的外层），
@@ -334,7 +357,7 @@ void main() {
       (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
         (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
-    final container = makeContainer();
+    final container = await makeContainer();
     addTearDown(container.dispose);
 
     await pumpHost(tester, container);
@@ -347,5 +370,29 @@ void main() {
     // 空列表）：来源条不得停留占位「会话 conv-9」，须显示回填后的标题。
     expect(find.text('甲会话'), findsOneWidget);
     expect(find.text('会话 conv-9'), findsNothing);
+  });
+
+  testWidgets('开关关 → 新卡不自动弹且队列保留;重开 → 积压卡弹出', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainerWithPref(false);
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+
+    // 关:不弹
+    expect(find.text('权限审批'), findsNothing);
+    // 队列未丢:卡仍在收件箱
+    expect(container.read(approvalInboxProvider).queue, isNotEmpty);
+
+    // 重开:set 同步置 state → Host rebuild → postFrame 编排 → 积压卡弹出
+    await container.read(inboxPopupPrefProvider.notifier).set(true);
+    await tester.pump(); // rebuild + postFrame 编排
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsOneWidget);
   });
 }

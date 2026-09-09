@@ -10,6 +10,7 @@ import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/providers/auth_provider.dart'
     show apiProvider, authProvider;
 import 'package:wanling_core/providers/conversation_provider.dart';
+import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
 import 'package:wanling_core/rendering/card_renderer.dart'
     show CardContentRenderer;
 import 'package:wanling_core/rendering/message_content_renderer.dart';
@@ -105,13 +106,17 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     // state，触发本层 rebuild → postFrame 重新编排，兑现「退出会话后恢复可弹」。
     ref.watch(conversationProvider);
     final activeConvId = ref.read(conversationProvider.notifier).activeConvId;
+    // 自动弹出开关:watch 建立订阅,重开开关时 rebuild → postFrame 编排,
+    // 积压卡自然弹出;关闭时只拦弹窗,队列照常收集。
+    final autoPopup = ref.watch(inboxPopupPrefProvider);
     // 队列/会话变化驱动弹窗编排。
     WidgetsBinding.instance
-        .addPostFrameCallback((_) => _orchestrate(inbox, activeConvId));
+        .addPostFrameCallback((_) => _orchestrate(inbox, activeConvId, autoPopup));
     return widget.child ?? const SizedBox.shrink();
   }
 
-  void _orchestrate(ApprovalInboxState inbox, String? activeConvId) {
+  void _orchestrate(
+      ApprovalInboxState inbox, String? activeConvId, bool autoPopup) {
     if (!mounted) return;
     final queue = inbox.queue;
     // 1) 正展示的卡已收敛（不在队列）→ 关闭当前 sheet
@@ -124,8 +129,9 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
         showAppSnackBar(context, '该卡片已在其他端处理', type: SnackBarType.info);
       }
     }
-    // 2) 条件满足 → 弹头条
-    if (_showing == null &&
+    // 2) 条件满足 → 弹头条(开关关闭时不自动弹,卡保留在队列)
+    if (autoPopup &&
+        _showing == null &&
         !_modalOpen &&
         inbox.exposing &&
         !inbox.suppressed &&
