@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:wanling_core/models/conversation.dart';
 import 'package:wanling_core/models/message.dart' show ChatMessage;
 import 'package:wanling_core/models/unread_info.dart' show UnreadInfo;
 import 'package:wanling_core/models/ws_message.dart';
@@ -20,6 +21,17 @@ import 'package:app/widgets/inbox/approval_inbox_host.dart';
 import '../helpers/fake_ws.dart';
 
 class _MockApi extends Mock implements ApiService {}
+
+Conversation _conv(String id, String title) => Conversation(
+      id: id,
+      type: 'agent_session',
+      title: title,
+      participants: const [],
+      lastMessageContent: null,
+      lastMessageAt: DateTime(2026),
+      createdAt: DateTime(2026),
+      unreadCount: 0,
+    );
 
 WSMessage _createPerm(String id, String convId) => WSMessage(op: 0, d: {
       'id': id,
@@ -82,6 +94,11 @@ void main() {
     when(() => api.getConversations()).thenAnswer((_) async => []);
     // ④ 卡弹窗渲染 MessageRenderContext 需要 baseUrl（非空 getter 必须 stub）。
     when(() => api.baseUrl).thenReturn('http://test.local');
+    // 收件箱对不在列表 state 的会话（agent_session 被过滤/冷启动）单查回填标题。
+    when(() => api.getConversation(any())).thenAnswer((inv) async {
+      final id = inv.positionalArguments[0] as String;
+      return _conv(id, id == 'conv-9' ? '甲会话' : '乙会话');
+    });
   });
 
   ProviderContainer makeContainer() {
@@ -263,7 +280,7 @@ void main() {
     await tester.pump(); // 入队
     await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
     await tester.pumpAndSettle();
-    expect(find.text('会话 conv-9'), findsOneWidget); // m1 展示中
+    expect(find.text('甲会话'), findsOneWidget); // m1 展示中（标题经 getConversation 回填）
 
     // m1 终态 UPDATE 收回 + 队列还有 m2：编排层同一 post-frame 内
     // pop 旧 sheet（m1）并 _showSheet(m2)，_sheetSettled 被新周期重置 false。
@@ -278,19 +295,19 @@ void main() {
     await tester.pump(); // UPDATE 入队 → 状态变更触发 rebuild
     await tester.pump(); // 编排 post-frame：pop 旧 sheet + push 新 sheet
     await tester.pump(); // 新 sheet 路由 build 出内容
-    expect(find.text('会话 conv-8'), findsOneWidget); // 已换到 m2
+    expect(find.text('乙会话'), findsOneWidget); // 已换到 m2
 
     // pump 越过旧 sheet 路由 dispose 触发 whenComplete 的迟到窗口。
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('会话 conv-9'), findsNothing); // 旧 sheet 已 dispose，迟到 close 已到
+    expect(find.text('甲会话'), findsNothing); // 旧 sheet 已 dispose，迟到 close 已到
 
     // 旧 sheet 的迟到 close 不得归入新周期：新头条不能被补发 dismissCurrent
     // （否则 suppressed=true / exposing=false，队列剩余卡静默停摆）。
     final state = container.read(approvalInboxProvider);
     expect(state.suppressed, isFalse);
     expect(state.exposing, isTrue);
-    expect(find.text('会话 conv-8'), findsOneWidget); // 新头条仍在展示
+    expect(find.text('乙会话'), findsOneWidget); // 新头条仍在展示
   });
 
   testWidgets('builder 层生产形态（Host context 不含 Navigator）也能弹出抽屉',
@@ -312,5 +329,23 @@ void main() {
 
     expect(find.text('权限审批'), findsOneWidget);
     expect(find.text('暂不处理'), findsOneWidget);
+  });
+  testWidgets('不在列表 state 的会话（agent_session）标题经 getConversation 回填上屏',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    // conv-9 是 agent_session（被列表 state 过滤，stub getConversations 返回
+    // 空列表）：来源条不得停留占位「会话 conv-9」，须显示回填后的标题。
+    expect(find.text('甲会话'), findsOneWidget);
+    expect(find.text('会话 conv-9'), findsNothing);
   });
 }

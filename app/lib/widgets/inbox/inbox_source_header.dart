@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:app/widgets/avatar.dart';
@@ -8,6 +9,10 @@ class InboxSourceHeader extends StatelessWidget {
 
   /// 会话显示名（convByIdProvider 查不到时用 convId 前 8 位占位）。
   final String title;
+
+  /// 标题回填监听（agent_session 等不在列表 state 的会话，经
+  /// getConversation 异步单查后刷新名字）；null 时静态展示 [title]。
+  final ValueListenable<String>? titleListenable;
 
   /// 会话头像 URL（可空，Avatar 组件内部降级首字）。
   final String? avatarUrl;
@@ -23,6 +28,7 @@ class InboxSourceHeader extends StatelessWidget {
     super.key,
     required this.convId,
     required this.title,
+    this.titleListenable,
     this.avatarUrl,
     required this.index,
     required this.total,
@@ -31,6 +37,13 @@ class InboxSourceHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 标题行：有回填监听则响应式刷新（异步单查回来后名字上屏）。
+    final Widget titleText = titleListenable == null
+        ? _titleText(title)
+        : ValueListenableBuilder<String>(
+            valueListenable: titleListenable!,
+            builder: (_, name, _) => _titleText(name),
+          );
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 9, 12, 9),
       child: Row(
@@ -42,16 +55,7 @@ class InboxSourceHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF222222),
-                  ),
-                ),
+                titleText,
                 const Text(
                   'Agent 会话',
                   style: TextStyle(fontSize: 10, color: Color(0xFF999999)),
@@ -88,4 +92,15 @@ class InboxSourceHeader extends StatelessWidget {
       ),
     );
   }
+
+  Widget _titleText(String name) => Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF222222),
+        ),
+      );
 }

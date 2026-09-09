@@ -45,6 +45,24 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   InboxEntry? _showing;
   bool _modalOpen = false;
 
+  /// 不在列表 state 的会话（agent_session 被 ListForUser 过滤 / 冷启动）
+  /// 的标题回填：convId → 异步单查 getConversation 后更新的 notifier。
+  /// 按 convId 缓存复用（同一会话再次弹卡直接有值，不再发请求）。
+  final Map<String, ValueNotifier<String>> _titleNotifiers = {};
+
+  ValueNotifier<String> _titleNotifierFor(String convId, String initial) =>
+      _titleNotifiers.putIfAbsent(convId, () => ValueNotifier<String>(initial));
+
+  /// 单查回填会话标题；失败保留占位（来源条显示不受影响）。
+  /// notifier 由 [_titleNotifiers] 永久缓存，随 Host 存活，无 dispose 竞态。
+  void _fetchTitleIfMissing(String convId, ValueNotifier<String> notifier) {
+    final api = ref.read(apiProvider);
+    // ignore: discarded_futures
+    api.getConversation(convId).then((conv) {
+      notifier.value = conv.displayName;
+    }).catchError((Object _) {});
+  }
+
   /// 当前 sheet 是否已收敛（决策/拒绝成功，或编排层主动关闭）。
   /// 被动关闭（返回键/手势下滑/点遮罩）不置位，_onSheetClosed 据此补发
   /// dismissCurrent——与 spec §6「返回键等同暂不处理」对齐，防 exposing
@@ -150,17 +168,21 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       return;
     }
     final conv = ref.read(convByIdProvider(e.convId));
-    if (conv == null) {
-      // 会话不在本地列表（冷启动直接收到他卡）：触发一次拉取补齐标题，
-      // 失败仅影响来源条显示占位名，不影响决策主流程（debug log 即可）。
-      // ignore: discarded_futures
-      ref.read(conversationProvider.notifier).load();
-    }
     // 占位名取 convId 前 8 位；不足 8 位时全量使用（防 RangeError）。
     final shortId = e.convId.length > 8 ? e.convId.substring(0, 8) : e.convId;
+    final placeholder = '会话 $shortId';
+    // 会话不在列表 state（agent_session 被过滤 / 冷启动未拉全）：
+    // 标题走回填 notifier，getConversation 单查返回后来源条实时刷新。
+    final needsFetch = conv == null;
+    final title = conv?.displayName ?? placeholder;
+    final titleNotifier = needsFetch ? _titleNotifierFor(e.convId, placeholder) : null;
+    if (needsFetch) {
+      _fetchTitleIfMissing(e.convId, titleNotifier!);
+    }
     final header = InboxSourceHeader(
       convId: e.convId,
-      title: conv?.displayName ?? '会话 $shortId',
+      title: title,
+      titleListenable: titleNotifier,
       avatarUrl: conv?.displayAvatarUrl,
       index: index,
       total: total,
