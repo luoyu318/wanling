@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/models/inbox_entry.dart';
 import 'package:app/providers/approval_inbox_provider.dart';
+import 'package:app/router.dart' show navigatorKey;
 import 'package:wanling_core/models/msg_type.dart';
 import 'package:wanling_core/providers/auth_provider.dart'
     show apiProvider, authProvider;
@@ -27,7 +28,13 @@ import 'inbox_source_header.dart';
 /// ④ approvals 卡经 ContentRendererRegistry 渲染。
 class ApprovalInboxHost extends ConsumerStatefulWidget {
   final Widget? child;
-  const ApprovalInboxHost({super.key, this.child});
+
+  /// 弹窗用的根 Navigator。Host 挂在 MaterialApp.builder 层，其 context
+  /// 的祖先链不含 Navigator（showModalBottomSheet 向上查找必抛
+  /// "does not include a Navigator"），必须显式持有根 key。
+  /// 默认取全局 router key；测试注入私有 key。
+  final GlobalKey<NavigatorState>? navigatorKey;
+  const ApprovalInboxHost({super.key, this.child, this.navigatorKey});
 
   @override
   ConsumerState<ApprovalInboxHost> createState() => _ApprovalInboxHostState();
@@ -70,10 +77,16 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     };
   }
 
+  /// 根 Navigator（弹窗/pop 统一走它；见 [ApprovalInboxHost.navigatorKey]）。
+  GlobalKey<NavigatorState> get _navKey => widget.navigatorKey ?? navigatorKey;
+
   @override
   Widget build(BuildContext context) {
     final inbox = ref.watch(approvalInboxProvider);
-    final activeConvId = ref.watch(conversationProvider.notifier).activeConvId;
+    // watch state（而非 notifier 对象）：进出聊天页时 setActiveConv 广播
+    // state，触发本层 rebuild → postFrame 重新编排，兑现「退出会话后恢复可弹」。
+    ref.watch(conversationProvider);
+    final activeConvId = ref.read(conversationProvider.notifier).activeConvId;
     // 队列/会话变化驱动弹窗编排。
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _orchestrate(inbox, activeConvId));
@@ -113,7 +126,7 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     if (_modalOpen) {
       // 编排层主动关闭（收敛换卡/暂不处理）视为已收敛，_onSheetClosed 不补 dismiss。
       _sheetSettled = true;
-      Navigator.of(context, rootNavigator: true).pop();
+      _navKey.currentState?.pop();
       _modalOpen = false;
     }
   }
@@ -125,6 +138,17 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
   }
 
   void _showSheet(InboxEntry e, int index, int total) {
+    // builder 层 context 不含 Navigator，弹窗必须用根 Navigator 的 context。
+    final navCtx = _navKey.currentContext;
+    if (navCtx == null) {
+      // 根 Navigator 未挂载（理论不可达，app 启动完成才有消息流）：fail fast
+      // 复位守卫让下次编排重试，卡保留在队列。
+      assert(false, 'ApprovalInboxHost: 根 Navigator 未挂载，无法弹出收件箱');
+      _showing = null;
+      _modalOpen = false;
+      _sheetSettled = false;
+      return;
+    }
     final conv = ref.read(convByIdProvider(e.convId));
     if (conv == null) {
       // 会话不在本地列表（冷启动直接收到他卡）：触发一次拉取补齐标题，
@@ -147,18 +171,18 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     _sheetSettled = false;
     switch (e.kind) {
       case InboxCardKind.ocPermission:
-        _openPermissionSheet(e, header);
+        _openPermissionSheet(navCtx, e, header);
       case InboxCardKind.ocQuestion:
       case InboxCardKind.aggregateElement:
         // 解析器不区分聚合元素的 permission/question 形态，按载荷分派：
         // 带 questions 列表 → 问答回复抽屉；否则按权限审批抽屉处理。
         if (e.kind == InboxCardKind.ocQuestion || e.data['questions'] is List) {
-          _openQuestionSheet(e, header);
+          _openQuestionSheet(navCtx, e, header);
         } else {
-          _openPermissionSheet(e, header);
+          _openPermissionSheet(navCtx, e, header);
         }
       case InboxCardKind.approvalCard:
-        _openApprovalCardSheet(e, header);
+        _openApprovalCardSheet(navCtx, e, header);
     }
   }
 
@@ -183,9 +207,10 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     _showing = null;
   }
 
-  void _openPermissionSheet(InboxEntry e, Widget header) {
+  void _openPermissionSheet(
+      BuildContext navCtx, InboxEntry e, Widget header) {
     unawaited(showPermissionReplySheet(
-      context,
+      navCtx,
       convId: e.convId,
       ocRequestId: e.data['oc_request_id'] as String? ?? '',
       action: e.data['action'] as String? ?? '',
@@ -205,13 +230,14 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     ).whenComplete(() => _onSheetClosed(e.entryKey)));
   }
 
-  void _openQuestionSheet(InboxEntry e, Widget header) {
+  void _openQuestionSheet(
+      BuildContext navCtx, InboxEntry e, Widget header) {
     final questions = (e.data['questions'] as List?)
             ?.map((x) => Map<String, dynamic>.from(x as Map))
             .toList() ??
         const <Map<String, dynamic>>[];
     unawaited(showQuestionReplySheet(
-      context,
+      navCtx,
       convId: e.convId,
       ocRequestId: e.data['oc_request_id'] as String? ?? '',
       questions: questions,
@@ -226,10 +252,11 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
     ).whenComplete(() => _onSheetClosed(e.entryKey)));
   }
 
-  void _openApprovalCardSheet(InboxEntry e, Widget header) {
+  void _openApprovalCardSheet(
+      BuildContext navCtx, InboxEntry e, Widget header) {
     final api = ref.read(apiProvider);
     final auth = ref.read(authProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark = Theme.of(navCtx).brightness == Brightness.dark;
     final rc = MessageRenderContext(
       isMe: false,
       baseUrl: api.baseUrl,
@@ -239,7 +266,7 @@ class _ApprovalInboxHostState extends ConsumerState<ApprovalInboxHost> {
       messageId: e.msgId,
     );
     unawaited(showModalBottomSheet<void>(
-      context: context,
+      context: navCtx,
       useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.white,

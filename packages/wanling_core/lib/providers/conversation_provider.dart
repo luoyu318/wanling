@@ -169,8 +169,12 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   /// 前台且正在看该会话时不弹通知（用户已直接看到）。
   void setActiveConv(String? convId) {
     _activeConvId = convId;
+    // 广播一次 state（内容不变的新实例）：activeConvId 不在 state 里，
+    // Riverpod 只认 state 实例变化；不广播的话常驻弹窗层（ApprovalInboxHost）
+    // 在退出聊天页后收不到信号，「退出会话后恢复可弹」永远不触发。
+    state = [...state];
     // 同步给 bg-service(经桥接,桌面/测试为 no-op),用于本地通知过滤:
-    // 前台且正在看该会话时不弹通知(用户已直接看到)。
+    // 前台且正在看该会话时不弹通知（用户已直接看到）。
     notifyService('setActiveConv', {
       'conv_id': convId ?? '',
     });

@@ -91,6 +91,31 @@ void main() {
     ]);
   }
 
+  /// 弹窗走根 Navigator（Host 挂 builder 层时其 context 不含 Navigator）。
+  /// 每个用例私有 key：MaterialApp 与 Host 必须挂同一个。
+  Future<void> pumpHost(WidgetTester tester, ProviderContainer container,
+      {bool asBuilderLayer = false}) async {
+    final navKey = GlobalKey<NavigatorState>();
+    final host = ApprovalInboxHost(
+      navigatorKey: navKey,
+      child: const Scaffold(),
+    );
+    final app = asBuilderLayer
+        ? MaterialApp(
+            navigatorKey: navKey,
+            home: const Scaffold(),
+            builder: (context, child) => ApprovalInboxHost(
+              navigatorKey: navKey,
+              child: child ?? const SizedBox.shrink(),
+            ),
+          )
+        : MaterialApp(navigatorKey: navKey, home: host);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: app,
+    ));
+  }
+
   testWidgets('队列非空且非当前会话 → 自动弹权限审批抽屉，含来源条与暂不处理',
       (tester) async {
     when(() => api.sendMessage(any(), any())).thenAnswer(
@@ -98,10 +123,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
     // controller 随 Host 首帧构建即完成订阅，直接注入新卡。
     // FakeWS 是 broadcast 流异步投递，emit 后 pump 刷 microtask 才入队。
     ws.emit(_createPerm('m1', 'conv-9'));
@@ -120,10 +142,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
     ws.emit(_createPerm('m1', 'conv-9'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
@@ -139,10 +158,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
     ws.emit(_createPerm('m1', 'conv-9'));
     await tester.pump(); // 入队
     // 模拟决策已提交：标记 awaiting（MESSAGE_UPDATE 尚未回流）。
@@ -168,10 +184,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
 
     // 模拟访问过聊天页：ChatNotifier 构造 → dispose。
     // 旧实现 dispose 把 static onDecide 置 null，④ 卡决策随后静默失效
@@ -207,10 +220,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
     ws.emit(_createPerm('m1', 'conv-9'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
@@ -246,10 +256,7 @@ void main() {
     final container = makeContainer();
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: ApprovalInboxHost(child: Scaffold())),
-    ));
+    await pumpHost(tester, container);
     // 两张卡同批入队，头条 m1 先弹，m2 在队列等待换卡。
     ws.emit(_createPerm('m1', 'conv-9'));
     ws.emit(_createPerm('m2', 'conv-8'));
@@ -284,5 +291,26 @@ void main() {
     expect(state.suppressed, isFalse);
     expect(state.exposing, isTrue);
     expect(find.text('会话 conv-8'), findsOneWidget); // 新头条仍在展示
+  });
+
+  testWidgets('builder 层生产形态（Host context 不含 Navigator）也能弹出抽屉',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = makeContainer();
+    addTearDown(container.dispose);
+
+    // 复现真实挂载结构：Host 在 MaterialApp.builder 层（Navigator 的外层），
+    // 弹窗必须经注入的根 navigatorKey，否则抛
+    // "Navigator operation requested with a context that does not include a
+    // Navigator"（真机回归：抽屉静默不弹）。
+    await pumpHost(tester, container, asBuilderLayer: true);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.text('权限审批'), findsOneWidget);
+    expect(find.text('暂不处理'), findsOneWidget);
   });
 }

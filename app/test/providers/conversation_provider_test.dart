@@ -1023,4 +1023,15 @@ void main() {
     notifier.setActiveConv(null);
     expect(notifier.activeConvId, isNull);
   });
+
+  test('setActiveConv 广播 state（进出聊天页驱动常驻层重新编排弹窗）', () {
+    final container = makeContainer();
+    addTearDown(container.dispose);
+    var notified = 0;
+    container.listen(conversationProvider, (prev, next) => notified++);
+    final base = notified; // 初始 listen 立即回调一次
+    container.read(conversationProvider.notifier).setActiveConv('conv-1');
+    expect(notified, greaterThan(base),
+        reason: 'setActiveConv 必须广播 state，否则常驻弹窗层收不到退出会话信号');
+  });
 }
