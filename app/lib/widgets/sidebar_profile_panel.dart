@@ -107,7 +107,7 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 ),
               ),
               const SizedBox(height: 4),
-              // —— 菜单区(原 ProfilePage 设置项):彩色图标区分功能,无分割线无箭头 ——
+              // —— 菜单区:彩色图标区分功能,无分割线无箭头 ——
               SettingsTile(
                 icon: Icons.widgets_outlined,
                 iconColor: AppColors.accentGreen,

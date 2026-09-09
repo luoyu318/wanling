@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
+import 'package:wanling_core/theme/app_colors.dart';
 
 import '../utils/permission_helper.dart';
 import '../widgets/settings_group.dart';
@@ -103,7 +104,7 @@ class _GroupLabel extends StatelessWidget {
         style: const TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w400,
-          color: Color(0xFF999999),
+          color: AppColors.textSecondary,
         ),
       ),
     );

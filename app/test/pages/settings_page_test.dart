@@ -1,7 +1,8 @@
 // SettingsPage 测试:分组渲染/四项文案/开关切换落盘。
 // harness 照 account_sidebar_test:mock prefs + authProvider(u1) +
 // sharedPrefsProvider 注入;本页无 package_info 依赖(版本号在「关于」)。
-// 导航项不做 tap 断言(裸 MaterialApp 无 GoRouter scope,路由跳转由 e2e 覆盖)。
+// 导航项不做 tap 断言(裸 MaterialApp 无 GoRouter scope),导航跳转未做
+// 自动化覆盖,真机验收兜底。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

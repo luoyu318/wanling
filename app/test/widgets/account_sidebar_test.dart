@@ -182,6 +182,9 @@ void main() {
       expect(find.text('添加'), findsOneWidget);
       expect(find.byType(SidebarProfilePanel), findsOneWidget);
       expect(find.text('编辑资料'), findsNothing); // 已迁设置页
+      expect(find.text('通知与后台'), findsNothing);
+      expect(find.text('修改密码'), findsNothing);
+      expect(find.text('自动弹出审批/问答'), findsNothing);
       expect(find.text('设置'), findsOneWidget);
       expect(find.text('退出登录'), findsOneWidget);
     });
