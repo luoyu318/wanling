@@ -69,9 +69,13 @@ Agent tab，紧凑列表（行点击 → 聊天；头像点击 → 详情）
 
 **文本文件全屏预览页**(v1.0.6)。FileContentRenderer 点击 txt/md/csv 文件时 push 此页,通过 `GET /api/files/:id` 下载字节流后 UTF-8 解码(`allowMalformed: true` 防非法字节崩) → `SelectableText` 渲染(monospace + 1.5 行高)。大文件 >512KB 截断前 512KB,末尾灰色斜体提示"文件较大,仅预览前 512KB"。AppBar 显示文件名
 
+## SettingsPage
+
+**设置页**（路由 `/settings`，侧滑栏「设置」入口）。静态菜单页两组：账号（编辑资料 `/profile/edit`、修改密码 `/change-password`）+ 通知与偏好（通知与后台跳系统设置 `PermissionHelper.openAppNotificationSettings`、自动弹出审批/问答开关消费 `inboxPopupPrefProvider`，见 [providers.md](./providers.md#inboxpopupprefprovider)）。菜单自侧滑栏迁入（spec 2026-09-09-app-settings-page-design），侧滑栏头部点击仍直达编辑资料
+
 ## AboutPage
 
-关于（用 `package_info_plus` 取版本号）。**`SettingsPage` 已移除**（服务器地址配置内页废弃），设置入口在侧滑栏主面板(SidebarProfilePanel)；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
+关于（用 `package_info_plus` 取版本号）。旧 SettingsPage（服务器地址配置内页）已废弃,与上节设置菜单页无关，设置入口在侧滑栏主面板(SidebarProfilePanel)；服务器地址现在由「切换账号」流程管理（见 `savedLoginsProvider.switchTo`，切换时按账号保存的 baseUrl 同步到 `settingsProvider`）。`settingsProvider`（baseUrl）仍被 main/auth/chat/avatar 多处引用，未删
 
 ## ConversationDetailPage
 

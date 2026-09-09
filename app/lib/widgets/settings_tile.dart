@@ -15,6 +15,7 @@ class SettingsTile extends StatefulWidget {
   final Color? iconColor;
   final bool showDivider;
   final bool showChevron;
+  final String? subtitle;
 
   const SettingsTile({
     super.key,
@@ -26,6 +27,7 @@ class SettingsTile extends StatefulWidget {
     this.iconColor,
     this.showDivider = true,
     this.showChevron = true,
+    this.subtitle,
   });
 
   @override
@@ -95,13 +97,30 @@ class _SettingsTileState extends State<SettingsTile> {
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Text(
-                      widget.label,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w300,
-                        color: widget.labelColor ?? const Color(0xFF333333),
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.label,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w300,
+                            color: widget.labelColor ?? const Color(0xFF333333),
+                          ),
+                        ),
+                        if (widget.subtitle != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.subtitle!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w300,
+                              color: Color(0xFF999999),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),

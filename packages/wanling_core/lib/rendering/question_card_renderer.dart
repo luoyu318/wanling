@@ -12,13 +12,20 @@ import 'message_content_renderer.dart';
 /// 公共入口：被 [QuestionCardRenderer]（独立选择题卡渲染）和
 /// `_PendingApprovalChip`（task 卡片下挂的审批缩略条）共用。
 /// sheet widget [_QuestionReplySheet] 保持私有。
-void showQuestionReplySheet(
+///
+/// 返回抽屉关闭 Future（提交/拒绝 pop / 手势下滑均触发 complete），
+/// 收件箱编排层据此复位弹窗守卫续弹下一条。
+Future<void> showQuestionReplySheet(
   BuildContext context, {
   required String convId,
   required String ocRequestId,
   required List<Map<String, dynamic>> questions,
+  /// 收件箱场景注入的来源条（把手下方、原头部之前）；聊天页内点击不传。
+  Widget? header,
+  /// 提交/拒绝成功后、关抽屉前回调（收件箱用于防重弹标记）。
+  VoidCallback? onSettled,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,
@@ -29,6 +36,8 @@ void showQuestionReplySheet(
       convId: convId,
       ocRequestId: ocRequestId,
       questions: questions,
+      header: header,
+      onSettled: onSettled,
     ),
   );
 }
@@ -320,11 +329,15 @@ class _QuestionReplySheet extends ConsumerStatefulWidget {
   final String convId;
   final String ocRequestId;
   final List<Map<String, dynamic>> questions;
+  final Widget? header;
+  final VoidCallback? onSettled;
 
   const _QuestionReplySheet({
     required this.convId,
     required this.ocRequestId,
     required this.questions,
+    this.header,
+    this.onSettled,
   });
 
   @override
@@ -397,6 +410,11 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+            // 收件箱来源条（可选）：把手之下、原头部之上。
+            if (widget.header != null) ...[
+              widget.header!,
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            ],
             // 头部 + 进度
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -522,6 +540,7 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
         },
       };
       await ref.read(apiProvider).sendMessage(widget.convId, content);
+      widget.onSettled?.call();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {
@@ -547,6 +566,7 @@ class _QuestionReplySheetState extends ConsumerState<_QuestionReplySheet>
         },
       };
       await ref.read(apiProvider).sendMessage(widget.convId, content);
+      widget.onSettled?.call();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {

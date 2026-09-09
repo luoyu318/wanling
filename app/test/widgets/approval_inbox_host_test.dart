@@ -1,0 +1,435 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wanling_core/models/conversation.dart';
+import 'package:wanling_core/models/message.dart' show ChatMessage;
+import 'package:wanling_core/models/unread_info.dart' show UnreadInfo;
+import 'package:wanling_core/models/ws_message.dart';
+import 'package:wanling_core/providers/auth_provider.dart' show apiProvider;
+import 'package:wanling_core/providers/chat_provider.dart'
+    show ChatNotifier, wsProvider;
+import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
+import 'package:wanling_core/providers/saved_logins_provider.dart'
+    show sharedPrefsProvider;
+import 'package:wanling_core/rendering/builtin_renderers.dart'
+    show registerBuiltinRenderers;
+import 'package:wanling_core/rendering/card_renderer.dart'
+    show CardContentRenderer;
+import 'package:wanling_core/services/api_service.dart';
+
+import 'package:app/providers/approval_inbox_provider.dart';
+import 'package:app/widgets/inbox/approval_inbox_host.dart';
+
+import '../helpers/fake_ws.dart';
+
+class _MockApi extends Mock implements ApiService {}
+
+Conversation _conv(String id, String title) => Conversation(
+      id: id,
+      type: 'agent_session',
+      title: title,
+      participants: const [],
+      lastMessageContent: null,
+      lastMessageAt: DateTime(2026),
+      createdAt: DateTime(2026),
+      unreadCount: 0,
+    );
+
+WSMessage _createPerm(String id, String convId) => WSMessage(op: 0, d: {
+      'id': id,
+      'conversation_id': convId,
+      'content': {
+        'msg_type': 'permission_card',
+        'data': {'status': 'pending', 'oc_request_id': 'oc1', 'action': 'bash'},
+      },
+    });
+
+/// ④ approvals 卡消息（msg_type=card， hermes command 形态，含可点按钮）。
+WSMessage _createApprovalCard(String id, String convId) =>
+    WSMessage(op: 0, d: {
+      'id': id,
+      'conversation_id': convId,
+      'content': {
+        'msg_type': 'card',
+        'data': {
+          'card_type': 'command',
+          'approval_id': 'ap-c1',
+          'title': '执行命令',
+          'preview': 'ls -la',
+          'state': 'pending',
+          'expires_at': DateTime.now()
+              .add(const Duration(hours: 1))
+              .toUtc()
+              .toIso8601String(),
+          'actions': [
+            {
+              'id': 'allow_once',
+              'label': '允许一次',
+              'icon': 'check',
+              'style': 'primary',
+            },
+            {
+              'id': 'deny',
+              'label': '拒绝',
+              'icon': 'x',
+              'style': 'danger',
+            },
+          ],
+        },
+      },
+    });
+
+void main() {
+  late _MockApi api;
+  late FakeWS ws;
+
+  setUp(() {
+    api = _MockApi();
+    ws = FakeWS();
+    registerFallbackValue(<String, dynamic>{});
+    // static onDecide 是进程级状态，先清掉防用例间串扰（Host initState 会重装）。
+    CardContentRenderer.onDecide = null;
+    // ④ 卡经 ContentRendererRegistry 渲染，内置注册表需显式注册。
+    registerBuiltinRenderers();
+    // Host 弹窗时 convByIdProvider 查不到会话会 fire-and-forget 触发
+    // conversationProvider.load()，stub 空列表避免未 stub 调用报错刷屏。
+    when(() => api.getConversations()).thenAnswer((_) async => []);
+    // ④ 卡弹窗渲染 MessageRenderContext 需要 baseUrl（非空 getter 必须 stub）。
+    when(() => api.baseUrl).thenReturn('http://test.local');
+    // 收件箱对不在列表 state 的会话（agent_session 被过滤/冷启动）单查回填标题。
+    when(() => api.getConversation(any())).thenAnswer((inv) async {
+      final id = inv.positionalArguments[0] as String;
+      return _conv(id, id == 'conv-9' ? '甲会话' : '乙会话');
+    });
+  });
+
+  /// 默认容器:inboxPopupPrefProvider 走真实实现(注入空 mock prefs;
+  /// 未登录 ownerId 空 → 匿名态恒 true = 现有默认行为)。
+  Future<ProviderContainer> makeContainer() async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    return ProviderContainer(overrides: [
+      apiProvider.overrideWithValue(api),
+      wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider.overrideWithValue(prefs),
+    ]);
+  }
+
+  /// 开关行为用例专用:同 [makeContainer],另用真实 pref notifier 覆盖
+  /// inboxPopupPrefProvider(SharedPreferences mock 存量种子,ownerId u1)。
+  Future<ProviderContainer> makeContainerWithPref(bool seed) async {
+    SharedPreferences.setMockInitialValues({'inbox_auto_popup_u1': seed});
+    final prefs = await SharedPreferences.getInstance();
+    return ProviderContainer(overrides: [
+      apiProvider.overrideWithValue(api),
+      wsProvider.overrideWithValue(ws),
+      sharedPrefsProvider.overrideWithValue(prefs),
+      inboxPopupPrefProvider.overrideWith(
+          (ref) => InboxPopupPrefNotifier(prefs: prefs, ownerId: 'u1')),
+    ]);
+  }
+
+  /// 弹窗走根 Navigator（Host 挂 builder 层时其 context 不含 Navigator）。
+  /// 每个用例私有 key：MaterialApp 与 Host 必须挂同一个。
+  Future<void> pumpHost(WidgetTester tester, ProviderContainer container,
+      {bool asBuilderLayer = false}) async {
+    final navKey = GlobalKey<NavigatorState>();
+    final host = ApprovalInboxHost(
+      navigatorKey: navKey,
+      child: const Scaffold(),
+    );
+    final app = asBuilderLayer
+        ? MaterialApp(
+            navigatorKey: navKey,
+            home: const Scaffold(),
+            builder: (context, child) => ApprovalInboxHost(
+              navigatorKey: navKey,
+              child: child ?? const SizedBox.shrink(),
+            ),
+          )
+        : MaterialApp(navigatorKey: navKey, home: host);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: app,
+    ));
+  }
+
+  testWidgets('队列非空且非当前会话 → 自动弹权限审批抽屉，含来源条与暂不处理',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    // controller 随 Host 首帧构建即完成订阅，直接注入新卡。
+    // FakeWS 是 broadcast 流异步投递，emit 后 pump 刷 microtask 才入队。
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle(); // 抽屉进出场动画
+
+    expect(find.text('权限审批'), findsOneWidget);
+    expect(find.text('暂不处理'), findsOneWidget);
+    expect(find.text('1 / 1'), findsOneWidget);
+  });
+
+  testWidgets('点暂不处理 → 抽屉关闭且不自动续弹', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsOneWidget);
+
+    await tester.tap(find.text('暂不处理'));
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsNothing); // 抽屉已关
+  });
+
+  testWidgets('已提交决策（awaiting）的头条卡在收敛前不重弹', (tester) async {
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    // 模拟决策已提交：标记 awaiting（MESSAGE_UPDATE 尚未回流）。
+    container.read(approvalInboxProvider.notifier).markAwaitingConfirm('m1');
+    await tester.pump(const Duration(milliseconds: 350)); // 过防抖
+    await tester.pumpAndSettle();
+
+    expect(find.text('权限审批'), findsNothing); // awaiting 头条不弹
+  });
+
+  testWidgets('C1 哨兵：访问过聊天页（ChatNotifier 构造+dispose）后 ④ 卡决策仍打到 API',
+      (tester) async {
+    // ChatNotifier._initialize 异步尾巴的 stub（镜像 chat_provider_test setUp）。
+    when(() => api.getUnreadInfo(any()))
+        .thenAnswer((_) async => const UnreadInfo(unreadCount: 0));
+    when(() => api.getMessagesBefore(any(),
+            limit: any(named: 'limit'), before: any(named: 'before')))
+        .thenAnswer((_) async => <ChatMessage>[]);
+    when(() => api.decideApproval(any(), any(),
+            reason: any(named: 'reason'), answers: any(named: 'answers')))
+        .thenAnswer((_) async => null);
+
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+
+    // 模拟访问过聊天页：ChatNotifier 构造 → dispose。
+    // 旧实现 dispose 把 static onDecide 置 null，④ 卡决策随后静默失效
+    // （乐观翻转、零 API 调用、无收敛回流）。
+    // 注意 widget 测试是 fake 时钟：等异步尾巴只能 pump，不能 Future.delayed。
+    final notifier = ChatNotifier(api, ws, 'conv-c1', null, 'user-1');
+    await tester.pump(const Duration(milliseconds: 50));
+    notifier.dispose();
+
+    // ④ approvals 卡入队 → 弹窗。
+    ws.emit(_createApprovalCard('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pump(); // 编排帧
+    await tester.pump(const Duration(milliseconds: 400)); // 抽屉进出场
+
+    expect(find.text('允许一次'), findsOneWidget);
+    await tester.tap(find.text('允许一次'));
+    await tester.pump(); // 决策回调微任务链
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 决策必须真实打到 API（旧实现 onDecide==null → 乐观翻转零调用）。
+    verify(() => api.decideApproval('ap-c1', 'allow_once',
+            reason: null, answers: null)).called(1);
+    // Host 侧 awaiting 标记生效（防 MESSAGE_UPDATE 回流前重弹）。
+    expect(container.read(approvalInboxProvider).awaitingKeys, contains('m1'));
+  });
+
+  testWidgets('I1 哨兵：被动关闭（pop 路由）等同暂不处理，exposing 恢复需新卡驱动',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsOneWidget);
+
+    // 被动关闭：返回键/手势下滑/点遮罩在测试里等价于直接 pop 路由。
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await tester.pumpAndSettle();
+
+    // 等同「暂不处理」（spec §6）：suppressed=true、exposing=false、卡片仍在队列。
+    final state = container.read(approvalInboxProvider);
+    expect(state.suppressed, isTrue);
+    expect(state.exposing, isFalse);
+    expect(state.queue.map((e) => e.entryKey), contains('m1'));
+
+    // 新卡入队：exposing 恢复必须由新卡驱动（走 300ms 防抖），
+    // 不能因旧状态泄漏（exposing 保持 true）立即重弹旧卡。
+    ws.emit(_createPerm('m2', 'conv-8'));
+    await tester.pump(); // 入队帧
+    expect(container.read(approvalInboxProvider).exposing, isFalse);
+    expect(find.text('权限审批'), findsNothing); // 防抖窗口内不重弹旧卡
+
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    // 队列保留语义（与「暂不处理」一致）：续弹重放队首 m1。
+    expect(find.text('权限审批'), findsOneWidget);
+  });
+
+  testWidgets('换卡收敛：旧 sheet 迟到 close 不误 suppress 新展示周期', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    // 两张卡同批入队，头条 m1 先弹，m2 在队列等待换卡。
+    ws.emit(_createPerm('m1', 'conv-9'));
+    ws.emit(_createPerm('m2', 'conv-8'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+    expect(find.text('甲会话'), findsOneWidget); // m1 展示中（标题经 getConversation 回填）
+
+    // m1 终态 UPDATE 收回 + 队列还有 m2：编排层同一 post-frame 内
+    // pop 旧 sheet（m1）并 _showSheet(m2)，_sheetSettled 被新周期重置 false。
+    ws.emitUpdate(WSMessage(op: 0, t: 'MESSAGE_UPDATE', d: {
+      'message_id': 'm1',
+      'conversation_id': 'conv-9',
+      'content': {
+        'msg_type': 'permission_card',
+        'data': {'status': 'approved', 'oc_request_id': 'oc1', 'action': 'bash'},
+      },
+    }));
+    await tester.pump(); // UPDATE 入队 → 状态变更触发 rebuild
+    await tester.pump(); // 编排 post-frame：pop 旧 sheet + push 新 sheet
+    await tester.pump(); // 新 sheet 路由 build 出内容
+    expect(find.text('乙会话'), findsOneWidget); // 已换到 m2
+
+    // pump 越过旧 sheet 路由 dispose 触发 whenComplete 的迟到窗口。
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('甲会话'), findsNothing); // 旧 sheet 已 dispose，迟到 close 已到
+
+    // 旧 sheet 的迟到 close 不得归入新周期：新头条不能被补发 dismissCurrent
+    // （否则 suppressed=true / exposing=false，队列剩余卡静默停摆）。
+    final state = container.read(approvalInboxProvider);
+    expect(state.suppressed, isFalse);
+    expect(state.exposing, isTrue);
+    expect(find.text('乙会话'), findsOneWidget); // 新头条仍在展示
+  });
+
+  testWidgets('builder 层生产形态（Host context 不含 Navigator）也能弹出抽屉',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    // 复现真实挂载结构：Host 在 MaterialApp.builder 层（Navigator 的外层），
+    // 弹窗必须经注入的根 navigatorKey，否则抛
+    // "Navigator operation requested with a context that does not include a
+    // Navigator"（真机回归：抽屉静默不弹）。
+    await pumpHost(tester, container, asBuilderLayer: true);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.text('权限审批'), findsOneWidget);
+    expect(find.text('暂不处理'), findsOneWidget);
+  });
+  testWidgets('不在列表 state 的会话（agent_session）标题经 getConversation 回填上屏',
+      (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainer();
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    // conv-9 是 agent_session（被列表 state 过滤，stub getConversations 返回
+    // 空列表）：来源条不得停留占位「会话 conv-9」，须显示回填后的标题。
+    expect(find.text('甲会话'), findsOneWidget);
+    expect(find.text('会话 conv-9'), findsNothing);
+  });
+
+  testWidgets('开关关 → 新卡不自动弹且队列保留;重开 → 积压卡弹出', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainerWithPref(false);
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    ws.emit(_createPerm('m1', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+
+    // 关:不弹
+    expect(find.text('权限审批'), findsNothing);
+    // 队列未丢:卡仍在收件箱
+    expect(container.read(approvalInboxProvider).queue, isNotEmpty);
+
+    // 重开:set 同步置 state → Host rebuild → postFrame 编排 → 积压卡弹出
+    await container.read(inboxPopupPrefProvider.notifier).set(true);
+    await tester.pump(); // rebuild + postFrame 编排
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsOneWidget);
+  });
+
+  testWidgets('哨兵:开关关时收敛(终态 UPDATE)只出队,不触发续弹', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainerWithPref(false);
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    // 两张卡入队(pref 关,均不弹)
+    ws.emit(_createPerm('m1', 'conv-9'));
+    ws.emit(_createPerm('m2', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsNothing);
+    expect(container.read(approvalInboxProvider).queue.length, 2);
+
+    // m1 经 MESSAGE_UPDATE 收敛:permission_card status→approved,
+    // parser 走全量替换路径把该 entry 出队(与「换卡收敛」用例同夹具形态)。
+    ws.emitUpdate(WSMessage(op: 0, t: 'MESSAGE_UPDATE', d: {
+      'message_id': 'm1',
+      'conversation_id': 'conv-9',
+      'content': {
+        'msg_type': 'permission_card',
+        'data': {'status': 'approved', 'oc_request_id': 'oc1', 'action': 'bash'},
+      },
+    }));
+    await tester.pump(); // UPDATE 入队 → 状态变更触发 rebuild
+    await tester.pump(const Duration(milliseconds: 350)); // 越过任何潜在防抖
+    await tester.pumpAndSettle();
+
+    // m1 已出队,m2 保留;收敛不是新卡,抽屉必须保持关闭
+    final state = container.read(approvalInboxProvider);
+    expect(state.queue.length, 1);
+    expect(state.queue.single.entryKey, 'm2');
+    expect(find.text('权限审批'), findsNothing);
+  });
+}

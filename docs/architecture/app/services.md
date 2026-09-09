@@ -137,3 +137,7 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 ## mini_program_launcher.dart
 
 **小程序统一打开入口 + live 壳路由同步**（模块级纯函数，无资源骨架）。`openMiniProgramWith(container, appid)` = manager.open + 保证 `/mini-program-live/:appid` 壳在栈上（壳在栈时系统返回键=最小化）；`bindLiveRoute()`（launch/live 壳页自报占位防重复压栈）、`syncLiveRouteWith(container)`（Host 最小化/恢复/关闭后同步壳有无，弹出壳返 true 供壳页残余兜底自弹判断）。所有打开路径（深链/聊天卡片/列表/底栏/下拉面板）必须经此文件，保证「manager 前台状态」与「live 壳路由有无」一致，详见 [mini-program.md](./mini-program.md)
+
+## inbox_parser.dart
+
+**审批收件箱四类待决策卡纯函数解析器**（2026-09-08，无 IO/无 Flutter 依赖可单测）。`ingestCreate` / `ingestUpdate` 两入口（MESSAGE_CREATE / MESSAGE_UPDATE），输入不可变 `InboxParserState`（entries: entryKey → InboxEntry + aggregateViews: 聚合卡 msgId → elementId → element data 工作视图），输出 `InboxParseResult`（新 state + added + removedKeys），由 `approvalInboxProvider` 消费增量维护队列。四类卡：`permission_card` / `question_card` / `card`(approvals) 独立消息 entryKey=msgId，聚合卡内嵌 permission/question 元素 entryKey=`msgId:elementId`；均仅 status/state=pending 入队。收敛：独立卡终态 UPDATE / 聚合卡 `update`/`remove` op 出队；聚合卡 `append` 增量入队、无 op 全量替换走重建收敛（清该 msgId 全部 entry 后按建卡逻辑重扫）。幂等：已在队不重复入队；不可变契约：内层 aggregateViews 更新整层重建（原地写会变异与旧 state 共享的 map）
