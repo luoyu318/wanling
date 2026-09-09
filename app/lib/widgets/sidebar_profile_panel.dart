@@ -1,20 +1,17 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
-import 'package:wanling_core/providers/inbox_popup_pref_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
-import '../utils/permission_helper.dart';
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/settings_tile.dart';
 
 /// 侧滑栏主面板（方案 B 双层的右侧区域）。
-/// 原「我的」页(ProfilePage)菜单整段迁移至此:编辑资料/通知与后台/
-/// 修改密码/关于(版本号)/退出登录钉底。头部(头像+昵称+简介)点击进编辑资料。
+/// 菜单:设置(→ /settings)/小程序/小程序审核(admin)/关于(版本号)/退出登录钉底。
+/// 头部(头像+昵称+简介)点击直达编辑资料(编辑资料/通知与后台/修改密码/
+/// 自动弹出审批·问答已迁至设置页)。
 class SidebarProfilePanel extends ConsumerStatefulWidget {
   const SidebarProfilePanel({super.key});
 
@@ -112,51 +109,6 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
               const SizedBox(height: 4),
               // —— 菜单区(原 ProfilePage 设置项):彩色图标区分功能,无分割线无箭头 ——
               SettingsTile(
-                icon: Icons.person,
-                iconColor: const Color(0xFF2F6BFF),
-                label: '编辑资料',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => context.push('/profile/edit'),
-              ),
-              // 审批/问答抽屉自动弹出开关:纯本地偏好,只拦全局抽屉自动弹,
-              // 卡片仍进消息流与收件箱队列(spec 2026-09-09-inbox-auto-popup-toggle)。
-              SettingsTile(
-                icon: Icons.inbox,
-                iconColor: const Color(0xFF5AC8FA),
-                label: '自动弹出审批/问答',
-                subtitle: '关闭后卡片仍在会话内，需进入会话处理',
-                showDivider: false,
-                showChevron: false,
-                trailing: Switch(
-                  key: const ValueKey('inbox-auto-popup-switch'),
-                  value: ref.watch(inboxPopupPrefProvider),
-                  // 写失败由 provider set 先回滚 state 再抛,Switch 随 watch 弹回
-                  // 真实持久态;这里显式 unawaited 标注丢弃 Future(失败不静默)。
-                  onChanged: (v) => unawaited(
-                      ref.read(inboxPopupPrefProvider.notifier).set(v)),
-                ),
-                onTap: () => unawaited(ref
-                    .read(inboxPopupPrefProvider.notifier)
-                    .set(!ref.read(inboxPopupPrefProvider))),
-              ),
-              SettingsTile(
-                icon: Icons.notifications,
-                iconColor: const Color(0xFFFF9500),
-                label: '通知与后台',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => PermissionHelper.openAppNotificationSettings(),
-              ),
-              SettingsTile(
-                icon: Icons.lock,
-                iconColor: const Color(0xFF00B578),
-                label: '修改密码',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => context.push('/change-password'),
-              ),
-              SettingsTile(
                 icon: Icons.widgets_outlined,
                 iconColor: AppColors.accentGreen,
                 label: '小程序',
@@ -174,6 +126,14 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                   showChevron: false,
                   onTap: () => context.push('/admin/mini-programs'),
                 ),
+              SettingsTile(
+                icon: Icons.settings,
+                iconColor: const Color(0xFF8E8E93),
+                label: '设置',
+                showDivider: false,
+                showChevron: false,
+                onTap: () => context.push('/settings'),
+              ),
               SettingsTile(
                 icon: Icons.info,
                 iconColor: const Color(0xFF7A5AF8),

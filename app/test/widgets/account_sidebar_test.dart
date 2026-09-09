@@ -109,7 +109,6 @@ void main() {
         overrides: [
           savedLoginsProvider.overrideWith((ref) => notifier),
           authProvider.overrideWith((ref) => authNotifier),
-          sharedPrefsProvider.overrideWithValue(prefs),
         ],
       );
     });
@@ -166,7 +165,6 @@ void main() {
       final c = ProviderContainer(
         overrides: [
           savedLoginsProvider.overrideWith((ref) => emptyNotifier),
-          sharedPrefsProvider.overrideWithValue(prefs),
         ],
       );
       addTearDown(c.dispose);
@@ -183,7 +181,8 @@ void main() {
       expect(find.text('暂无记录'), findsNothing);
       expect(find.text('添加'), findsOneWidget);
       expect(find.byType(SidebarProfilePanel), findsOneWidget);
-      expect(find.text('编辑资料'), findsOneWidget);
+      expect(find.text('编辑资料'), findsNothing); // 已迁设置页
+      expect(find.text('设置'), findsOneWidget);
       expect(find.text('退出登录'), findsOneWidget);
     });
 
@@ -204,7 +203,6 @@ void main() {
       final c = ProviderContainer(
         overrides: [
           savedLoginsProvider.overrideWith((ref) => failNotifier),
-          sharedPrefsProvider.overrideWithValue(prefs),
         ],
       );
       addTearDown(c.dispose);
@@ -241,7 +239,6 @@ void main() {
       final c = ProviderContainer(
         overrides: [
           savedLoginsProvider.overrideWith((ref) => slowNotifier),
-          sharedPrefsProvider.overrideWithValue(prefs),
         ],
       );
       addTearDown(c.dispose);
@@ -345,35 +342,5 @@ void main() {
       expect(find.text('v1.2.3+45'), findsOneWidget);
     });
 
-    testWidgets('自动弹出审批/问答开关:渲染默认开,整行与开关均可切换并落盘', (tester) async {
-      await pumpSidebar(tester);
-      expect(find.text('自动弹出审批/问答'), findsOneWidget);
-      expect(find.text('关闭后卡片仍在会话内，需进入会话处理'), findsOneWidget);
-      // 默认开(ownerId u1 无存量)
-      expect(
-          tester.widget<Switch>(
-              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
-          isTrue);
-
-      // 整行点击(SettingsTile InkWell)切换
-      await tester.ensureVisible(find.text('自动弹出审批/问答'));
-      await tester.tap(find.text('自动弹出审批/问答'));
-      await tester.pumpAndSettle();
-      expect(
-          tester.widget<Switch>(
-              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
-          isFalse);
-      // 落盘(u1 key)
-      expect((await SharedPreferences.getInstance())
-          .getBool('inbox_auto_popup_u1'), isFalse);
-
-      // 点开关本体恢复 true
-      await tester.tap(find.byKey(const ValueKey('inbox-auto-popup-switch')));
-      await tester.pumpAndSettle();
-      expect(
-          tester.widget<Switch>(
-              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
-          isTrue);
-    });
   });
 }
