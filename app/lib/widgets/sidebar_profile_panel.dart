@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -127,13 +129,16 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 showDivider: false,
                 showChevron: false,
                 trailing: Switch(
+                  key: const ValueKey('inbox-auto-popup-switch'),
                   value: ref.watch(inboxPopupPrefProvider),
-                  onChanged: (v) =>
-                      ref.read(inboxPopupPrefProvider.notifier).set(v),
+                  // 写失败由 provider set 先回滚 state 再抛,Switch 随 watch 弹回
+                  // 真实持久态;这里显式 unawaited 标注丢弃 Future(失败不静默)。
+                  onChanged: (v) => unawaited(
+                      ref.read(inboxPopupPrefProvider.notifier).set(v)),
                 ),
-                onTap: () => ref
+                onTap: () => unawaited(ref
                     .read(inboxPopupPrefProvider.notifier)
-                    .set(!ref.read(inboxPopupPrefProvider)),
+                    .set(!ref.read(inboxPopupPrefProvider))),
               ),
               SettingsTile(
                 icon: Icons.notifications,

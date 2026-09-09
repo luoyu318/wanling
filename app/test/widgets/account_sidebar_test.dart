@@ -350,21 +350,30 @@ void main() {
       expect(find.text('自动弹出审批/问答'), findsOneWidget);
       expect(find.text('关闭后卡片仍在会话内，需进入会话处理'), findsOneWidget);
       // 默认开(ownerId u1 无存量)
-      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+      expect(
+          tester.widget<Switch>(
+              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
+          isTrue);
 
       // 整行点击(SettingsTile InkWell)切换
       await tester.ensureVisible(find.text('自动弹出审批/问答'));
       await tester.tap(find.text('自动弹出审批/问答'));
       await tester.pumpAndSettle();
-      expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+      expect(
+          tester.widget<Switch>(
+              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
+          isFalse);
       // 落盘(u1 key)
       expect((await SharedPreferences.getInstance())
           .getBool('inbox_auto_popup_u1'), isFalse);
 
       // 点开关本体恢复 true
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byKey(const ValueKey('inbox-auto-popup-switch')));
       await tester.pumpAndSettle();
-      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+      expect(
+          tester.widget<Switch>(
+              find.byKey(const ValueKey('inbox-auto-popup-switch'))).value,
+          isTrue);
     });
   });
 }

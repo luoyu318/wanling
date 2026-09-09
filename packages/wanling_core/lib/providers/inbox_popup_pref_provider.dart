@@ -30,11 +30,13 @@ class InboxPopupPrefNotifier extends StateNotifier<bool> {
           : (prefs.getBool('inbox_auto_popup_$ownerId') ?? true);
 
   /// 切换开关:同步更新 state(Host watch 立即 rebuild),再落盘。
-  /// 审计 M3:同值幂等不重复 notify;写失败抛出(fail fast,禁吞)。
+  /// 审计 M3:同值幂等不重复 notify;写失败先回滚 state 再抛(fail fast,
+  /// UI 弹回真实持久态,且不挡用户重试)。
   Future<void> set(bool v) async {
     if (_anonymous || v == state) return;
     state = v;
     if (!await _prefs.setBool(_key, v)) {
+      state = !v;
       throw StateError('InboxPopupPref: 持久化失败 $_key=$v');
     }
   }

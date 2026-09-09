@@ -395,4 +395,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('权限审批'), findsOneWidget);
   });
+
+  testWidgets('哨兵:开关关时收敛(终态 UPDATE)只出队,不触发续弹', (tester) async {
+    when(() => api.sendMessage(any(), any())).thenAnswer(
+        (inv) async => (messageId: 'mid', createdAt: DateTime(2026)));
+    final container = await makeContainerWithPref(false);
+    addTearDown(container.dispose);
+
+    await pumpHost(tester, container);
+    // 两张卡入队(pref 关,均不弹)
+    ws.emit(_createPerm('m1', 'conv-9'));
+    ws.emit(_createPerm('m2', 'conv-9'));
+    await tester.pump(); // 入队
+    await tester.pump(const Duration(milliseconds: 350)); // 过 300ms 防抖
+    await tester.pumpAndSettle();
+    expect(find.text('权限审批'), findsNothing);
+    expect(container.read(approvalInboxProvider).queue.length, 2);
+
+    // m1 经 MESSAGE_UPDATE 收敛:permission_card status→approved,
+    // parser 走全量替换路径把该 entry 出队(与「换卡收敛」用例同夹具形态)。
+    ws.emitUpdate(WSMessage(op: 0, t: 'MESSAGE_UPDATE', d: {
+      'message_id': 'm1',
+      'conversation_id': 'conv-9',
+      'content': {
+        'msg_type': 'permission_card',
+        'data': {'status': 'approved', 'oc_request_id': 'oc1', 'action': 'bash'},
+      },
+    }));
+    await tester.pump(); // UPDATE 入队 → 状态变更触发 rebuild
+    await tester.pump(const Duration(milliseconds: 350)); // 越过任何潜在防抖
+    await tester.pumpAndSettle();
+
+    // m1 已出队,m2 保留;收敛不是新卡,抽屉必须保持关闭
+    final state = container.read(approvalInboxProvider);
+    expect(state.queue.length, 1);
+    expect(state.queue.single.entryKey, 'm2');
+    expect(find.text('权限审批'), findsNothing);
+  });
 }
