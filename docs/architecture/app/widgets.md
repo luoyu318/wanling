@@ -162,7 +162,7 @@ WS 断线时顶部条幅提示。ConsumerStatefulWidget，订阅 `connStateProvi
 
 ## SidebarProfilePanel
 
-双层侧滑栏右侧主面板：头部大头像 + 名字 + server 副标题 + 签名 pill(点击进编辑资料)，下方 SettingsGroup 菜单——编辑资料 / 通知与后台 / 修改密码 / 关于(版本号) / 退出登录(确认弹窗)。原 ProfilePage「我的」页菜单整段迁移至此;极小屏防溢出整体可滚动
+双层侧滑栏右侧主面板：头部大头像 + 名字 + server 副标题 + 签名 pill(点击进编辑资料)，下方 SettingsGroup 菜单——设置(→ [SettingsPage](./pages.md#settingspage)) / 小程序 / 小程序审核(admin) / 关于(版本号) / 退出登录(确认弹窗)。编辑资料/通知与后台/修改密码/自动弹出审批·问答已迁设置页;极小屏防溢出整体可滚动
 
 ## AccountMarkEditor
 
