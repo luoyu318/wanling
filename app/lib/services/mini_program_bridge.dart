@@ -42,6 +42,11 @@ class MiniProgramBridge {
   /// 云数据退订接线(容器页传 WS 实现;未接线时 no-op,unsubscribe 仍 ok)
   final Future<void> Function()? onMpUnsubscribe;
 
+  /// 设备运动订阅接线(容器页注入;null=未接线,防御性拒绝)。
+  /// 桥只做门禁 + hz 钳制,流订阅/节流/推送在接线层(不感知 sensors_plus)。
+  final void Function(int hz)? onMotionStart;
+  final VoidCallback? onMotionStop;
+
   MiniProgramBridge({
     required this.permissions,
     required this.proxy,
@@ -57,6 +62,8 @@ class MiniProgramBridge {
     this.requestProfilePermission,
     this.onMpSubscribe,
     this.onMpUnsubscribe,
+    this.onMotionStart,
+    this.onMotionStop,
   });
 
   /// JSBridge 分发唯一出口:先经 [_dispatch] 跑各 case 原逻辑,回传 JS 前把
@@ -232,6 +239,31 @@ class MiniProgramBridge {
             default:
               return {'ok': false, 'error': '未知页面: $page'};
           }
+        case 'wanlingDeviceMotionStart':
+          if (!permissions.contains('wanling.device.motion')) {
+            return {
+              'ok': false,
+              'error': 'permission denied: wanling.device.motion'
+            };
+          }
+          if (onMotionStart == null) {
+            return {'ok': false, 'error': 'motion unavailable'};
+          }
+          final motionOpts =
+              (args.isNotEmpty ? args.first : null) as Map? ?? const {};
+          final hz = clampMotionHz(motionOpts['hz'] as num?);
+          onMotionStart!(hz);
+          return {'ok': true, 'data': {'hz': hz}};
+        case 'wanlingDeviceMotionStop':
+          if (!permissions.contains('wanling.device.motion')) {
+            return {
+              'ok': false,
+              'error': 'permission denied: wanling.device.motion'
+            };
+          }
+          // 未接线/无订阅均 no-op 返 ok(对齐 storage unsubscribe 语义)
+          onMotionStop?.call();
+          return {'ok': true};
         case 'wanlingStorageGet':
         case 'wanlingStorageSet':
         case 'wanlingStorageRemove':
@@ -410,6 +442,13 @@ final _agentIdPattern =
 /// 云数据 key/coll 白名单(与 server storageKeyRe/coll 校验一致,客户端预校验)。
 final _storageKeyPattern = RegExp(r'^[A-Za-z0-9_.:@-]{1,128}$');
 final _storageCollPattern = RegExp(r'^[a-z0-9_-]{1,32}$');
+
+/// 设备运动推送频率钳制:缺省 10Hz,范围 1..30(防 JS 请求高频拉高
+/// evaluateJavascript 往返耗电)。
+int clampMotionHz(num? hz) {
+  final raw = hz?.toInt() ?? 10;
+  return raw.clamp(1, 30);
+}
 
 /// 需用户弹窗授权的权限:chat 类(涉及用户会话数据)与 nav(涉及宿主页面跳转)。
 /// 其余(如 wanling.api)不涉及用户数据,声明即生效。

@@ -4,7 +4,7 @@ main.dart + router.dart + router_helpers.dart。
 
 ## main.dart
 
-入口。`async main` 在 runApp 前调 `restoreSession` 拉用户信息，避免首帧渲染时 auth 状态未定。`MaterialApp.router` 固定 `locale: Locale('zh')` + `supportedLocales: [zh]` + Material/Widgets/Cupertino 三套 `localizationsDelegates`（让内置组件和第三方插件拿到 zh locale，否则 wechat_assets_picker 会因 Flutter 默认 supportedLocales=[en,US] 被解析成英文）。**`builder` 挂全局小程序保活层**：`MiniProgramHost` 包住 Navigator 产物，实例 WebView 常驻 Offstage 保活；无实例时纯透传不影响既有页面（见 [mini-program.md](./mini-program.md)）。
+入口。`async main` 在 runApp 前调 `restoreSession` 拉用户信息，避免首帧渲染时 auth 状态未定。`MaterialApp.router` 固定 `locale: Locale('zh')` + `supportedLocales: [zh]` + Material/Widgets/Cupertino 三套 `localizationsDelegates`（让内置组件和第三方插件拿到 zh locale，否则 wechat_assets_picker 会因 Flutter 默认 supportedLocales=[en,US] 被解析成英文）。**`builder` 挂两层全局常驻层**：`ApprovalInboxHost` 包 `MiniProgramHost` 包住 Navigator 产物——前者是全局审批收件箱弹窗编排层，任何页面上方监听待决策队列自动弹抽屉（见 [providers.md](./providers.md#approvalinboxprovider) 与 [widgets.md](./widgets.md#inbox)）；后者实例 WebView 常驻 Offstage 保活；无实例/无待决策卡时均纯透传 child，不影响既有页面（小程序见 [mini-program.md](./mini-program.md)）。
 
 ## router.dart
 

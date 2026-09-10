@@ -27,6 +27,7 @@ import 'pages/scan_pair_page.dart';
 import 'pages/select_account_page.dart';
 import 'pages/session_diff_file_page.dart';
 import 'pages/session_diff_page.dart';
+import 'pages/settings_page.dart';
 import 'pages/splash_page.dart';
 import 'pages/subagent_detail_page.dart';
 import 'pages/user_detail_page.dart';
@@ -341,6 +342,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/friends',
         pageBuilder: (context, state) => _cupertinoPage(
           child: const FriendsListPage(),
+          key: state.pageKey,
+        ),
+      ),
+      GoRoute(
+        path: '/settings',
+        pageBuilder: (context, state) => _cupertinoPage(
+          child: const SettingsPage(),
           key: state.pageKey,
         ),
       ),

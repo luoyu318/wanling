@@ -27,7 +27,7 @@
 
 ## card_renderer
 
-**审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行，**question 选项列表**（options 渲染单选 chip/多选 checkbox，multi_select 决定；提交走 `decideApproval(action_id:answer, answers)`，reject 拒绝按钮；终态回显 `data.answers` 所选选项，乐观窗口内 MESSAGE_UPDATE 与本地不一致则回退本地已选）。按钮终态映射：deny/cancel/reject→denied，allow_once/allow_always/once/always/answer→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，ChatNotifier 构造时注入（避免 Riverpod 循环依赖）。**`_CardView` 整体包 AnimatedSize**(250ms easeOut, alignment topCenter):pending→终态 PATCH 回写高度变化时平滑向下展开
+**审批卡片渲染器**（msg_type=card）。`CardContentRenderer` 注册到 MsgType.card，卡片自带白底外壳（`wrapInBubble=false`，MessageBubble 仍给三角）。`_CardView` StatefulWidget 管乐观更新（点按钮立即本地切状态，失败回滚 + snackbar）。按 card_type 分流渲染：command/slash_confirm 用代码块预览，tool 用工具名+预览，file 用文件行，**question 选项列表**（options 渲染单选 chip/多选 checkbox，multi_select 决定；提交走 `decideApproval(action_id:answer, answers)`，reject 拒绝按钮；终态回显 `data.answers` 所选选项，乐观窗口内 MESSAGE_UPDATE 与本地不一致则回退本地已选）。按钮终态映射：deny/cancel/reject→denied，allow_once/allow_always/once/always/answer→approved；终态文案区分（已批准/已拒绝 vs 已确认/已取消）。**`CardContentRenderer.onDecide` 是全局静态回调**，所有权唯一化：由首个安装方持有（APP 端 ApprovalInboxHost.initState 注入收件箱增强版，ChatNotifier 构造 `??=` 兜底装裸版，dispose 不清空；避免 Riverpod 循环依赖）。**`_CardView` 整体包 AnimatedSize**(250ms easeOut, alignment topCenter):pending→终态 PATCH 回写高度变化时平滑向下展开
 
 ## Agent 过程渲染器（v1.0.7，opencode-plugin streamer 发的过程消息）
 
@@ -47,6 +47,8 @@
 
 - **PermissionCardRenderer**（msg_type=permission_card）— `#FFF8F0` pending 暖色卡片 + 底部抽屉 radio 三选项（仅本次/始终允许/拒绝）。`save_rules` 只读展示。终态（resolved）灰阶。用户决策通过 PATCH /api/messages/:id 回传 `permission_reply`。**终态(2026-08-08 起)外包无边框折叠外壳**(对齐折叠组风格):折叠时只显示标题行(图标 + 「权限审批 · label」+ 结果 + 箭头,结果如已批准/已拒绝/会话已结束),展开显示完整原卡(绿/红/灰背景 + 左边框样式不变);折叠展开接入 ToolGroupCard 同构滚动补偿
 - **QuestionCardRenderer**（msg_type=question_card）— TabBar 横向切换题目，radio/checkbox/custom 输入，已答题标记绿色小圆点。单题退化隐藏 TabBar。提交按钮汇总后 PATCH /api/messages/:id 回传 `question_reply`
+
+**回复抽屉可选参数**（2026-09-08，wanling_core）：`showPermissionReplySheet` / `showQuestionReplySheet` 增加可选 `header`（抽屉顶部来源条 widget）与 `onSettled`（决策提交成功回调），聊天页内原调用不传参行为不变；全局审批收件箱 ApprovalInboxHost 注入两参数复用同一抽屉（见 [widgets.md](./widgets.md#inbox)）
 
 **dm_user_agent 气泡宽度**: Agent 过程消息的 `widthRatio = 0.95`（两侧各 12px padding），渲染器不带自带 maxWidth。`BubbleWithTail` 颜色: `isMe ? #597BFF : #FFFFFF`
 

@@ -513,8 +513,8 @@ void main() {
     });
   });
 
-  group('ChatNotifier dispose 清理 onDecide (F6)', () {
-    test('构造时 onDecide 被赋值', () async {
+  group('ChatNotifier onDecide 所有权唯一化 (F6 收尾)', () {
+    test('构造时 onDecide 为空 → ??= 安装裸版', () async {
       // 先清掉其他测试残留
       CardContentRenderer.onDecide = null;
       final notifier = ChatNotifier(
@@ -530,7 +530,8 @@ void main() {
       notifier.dispose();
     });
 
-    test('dispose 清空 onDecide', () async {
+    test('dispose 不清空 onDecide（回调由首个安装方持有，不随实例生命周期清空）',
+        () async {
       CardContentRenderer.onDecide = null;
       final notifier = ChatNotifier(
         api,
@@ -542,7 +543,28 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
       expect(CardContentRenderer.onDecide, isNotNull);
       notifier.dispose();
-      expect(CardContentRenderer.onDecide, isNull);
+      // 旧实现此处断言 isNull：访问过聊天页后回到收件箱，④ 卡决策静默失效。
+      expect(CardContentRenderer.onDecide, isNotNull);
+    });
+
+    test('已安装的回调（如收件箱 Host 增强版）不被构造覆盖、不被 dispose 清空',
+        () async {
+      Future<String?> installed(
+          String approvalId, String actionId, String? reason, List<String>? answers) async {
+        return null;
+      }
+      CardContentRenderer.onDecide = installed;
+      final notifier = ChatNotifier(
+        api,
+        ws,
+        'conv-f6-3',
+        null,
+        'user-1',
+      );
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(identical(CardContentRenderer.onDecide, installed), isTrue);
+      notifier.dispose();
+      expect(identical(CardContentRenderer.onDecide, installed), isTrue);
     });
   });
 

@@ -26,6 +26,7 @@ description: window.wanling 全部 API 参考
 | `wanling.openPage` | `wanling.nav` | 跳转白名单内的宿主页面 |
 | `wanling.storage.*` | `wanling.storage` | 云数据读写与订阅（跨设备同步、多人实时协作） |
 | `wanling.close` | 无 | 关闭小程序页 |
+| `wanling.deviceMotion` | `wanling.device.motion` | 订阅设备运动流（加速度计/陀螺仪），适合横竖屏判定、摇一摇等交互 |
 
 ## wanling.request(\{ path, method?, body? \})
 
@@ -122,6 +123,36 @@ await wanling.openPage({ page: 'agentDetail', params: { agentId: agents[0].id } 
 ```js
 // 关闭小程序页
 wanling.close();
+```
+
+## wanling.deviceMotion —— 设备运动
+
+订阅设备运动传感器流（加速度计/陀螺仪）。
+
+- **权限**：`wanling.device.motion`（manifest 声明即生效，无弹窗）
+- **hz**：采样频率，缺省 10，钳制 1-30
+- **数据帧**：`{accel:{x,y,z}, userAccel:{x,y,z}, gyro:{x,y,z}}`；accel/userAccel 单位 m/s²，gyro 单位 rad/s；三流各取最新帧拼包，不做姿态融合
+- **回调**：`onEvent` 为 JS 本地回调，帧经回调推送、不跨桥；重复 start 幂等替换旧回调，stop 清空回调，小程序关闭时宿主自动退订
+- **生命周期**：APP 切后台宿主自动停推，回前台自动恢复
+- **注**：Android 上 WebView 引擎自身可能向页面派发 H5 `deviceorientation`/`devicemotion` 事件（引擎行为，不经权限门禁、宿主无法禁用）；官方桥是受权限管控的路径，请统一走官方桥
+
+```js
+// 姿态判定:静止时 accel 即重力方向,竖持 y≈+9.8 / 横置 x≈±9.8 / 平放 z≈+9.8
+await wanling.deviceMotion.start({
+  hz: 10,
+  onEvent: (frame) => {
+    const { x, y } = frame.accel;
+    if (Math.abs(y) > Math.abs(x)) {
+      renderPortrait(); // 竖持(重力沿 +y)
+    } else {
+      renderLandscape(); // 横置(重力沿 ±x)
+    }
+    // 注:平放桌面时 |z| 主导(z≈+9.8),此时横竖屏判定无意义,可按需先行检测
+  },
+});
+
+// 离开页面时停止订阅
+await wanling.deviceMotion.stop();
 ```
 
 ## wanling.storage —— 云数据

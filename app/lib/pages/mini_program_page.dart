@@ -18,6 +18,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:app/services/mini_program_bridge.dart';
+import 'package:app/providers/mini_program_manager_provider.dart';
 import 'package:app/services/mini_program_permission_flow.dart';
 import 'package:app/widgets/mini_program_conversation_picker.dart';
 import 'package:app/widgets/avatar.dart';
@@ -37,11 +38,12 @@ import 'package:wanling_core/utils/snackbar.dart';
 
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/mini_program_overlay.dart';
+import '../services/mini_program_motion.dart';
 import '../services/mini_program_snapshot.dart';
 
 /// 注入 window.wanling:request/close/getChatContext/shareToChat/openPage/
-/// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听),底层走
-/// flutter_inappwebview callHandler。
+/// getProfile 六桥 + storage 云数据桥(七方法 + 事件监听) + deviceMotion
+/// 设备运动桥(start/stop 订阅式),底层走 flutter_inappwebview callHandler。
 const _jsBridgeBootstrap = """
 window.wanling = {
   request: function(opts) {
@@ -132,6 +134,40 @@ window.wanling = {
     });
   };
 })();
+
+// —— 设备运动桥(window.wanling.deviceMotion):陀螺仪+加速度计订阅 ——
+// onEvent 为 JS 本地回调不跨桥(函数不可过 callHandler);原生按 hz 推帧,
+// 经 _emitMpMotionEvent 转投最近一次 start 注册的 onEvent,stop 即清空。
+window.wanling.deviceMotion = {
+  _onEvent: null,
+  start: function(opts) {
+    opts = opts || {};
+    window.wanling.deviceMotion._onEvent =
+        typeof opts.onEvent === 'function' ? opts.onEvent : null;
+    return window.flutter_inappwebview
+        .callHandler('wanlingDeviceMotionStart', {hz: opts.hz})
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'deviceMotion start failed');
+        });
+  },
+  stop: function() {
+    window.wanling.deviceMotion._onEvent = null;
+    return window.flutter_inappwebview
+        .callHandler('wanlingDeviceMotionStop')
+        .then(function(r) {
+          if (r && r.ok) return r.data;
+          throw new Error((r && r.error) || 'deviceMotion stop failed');
+        });
+  }
+};
+// 由原生 evaluateJavascript 调:无订阅回调/回调抛异常均静默(单消费方)
+window.wanling._emitMpMotionEvent = function(data) {
+  var cb = window.wanling.deviceMotion._onEvent;
+  if (typeof cb === 'function') {
+    try { cb(data); } catch (e) {}
+  }
+};
 """;
 
 /// 测试可见别名:bootstrap 源码包含性断言用(库私有 const 单测不可见)。
@@ -176,6 +212,18 @@ String? mpEventFilter(WSMessage msg, String appid) {
   if (d['appid'] != appid) return null;
   return jsonEncode(d);
 }
+
+/// 实例级设备运动停推判定(公开顶层纯函数便于单测,对齐 mpEventFilter 模式)。
+/// 切后台 app 级停推已在容器页生命周期挂,此处为实例级:嵌入实例非 manager
+/// 前台(被最小化/被其他实例覆盖)即停推,防保活实例(Offstage JS 仍跑)
+/// 后台持续采传感器推帧;路由模式无实例编排,永不停推。
+bool motionSuspendedForInstance({
+  required bool embedded,
+  required bool hasForeground,
+  required String? foregroundAppid,
+  required String appid,
+}) =>
+    embedded && (!hasForeground || foregroundAppid != appid);
 
 /// 文本响应(403 越界 / 404 缺失 / 405 非 GET / 502 代理失败)。statusCode 需
 /// 同时带 headers + reasonPhrase(平台约定)。
@@ -317,7 +365,8 @@ class MiniProgramPage extends ConsumerStatefulWidget {
   ConsumerState<MiniProgramPage> createState() => _MiniProgramPageState();
 }
 
-class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
+class _MiniProgramPageState extends ConsumerState<MiniProgramPage>
+    with WidgetsBindingObserver {
   /// wanlingGetProfile 调用式授权的 KVS 授权痕键(复用 mp_perm 集合语义,
   /// 随 deleteMpPerms 卸载清理)。
   static const _profilePermKey = 'wanling.profile';
@@ -348,6 +397,20 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
 
   /// 云数据推送流订阅(MP_DATA_UPDATE → mpEventFilter → evaluateJavascript)。
   StreamSubscription<WSMessage>? _mpEventSub;
+
+  /// 设备运动订阅源(桥委托接线;dispose stop 退订,切后台 pause 停推)。
+  final _motion = MiniProgramMotionSource();
+
+  /// 实例级停推跟踪(上次判定的挂起态),manager 前台切换监听做差量。
+  bool _motionInstanceSuspended = false;
+
+  /// 实例级停推判定(当前 manager 前台态),语义见 [motionSuspendedForInstance]。
+  bool get _motionSuspendedByInstance => motionSuspendedForInstance(
+        embedded: widget.isEmbedded,
+        hasForeground: ref.read(miniProgramManagerProvider).hasForeground,
+        foregroundAppid: ref.read(miniProgramManagerProvider).foregroundAppid,
+        appid: widget.appid,
+      );
 
   String get _virtualHost => virtualHostFor(widget.appid, _uid!);
 
@@ -388,6 +451,26 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
     } else if (mounted) {
       context.pop();
     }
+  }
+
+  /// 设备运动帧推送:JSON 序列化后 evaluateJavascript 调 JS 侧
+  /// _emitMpMotionEvent。页面销毁/重载中注入可能失败,best-effort 丢弃
+  /// (同 storage 事件推送语义,单回调异常不阻断节流循环)。
+  void _pushMotionFrame(Map<String, dynamic> frame) {
+    final controller = _controller;
+    if (!mounted || controller == null) return;
+    final String json;
+    try {
+      json = jsonEncode(frame);
+    } catch (_) {
+      // NaN/Infinity 等不可序列化值会同步抛 JsonUnsupportedObjectError:
+      // 异常帧静默丢弃,对齐 JS 侧 _emitMpMotionEvent 静默语义,
+      // 防沿节流定时器进 zone 丢帧刷噪音
+      return;
+    }
+    unawaited(controller
+        .evaluateJavascript(source: 'window.wanling._emitMpMotionEvent($json)')
+        .catchError((_) {}));
   }
 
   /// 胶囊「更多」菜单抽屉:信息头(图标+名称) + 方形圆角功能瓦片(刷新/分享,
@@ -485,6 +568,10 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                     label: '刷新',
                     onTap: () {
                       close();
+                      // reload 重置 JS 上下文(_onEvent 丢失),原生订阅+节流
+                      // 定时器会空转到 dispose:刷新前全量停推,JS 侧重新
+                      // start 才会再订阅
+                      _motion.stop();
                       _controller?.reload();
                     },
                   ),
@@ -621,6 +708,15 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
         // 容器页接 WS;appid 为 bridge 持有的宿主注入值,JS 不可传参
         onMpSubscribe: (mpAppid, colls) => ws.sendMpSubscribe(mpAppid, colls),
         onMpUnsubscribe: () async => ws.sendMpUnsubscribe(),
+        // 设备运动订阅接线:桥门禁(wanling.device.motion)通过后回调到订阅源,
+        // 节流帧经 _pushMotionFrame 推进 WebView
+        onMotionStart: (hz) {
+          _motion.start(hz, _pushMotionFrame);
+          // start 内部 stop 会复位停推标志:实例挂起态下(打开即最小化/运行中
+          // 被覆盖)保活实例 JS 仍可 start,按跟踪态重新施加停推
+          if (_motionInstanceSuspended) _motion.pause();
+        },
+        onMotionStop: () => _motion.stop(),
       );
       // 云数据推送:订阅 MP_DATA_UPDATE 流,过滤本 appid 后转发进 WebView
       // (JS 侧按到达序应用,version 语义见 bootstrap 注释)。
@@ -649,11 +745,46 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // 实例级停推接线(切后台 app 级已在 didChangeAppLifecycleState 挂,此处为
+    // 实例级):manager 前台切换(最小化/切实例/恢复)→ pause/resume,与
+    // Host._syncSuspension 的 hostpause/hostresume 同一信号源。listenManual
+    // 随元素销毁自动退订。
+    _motionInstanceSuspended = _motionSuspendedByInstance;
+    ref.listenManual(miniProgramManagerProvider, (_, _) {
+      final suspended = _motionSuspendedByInstance;
+      if (suspended == _motionInstanceSuspended) return;
+      _motionInstanceSuspended = suspended;
+      if (suspended) {
+        _motion.pause();
+      } else {
+        _motion.resume();
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 切后台停推/回前台恢复(订阅保留,真正退订只在 dispose)
+    if (state == AppLifecycleState.paused) {
+      _motion.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      // APP 回前台仅前台实例续推:被最小化/覆盖实例维持实例级停推,
+      // 否则 app 级 resume 会击穿实例级挂起(两实例场景其一在后台被复活)
+      if (!_motionInstanceSuspended) _motion.resume();
+    }
+  }
+
+  @override
   void dispose() {
     // 云数据退订闭环:best-effort 发 op=16(连接断开时 send 对 null channel
     // no-op 不抛异常),再取消流订阅防泄漏。
     _ws?.sendMpUnsubscribe();
     _mpEventSub?.cancel();
+    _motion.stop();
+    WidgetsBinding.instance.removeObserver(this);
     unregisterMiniProgramController(widget.appid);
     super.dispose();
   }
@@ -835,6 +966,23 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
               // 快照抓帧编排层按 appid 注册 controller(dispose 注销),
               // 缺注册则 minimizeWithSnapshot 拿不到 controller 永远走占位
               registerMiniProgramController(widget.appid, controller);
+              // 竞态兜底:WebView 就绪前实例已被最小化(打开即最小化/登出等),
+              // Host 编排已跑过拿不到本 controller,这里补挂起(Android;
+              // hostpause 事件让合作页面停循环+静音,同 Host._syncSuspension)
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final mgr = ref.read(miniProgramManagerProvider);
+                if (!mgr.hasForeground || mgr.foregroundAppid != widget.appid) {
+                  unawaited(controller.evaluateJavascript(source:
+                      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()"));
+                  controller.pause();
+                  // 实例级停推同步兜底(打开即最小化路径):与 Host 兜底挂起
+                  // 同一判定,此刻订阅源尚无订阅,先对齐停推跟踪态,后续 JS
+                  // start 由桥回调按本标志重新施加停推
+                  _motion.pause();
+                  _motionInstanceSuspended = true;
+                  debugPrint('[mp-lifecycle] 创建兜底挂起 ${widget.appid}');
+                }
+              }
               controller.addJavaScriptHandler(
                 handlerName: 'wanlingRequest',
                 callback: (args) async =>
@@ -899,6 +1047,16 @@ class _MiniProgramPageState extends ConsumerState<MiniProgramPage> {
                 handlerName: 'wanlingStorageUnsubscribe',
                 callback: (args) async =>
                     await _bridge?.handle('wanlingStorageUnsubscribe', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingDeviceMotionStart',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingDeviceMotionStart', args),
+              );
+              controller.addJavaScriptHandler(
+                handlerName: 'wanlingDeviceMotionStop',
+                callback: (args) async =>
+                    await _bridge?.handle('wanlingDeviceMotionStop', args),
               );
               unawaited(_start(info));
             },

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -29,7 +30,8 @@ class MiniProgramHost extends ConsumerStatefulWidget {
   ConsumerState<MiniProgramHost> createState() => _MiniProgramHostState();
 }
 
-class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
+class _MiniProgramHostState extends ConsumerState<MiniProgramHost>
+    with WidgetsBindingObserver {
   bool _showTaskView = false;
 
   /// manager 强引用(initState 捕获,dispose 移除监听用;dispose 内禁 ref)
@@ -39,9 +41,12 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
   void initState() {
     super.initState();
     _manager = ref.read(miniProgramManagerProvider);
+    WidgetsBinding.instance.addObserver(this);
     // 嵌入弹层生命周期:前台实例变化(最小化/切实例/关闭/登出清空)→
     // 批量关闭弹层,防 barrier 悬浮在非小程序页面上拦死宿主导航
     _manager.addListener(_dismissOverlaysOnForegroundChange);
+    // 保活实例挂起编排:前台实例变化 → 按需 pause/resume(见 _syncSuspension)
+    _manager.addListener(_onManagerChanged);
     // 登出/切账号联动(I1):认证态从有到无(手动登出/401 踢出/切换账号的
     // logout 段都收敛到 authProvider 状态流转)→ 清空保活实例。
     // 放 app 侧 Host 消费:core 不依赖 app,不能在 core 里调 app 的 manager。
@@ -62,8 +67,93 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _manager.removeListener(_dismissOverlaysOnForegroundChange);
+    _manager.removeListener(_onManagerChanged);
     super.dispose();
+  }
+
+  void _onManagerChanged() {
+    unawaited(_syncSuspension());
+  }
+
+  /// 向页面广播宿主挂起/恢复事件。实例级 onPause 停不掉 rAF 游戏循环与
+  /// WebAudio(Chromium 已知行为),合作页面(如游戏类小程序)监听本事件
+  /// 自行暂停+静音,是最精确的一层。
+  static const _jsPause =
+      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostpause'))})()";
+  static const _jsResume =
+      "(function(){document.dispatchEvent(new CustomEvent('wanling:hostresume'))})()";
+
+  Future<void> _evaluate(String appid, String js, String what) async {
+    final c = miniProgramControllerRegistry[appid];
+    if (c == null) return;
+    try {
+      await c.evaluateJavascript(source: js);
+      debugPrint('[mp-lifecycle] $what → $appid ok');
+    } catch (e) {
+      // 页面销毁竞态等失败可忽略(挂起编排是保活增强,不阻断流程)
+      debugPrint('[mp-lifecycle] $what → $appid 失败(忽略): $e');
+    }
+  }
+
+  /// 挂起编排(集中在此,page 层不重复;幂等可重入)。三层叠加:
+  /// 1) hostpause/hostresume JS 事件(合作页面自行暂停+静音/恢复);
+  /// 2) 实例级 pause/resume(停 layout/parsing,无害兜底);
+  /// 3) pauseTimers 全局停 DOM 定时器——它是进程级共享(波及全部 WebView),
+  ///    只在"无前台=全部该停"时停;恢复时机不能依赖前台实例的 controller
+  ///    已注册(打开新实例时它常还没建,查不到会导致全局 timers 永久暂停、
+  ///    新页面 JS 假死),有前台即对 registry 内任意存活实例恢复。
+  Future<void> _syncSuspension() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final registry = miniProgramControllerRegistry;
+    if (registry.isEmpty) return;
+    final fg = _manager.foregroundAppid;
+    if (fg != null) {
+      unawaited(registry.values.first.resumeTimers());
+      for (final e in registry.entries) {
+        final c = e.value;
+        if (e.key == fg) {
+          unawaited(c.resume());
+          await _evaluate(e.key, _jsResume, 'hostresume');
+        } else {
+          await _evaluate(e.key, _jsPause, 'hostpause');
+          unawaited(c.pause());
+        }
+      }
+    } else {
+      for (final appid in registry.keys) {
+        await _evaluate(appid, _jsPause, 'hostpause');
+        unawaited(registry[appid]!.pause());
+      }
+      // pauseTimers 全局生效,任一 WebView 调一次即可
+      unawaited(registry.values.first.pauseTimers());
+    }
+  }
+
+  /// 宿主 APP 生命周期:整体退后台 → 全局停 timers + 广播 hostpause + 实例级
+  /// 挂起(含前台实例);回前台 → 有前台实例则恢复 timers 并 hostresume。
+  /// 与 _syncSuspension 共用同一套动作,叠加幂等(Android 可重入)。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    if (state == AppLifecycleState.paused) {
+      debugPrint('[mp-lifecycle] APP 退后台');
+      unawaited(_suspendAll());
+    } else if (state == AppLifecycleState.resumed) {
+      debugPrint('[mp-lifecycle] APP 回前台');
+      unawaited(_syncSuspension());
+    }
+  }
+
+  Future<void> _suspendAll() async {
+    for (final appid in miniProgramControllerRegistry.keys) {
+      await _evaluate(appid, _jsPause, 'hostpause(后台)');
+      unawaited(miniProgramControllerRegistry[appid]?.pause());
+    }
+    if (miniProgramControllerRegistry.isNotEmpty) {
+      await miniProgramControllerRegistry.values.first.pauseTimers();
+    }
   }
 
   void _minimize() {
@@ -129,6 +219,8 @@ class _MiniProgramHostState extends ConsumerState<MiniProgramHost> {
             },
             onClose: _close,
             onCloseView: () => setState(() => _showTaskView = false),
+            onCloseAll: () =>
+                ref.read(miniProgramManagerProvider).closeAll(),
           ),
       ],
     );

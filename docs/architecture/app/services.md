@@ -128,6 +128,8 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 
 **M2 会话上下文 4 handler**：`wanlingGetChatContext`（须 `wanling.chat.read`，经容器页注入的 `onChatContext` 回调返 `{conversation_id}`，未接来源会话返 null）+ `wanlingShareToChat`（须 `wanling.chat.share`，经 `onShare` 回调弹会话选择器 → 以 `mini_program_card` 发消息，返 `{message_id}`；用户取消返 cancelled）。`onChatContext`/`onShare` 由容器页构造注入（bridge 不感知 KVS/UI）。**`effectivePermissions(declared, granted)` 纯函数**：非 `wanling.chat.` 前缀权限（如 `wanling.api`）不涉及用户会话数据直接生效，`wanling.chat.*` 须在 granted 授权集中；只收窄不放大（granted 多余项不生效）
 
+**设备运动桥**：`wanlingDeviceMotionStart`/`wanlingDeviceMotionStop` 两 handler（须 `wanling.device.motion`，manifest 声明即生效无弹窗）；hz 缺省 10 钳 1-30，start 回显 `{hz}`；帧经容器页注入的 `window.wanling._emitMpMotionEvent(data)` 推 JS（onEvent 为 JS 本地回调，stop 即清空）。订阅源 `mini_program_motion.dart`（accel/userAccel/gyro 三流最新帧拼包，按 hz 节流，不做姿态融合；切后台停推回前台恢复），容器页接线委托（mini_program_page.dart）→ bridge 门禁 → 订阅源；重复 start 幂等替换，dispose 全量退订
+
 ## mini_program_manager.dart
 
 **小程序保活管理器**（多任务，纯状态 ChangeNotifier，WebView 由 Host 层持有）。多实例 Map（上限 `maxInstances = 5`）+ 前台 appid + `open/minimize/restore/close`；`open` 超上限按 `lastForegroundAt` 淘汰最久未前台者并返回被淘汰 appid（LRU），`list` 按打开时间倒序。全局单例 `miniProgramManagerProvider`（ChangeNotifierProvider）。宿主层/浮球/多任务视图消费，详见 [mini-program.md](./mini-program.md)
@@ -135,3 +137,7 @@ SQLCipher 32 字节随机密钥管理。首次启动 `getOrCreate` 生成 + base
 ## mini_program_launcher.dart
 
 **小程序统一打开入口 + live 壳路由同步**（模块级纯函数，无资源骨架）。`openMiniProgramWith(container, appid)` = manager.open + 保证 `/mini-program-live/:appid` 壳在栈上（壳在栈时系统返回键=最小化）；`bindLiveRoute()`（launch/live 壳页自报占位防重复压栈）、`syncLiveRouteWith(container)`（Host 最小化/恢复/关闭后同步壳有无，弹出壳返 true 供壳页残余兜底自弹判断）。所有打开路径（深链/聊天卡片/列表/底栏/下拉面板）必须经此文件，保证「manager 前台状态」与「live 壳路由有无」一致，详见 [mini-program.md](./mini-program.md)
+
+## inbox_parser.dart
+
+**审批收件箱四类待决策卡纯函数解析器**（2026-09-08，无 IO/无 Flutter 依赖可单测）。`ingestCreate` / `ingestUpdate` 两入口（MESSAGE_CREATE / MESSAGE_UPDATE），输入不可变 `InboxParserState`（entries: entryKey → InboxEntry + aggregateViews: 聚合卡 msgId → elementId → element data 工作视图），输出 `InboxParseResult`（新 state + added + removedKeys），由 `approvalInboxProvider` 消费增量维护队列。四类卡：`permission_card` / `question_card` / `card`(approvals) 独立消息 entryKey=msgId，聚合卡内嵌 permission/question 元素 entryKey=`msgId:elementId`；均仅 status/state=pending 入队。收敛：独立卡终态 UPDATE / 聚合卡 `update`/`remove` op 出队；聚合卡 `append` 增量入队、无 op 全量替换走重建收敛（清该 msgId 全部 entry 后按建卡逻辑重扫）。幂等：已在队不重复入队；不可变契约：内层 aggregateViews 更新整层重建（原地写会变异与旧 state 共享的 map）

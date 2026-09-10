@@ -4,14 +4,14 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wanling_core/providers/auth_provider.dart';
 import 'package:wanling_core/theme/app_colors.dart';
-import '../utils/permission_helper.dart';
 import '../widgets/avatar.dart';
 import '../widgets/feedback/app_dialog.dart';
 import '../widgets/settings_tile.dart';
 
 /// 侧滑栏主面板（方案 B 双层的右侧区域）。
-/// 原「我的」页(ProfilePage)菜单整段迁移至此:编辑资料/通知与后台/
-/// 修改密码/关于(版本号)/退出登录钉底。头部(头像+昵称+简介)点击进编辑资料。
+/// 菜单:设置(→ /settings)/小程序/小程序审核(admin)/关于(版本号)/退出登录钉底。
+/// 头部(头像+昵称+简介)点击直达编辑资料(编辑资料/通知与后台/修改密码/
+/// 自动弹出审批·问答已迁至设置页)。
 class SidebarProfilePanel extends ConsumerStatefulWidget {
   const SidebarProfilePanel({super.key});
 
@@ -107,31 +107,7 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                 ),
               ),
               const SizedBox(height: 4),
-              // —— 菜单区(原 ProfilePage 设置项):彩色图标区分功能,无分割线无箭头 ——
-              SettingsTile(
-                icon: Icons.person,
-                iconColor: const Color(0xFF2F6BFF),
-                label: '编辑资料',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => context.push('/profile/edit'),
-              ),
-              SettingsTile(
-                icon: Icons.notifications,
-                iconColor: const Color(0xFFFF9500),
-                label: '通知与后台',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => PermissionHelper.openAppNotificationSettings(),
-              ),
-              SettingsTile(
-                icon: Icons.lock,
-                iconColor: const Color(0xFF00B578),
-                label: '修改密码',
-                showDivider: false,
-                showChevron: false,
-                onTap: () => context.push('/change-password'),
-              ),
+              // —— 菜单区:彩色图标区分功能,无分割线无箭头 ——
               SettingsTile(
                 icon: Icons.widgets_outlined,
                 iconColor: AppColors.accentGreen,
@@ -150,6 +126,14 @@ class _SidebarProfilePanelState extends ConsumerState<SidebarProfilePanel> {
                   showChevron: false,
                   onTap: () => context.push('/admin/mini-programs'),
                 ),
+              SettingsTile(
+                icon: Icons.settings,
+                iconColor: const Color(0xFF8E8E93),
+                label: '设置',
+                showDivider: false,
+                showChevron: false,
+                onTap: () => context.push('/settings'),
+              ),
               SettingsTile(
                 icon: Icons.info,
                 iconColor: const Color(0xFF7A5AF8),

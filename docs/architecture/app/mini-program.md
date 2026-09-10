@@ -39,7 +39,7 @@ flowchart LR
 ## 浮球 / 多任务视图
 
 - **MiniProgramFloatBall**（`mini_program_float_ball.dart`）：吸附态 `Positioned` 只占露出宽度（`_size/3`），`OverflowBox` 让球体溢出、Stack 裁剪出「藏 2/3 露 1/3」，命中区域恰为可见部分；长按拖拽（y 钳制避开状态栏/屏底，多实例拖拽中显示数量角标），松手/取消就近吸附（球心半屏判定），手势被打断 `onLongPressCancel` 兜底防卡半空
-- **MiniProgramTaskView**（`mini_program_task_view.dart`）：全屏遮罩（`0xE6141418`）+ 顶部实例 tab（横滑）+ `PageView` 卡片。`taskCardLayout` 纯函数：卡宽 0.74 屏宽、高按真实屏幕宽高比、`viewportFraction = (cardW+20)/屏宽`。点卡片/tab → 恢复前台（视图随关）；`Dismissible(direction: up)` 上滑销毁；点空白遮罩/系统返回关视图本身。展开期间为全屏遮罩，外部打开入口不可达（若未来新增绕行入口需同步收起视图）
+- **MiniProgramTaskView**（`mini_program_task_view.dart`）：澎湃 OS 任务视图样式——毛玻璃背景（`BackdropFilter` blur 20 + `0x99141418` 压暗）+ **横向队列卡组** + 底部中央 X（`onCloseAll` 清空全部）。队列几何：基准左缘 `_baseLeftFactor`=0.16 屏宽（堆叠前台卡位 = 拖到底最老卡位 → 屏上恒留至少一个视图），卡宽 0.64 屏宽整屏等比，堆叠间距 `_peekStep`=16 露边，展开间距 `_stepFactor`=0.7 卡宽；`_fan` 0~1 在两态间插值，fan=1 时最新卡滑向右屏外（参考图 4：最老卡左 2/3 + 最新卡右 1/3）。右滑跟手展开 / 左滑跟手折叠（`AnimationController`），松手按速度惯性匀减速滑行（`_FanInertia` Simulation，撞 0/1 边界即停，微速度原地停留），全程拖动距离 `(n-1)×step×0.5` 钳制 0.35~0.65 屏宽；点卡片恢复该实例，上滑（Dismissible up 阈值 0.35 包「标题+卡片」整体）销毁单实例；点空白遮罩/系统返回关视图。水平拖拽手势挂**全屏 translucent 层**（SafeArea 直下）——挂卡组层会被 Stack hitTest 的 bounds 裁剪（卡随 fan 平移越出卡组边界后拖不动）。快照 contain 完整展示 + 同帧模糊 cover 底层兜边，无黑边；堆叠态后排标题隐藏防叠字（`headerOpacity` 随 `_fan` 渐显）。⚠️ 卡 Column 必须 `mainAxisSize.min`：loose 约束下默认 max 会吃满全高导致贴顶不居中。展开期间为全屏遮罩，外部打开入口不可达（若未来新增绕行入口需同步收起视图）
 
 ## 消息页下拉面板
 

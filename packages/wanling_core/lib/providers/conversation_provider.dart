@@ -37,6 +37,10 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   // 当前打开的 ChatPage convId。该会话收到的 agent 消息不计未读（用户正在看）。
   String? _activeConvId;
 
+  /// 当前正在浏览的会话 ID（null=不在任何聊天页）。
+  /// 供全局审批收件箱（ApprovalInboxHost）判断「头条卡所属会话正被浏览时不弹抽屉」。
+  String? get activeConvId => _activeConvId;
+
   ConversationListNotifier(
     this.api,
     this.ws,
@@ -165,8 +169,18 @@ class ConversationListNotifier extends StateNotifier<List<Conversation>> {
   /// 前台且正在看该会话时不弹通知（用户已直接看到）。
   void setActiveConv(String? convId) {
     _activeConvId = convId;
+    // 广播一次 state（内容不变的新实例）：activeConvId 不在 state 里，
+    // Riverpod 只认 state 实例变化；不广播的话常驻弹窗层（ApprovalInboxHost）
+    // 在退出聊天页后收不到信号，「退出会话后恢复可弹」永远不触发。
+    // 调用点在 ChatPage initState/dispose（build 生命周期内），同步改 state
+    // 会抛 "Tried to modify a provider while the widget tree was building"，
+    // 故延迟到 microtask（本帧 build 结束后）。
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      state = [...state];
+    });
     // 同步给 bg-service(经桥接,桌面/测试为 no-op),用于本地通知过滤:
-    // 前台且正在看该会话时不弹通知(用户已直接看到)。
+    // 前台且正在看该会话时不弹通知（用户已直接看到）。
     notifyService('setActiveConv', {
       'conv_id': convId ?? '',
     });

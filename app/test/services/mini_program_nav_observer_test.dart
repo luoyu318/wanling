@@ -28,6 +28,18 @@ import 'package:app/widgets/mini_program_host.dart';
 /// 快照抓帧用替身 controller(E)。
 class _MockShotController extends Mock implements InAppWebViewController {}
 
+/// 挂起编排的 pause/resume 走 unawaited(生产签名 Future),替身默认返 null
+/// 会炸 unawaited 的类型校验,统一 stub 成 no-op Future。
+void _stubLifecycle(_MockShotController c) {
+  when(() => c.pause()).thenAnswer((_) async {});
+  when(() => c.resume()).thenAnswer((_) async {});
+  when(() => c.pauseTimers()).thenAnswer((_) async {});
+  when(() => c.resumeTimers()).thenAnswer((_) async {});
+  // 壳返回键先问 WebView 历史(false → 落到最小化,对齐既有断言语义)
+  when(() => c.canGoBack()).thenAnswer((_) async => false);
+  when(() => c.goBack()).thenAnswer((_) async {});
+}
+
 /// 测试脚手架:真实 manager + 真实 GoRouter(壳路由带 name,对齐 router.dart
 /// 定义)+ observer 挂载 + Host 接线(替身实例视图)。
 class _Harness {
@@ -134,6 +146,7 @@ void main() {
 
     // 替身 controller 模拟嵌入页注册(测试环境无 WebView 平台通道)
     final fake = _MockShotController();
+    _stubLifecycle(fake);
     final frame = Uint8List.fromList([4, 5, 6]);
     when(() => fake.takeScreenshot()).thenAnswer((_) async => frame);
     registerMiniProgramController('a', fake);

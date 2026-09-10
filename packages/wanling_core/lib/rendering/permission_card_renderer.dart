@@ -14,7 +14,10 @@ import 'truncatable_text_block.dart';
 /// 公共入口：被 [PermissionCardRenderer]（独立审批卡渲染）和
 /// `_PendingApprovalChip`（task 卡片下挂的审批缩略条）共用。
 /// sheet widget [_PermissionReplySheet] 保持私有。
-void showPermissionReplySheet(
+///
+/// 返回抽屉关闭 Future（决策 pop / 手势下滑均触发 complete），
+/// 收件箱编排层据此复位弹窗守卫续弹下一条。
+Future<void> showPermissionReplySheet(
   BuildContext context, {
   required String convId,
   required String ocRequestId,
@@ -22,8 +25,12 @@ void showPermissionReplySheet(
   required List<String> resources,
   required Map<String, dynamic> metadata,
   required List<String> save,
+  /// 收件箱场景注入的来源条（把手下方、原头部之前）；聊天页内点击不传。
+  Widget? header,
+  /// 确认（含拒绝）成功后、关抽屉前回调（收件箱用于防重弹标记）。
+  VoidCallback? onSettled,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,
@@ -37,6 +44,8 @@ void showPermissionReplySheet(
       resources: resources,
       metadata: metadata,
       save: save,
+      header: header,
+      onSettled: onSettled,
     ),
   );
 }
@@ -440,6 +449,8 @@ class _PermissionReplySheet extends ConsumerStatefulWidget {
   final List<String> resources;
   final Map<String, dynamic> metadata;
   final List<String> save;
+  final Widget? header;
+  final VoidCallback? onSettled;
 
   const _PermissionReplySheet({
     required this.convId,
@@ -448,6 +459,8 @@ class _PermissionReplySheet extends ConsumerStatefulWidget {
     required this.resources,
     required this.metadata,
     required this.save,
+    this.header,
+    this.onSettled,
   });
 
   @override
@@ -480,6 +493,11 @@ class _PermissionReplySheetState extends ConsumerState<_PermissionReplySheet> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+            // 收件箱来源条（可选）：把手之下、原头部之上。
+            if (widget.header != null) ...[
+              widget.header!,
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            ],
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
@@ -683,6 +701,7 @@ class _PermissionReplySheetState extends ConsumerState<_PermissionReplySheet> {
         },
       };
       await ref.read(apiProvider).sendMessage(widget.convId, content);
+      widget.onSettled?.call();
       if (mounted) Navigator.of(context).pop();
       // 成功后不本地切终态：等 plugin PATCH → MESSAGE_UPDATE 由 chatProvider
       // 替换 content → 本 renderer.build 读 status 自然切终态。

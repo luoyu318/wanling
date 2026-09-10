@@ -24,7 +24,7 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 | version | 是 | 正整数；**同 appid 重传必须递增**（重传=换版本且状态重置回私有） |
 | entry | 否 | 入口 HTML，默认 `index.html`，必须真实存在于包内 |
 | icon | 否 | 包内相对路径；扩展名 png/jpg/jpeg/webp、≤256KB、内容须为真实图片（魔数校验） |
-| permissions | 否 | 白名单五选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`（云数据 KV，声明即生效），其他值会被拒 |
+| permissions | 否 | 白名单六选：`wanling.api` / `wanling.chat.read` / `wanling.chat.share` / `wanling.nav` / `wanling.storage`（云数据 KV，声明即生效）/ `wanling.device.motion`（设备运动订阅，声明即生效），其他值会被拒 |
 | collections | 否 | 云数据集合声明 `[{name, mode}]`，≤16 个；name `^[a-z0-9_-]{1,32}$` 且不可用保留名 `default`、不可重名；mode 三选一 `private`/`shared_read`/`shared_write`；未声明的 coll 运行时不可用（`default` 集合免声明、恒 private） |
 | navigationBar | 否 | 导航栏声明：`{"style":"default"|"custom","backgroundColor":"#RRGGBB","foregroundColor":"#RRGGBB"}`；default=宿主原生 AppBar（可配色），custom=全屏无标题栏 |
 | minHostVersion | 否 | 宿主最低版本声明 |
@@ -39,8 +39,9 @@ description: 当用户要求「写一个小程序/做个小程序/发布小程�
 - `wanling.shareToChat({title, params})` — 弹会话选择器分享卡片（仅公开小程序可分享）
 - `wanling.openPage({page, params})` — 跳宿主页面白名单：`home` / `miniPrograms` / `agentDetail`（params.agentId 须 UUID）
 - `wanling.close()` — 关闭小程序
+- `wanling.deviceMotion.start({hz, onEvent})` / `.stop()` — 订阅设备运动流（加速度计/陀螺仪）；hz 缺省 10、钳制 1-30，数据帧 `{accel:{x,y,z}, userAccel:{x,y,z}, gyro:{x,y,z}}`（m/s² 与 rad/s，三流取最新帧拼包）；onEvent 为 JS 本地回调，重复 start 幂等替换，stop 清空回调；切后台宿主自动停推回前台恢复。注：Android WebView 引擎自身可能派发 H5 `deviceorientation`/`devicemotion` 事件（引擎行为，不经权限门禁），统一走官方桥
 
-权限语义：`wanling.api` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权，profile 为调用式授权（调 getProfile 时弹）。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
+权限语义：`wanling.api` 与 `wanling.device.motion` 声明即生效；chat 类与 nav 首次运行由用户逐项弹窗授权，profile 为调用式授权（调 getProfile 时弹）。token 永远不会进入 JS——所有 API 必须经 `wanling.request`。
 
 错误契约：bridge 返回的 error 恒为字符串（JS 侧 `catch (e)` 后 `e.message` 直接可读，无需判型）。语义性拒绝格式为 `-<code> <message>`，可按前缀分流：`-32091 身份信息请使用 wanlingGetProfile`（request 打到身份端点）/ `-32090 用户未授权`（getProfile 被拒）；权限拒绝为 `permission denied: <perm>`（如 `permission denied: wanling.api`）。
 

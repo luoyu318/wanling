@@ -6,7 +6,7 @@
 //
 // Mock 策略:InAppWebViewController 用 mocktail 替身(只 stub takeScreenshot);
 // manager 用真实例;live 壳同步走真实 launcher(routerProvider 覆盖为空壳路由)。
-import 'dart:typed_data';
+import 'dart:convert' show base64Decode;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -22,6 +22,18 @@ import 'package:app/services/mini_program_manager.dart';
 import 'package:app/services/mini_program_snapshot.dart';
 
 class _MockController extends Mock implements InAppWebViewController {}
+
+/// 挂起编排的 pause/resume 走 unawaited(生产签名 Future),替身默认返 null
+/// 会炸 unawaited 的类型校验,统一 stub 成 no-op Future。
+void _stubLifecycle(_MockController c) {
+  when(() => c.pause()).thenAnswer((_) async {});
+  when(() => c.resume()).thenAnswer((_) async {});
+  when(() => c.pauseTimers()).thenAnswer((_) async {});
+  when(() => c.resumeTimers()).thenAnswer((_) async {});
+  // 壳返回键先问 WebView 历史(false → 落到最小化,对齐既有断言语义)
+  when(() => c.canGoBack()).thenAnswer((_) async => false);
+  when(() => c.goBack()).thenAnswer((_) async {});
+}
 
 class _Harness {
   final MiniProgramManager manager = MiniProgramManager();
@@ -49,9 +61,14 @@ void main() {
     resetMiniProgramControllersForTest();
   });
 
+  /// 真实 PNG 字节(4×2 RGB,离线生成的最小合法 PNG)。
+  final realPng = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR4nGMQMgmDIwZkDgA9WgThy2nKhwAAAABJRU5ErkJggg==');
+
   group('注册表', () {
     test('register 写入 / unregister 移除 / reset 清空', () {
       final c = _MockController();
+      _stubLifecycle(c);
       registerMiniProgramController('a', c);
       expect(miniProgramControllerRegistry['a'], same(c));
 
@@ -71,8 +88,9 @@ void main() {
 
     test('takeScreenshot 返帧 → 透传;返 null → null;抛异常 → null 不炸', () async {
       final c = _MockController();
+      _stubLifecycle(c);
       registerMiniProgramController('a', c);
-      final frame = Uint8List.fromList([9, 9]);
+      final frame = realPng;
 
       when(() => c.takeScreenshot()).thenAnswer((_) async => frame);
       expect(await captureSnapshot('a'), same(frame));
@@ -89,8 +107,9 @@ void main() {
     test('抓帧成功:帧写入实例 + 前台清空(最小化完成)', () async {
       final h = _Harness()..pump();
       h.manager.open('a');
-      final frame = Uint8List.fromList([1, 2, 3]);
+      final frame = realPng;
       final c = _MockController();
+      _stubLifecycle(c);
       registerMiniProgramController('a', c);
       when(() => c.takeScreenshot()).thenAnswer((_) async => frame);
 
@@ -118,6 +137,7 @@ void main() {
       final h = _Harness()..pump();
       h.manager.open('a');
       final c = _MockController();
+      _stubLifecycle(c);
       registerMiniProgramController('a', c);
       when(() => c.takeScreenshot()).thenThrow(Exception('crash'));
 

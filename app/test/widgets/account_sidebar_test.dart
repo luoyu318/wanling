@@ -153,8 +153,9 @@ void main() {
     });
 
     testWidgets('空列表:竖条只有添加按钮 + 主面板菜单仍在', (tester) async {
+      final prefs = await SharedPreferences.getInstance();
       final emptyNotifier = SavedLoginsNotifier(
-        prefs: await SharedPreferences.getInstance(),
+        prefs: prefs,
         storage: SecureStorage(deviceId: 'test-device'),
         onBaseUrlChange: (_) {},
         onLogout: ({bool silent = false}) async {},
@@ -162,7 +163,9 @@ void main() {
         onSwitchingChange: (_) {},
       );
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => emptyNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => emptyNotifier),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -178,7 +181,11 @@ void main() {
       expect(find.text('暂无记录'), findsNothing);
       expect(find.text('添加'), findsOneWidget);
       expect(find.byType(SidebarProfilePanel), findsOneWidget);
-      expect(find.text('编辑资料'), findsOneWidget);
+      expect(find.text('编辑资料'), findsNothing); // 已迁设置页
+      expect(find.text('通知与后台'), findsNothing);
+      expect(find.text('修改密码'), findsNothing);
+      expect(find.text('自动弹出审批/问答'), findsNothing);
+      expect(find.text('设置'), findsOneWidget);
       expect(find.text('退出登录'), findsOneWidget);
     });
 
@@ -197,7 +204,9 @@ void main() {
       await failNotifier.add('http://b', 'u2', 'p2', label: '账号B');
       failNotifier.select(0);
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => failNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => failNotifier),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -231,7 +240,9 @@ void main() {
       await slowNotifier.add('http://b', 'u2', 'p2', label: '账号B');
       slowNotifier.select(0);
       final c = ProviderContainer(
-        overrides: [savedLoginsProvider.overrideWith((ref) => slowNotifier)],
+        overrides: [
+          savedLoginsProvider.overrideWith((ref) => slowNotifier),
+        ],
       );
       addTearDown(c.dispose);
       await tester.pumpWidget(
@@ -333,5 +344,6 @@ void main() {
       // 版本号显示在关于行 trailing
       expect(find.text('v1.2.3+45'), findsOneWidget);
     });
+
   });
 }

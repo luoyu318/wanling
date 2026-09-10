@@ -17,6 +17,7 @@ import 'package:wanling_core/rendering/builtin_renderers.dart';
 import 'router.dart';
 import 'widgets/chat/builtin_renderers.dart'
     show registerMixedContentRenderer;
+import 'widgets/inbox/approval_inbox_host.dart';
 import 'widgets/mini_program_host.dart';
 import 'package:wanling_core/theme/app_colors.dart';
 import 'services/background_chat_service.dart';
@@ -261,10 +262,10 @@ class _MyAppState extends ConsumerState<MyApp> {
         ),
       ),
       routerConfig: router,
-      // 全局小程序保活层:实例视图常驻覆盖在 Navigator 之上,
-      // 默认无实例时只透传 child,不影响既有页面行为。
-      builder: (context, child) => MiniProgramHost(
-        child: child ?? const SizedBox.shrink(),
+      // 全局常驻层(builder 链):审批收件箱弹窗编排包在小程序保活层之外,
+      // 两者默认均纯透传 child,不影响既有页面行为。
+      builder: (context, child) => ApprovalInboxHost(
+        child: MiniProgramHost(child: child ?? const SizedBox.shrink()),
       ),
     );
   }

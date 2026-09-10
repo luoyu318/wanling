@@ -1010,4 +1010,68 @@ void main() {
       expect((r['error'] as String), contains('quota exceeded'));
     });
   });
+
+  group('设备运动桥', () {
+    test('无 wanling.device.motion 权限 → start/stop 拒绝且不触接线', () async {
+      var started = 0, stopped = 0;
+      final b = MiniProgramBridge(
+        permissions: const {},
+        proxy: (_, _, _) async => null,
+        onMotionStart: (_) => started++,
+        onMotionStop: () => stopped++,
+      );
+      final r1 = await b.handle('wanlingDeviceMotionStart', [{}]);
+      final r2 = await b.handle('wanlingDeviceMotionStop', []);
+      expect((r1 as Map)['ok'], isFalse);
+      expect(r1['error'], 'permission denied: wanling.device.motion');
+      expect((r2 as Map)['ok'], isFalse);
+      expect(r2['error'], 'permission denied: wanling.device.motion');
+      expect(started, 0);
+      expect(stopped, 0);
+    });
+
+    test('hz 缺省 10,越界钳 1..30', () {
+      expect(clampMotionHz(null), 10);
+      expect(clampMotionHz(0), 1);
+      expect(clampMotionHz(-5), 1);
+      expect(clampMotionHz(120), 30);
+      expect(clampMotionHz(15.7), 15);
+      expect(clampMotionHz(3), 3);
+    });
+
+    test('声明权限 + 已接线 → 委托 onMotionStart 并回显生效 hz', () async {
+      int? seenHz;
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.device.motion'},
+        proxy: (_, _, _) async => null,
+        onMotionStart: (hz) => seenHz = hz,
+      );
+      final r = await b.handle('wanlingDeviceMotionStart', [
+        {'hz': 20}
+      ]);
+      expect((r as Map)['ok'], isTrue);
+      expect((r['data'] as Map)['hz'], 20);
+      expect(seenHz, 20);
+    });
+
+    test('未接线(onMotionStart null) → 防御性拒绝 motion unavailable', () async {
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.device.motion'},
+        proxy: (_, _, _) async => null,
+      );
+      final r = await b.handle('wanlingDeviceMotionStart', [{}]);
+      expect((r as Map)['ok'], isFalse);
+      expect(r['error'], 'motion unavailable');
+    });
+
+    test('stop 无订阅 no-op → ok', () async {
+      final b = MiniProgramBridge(
+        permissions: const {'wanling.device.motion'},
+        proxy: (_, _, _) async => null,
+        onMotionStop: () {},
+      );
+      final r = await b.handle('wanlingDeviceMotionStop', []);
+      expect((r as Map)['ok'], isTrue);
+    });
+  });
 }
