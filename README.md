@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo/seal/wordmark.svg" alt="万灵 Wanling — 唤灵即应" width="380">
+</div>
+
 # 万灵 Wanling
 
 > **万物有灵,唤灵即应。**
