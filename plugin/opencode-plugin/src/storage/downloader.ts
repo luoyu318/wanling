@@ -26,6 +26,7 @@ export class DownloadError extends Error {
 const SAFE_EXT = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp",
   ".pdf", ".txt", ".md", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".json",
+  ".html",
   ".zip", ".tar", ".gz", ".bin",
 ])
 
