@@ -1414,7 +1414,7 @@ class WanlingAdapter(BasePlatformAdapter):
         ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
         # 文本（hermes 内部 DOCUMENT 处理可读）
         ".txt", ".md", ".csv", ".log", ".json", ".xml", ".yaml", ".yml",
-        ".toml", ".ini", ".cfg",
+        ".toml", ".ini", ".cfg", ".html",
         # 常见文档
         ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     })
@@ -1694,6 +1694,99 @@ class WanlingAdapter(BasePlatformAdapter):
         if caption:
             await self.send(chat_id, caption)
         return SendResult(success=True, message_id=uuid.uuid4().hex[:12])
+
+    async def _send_file_path(
+        self,
+        chat_id: str,
+        local_path: str,
+        filename: Optional[str] = None,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+    ) -> SendResult:
+        """上传本地文件到 server + REST 建 msg_type=file 消息（caption 追加文本）。
+
+        send_document / send_video / send_voice 共用此 helper：wanling 协议无
+        独立 video/voice 消息类型，统一走 file 气泡（APP 文件卡片可下载）。
+
+        通道选 REST 而非 WS：POST 建消息有回执，SendResult.success 真实反映
+        投递结果——hermes 上游 MEDIA 分派依赖 success=False 触发
+        _notify_media_delivery_failure 发标准失败通知。
+
+        失败语义（对齐 hermes 基类安全约束）：返回 success=False，绝不把本地
+        路径发进聊天（防泄漏 hermes host 文件系统布局），失败提示由上游
+        _notify_media_delivery_failure 兜底。
+        """
+        if not local_path or not os.path.isfile(local_path):
+            return SendResult(success=False, error=f"file not found: {local_path}")
+
+        file_id = await self._upload_file(local_path)
+        if not file_id:
+            return SendResult(
+                success=False,
+                error=f"upload failed: {os.path.basename(local_path)}",
+            )
+
+        # filename：显式传入优先（send_document 的 file_name 是 user-facing 名），
+        # basename 化兜底防上游传绝对路径，JSON 落库不泄漏 host 目录结构。
+        name = os.path.basename(filename or "") or os.path.basename(local_path)
+
+        data: Dict[str, Any] = {"file_id": file_id, "filename": name}
+        if reply_to:
+            data["quote"] = {"message_id": reply_to}
+
+        resp = await self._rest(
+            "POST", f"/api/conversations/{chat_id}/messages",
+            {"content": {"msg_type": "file", "data": data}},
+        )
+        if not (resp and resp.get("ok")):
+            return SendResult(success=False, error=f"REST create 失败: {resp}")
+
+        if caption:
+            await self.send(chat_id, caption, reply_to=reply_to)
+        msg_id = str((resp.get("data") or {}).get("message_id") or "")
+        return SendResult(success=True, message_id=msg_id or uuid.uuid4().hex[:12])
+
+    async def send_document(
+        self,
+        chat_id: str,
+        file_path: str,
+        caption: Optional[str] = None,
+        file_name: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """覆盖基类 fallback（基类只发 '⚠️ Couldn't deliver...' 提示文本不上传
+        文件——wanling 平台此前收不到任何文件即此因）。上传后发独立 file 气泡。
+        聚合卡不吸收文件：卡改写只处理 markdown 图片语法，file 是独立消息类型。
+        """
+        return await self._send_file_path(
+            chat_id, file_path, file_name or os.path.basename(file_path), caption, reply_to
+        )
+
+    async def send_video(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """覆盖基类 fallback：上传后走 msg_type=file 气泡（协议无 video 类型）。"""
+        return await self._send_file_path(chat_id, video_path, None, caption, reply_to)
+
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """覆盖基类 fallback：上传后走 msg_type=file 气泡（协议无 voice 类型）。"""
+        return await self._send_file_path(chat_id, audio_path, None, caption, reply_to)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Send typing indicator to user.
@@ -2521,6 +2614,121 @@ if __name__ == "__main__":
         adapter._rest = _fail_rest  # type: ignore[method-assign]
         r = await adapter.send("conv-6", "hello")
         _check(not r.success, "REST 建消息失败 → send 显式失败")
+
+        # ── send_document/send_video/send_voice 文件投递（msg_type=file） ──
+        print("== send_document/send_video/send_voice 自检 ==")
+
+        # 用例 F1：send_document 成功 → REST 建 msg_type=file（file_id + filename）
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidDoc")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"pdf")
+            doc_path = f.name
+        try:
+            r = await adapter.send_document("conv-f1", doc_path)
+            method, path, body = calls[0]
+            content = body["content"]
+            _check(
+                r.success and method == "POST"
+                and path == "/api/conversations/conv-f1/messages"
+                and content["msg_type"] == "file"
+                and content["data"]["file_id"] == "fidDoc"
+                and content["data"]["filename"] == os.path.basename(doc_path),
+                "send_document: 上传后 REST 建 msg_type=file（file_id + filename=basename）",
+            )
+        finally:
+            os.unlink(doc_path)
+
+        # 用例 F2：file_name 参数优先于 basename（user-facing 文件名）
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidDoc")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
+            f.write(b"x")
+            doc_path = f.name
+        try:
+            await adapter.send_document("conv-f2", doc_path, file_name="季度报表.pdf")
+            _check(
+                calls[0][2]["content"]["data"]["filename"] == "季度报表.pdf",
+                "send_document: file_name 参数优先作为 filename",
+            )
+        finally:
+            os.unlink(doc_path)
+
+        # 用例 F3：caption → file 消息后跟发一条文本（第 2 条 POST）
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidDoc")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"x")
+            doc_path = f.name
+        try:
+            await adapter.send_document("conv-f3", doc_path, caption="这是报表")
+            _check(
+                len(calls) == 2
+                and calls[0][2]["content"]["msg_type"] == "file"
+                and calls[1][2]["content"]["msg_type"] == "markdown"
+                and calls[1][2]["content"]["data"]["text"] == "这是报表",
+                "send_document: caption 跟发独立文本消息",
+            )
+        finally:
+            os.unlink(doc_path)
+
+        # 用例 F4：reply_to → file 消息 data.quote 注入
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidDoc")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"x")
+            doc_path = f.name
+        try:
+            await adapter.send_document("conv-f4", doc_path, reply_to="msg-anchor")
+            _check(
+                calls[0][2]["content"]["data"]["quote"] == {"message_id": "msg-anchor"},
+                "send_document: reply_to 注入 quote",
+            )
+        finally:
+            os.unlink(doc_path)
+
+        # 用例 F5：上传失败 → success=False 且不发消息（绝不降级发本地路径，防泄漏）
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: None)  # type: ignore[method-assign]
+        r = await adapter.send_document("conv-f5", "/nonexistent/f.pdf")
+        _check(
+            not r.success and calls == [],
+            "send_document: 上传失败显式失败，不发路径文本（上游兜底发失败通知）",
+        )
+
+        # 用例 F6：send_video / send_voice → 统一走 msg_type=file（协议无独立类型）
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidVid")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            f.write(b"v")
+            video_path = f.name
+        try:
+            r1 = await adapter.send_video("conv-f6", video_path)
+            _check(
+                r1.success
+                and calls[0][2]["content"]["msg_type"] == "file"
+                and calls[0][2]["content"]["data"]["file_id"] == "fidVid"
+                and calls[0][2]["content"]["data"]["filename"].endswith(".mp4"),
+                "send_video: 降级为 msg_type=file 气泡（可下载）",
+            )
+        finally:
+            os.unlink(video_path)
+
+        adapter, calls = _make_send_adapter()
+        adapter._upload_file = _asyncify(lambda p: "fidAud")  # type: ignore[method-assign]
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(b"a")
+            audio_path = f.name
+        try:
+            r2 = await adapter.send_voice("conv-f6", audio_path)
+            _check(
+                r2.success
+                and calls[0][2]["content"]["msg_type"] == "file"
+                and calls[0][2]["content"]["data"]["filename"].endswith(".wav"),
+                "send_voice: 降级为 msg_type=file 气泡（可下载）",
+            )
+        finally:
+            os.unlink(audio_path)
 
     async def _run_aggregate_tests():
         """聚合卡核心自检：mock adapter REST（io 边界），SDK AggregateCard 真跑。
