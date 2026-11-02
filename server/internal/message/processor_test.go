@@ -647,6 +647,89 @@ func TestEnhanceContentFromFile_FillsWidthHeight(t *testing.T) {
 	}
 }
 
+// TestEnhanceContentFromFile_FillsFilename file 消息 data 只带 file_id（发送端漏
+// 带 filename，如第三方脚本/SDK 直发）→ 从 files 表补 filename + file_size/mime_type。
+func TestEnhanceContentFromFile_FillsFilename(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	f, err := fix.fileRepo.Create(t.Context(), repository.CreateFileParams{
+		OwnerID:     fix.userID,
+		Filename:    "wanling-slides.html",
+		MimeType:    "text/html",
+		Size:        1368054,
+		StoragePath: "abc.html",
+	})
+	if err != nil {
+		t.Fatalf("Create file 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "file",
+		"data":     map[string]interface{}{"file_id": f.ID},
+	})
+
+	got := p.enhanceContentFromFile(t.Context(), json.RawMessage(content))
+
+	var parsed struct {
+		Data struct {
+			FileID   string `json:"file_id"`
+			Filename string `json:"filename"`
+			MimeType string `json:"mime_type"`
+			FileSize int64  `json:"file_size"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("解析增强后 content 失败: %v", err)
+	}
+	if parsed.Data.Filename != "wanling-slides.html" {
+		t.Errorf("filename 未补全: got %q, want wanling-slides.html", parsed.Data.Filename)
+	}
+	if parsed.Data.MimeType != "text/html" {
+		t.Errorf("mime_type 未补全: got %q", parsed.Data.MimeType)
+	}
+	if parsed.Data.FileSize != 1368054 {
+		t.Errorf("file_size 未补全: got %d", parsed.Data.FileSize)
+	}
+}
+
+// TestEnhanceContentFromFile_FilenameIdempotent data 已带 filename（发送端显式命名，
+// 可能与库内原始名不同如重命名分发）→ 保留原值不覆盖。
+func TestEnhanceContentFromFile_FilenameIdempotent(t *testing.T) {
+	fix := seedDM(t)
+	p := newProcessorWithNilHub(t, fix)
+
+	f, err := fix.fileRepo.Create(t.Context(), repository.CreateFileParams{
+		OwnerID:     fix.userID,
+		Filename:    "original.html",
+		MimeType:    "text/html",
+		Size:        100,
+		StoragePath: "def.html",
+	})
+	if err != nil {
+		t.Fatalf("Create file 失败: %v", err)
+	}
+
+	content, _ := json.Marshal(map[string]interface{}{
+		"msg_type": "file",
+		"data": map[string]interface{}{
+			"file_id":  f.ID,
+			"filename": "重命名.html",
+		},
+	})
+	got := p.enhanceContentFromFile(t.Context(), json.RawMessage(content))
+
+	var parsed struct {
+		Data struct {
+			Filename string `json:"filename"`
+		} `json:"data"`
+	}
+	json.Unmarshal(got, &parsed)
+	if parsed.Data.Filename != "重命名.html" {
+		t.Errorf("幂等失败: filename 被覆盖为 %q, 应保留 显式值", parsed.Data.Filename)
+	}
+}
+
 // TestEnhanceContentFromFile_Idempotent 已带宽高的消息 → 幂等跳过，不查 DB。
 func TestEnhanceContentFromFile_Idempotent(t *testing.T) {
 	fix := seedDM(t)

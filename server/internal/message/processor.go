@@ -1121,7 +1121,8 @@ func truncate(s string, n int) string {
 //
 //	files 表查权威宽高,补完后存库 + dispatch 两处都带,前端按真实尺寸渲染无跳动)
 //
-// file: 补 file_size, mime_type(前端文件卡片展示用)
+// file: 补 filename, file_size, mime_type(前端文件卡片展示用;filename 兜底
+// 发送端漏带的场景,如第三方脚本/SDK 直发只传 file_id,APP 文件卡片显示光秃文件名)
 //
 // 幂等:data 已有非 0 值则跳过,避免每条消息多一次 DB 查询。
 // fail-soft:非 image/file / file_id 缺失 / files 表查不到 / 字段为 NULL / json 解析失败,
@@ -1131,6 +1132,7 @@ func (p *Processor) enhanceContentFromFile(ctx context.Context, raw json.RawMess
 		MsgType string `json:"msg_type"`
 		Data    struct {
 			FileID   string `json:"file_id"`
+			Filename string `json:"filename"`
 			Width    *int   `json:"width"`
 			Height   *int   `json:"height"`
 			FileSize *int64 `json:"file_size"`
@@ -1169,6 +1171,9 @@ func (p *Processor) enhanceContentFromFile(ctx context.Context, raw json.RawMess
 		}
 	}
 	if content.MsgType == "file" {
+		if content.Data.Filename == "" {
+			data["filename"] = f.Filename
+		}
 		if content.Data.FileSize == nil || *content.Data.FileSize <= 0 {
 			data["file_size"] = f.Size
 		}

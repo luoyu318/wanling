@@ -437,9 +437,11 @@ func TestFileHandler_Upload_OversizedRejected(t *testing.T) {
 	AssertErr(t, w, http.StatusRequestEntityTooLarge, "payload_too_large")
 }
 
-// TestUpload_RejectsHtml 验证 M5 扩展名白名单：上传 .html 文件应被拒（415），
-// 防 .html/.exe 等可执行/可渲染类型上传导致存储型 XSS 或客户端被利用。
-func TestUpload_RejectsHtml(t *testing.T) {
+// TestUpload_AcceptsHtml 验证 M5 白名单放行 .html（应用户需求放开，如 agent
+// 生成的幻灯片/报告页面）。存储型 XSS 防线由下载端兜底：
+// Content-Disposition: attachment（强制下载不 inline 渲染）+ X-Content-Type-Options: nosniff。
+// M3 嗅探仍生效：`<script>` 前缀被识别为 text/html，与扩展名交叉校验通过才会 201。
+func TestUpload_AcceptsHtml(t *testing.T) {
 	db := repository.SetupTestDB(t)
 	frepo := repository.NewFileRepo(db)
 	store, err := storage.NewLocalStorage(t.TempDir())
@@ -461,14 +463,14 @@ func TestUpload_RejectsHtml(t *testing.T) {
 		h.Upload(c)
 	})
 
-	// 构造一个 .html 文件（XSS payload），应被白名单拒绝
+	// 上传含 XSS payload 的 .html → 应放行（201），嗅探 mime=text/html 与扩展名匹配
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", "evil.html")
+	part, err := writer.CreateFormFile("file", "slides.html")
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
 	}
-	part.Write([]byte("<script>alert('xss')</script>"))
+	part.Write([]byte("<!DOCTYPE html><html><body><script>alert('xss')</script></body></html>"))
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload", body)
@@ -476,7 +478,52 @@ func TestUpload_RejectsHtml(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	AssertErr(t, w, http.StatusUnsupportedMediaType, "unsupported_media_type")
+	AssertOk(t, w, http.StatusCreated)
+}
+
+// TestUpload_HtmlContentExtMismatch_Rejected 验证 M3：二进制内容改名 .html
+// （嗅探为 application/octet-stream，非 html 预期 MIME 集合）→ 应 415 mime_mismatch。
+func TestUpload_HtmlContentExtMismatch_Rejected(t *testing.T) {
+	db := repository.SetupTestDB(t)
+	frepo := repository.NewFileRepo(db)
+	store, err := storage.NewLocalStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalStorage: %v", err)
+	}
+	h := NewFileHandler(frepo, store, 32<<20)
+
+	urepo := repository.NewUserRepo(db)
+	uploader, err := urepo.Create(t.Context(), shortName(t, "up_"), "$2a$10$hash")
+	if err != nil {
+		t.Fatalf("create uploader: %v", err)
+	}
+
+	r := gin.New()
+	r.POST("/api/upload", func(c *gin.Context) {
+		c.Set("userID", uploader.ID)
+		c.Set("role", "user")
+		h.Upload(c)
+	})
+
+	// PE 可执行文件 magic bytes（MZ...）改名成 .html → 嗅探 octet-stream 不在预期集合
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "evil.html")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	part.Write([]byte{0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
+		0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00,
+		0xB8, 0x00, 0x00, 0x00})
+	part.Write(make([]byte, 100)) // padding 凑足嗅探区
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/api/upload", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	AssertErr(t, w, http.StatusUnsupportedMediaType, "mime_mismatch")
 }
 
 // TestUpload_AcceptsJpg 验证 M5 扩展名白名单放行 jpg（白名单覆盖图片类型）。

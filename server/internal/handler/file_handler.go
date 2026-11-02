@@ -37,7 +37,9 @@ var imageExtensions = map[string]string{
 	".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
 }
 
-// allowedExtensions 文件上传扩展名白名单（M5 防 .html/.exe 等可执行/可渲染类型上传）。
+// allowedExtensions 文件上传扩展名白名单（M5 防 .exe 等可执行类型上传）。
+// .html 已应用户需求放行（agent 生成的幻灯片/报告页面）：存储型 XSS 防线
+// 由下载端兜底（Content-Disposition: attachment 强制下载 + nosniff，见 Download）。
 // 同时映射到标准 mime（Content-Type 矫正用，但矫正仍只对图片做）。
 var allowedExtensions = map[string]string{
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -46,6 +48,7 @@ var allowedExtensions = map[string]string{
 	".txt": "text/plain",
 	".md":  "text/markdown", ".markdown": "text/markdown",
 	".csv":  "text/csv",
+	".html": "text/html",
 	".doc":  "application/msword",
 	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 	".xls":  "application/vnd.ms-excel",
@@ -107,6 +110,9 @@ var extToExpectedMIME = map[string][]string{
 	".md":       {"text/plain", "text/markdown", "application/octet-stream"},
 	".markdown": {"text/plain", "text/markdown", "application/octet-stream"},
 	".csv":      {"text/plain", "text/csv", "application/octet-stream"},
+	// html 是文本格式：合法内容嗅探为 text/html（<script>/<html>/<!DOCTYPE 前缀）
+	// 或 text/plain（普通文本），二进制内容（octet-stream，改名攻击）不放行。
+	".html": {"text/html", "text/plain"},
 }
 
 // isAllowedMIME 校验嗅探到的真实 MIME 是否与扩展名相符。
